@@ -1390,4 +1390,649 @@ mod tests {
             variants.iter().map(|e| format!("{e}")).collect();
         assert_eq!(set.len(), variants.len());
     }
+
+    // -----------------------------------------------------------------------
+    // 1. Copy semantics
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn idempotency_class_copy_semantics() {
+        let a = IdempotencyClass::NaturallyIdempotent;
+        let b = a; // copy
+        assert_eq!(a, b);
+        let c = IdempotencyClass::RequiresKey;
+        let d = c; // copy
+        assert_eq!(c, d);
+    }
+
+    // -----------------------------------------------------------------------
+    // 2. Debug distinctness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn idempotency_class_debug_distinct() {
+        let a = format!("{:?}", IdempotencyClass::NaturallyIdempotent);
+        let b = format!("{:?}", IdempotencyClass::RequiresKey);
+        assert_ne!(a, b);
+        assert!(a.contains("NaturallyIdempotent"));
+        assert!(b.contains("RequiresKey"));
+    }
+
+    #[test]
+    fn registry_error_debug_nonempty() {
+        let e = RegistryError::InvalidComputationName {
+            name: "bad".into(),
+            reason: "empty".into(),
+        };
+        let d = format!("{e:?}");
+        assert!(!d.is_empty());
+        assert!(d.contains("InvalidComputationName"));
+    }
+
+    #[test]
+    fn registry_event_debug_nonempty() {
+        let ev = RegistryEvent {
+            trace_id: "t1".into(),
+            component: "registry".into(),
+            computation_name: "c".into(),
+            version: "1.0.0".into(),
+            input_hash: "abc".into(),
+            event: "test".into(),
+            outcome: "ok".into(),
+        };
+        let d = format!("{ev:?}");
+        assert!(!d.is_empty());
+        assert!(d.contains("RegistryEvent"));
+    }
+
+    #[test]
+    fn computation_name_debug_nonempty() {
+        let n = ComputationName::new("debug_test").unwrap();
+        let d = format!("{n:?}");
+        assert!(!d.is_empty());
+        assert!(d.contains("ComputationName"));
+    }
+
+    #[test]
+    fn computation_schema_debug_nonempty() {
+        let s = test_input_schema();
+        let d = format!("{s:?}");
+        assert!(!d.is_empty());
+        assert!(d.contains("ComputationSchema"));
+    }
+
+    #[test]
+    fn computation_registration_debug_nonempty() {
+        let r = test_registration("debug_reg");
+        let d = format!("{r:?}");
+        assert!(!d.is_empty());
+        assert!(d.contains("ComputationRegistration"));
+    }
+
+    #[test]
+    fn version_negotiation_result_debug_nonempty() {
+        let result = VersionNegotiationResult {
+            computation_name: ComputationName::new("x").unwrap(),
+            compatible: true,
+            local_version: SchemaVersion::new(1, 0, 0),
+            remote_version: SchemaVersion::new(1, 0, 0),
+        };
+        let d = format!("{result:?}");
+        assert!(!d.is_empty());
+        assert!(d.contains("VersionNegotiationResult"));
+    }
+
+    // -----------------------------------------------------------------------
+    // 3. Serde variant distinctness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn registry_error_serde_variants_distinct() {
+        let variants: Vec<RegistryError> = vec![
+            RegistryError::InvalidComputationName {
+                name: "n".into(),
+                reason: "r".into(),
+            },
+            RegistryError::DuplicateRegistration { name: "n".into() },
+            RegistryError::ComputationNotFound { name: "n".into() },
+            RegistryError::SchemaValidationFailed {
+                computation_name: "n".into(),
+                reason: "r".into(),
+            },
+            RegistryError::CapabilityDenied {
+                computation_name: "n".into(),
+                required: ProfileKind::Full,
+                held: ProfileKind::ComputeOnly,
+            },
+            RegistryError::VersionIncompatible {
+                computation_name: "n".into(),
+                registered: SchemaVersion::new(1, 0, 0),
+                requested: SchemaVersion::new(2, 0, 0),
+            },
+            RegistryError::ClosureRejected { reason: "r".into() },
+            RegistryError::HotRegistrationDenied { reason: "r".into() },
+        ];
+        let jsons: std::collections::BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        // Each variant serialises to a distinct JSON string.
+        assert_eq!(jsons.len(), variants.len());
+    }
+
+    #[test]
+    fn idempotency_class_serde_variants_distinct() {
+        let a = serde_json::to_string(&IdempotencyClass::NaturallyIdempotent).unwrap();
+        let b = serde_json::to_string(&IdempotencyClass::RequiresKey).unwrap();
+        assert_ne!(a, b);
+    }
+
+    // -----------------------------------------------------------------------
+    // 4. Clone independence
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn computation_name_clone_independence() {
+        let orig = ComputationName::new("clone_me").unwrap();
+        let mut cloned = orig.clone();
+        // Inner string is a clone; modifying cloned does not affect original.
+        // We can only verify equality then check they're independent via serde.
+        assert_eq!(orig, cloned);
+        let serialised = serde_json::to_string(&cloned).unwrap();
+        cloned = serde_json::from_str(&serialised).unwrap();
+        assert_eq!(orig, cloned);
+    }
+
+    #[test]
+    fn registry_error_clone_independence() {
+        let orig = RegistryError::DuplicateRegistration {
+            name: "dup".to_string(),
+        };
+        let cloned = orig.clone();
+        assert_eq!(orig, cloned);
+    }
+
+    #[test]
+    fn registry_event_clone_independence() {
+        let ev = RegistryEvent {
+            trace_id: "t".into(),
+            component: "c".into(),
+            computation_name: "n".into(),
+            version: "1.0.0".into(),
+            input_hash: "h".into(),
+            event: "e".into(),
+            outcome: "o".into(),
+        };
+        let cloned = ev.clone();
+        assert_eq!(ev, cloned);
+    }
+
+    #[test]
+    fn computation_registration_clone_independence() {
+        let orig = test_registration("clone_reg");
+        let cloned = orig.clone();
+        assert_eq!(orig, cloned);
+    }
+
+    #[test]
+    fn computation_schema_clone_independence() {
+        let orig = test_input_schema();
+        let cloned = orig.clone();
+        assert_eq!(orig, cloned);
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. JSON field-name stability
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn registry_event_json_field_names() {
+        let ev = RegistryEvent {
+            trace_id: "t1".into(),
+            component: "reg".into(),
+            computation_name: "comp".into(),
+            version: "1.0.0".into(),
+            input_hash: "abc123".into(),
+            event: "schema_validation".into(),
+            outcome: "success".into(),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"computation_name\""));
+        assert!(json.contains("\"version\""));
+        assert!(json.contains("\"input_hash\""));
+        assert!(json.contains("\"event\""));
+        assert!(json.contains("\"outcome\""));
+    }
+
+    #[test]
+    fn computation_registration_json_field_names() {
+        let reg = test_registration("field_test");
+        let json = serde_json::to_string(&reg).unwrap();
+        assert!(json.contains("\"name\""));
+        assert!(json.contains("\"input_schema\""));
+        assert!(json.contains("\"output_schema\""));
+        assert!(json.contains("\"version\""));
+        assert!(json.contains("\"capability_required\""));
+        assert!(json.contains("\"idempotency_class\""));
+    }
+
+    #[test]
+    fn computation_schema_json_field_names() {
+        let schema = test_input_schema();
+        let json = serde_json::to_string(&schema).unwrap();
+        assert!(json.contains("\"description\""));
+        assert!(json.contains("\"schema_hash\""));
+        assert!(json.contains("\"expected_fields\""));
+    }
+
+    #[test]
+    fn version_negotiation_result_json_field_names() {
+        let result = VersionNegotiationResult {
+            computation_name: ComputationName::new("field_check").unwrap(),
+            compatible: false,
+            local_version: SchemaVersion::new(1, 0, 0),
+            remote_version: SchemaVersion::new(2, 0, 0),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"computation_name\""));
+        assert!(json.contains("\"compatible\""));
+        assert!(json.contains("\"local_version\""));
+        assert!(json.contains("\"remote_version\""));
+    }
+
+    // -----------------------------------------------------------------------
+    // 6. Display format checks
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_display_invalid_computation_name() {
+        let e = RegistryError::InvalidComputationName {
+            name: "BAD".into(),
+            reason: "uppercase not allowed".into(),
+        };
+        let s = e.to_string();
+        assert!(s.contains("BAD"));
+        assert!(s.contains("uppercase not allowed"));
+    }
+
+    #[test]
+    fn error_display_schema_validation_failed() {
+        let e = RegistryError::SchemaValidationFailed {
+            computation_name: "my_comp".into(),
+            reason: "missing field".into(),
+        };
+        let s = e.to_string();
+        assert!(s.contains("my_comp"));
+        assert!(s.contains("missing field"));
+    }
+
+    #[test]
+    fn error_display_capability_denied() {
+        let e = RegistryError::CapabilityDenied {
+            computation_name: "x".into(),
+            required: ProfileKind::Full,
+            held: ProfileKind::ComputeOnly,
+        };
+        let s = e.to_string();
+        assert!(s.contains("x"));
+        assert!(s.contains("requires"));
+        assert!(s.contains("held"));
+    }
+
+    #[test]
+    fn error_display_version_incompatible() {
+        let e = RegistryError::VersionIncompatible {
+            computation_name: "v_comp".into(),
+            registered: SchemaVersion::new(1, 0, 0),
+            requested: SchemaVersion::new(2, 0, 0),
+        };
+        let s = e.to_string();
+        assert!(s.contains("v_comp"));
+        assert!(s.contains("1.0.0"));
+        assert!(s.contains("2.0.0"));
+    }
+
+    #[test]
+    fn error_display_hot_registration_denied() {
+        let e = RegistryError::HotRegistrationDenied {
+            reason: "insufficient caps".into(),
+        };
+        let s = e.to_string();
+        assert!(s.contains("hot-registration denied"));
+        assert!(s.contains("insufficient caps"));
+    }
+
+    #[test]
+    fn computation_name_display_matches_as_str() {
+        let n = ComputationName::new("display_check").unwrap();
+        assert_eq!(n.to_string(), n.as_str());
+    }
+
+    // -----------------------------------------------------------------------
+    // 7. Hash consistency
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn computation_name_hash_consistent() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let n = ComputationName::new("hash_me").unwrap();
+        let mut h1 = DefaultHasher::new();
+        n.hash(&mut h1);
+        let mut h2 = DefaultHasher::new();
+        n.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn computation_name_hash_distinct_for_different_names() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let n1 = ComputationName::new("alpha").unwrap();
+        let n2 = ComputationName::new("beta").unwrap();
+        let mut h1 = DefaultHasher::new();
+        n1.hash(&mut h1);
+        let mut h2 = DefaultHasher::new();
+        n2.hash(&mut h2);
+        assert_ne!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn input_hash_32_bytes() {
+        let name = ComputationName::new("hash_len_check").unwrap();
+        let input = valid_input();
+        let h = RemoteComputationRegistry::compute_input_hash(&name, &input);
+        assert_eq!(h.as_bytes().len(), 32);
+    }
+
+    #[test]
+    fn input_hash_scalar_differs_from_map() {
+        let name = ComputationName::new("scalar_vs_map").unwrap();
+        let map_input = valid_input();
+        let scalar_input = CanonicalValue::U64(42);
+        let h1 = RemoteComputationRegistry::compute_input_hash(&name, &map_input);
+        let h2 = RemoteComputationRegistry::compute_input_hash(&name, &scalar_input);
+        assert_ne!(h1, h2);
+    }
+
+    // -----------------------------------------------------------------------
+    // 8. Boundary / edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn computation_name_single_char_valid() {
+        let n = ComputationName::new("a").unwrap();
+        assert_eq!(n.as_str(), "a");
+    }
+
+    #[test]
+    fn computation_name_leading_digit_valid() {
+        // digits are allowed; a name can start with a digit
+        assert!(ComputationName::new("1abc").is_ok());
+    }
+
+    #[test]
+    fn computation_name_only_dots_valid() {
+        // dots are allowed; "..." is technically valid per the rule
+        assert!(ComputationName::new("...").is_ok());
+    }
+
+    #[test]
+    fn computation_name_slash_rejected() {
+        assert!(matches!(
+            ComputationName::new("my/comp"),
+            Err(RegistryError::InvalidComputationName { .. })
+        ));
+    }
+
+    #[test]
+    fn computation_name_at_sign_rejected() {
+        assert!(matches!(
+            ComputationName::new("my@comp"),
+            Err(RegistryError::InvalidComputationName { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_input_empty_map_missing_all_fields() {
+        let mut reg = RemoteComputationRegistry::new();
+        reg.register(test_registration("empty_map_comp")).unwrap();
+        let name = ComputationName::new("empty_map_comp").unwrap();
+        let empty = CanonicalValue::Map(BTreeMap::new());
+        let err = reg.validate_input(&name, &empty, "t").unwrap_err();
+        assert!(matches!(err, RegistryError::SchemaValidationFailed { .. }));
+    }
+
+    #[test]
+    fn validate_input_array_rejected_as_non_map() {
+        let mut reg = RemoteComputationRegistry::new();
+        reg.register(test_registration("arr_comp")).unwrap();
+        let name = ComputationName::new("arr_comp").unwrap();
+        let arr = CanonicalValue::Array(vec![CanonicalValue::U64(1)]);
+        let err = reg.validate_input(&name, &arr, "t").unwrap_err();
+        assert!(matches!(err, RegistryError::SchemaValidationFailed { .. }));
+    }
+
+    #[test]
+    fn validate_input_null_rejected_as_non_map() {
+        let mut reg = RemoteComputationRegistry::new();
+        reg.register(test_registration("null_comp")).unwrap();
+        let name = ComputationName::new("null_comp").unwrap();
+        let err = reg
+            .validate_input(&name, &CanonicalValue::Null, "t")
+            .unwrap_err();
+        assert!(matches!(err, RegistryError::SchemaValidationFailed { .. }));
+    }
+
+    #[test]
+    fn registry_starts_empty_no_events() {
+        let mut reg = RemoteComputationRegistry::new();
+        assert_eq!(reg.drain_events().len(), 0);
+        assert!(reg.event_counts().is_empty());
+    }
+
+    #[test]
+    fn schema_version_major_zero_compatible_with_itself() {
+        let v = SchemaVersion::new(0, 0, 0);
+        assert!(v.is_compatible_with(&SchemaVersion::new(0, 0, 0)));
+    }
+
+    #[test]
+    fn schema_version_major_zero_incompatible_higher_major() {
+        let v = SchemaVersion::new(0, 0, 0);
+        assert!(!v.is_compatible_with(&SchemaVersion::new(1, 0, 0)));
+    }
+
+    #[test]
+    fn registration_count_increments_correctly() {
+        let mut reg = RemoteComputationRegistry::new();
+        for i in 0..5u32 {
+            let name = format!("comp_{i}");
+            reg.register(test_registration(&name)).unwrap();
+            assert_eq!(reg.len(), (i + 1) as usize);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 9. Serde round-trips (additional variants)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn registry_error_all_variants_serde_roundtrip() {
+        let variants: Vec<RegistryError> = vec![
+            RegistryError::InvalidComputationName {
+                name: "nn".into(),
+                reason: "rr".into(),
+            },
+            RegistryError::DuplicateRegistration { name: "nn".into() },
+            RegistryError::ComputationNotFound { name: "nn".into() },
+            RegistryError::SchemaValidationFailed {
+                computation_name: "nn".into(),
+                reason: "rr".into(),
+            },
+            RegistryError::CapabilityDenied {
+                computation_name: "nn".into(),
+                required: ProfileKind::EngineCore,
+                held: ProfileKind::ComputeOnly,
+            },
+            RegistryError::VersionIncompatible {
+                computation_name: "nn".into(),
+                registered: SchemaVersion::new(3, 1, 0),
+                requested: SchemaVersion::new(3, 0, 0),
+            },
+            RegistryError::ClosureRejected { reason: "rr".into() },
+            RegistryError::HotRegistrationDenied { reason: "rr".into() },
+        ];
+        for err in &variants {
+            let json = serde_json::to_string(err).unwrap();
+            let back: RegistryError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    #[test]
+    fn computation_schema_serde_roundtrip() {
+        let schema = ComputationSchema::new(
+            "round trip schema",
+            b"schema-definition-bytes",
+            vec!["field_a".into(), "field_b".into(), "field_c".into()],
+        );
+        let json = serde_json::to_string(&schema).unwrap();
+        let back: ComputationSchema = serde_json::from_str(&json).unwrap();
+        assert_eq!(schema, back);
+    }
+
+    #[test]
+    fn version_negotiation_result_serde_incompatible_roundtrip() {
+        let result = VersionNegotiationResult {
+            computation_name: ComputationName::new("incompat_rt").unwrap(),
+            compatible: false,
+            local_version: SchemaVersion::new(2, 0, 0),
+            remote_version: SchemaVersion::new(1, 0, 0),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: VersionNegotiationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    #[test]
+    fn computation_registration_all_profile_kinds_roundtrip() {
+        for kind in [
+            ProfileKind::Full,
+            ProfileKind::EngineCore,
+            ProfileKind::Policy,
+            ProfileKind::Remote,
+            ProfileKind::ComputeOnly,
+        ] {
+            let reg = ComputationRegistration {
+                name: ComputationName::new("rt_comp").unwrap(),
+                input_schema: test_input_schema(),
+                output_schema: test_output_schema(),
+                version: SchemaVersion::new(1, 0, 0),
+                capability_required: kind,
+                idempotency_class: IdempotencyClass::NaturallyIdempotent,
+            };
+            let json = serde_json::to_string(&reg).unwrap();
+            let back: ComputationRegistration = serde_json::from_str(&json).unwrap();
+            assert_eq!(reg, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 10. Additional event / counter coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn event_count_registration_key_present() {
+        let mut reg = RemoteComputationRegistry::new();
+        reg.register(test_registration("cnt_comp")).unwrap();
+        assert_eq!(reg.event_counts().get("registration"), Some(&1));
+    }
+
+    #[test]
+    fn event_count_capability_denied_increments() {
+        let mut reg = RemoteComputationRegistry::new();
+        reg.register(test_registration("cap_cnt")).unwrap();
+        let name = ComputationName::new("cap_cnt").unwrap();
+        let _ = reg.check_capability(&name, &compute_only_profile(), "t");
+        assert_eq!(reg.event_counts().get("capability_denied"), Some(&1));
+    }
+
+    #[test]
+    fn event_count_capability_granted_increments() {
+        let mut reg = RemoteComputationRegistry::new();
+        reg.register(test_registration("cap_grant")).unwrap();
+        let name = ComputationName::new("cap_grant").unwrap();
+        reg.check_capability(&name, &remote_profile(), "t").unwrap();
+        assert_eq!(reg.event_counts().get("capability_granted"), Some(&1));
+    }
+
+    #[test]
+    fn hot_register_event_count_increments() {
+        let mut reg = RemoteComputationRegistry::new();
+        let profile = CapabilityProfile::policy();
+        reg.hot_register(test_registration("hot_cnt"), &profile, "t")
+            .unwrap();
+        assert_eq!(reg.event_counts().get("hot_registration"), Some(&1));
+    }
+
+    #[test]
+    fn hot_register_denied_emits_event_with_denied_outcome() {
+        let mut reg = RemoteComputationRegistry::new();
+        let _ = reg.hot_register(
+            test_registration("no_hot"),
+            &compute_only_profile(),
+            "trace-hot-denied",
+        );
+        let events = reg.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, "hot_registration_denied");
+        assert_eq!(events[0].outcome, "denied");
+        assert_eq!(events[0].trace_id, "trace-hot-denied");
+    }
+
+    #[test]
+    fn capability_denied_emits_event() {
+        let mut reg = RemoteComputationRegistry::new();
+        reg.register(test_registration("cap_ev")).unwrap();
+        let name = ComputationName::new("cap_ev").unwrap();
+        let _ = reg.check_capability(&name, &compute_only_profile(), "trace-cap-ev");
+        let events = reg.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, "capability_check");
+        assert_eq!(events[0].outcome, "denied");
+        assert_eq!(events[0].trace_id, "trace-cap-ev");
+    }
+
+    #[test]
+    fn computation_names_deterministic_order_many() {
+        let mut reg = RemoteComputationRegistry::new();
+        let names = ["zeta", "alpha", "mu", "delta", "beta"];
+        for n in &names {
+            reg.register(test_registration(n)).unwrap();
+        }
+        let mut expected = names.to_vec();
+        expected.sort_unstable();
+        assert_eq!(reg.computation_names(), expected);
+    }
+
+    #[test]
+    fn empty_registry_is_empty_and_len_zero() {
+        let reg = RemoteComputationRegistry::new();
+        assert!(reg.is_empty());
+        assert_eq!(reg.len(), 0);
+    }
+
+    #[test]
+    fn reject_closure_message_propagates() {
+        let reason = "closure with captures not allowed";
+        let err = RemoteComputationRegistry::reject_closure(reason);
+        if let RegistryError::ClosureRejected { reason: r } = &err {
+            assert_eq!(r, reason);
+        } else {
+            panic!("expected ClosureRejected");
+        }
+    }
 }

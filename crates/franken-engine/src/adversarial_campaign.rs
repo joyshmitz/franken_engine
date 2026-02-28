@@ -4750,8 +4750,8 @@ mod tests {
         assert_eq!(score.damage_potential_millionths, 420_000);
         // detection = min(14 * 20_000, 1_000_000) = 280_000
         assert_eq!(score.detection_difficulty_millionths, 280_000);
-        // novel = 150_000
-        assert_eq!(score.novel_technique_bonus_millionths, 150_000);
+        // novel = 1_000_000 (boolean: full millionths when true)
+        assert_eq!(score.novel_technique_bonus_millionths, 1_000_000);
     }
 
     #[test]

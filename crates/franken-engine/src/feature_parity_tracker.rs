@@ -1130,7 +1130,7 @@ mod tests {
             failing_test_ids: vec![],
         };
         let err = tracker.ingest_test262(&bad, &ctx).unwrap_err();
-        assert_eq!(err.code(), "FE-FPT-0005");
+        assert_eq!(err.code(), "FE-FPT-0006");
     }
 
     // -------------------------------------------------------------------
@@ -1513,6 +1513,9 @@ mod tests {
         let errors = vec![
             ParityTrackerError::FeatureNotFound {
                 feature_id: "x".to_string(),
+            },
+            ParityTrackerError::WaiverNotFound {
+                waiver_id: "w".to_string(),
             },
             ParityTrackerError::WaiverAlreadyExists {
                 waiver_id: "w".to_string(),
@@ -1931,5 +1934,526 @@ mod tests {
         assert!(FeatureArea::NullishCoalescing < FeatureArea::DynamicImport);
         assert!(FeatureArea::DynamicImport < FeatureArea::BigInt);
         assert!(FeatureArea::ImportMeta < FeatureArea::ForInOrder);
+    }
+
+    // ── Enrichment: Copy semantics ──────────────────────────────────
+
+    #[test]
+    fn feature_status_copy_from_array() {
+        let arr = [
+            FeatureStatus::NotStarted,
+            FeatureStatus::InProgress,
+            FeatureStatus::Passing,
+            FeatureStatus::Waived,
+        ];
+        let copied = arr[2];
+        assert_eq!(copied, FeatureStatus::Passing);
+        assert_eq!(arr[2], FeatureStatus::Passing);
+    }
+
+    #[test]
+    fn feature_area_copy_from_array() {
+        let arr = [FeatureArea::BigInt, FeatureArea::GlobalThis];
+        let copied = arr[0];
+        assert_eq!(copied, FeatureArea::BigInt);
+        assert_eq!(arr[0], FeatureArea::BigInt);
+    }
+
+    #[test]
+    fn lockstep_runtime_copy_from_array() {
+        let arr = [LockstepRuntime::Node, LockstepRuntime::Bun];
+        let copied = arr[1];
+        assert_eq!(copied, LockstepRuntime::Bun);
+        assert_eq!(arr[1], LockstepRuntime::Bun);
+    }
+
+    #[test]
+    fn es_version_copy_from_array() {
+        let arr = [EsVersion::Es2020];
+        let copied = arr[0];
+        assert_eq!(copied, EsVersion::Es2020);
+    }
+
+    // ── Enrichment: Debug distinctness ──────────────────────────────
+
+    #[test]
+    fn feature_status_debug_all_distinct() {
+        let dbgs: BTreeSet<String> = [
+            FeatureStatus::NotStarted,
+            FeatureStatus::InProgress,
+            FeatureStatus::Passing,
+            FeatureStatus::Waived,
+        ]
+        .iter()
+        .map(|s| format!("{s:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 4);
+    }
+
+    #[test]
+    fn feature_area_debug_all_distinct() {
+        let dbgs: BTreeSet<String> = FeatureArea::all()
+            .iter()
+            .map(|a| format!("{a:?}"))
+            .collect();
+        assert_eq!(dbgs.len(), 10);
+    }
+
+    #[test]
+    fn lockstep_runtime_debug_all_distinct() {
+        let dbgs: BTreeSet<String> = [LockstepRuntime::Node, LockstepRuntime::Bun]
+            .iter()
+            .map(|r| format!("{r:?}"))
+            .collect();
+        assert_eq!(dbgs.len(), 2);
+    }
+
+    #[test]
+    fn parity_tracker_error_debug_all_distinct() {
+        let errors = vec![
+            ParityTrackerError::FeatureNotFound { feature_id: "f".into() },
+            ParityTrackerError::WaiverNotFound { waiver_id: "w".into() },
+            ParityTrackerError::WaiverAlreadyExists { waiver_id: "w".into() },
+            ParityTrackerError::WaiverSealed { waiver_id: "w".into() },
+            ParityTrackerError::InvalidWaiver { detail: "d".into() },
+            ParityTrackerError::InvalidMetrics { detail: "d".into() },
+            ParityTrackerError::DuplicateFeature { feature_id: "f".into() },
+            ParityTrackerError::GateEvaluationFailed { detail: "d".into() },
+        ];
+        let dbgs: BTreeSet<String> = errors.iter().map(|e| format!("{e:?}")).collect();
+        assert_eq!(dbgs.len(), 8);
+    }
+
+    // ── Enrichment: Serde variant distinctness ──────────────────────
+
+    #[test]
+    fn feature_status_serde_all_distinct() {
+        let jsons: BTreeSet<String> = [
+            FeatureStatus::NotStarted,
+            FeatureStatus::InProgress,
+            FeatureStatus::Passing,
+            FeatureStatus::Waived,
+        ]
+        .iter()
+        .map(|s| serde_json::to_string(s).unwrap())
+        .collect();
+        assert_eq!(jsons.len(), 4);
+    }
+
+    #[test]
+    fn feature_area_serde_all_distinct() {
+        let jsons: BTreeSet<String> = FeatureArea::all()
+            .iter()
+            .map(|a| serde_json::to_string(a).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 10);
+    }
+
+    #[test]
+    fn parity_tracker_error_serde_all_variants_distinct() {
+        let errors = vec![
+            ParityTrackerError::FeatureNotFound { feature_id: "f".into() },
+            ParityTrackerError::WaiverNotFound { waiver_id: "w".into() },
+            ParityTrackerError::WaiverAlreadyExists { waiver_id: "w2".into() },
+            ParityTrackerError::WaiverSealed { waiver_id: "w3".into() },
+            ParityTrackerError::InvalidWaiver { detail: "d".into() },
+            ParityTrackerError::InvalidMetrics { detail: "d2".into() },
+            ParityTrackerError::DuplicateFeature { feature_id: "f2".into() },
+            ParityTrackerError::GateEvaluationFailed { detail: "d3".into() },
+        ];
+        let jsons: BTreeSet<String> = errors
+            .iter()
+            .map(|e| serde_json::to_string(e).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 8);
+    }
+
+    // ── Enrichment: Clone independence ──────────────────────────────
+
+    #[test]
+    fn feature_entry_clone_independence() {
+        let entry = FeatureEntry::new(FeatureArea::BigInt, EsVersion::Es2020);
+        let mut cloned = entry.clone();
+        cloned.status = FeatureStatus::Passing;
+        cloned.test262_total = 999;
+        assert_eq!(entry.status, FeatureStatus::NotStarted);
+        assert_eq!(entry.test262_total, 0);
+    }
+
+    #[test]
+    fn waiver_record_clone_independence() {
+        let waiver = make_waiver("feat-1", "w-1");
+        let mut cloned = waiver.clone();
+        cloned.sealed = true;
+        cloned.reason = "changed".into();
+        assert!(!waiver.sealed);
+        assert_eq!(waiver.reason, "intentional divergence");
+    }
+
+    #[test]
+    fn release_gate_decision_clone_independence() {
+        let decision = ReleaseGateDecision {
+            passed: true,
+            failing_features: vec![],
+            unwaived_failures: vec![],
+            overall_test262_pass_rate_millionths: 1_000_000,
+            overall_lockstep_match_rate_millionths: 1_000_000,
+        };
+        let mut cloned = decision.clone();
+        cloned.passed = false;
+        cloned.failing_features.push("feat-x".into());
+        assert!(decision.passed);
+        assert!(decision.failing_features.is_empty());
+    }
+
+    #[test]
+    fn parity_event_clone_independence() {
+        let event = ParityEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: COMPONENT.into(),
+            event: "test".into(),
+            outcome: "ok".into(),
+            error_code: None,
+        };
+        let mut cloned = event.clone();
+        cloned.trace_id = "modified".into();
+        assert_eq!(event.trace_id, "t");
+    }
+
+    #[test]
+    fn dashboard_snapshot_clone_independence() {
+        let tracker = FeatureParityTracker::new();
+        let dash = tracker.dashboard();
+        let mut cloned = dash.clone();
+        cloned.total_features = 999;
+        assert_eq!(dash.total_features, FeatureArea::all().len());
+    }
+
+    // ── Enrichment: JSON field-name stability ───────────────────────
+
+    #[test]
+    fn feature_entry_json_field_names_stable() {
+        let entry = FeatureEntry::new(FeatureArea::BigInt, EsVersion::Es2020);
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"feature_id\""));
+        assert!(json.contains("\"area\""));
+        assert!(json.contains("\"es_version\""));
+        assert!(json.contains("\"status\""));
+        assert!(json.contains("\"test262_total\""));
+        assert!(json.contains("\"test262_passing\""));
+        assert!(json.contains("\"test262_pass_rate_millionths\""));
+        assert!(json.contains("\"lockstep_match_rates_millionths\""));
+        assert!(json.contains("\"lockstep_total_comparisons\""));
+        assert!(json.contains("\"lockstep_matches\""));
+    }
+
+    #[test]
+    fn waiver_record_json_field_names_stable() {
+        let waiver = make_waiver("feat-1", "w-1");
+        let json = serde_json::to_string(&waiver).unwrap();
+        assert!(json.contains("\"waiver_id\""));
+        assert!(json.contains("\"feature_id\""));
+        assert!(json.contains("\"reason\""));
+        assert!(json.contains("\"approved_by\""));
+        assert!(json.contains("\"approved_at_ns\""));
+        assert!(json.contains("\"valid_until_ns\""));
+        assert!(json.contains("\"test262_exemptions\""));
+        assert!(json.contains("\"lockstep_exemptions\""));
+        assert!(json.contains("\"sealed\""));
+    }
+
+    #[test]
+    fn release_gate_criteria_json_field_names_stable() {
+        let c = ReleaseGateCriteria::default();
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains("\"min_test262_pass_rate_millionths\""));
+        assert!(json.contains("\"min_lockstep_match_rate_millionths\""));
+        assert!(json.contains("\"require_waiver_coverage\""));
+    }
+
+    #[test]
+    fn release_gate_decision_json_field_names_stable() {
+        let decision = ReleaseGateDecision {
+            passed: false,
+            failing_features: vec!["f1".into()],
+            unwaived_failures: vec![],
+            overall_test262_pass_rate_millionths: 0,
+            overall_lockstep_match_rate_millionths: 0,
+        };
+        let json = serde_json::to_string(&decision).unwrap();
+        assert!(json.contains("\"passed\""));
+        assert!(json.contains("\"failing_features\""));
+        assert!(json.contains("\"unwaived_failures\""));
+        assert!(json.contains("\"overall_test262_pass_rate_millionths\""));
+        assert!(json.contains("\"overall_lockstep_match_rate_millionths\""));
+    }
+
+    #[test]
+    fn dashboard_snapshot_json_field_names_stable() {
+        let tracker = FeatureParityTracker::new();
+        let dash = tracker.dashboard();
+        let json = serde_json::to_string(&dash).unwrap();
+        assert!(json.contains("\"total_features\""));
+        assert!(json.contains("\"status_counts\""));
+        assert!(json.contains("\"total_waivers\""));
+        assert!(json.contains("\"sealed_waivers\""));
+        assert!(json.contains("\"overall_test262_pass_rate_millionths\""));
+        assert!(json.contains("\"overall_lockstep_match_rates_millionths\""));
+        assert!(json.contains("\"per_area\""));
+    }
+
+    // ── Enrichment: Display format checks ───────────────────────────
+
+    #[test]
+    fn feature_status_display_all_unique() {
+        let displays: BTreeSet<String> = [
+            FeatureStatus::NotStarted,
+            FeatureStatus::InProgress,
+            FeatureStatus::Passing,
+            FeatureStatus::Waived,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn feature_area_display_all_unique() {
+        let displays: BTreeSet<String> = FeatureArea::all()
+            .iter()
+            .map(|a| a.to_string())
+            .collect();
+        assert_eq!(displays.len(), 10);
+    }
+
+    #[test]
+    fn parity_tracker_error_display_includes_code() {
+        let err = ParityTrackerError::FeatureNotFound {
+            feature_id: "bigint".into(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("FE-FPT-0001"));
+        assert!(display.contains("bigint"));
+    }
+
+    // ── Enrichment: Hash consistency ────────────────────────────────
+
+    #[test]
+    fn feature_status_hash_consistent() {
+        use std::hash::{Hash, Hasher};
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        FeatureStatus::Passing.hash(&mut h1);
+        FeatureStatus::Passing.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn feature_area_hash_consistent() {
+        use std::hash::{Hash, Hasher};
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        FeatureArea::BigInt.hash(&mut h1);
+        FeatureArea::BigInt.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    // ── Enrichment: boundary/edge cases ─────────────────────────────
+
+    #[test]
+    fn feature_entry_new_computes_correct_id() {
+        let entry = FeatureEntry::new(FeatureArea::OptionalChaining, EsVersion::Es2020);
+        assert_eq!(entry.feature_id, "ES2020-optional_chaining");
+    }
+
+    #[test]
+    fn feature_entry_new_all_zeroed_rates() {
+        let entry = FeatureEntry::new(FeatureArea::BigInt, EsVersion::Es2020);
+        assert_eq!(entry.test262_total, 0);
+        assert_eq!(entry.test262_passing, 0);
+        assert_eq!(entry.test262_pass_rate_millionths, 0);
+        assert!(entry.lockstep_match_rates_millionths.is_empty());
+    }
+
+    #[test]
+    fn ingest_test262_zero_total_leaves_rate_zero() {
+        let mut tracker = FeatureParityTracker::new();
+        let ctx = test_ctx();
+        let r = Test262Result {
+            area: FeatureArea::BigInt,
+            total: 0,
+            passing: 0,
+            failing_test_ids: vec![],
+        };
+        tracker.ingest_test262(&r, &ctx).unwrap();
+        let fid = format!("{}-{}", EsVersion::Es2020, FeatureArea::BigInt);
+        assert_eq!(
+            tracker.feature(&fid).unwrap().test262_pass_rate_millionths,
+            0
+        );
+    }
+
+    #[test]
+    fn lockstep_zero_comparisons_leaves_rate_zero() {
+        let mut tracker = FeatureParityTracker::new();
+        let ctx = test_ctx();
+        let r = LockstepResult {
+            area: FeatureArea::BigInt,
+            runtime: LockstepRuntime::Node,
+            total_comparisons: 0,
+            matches: 0,
+            mismatches: vec![],
+        };
+        tracker.ingest_lockstep(&r, &ctx).unwrap();
+        let fid = format!("{}-{}", EsVersion::Es2020, FeatureArea::BigInt);
+        let entry = tracker.feature(&fid).unwrap();
+        assert_eq!(
+            entry.lockstep_match_rates_millionths.get("node"),
+            Some(&0)
+        );
+    }
+
+    #[test]
+    fn waiver_validation_rejects_empty_feature_id() {
+        let bad = WaiverRecord {
+            waiver_id: "w".to_string(),
+            feature_id: "".to_string(),
+            reason: "r".to_string(),
+            approved_by: "a".to_string(),
+            approved_at_ns: 1,
+            valid_until_ns: None,
+            test262_exemptions: vec![],
+            lockstep_exemptions: vec![],
+            sealed: false,
+        };
+        assert_eq!(bad.validate().unwrap_err().code(), "FE-FPT-0005");
+    }
+
+    #[test]
+    fn waiver_validation_rejects_empty_reason() {
+        let bad = WaiverRecord {
+            waiver_id: "w".to_string(),
+            feature_id: "f".to_string(),
+            reason: "  ".to_string(),
+            approved_by: "a".to_string(),
+            approved_at_ns: 1,
+            valid_until_ns: None,
+            test262_exemptions: vec![],
+            lockstep_exemptions: vec![],
+            sealed: false,
+        };
+        assert_eq!(bad.validate().unwrap_err().code(), "FE-FPT-0005");
+    }
+
+    #[test]
+    fn waiver_validation_rejects_empty_approved_by() {
+        let bad = WaiverRecord {
+            waiver_id: "w".to_string(),
+            feature_id: "f".to_string(),
+            reason: "r".to_string(),
+            approved_by: "".to_string(),
+            approved_at_ns: 1,
+            valid_until_ns: None,
+            test262_exemptions: vec![],
+            lockstep_exemptions: vec![],
+            sealed: false,
+        };
+        assert_eq!(bad.validate().unwrap_err().code(), "FE-FPT-0005");
+    }
+
+    #[test]
+    fn waiver_valid_until_equals_approved_at_rejected() {
+        let bad = WaiverRecord {
+            waiver_id: "w".to_string(),
+            feature_id: "f".to_string(),
+            reason: "r".to_string(),
+            approved_by: "a".to_string(),
+            approved_at_ns: 100,
+            valid_until_ns: Some(100),
+            test262_exemptions: vec![],
+            lockstep_exemptions: vec![],
+            sealed: false,
+        };
+        assert_eq!(bad.validate().unwrap_err().code(), "FE-FPT-0005");
+    }
+
+    #[test]
+    fn test262_result_validate_passing_equals_total_ok() {
+        let r = Test262Result {
+            area: FeatureArea::BigInt,
+            total: 10,
+            passing: 10,
+            failing_test_ids: vec![],
+        };
+        assert!(r.validate().is_ok());
+    }
+
+    #[test]
+    fn lockstep_result_validate_mismatch_count_inconsistent() {
+        let bad = LockstepResult {
+            area: FeatureArea::BigInt,
+            runtime: LockstepRuntime::Node,
+            total_comparisons: 10,
+            matches: 8,
+            mismatches: vec![],
+        };
+        assert_eq!(bad.validate().unwrap_err().code(), "FE-FPT-0006");
+    }
+
+    #[test]
+    fn gate_with_custom_criteria_passes_at_lower_threshold() {
+        let mut tracker = FeatureParityTracker::new();
+        let ctx = test_ctx();
+        tracker.set_gate_criteria(ReleaseGateCriteria {
+            min_test262_pass_rate_millionths: 500_000,
+            min_lockstep_match_rate_millionths: 500_000,
+            require_waiver_coverage: false,
+        });
+        let result = Test262Result {
+            area: FeatureArea::BigInt,
+            total: 10,
+            passing: 6,
+            failing_test_ids: (0..4).map(|i| format!("f{i}")).collect(),
+        };
+        tracker.ingest_test262(&result, &ctx).unwrap();
+        let decision = tracker.evaluate_gate(&ctx);
+        assert!(decision.passed);
+    }
+
+    #[test]
+    fn not_waived_test262_ids_false_by_default() {
+        let tracker = FeatureParityTracker::new();
+        assert!(!tracker.is_test262_waived("any-test"));
+        assert!(!tracker.is_lockstep_waived("any-test"));
+    }
+
+    // ── Enrichment: Debug nonempty ──────────────────────────────────
+
+    #[test]
+    fn feature_parity_tracker_debug_nonempty() {
+        let tracker = FeatureParityTracker::new();
+        let dbg = format!("{tracker:?}");
+        assert!(dbg.contains("FeatureParityTracker"));
+    }
+
+    #[test]
+    fn tracker_context_debug_nonempty() {
+        let ctx = test_ctx();
+        let dbg = format!("{ctx:?}");
+        assert!(dbg.contains("TrackerContext"));
+    }
+
+    #[test]
+    fn lockstep_mismatch_debug_nonempty() {
+        let m = LockstepMismatch {
+            test_id: "t1".into(),
+            expected: "42".into(),
+            actual: "43".into(),
+        };
+        let dbg = format!("{m:?}");
+        assert!(dbg.contains("LockstepMismatch"));
     }
 }

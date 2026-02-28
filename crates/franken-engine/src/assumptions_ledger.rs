@@ -1401,4 +1401,604 @@ mod tests {
         let e = LedgerError::DuplicateAssumption("test".into());
         let _: &dyn std::error::Error = &e;
     }
+
+    // ── Enrichment: Copy semantics ──────────────────────────────────
+
+    #[test]
+    fn assumption_category_copy_from_array() {
+        let arr = [
+            AssumptionCategory::Statistical,
+            AssumptionCategory::Behavioral,
+            AssumptionCategory::Resource,
+            AssumptionCategory::Safety,
+            AssumptionCategory::Structural,
+        ];
+        let copied = arr[2];
+        assert_eq!(copied, AssumptionCategory::Resource);
+        assert_eq!(arr[2], AssumptionCategory::Resource);
+    }
+
+    #[test]
+    fn assumption_origin_copy_from_array() {
+        let arr = [
+            AssumptionOrigin::CompileTime,
+            AssumptionOrigin::Runtime,
+            AssumptionOrigin::PolicyInherited,
+            AssumptionOrigin::Inferred,
+        ];
+        let copied = arr[3];
+        assert_eq!(copied, AssumptionOrigin::Inferred);
+        assert_eq!(arr[3], AssumptionOrigin::Inferred);
+    }
+
+    #[test]
+    fn violation_severity_copy_from_array() {
+        let arr = [
+            ViolationSeverity::Advisory,
+            ViolationSeverity::Warning,
+            ViolationSeverity::Critical,
+            ViolationSeverity::Fatal,
+        ];
+        let copied = arr[0];
+        assert_eq!(copied, ViolationSeverity::Advisory);
+        assert_eq!(arr[0], ViolationSeverity::Advisory);
+    }
+
+    #[test]
+    fn monitor_kind_copy_from_array() {
+        let arr = [
+            MonitorKind::Threshold,
+            MonitorKind::Drift,
+            MonitorKind::Coverage,
+            MonitorKind::Invariant,
+            MonitorKind::Budget,
+        ];
+        let copied = arr[4];
+        assert_eq!(copied, MonitorKind::Budget);
+        assert_eq!(arr[4], MonitorKind::Budget);
+    }
+
+    #[test]
+    fn monitor_op_copy_from_array() {
+        let arr = [MonitorOp::Le, MonitorOp::Ge, MonitorOp::Eq];
+        let copied = arr[1];
+        assert_eq!(copied, MonitorOp::Ge);
+        assert_eq!(arr[1], MonitorOp::Ge);
+    }
+
+    // ── Enrichment: Debug distinctness ──────────────────────────────
+
+    #[test]
+    fn assumption_category_debug_all_distinct() {
+        let dbgs: BTreeSet<String> = [
+            AssumptionCategory::Statistical,
+            AssumptionCategory::Behavioral,
+            AssumptionCategory::Resource,
+            AssumptionCategory::Safety,
+            AssumptionCategory::Structural,
+        ]
+        .iter()
+        .map(|v| format!("{v:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 5);
+    }
+
+    #[test]
+    fn assumption_origin_debug_all_distinct() {
+        let dbgs: BTreeSet<String> = [
+            AssumptionOrigin::CompileTime,
+            AssumptionOrigin::Runtime,
+            AssumptionOrigin::PolicyInherited,
+            AssumptionOrigin::Inferred,
+        ]
+        .iter()
+        .map(|v| format!("{v:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 4);
+    }
+
+    #[test]
+    fn assumption_status_debug_all_distinct() {
+        let dbgs: BTreeSet<String> = [
+            AssumptionStatus::Active,
+            AssumptionStatus::Violated,
+            AssumptionStatus::Retired,
+            AssumptionStatus::Suspended,
+        ]
+        .iter()
+        .map(|v| format!("{v:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 4);
+    }
+
+    #[test]
+    fn violation_severity_debug_all_distinct() {
+        let dbgs: BTreeSet<String> = [
+            ViolationSeverity::Advisory,
+            ViolationSeverity::Warning,
+            ViolationSeverity::Critical,
+            ViolationSeverity::Fatal,
+        ]
+        .iter()
+        .map(|v| format!("{v:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 4);
+    }
+
+    #[test]
+    fn monitor_kind_debug_all_distinct() {
+        let dbgs: BTreeSet<String> = [
+            MonitorKind::Threshold,
+            MonitorKind::Drift,
+            MonitorKind::Coverage,
+            MonitorKind::Invariant,
+            MonitorKind::Budget,
+        ]
+        .iter()
+        .map(|v| format!("{v:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 5);
+    }
+
+    // ── Enrichment: Serde variant distinctness ──────────────────────
+
+    #[test]
+    fn assumption_status_serde_variants_distinct() {
+        let variants = [
+            AssumptionStatus::Active,
+            AssumptionStatus::Violated,
+            AssumptionStatus::Retired,
+            AssumptionStatus::Suspended,
+        ];
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 4);
+    }
+
+    #[test]
+    fn monitor_op_serde_variants_distinct() {
+        let variants = [MonitorOp::Le, MonitorOp::Ge, MonitorOp::Eq];
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 3);
+    }
+
+    #[test]
+    fn demotion_action_serde_variants_distinct() {
+        let variants = vec![
+            DemotionAction::EnterSafeMode { reason: "r".into() },
+            DemotionAction::DemoteLane { lane_id: "l".into(), reason: "r".into() },
+            DemotionAction::SuspendAdaptive { reason: "r".into() },
+            DemotionAction::EscalateToOperator { reason: "r".into() },
+            DemotionAction::NoAction,
+        ];
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 5);
+    }
+
+    // ── Enrichment: Clone independence ──────────────────────────────
+
+    #[test]
+    fn assumption_clone_independence() {
+        let mut original = make_assumption("a1", ViolationSeverity::Warning);
+        let cloned = original.clone();
+        original.status = AssumptionStatus::Violated;
+        original.description = "mutated".into();
+        assert_eq!(cloned.status, AssumptionStatus::Active);
+        assert_eq!(cloned.description, "Test assumption a1");
+    }
+
+    #[test]
+    fn falsification_evidence_clone_independence() {
+        let mut original = FalsificationEvidence {
+            assumption_id: "a1".into(),
+            monitor_id: "m1".into(),
+            epoch: 1,
+            tick: 0,
+            observed_value_millionths: 600_000,
+            threshold_millionths: 500_000,
+            explanation: "test".into(),
+            evidence_hash: "abc".into(),
+        };
+        let cloned = original.clone();
+        original.explanation = "mutated".into();
+        assert_eq!(cloned.explanation, "test");
+    }
+
+    #[test]
+    fn monitor_clone_independence() {
+        let mut original = make_monitor("m1", "a1");
+        let cloned = original.clone();
+        original.triggered = true;
+        original.current_violations = 5;
+        assert!(!cloned.triggered);
+        assert_eq!(cloned.current_violations, 0);
+    }
+
+    #[test]
+    fn ledger_clone_independence() {
+        let mut original = default_ledger();
+        original
+            .record_assumption(make_assumption("a1", ViolationSeverity::Warning))
+            .unwrap();
+        let cloned = original.clone();
+        original
+            .record_assumption(make_assumption("a2", ViolationSeverity::Critical))
+            .unwrap();
+        assert_eq!(cloned.assumption_count(), 1);
+        assert_eq!(original.assumption_count(), 2);
+    }
+
+    // ── Enrichment: JSON field-name stability ───────────────────────
+
+    #[test]
+    fn assumption_json_field_names() {
+        let a = make_assumption("a1", ViolationSeverity::Warning);
+        let val: serde_json::Value = serde_json::to_value(&a).unwrap();
+        let obj = val.as_object().unwrap();
+        assert!(obj.contains_key("id"));
+        assert!(obj.contains_key("category"));
+        assert!(obj.contains_key("origin"));
+        assert!(obj.contains_key("status"));
+        assert!(obj.contains_key("description"));
+        assert!(obj.contains_key("decision_id"));
+        assert!(obj.contains_key("epoch"));
+        assert!(obj.contains_key("dependencies"));
+        assert!(obj.contains_key("violation_severity"));
+        assert!(obj.contains_key("predicate_hash"));
+        assert_eq!(obj.len(), 10);
+    }
+
+    #[test]
+    fn falsification_evidence_json_field_names() {
+        let ev = FalsificationEvidence {
+            assumption_id: "a1".into(),
+            monitor_id: "m1".into(),
+            epoch: 1,
+            tick: 0,
+            observed_value_millionths: 600_000,
+            threshold_millionths: 500_000,
+            explanation: "test".into(),
+            evidence_hash: "abc".into(),
+        };
+        let val: serde_json::Value = serde_json::to_value(&ev).unwrap();
+        let obj = val.as_object().unwrap();
+        assert!(obj.contains_key("assumption_id"));
+        assert!(obj.contains_key("monitor_id"));
+        assert!(obj.contains_key("epoch"));
+        assert!(obj.contains_key("tick"));
+        assert!(obj.contains_key("observed_value_millionths"));
+        assert!(obj.contains_key("threshold_millionths"));
+        assert!(obj.contains_key("explanation"));
+        assert!(obj.contains_key("evidence_hash"));
+        assert_eq!(obj.len(), 8);
+    }
+
+    #[test]
+    fn falsification_monitor_json_field_names() {
+        let m = make_monitor("m1", "a1");
+        let val: serde_json::Value = serde_json::to_value(&m).unwrap();
+        let obj = val.as_object().unwrap();
+        assert!(obj.contains_key("monitor_id"));
+        assert!(obj.contains_key("assumption_id"));
+        assert!(obj.contains_key("kind"));
+        assert!(obj.contains_key("variable"));
+        assert!(obj.contains_key("threshold_millionths"));
+        assert!(obj.contains_key("op"));
+        assert!(obj.contains_key("trigger_count"));
+        assert!(obj.contains_key("current_violations"));
+        assert!(obj.contains_key("triggered"));
+        assert_eq!(obj.len(), 9);
+    }
+
+    #[test]
+    fn demotion_record_json_field_names() {
+        let record = DemotionRecord {
+            record_id: "d0".into(),
+            assumption_id: "a1".into(),
+            evidence: FalsificationEvidence {
+                assumption_id: "a1".into(),
+                monitor_id: "m1".into(),
+                epoch: 1,
+                tick: 0,
+                observed_value_millionths: 600_000,
+                threshold_millionths: 500_000,
+                explanation: "test".into(),
+                evidence_hash: "abc".into(),
+            },
+            action: DemotionAction::NoAction,
+            epoch: 1,
+            severity: ViolationSeverity::Critical,
+        };
+        let val: serde_json::Value = serde_json::to_value(&record).unwrap();
+        let obj = val.as_object().unwrap();
+        assert!(obj.contains_key("record_id"));
+        assert!(obj.contains_key("assumption_id"));
+        assert!(obj.contains_key("evidence"));
+        assert!(obj.contains_key("action"));
+        assert!(obj.contains_key("epoch"));
+        assert!(obj.contains_key("severity"));
+        assert_eq!(obj.len(), 6);
+    }
+
+    #[test]
+    fn demotion_policy_json_field_names() {
+        let policy = DemotionPolicy::default();
+        let val: serde_json::Value = serde_json::to_value(&policy).unwrap();
+        let obj = val.as_object().unwrap();
+        assert!(obj.contains_key("advisory_action"));
+        assert!(obj.contains_key("warning_action"));
+        assert!(obj.contains_key("critical_action"));
+        assert!(obj.contains_key("fatal_action"));
+        assert_eq!(obj.len(), 4);
+    }
+
+    // ── Enrichment: Hash consistency ────────────────────────────────
+
+    #[test]
+    fn assumption_category_hash_consistent() {
+        use std::hash::{Hash, Hasher};
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        AssumptionCategory::Statistical.hash(&mut h1);
+        AssumptionCategory::Statistical.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn violation_severity_hash_all_distinct() {
+        use std::hash::{Hash, Hasher};
+        let variants = [
+            ViolationSeverity::Advisory,
+            ViolationSeverity::Warning,
+            ViolationSeverity::Critical,
+            ViolationSeverity::Fatal,
+        ];
+        let hashes: BTreeSet<u64> = variants
+            .iter()
+            .map(|v| {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                v.hash(&mut h);
+                h.finish()
+            })
+            .collect();
+        assert_eq!(hashes.len(), 4);
+    }
+
+    // ── Enrichment: Boundary/edge cases ─────────────────────────────
+
+    #[test]
+    fn monitor_check_exact_threshold_holds_le() {
+        let mut monitor = make_monitor("m1", "a1");
+        // Exactly at threshold (500_000) → Le holds
+        assert!(monitor.check(500_000, 1, 0).is_none());
+    }
+
+    #[test]
+    fn monitor_check_one_above_threshold_violates_le() {
+        let mut monitor = make_monitor("m1", "a1");
+        assert!(monitor.check(500_001, 1, 0).is_some());
+    }
+
+    #[test]
+    fn monitor_check_exact_threshold_holds_ge() {
+        let mut monitor = FalsificationMonitor {
+            monitor_id: "m1".into(),
+            assumption_id: "a1".into(),
+            kind: MonitorKind::Threshold,
+            variable: "budget".into(),
+            threshold_millionths: 100_000,
+            op: MonitorOp::Ge,
+            trigger_count: 1,
+            current_violations: 0,
+            triggered: false,
+        };
+        assert!(monitor.check(100_000, 1, 0).is_none());
+    }
+
+    #[test]
+    fn monitor_check_one_below_threshold_violates_ge() {
+        let mut monitor = FalsificationMonitor {
+            monitor_id: "m1".into(),
+            assumption_id: "a1".into(),
+            kind: MonitorKind::Threshold,
+            variable: "budget".into(),
+            threshold_millionths: 100_000,
+            op: MonitorOp::Ge,
+            trigger_count: 1,
+            current_violations: 0,
+            triggered: false,
+        };
+        assert!(monitor.check(99_999, 1, 0).is_some());
+    }
+
+    #[test]
+    fn ledger_many_assumptions_btree_ordered() {
+        let mut ledger = default_ledger();
+        for i in (0..10).rev() {
+            ledger
+                .record_assumption(make_assumption(&format!("a{i:02}"), ViolationSeverity::Advisory))
+                .unwrap();
+        }
+        let keys: Vec<&String> = ledger.assumptions().keys().collect();
+        let sorted: Vec<&String> = {
+            let mut s = keys.clone();
+            s.sort();
+            s
+        };
+        assert_eq!(keys, sorted);
+    }
+
+    #[test]
+    fn ledger_chain_hash_deterministic() {
+        let mut l1 = default_ledger();
+        let mut l2 = default_ledger();
+        l1.record_assumption(make_assumption("a1", ViolationSeverity::Warning)).unwrap();
+        l2.record_assumption(make_assumption("a1", ViolationSeverity::Warning)).unwrap();
+        assert_eq!(l1.chain_hash(), l2.chain_hash());
+    }
+
+    #[test]
+    fn ledger_chain_hash_differs_for_different_assumptions() {
+        let mut l1 = default_ledger();
+        let mut l2 = default_ledger();
+        l1.record_assumption(make_assumption("a1", ViolationSeverity::Warning)).unwrap();
+        l2.record_assumption(make_assumption("a2", ViolationSeverity::Warning)).unwrap();
+        assert_ne!(l1.chain_hash(), l2.chain_hash());
+    }
+
+    #[test]
+    fn empty_ledger_report_contains_zeros() {
+        let ledger = default_ledger();
+        let report = ledger.report();
+        assert!(report.contains("Total assumptions: 0"));
+        assert!(report.contains("Active: 0"));
+        assert!(report.contains("Violated: 0"));
+        assert!(report.contains("Monitors: 0"));
+        assert!(report.contains("Falsifications: 0"));
+        assert!(report.contains("Demotions: 0"));
+        assert!(!report.contains("Recent Falsifications"));
+    }
+
+    #[test]
+    fn simple_hash_deterministic() {
+        let h1 = simple_hash("hello");
+        let h2 = simple_hash("hello");
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 16);
+    }
+
+    #[test]
+    fn simple_hash_differs_for_different_inputs() {
+        let h1 = simple_hash("hello");
+        let h2 = simple_hash("world");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn monitor_negative_millionths_check() {
+        let mut monitor = FalsificationMonitor {
+            monitor_id: "m1".into(),
+            assumption_id: "a1".into(),
+            kind: MonitorKind::Threshold,
+            variable: "temp".into(),
+            threshold_millionths: -100_000,
+            op: MonitorOp::Ge,
+            trigger_count: 1,
+            current_violations: 0,
+            triggered: false,
+        };
+        // Value above negative threshold → holds
+        assert!(monitor.check(0, 1, 0).is_none());
+        // Value below negative threshold → violates
+        assert!(monitor.check(-200_000, 1, 1).is_some());
+    }
+
+    #[test]
+    fn demotion_controller_multiple_records_sequential_ids() {
+        let mut ctrl = DemotionController::new(DemotionPolicy::default());
+        let a1 = make_assumption("a1", ViolationSeverity::Warning);
+        let ev1 = FalsificationEvidence {
+            assumption_id: "a1".into(),
+            monitor_id: "m1".into(),
+            epoch: 1,
+            tick: 0,
+            observed_value_millionths: 600_000,
+            threshold_millionths: 500_000,
+            explanation: "first".into(),
+            evidence_hash: "h1".into(),
+        };
+        let ev2 = FalsificationEvidence {
+            assumption_id: "a1".into(),
+            monitor_id: "m2".into(),
+            epoch: 1,
+            tick: 1,
+            observed_value_millionths: 700_000,
+            threshold_millionths: 500_000,
+            explanation: "second".into(),
+            evidence_hash: "h2".into(),
+        };
+        ctrl.process_violation(&a1, ev1);
+        ctrl.process_violation(&a1, ev2);
+        assert_eq!(ctrl.demotion_count(), 2);
+        assert_eq!(ctrl.records()[0].record_id, "demotion_0");
+        assert_eq!(ctrl.records()[1].record_id, "demotion_1");
+    }
+
+    // ── Enrichment: Debug nonempty ──────────────────────────────────
+
+    #[test]
+    fn assumption_debug_nonempty() {
+        let a = make_assumption("a1", ViolationSeverity::Warning);
+        let dbg = format!("{a:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("a1"));
+    }
+
+    #[test]
+    fn ledger_debug_nonempty() {
+        let ledger = default_ledger();
+        let dbg = format!("{ledger:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("AssumptionLedger"));
+    }
+
+    #[test]
+    fn demotion_controller_debug_nonempty() {
+        let ctrl = DemotionController::new(DemotionPolicy::default());
+        let dbg = format!("{ctrl:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("DemotionController"));
+    }
+
+    // ── Enrichment: LedgerError serde roundtrips ────────────────────
+
+    #[test]
+    fn ledger_error_serde_all_variants_roundtrip() {
+        let variants = vec![
+            LedgerError::DuplicateAssumption("a1".into()),
+            LedgerError::AssumptionNotFound("a2".into()),
+            LedgerError::MonitorNotFound("m1".into()),
+            LedgerError::DuplicateMonitor("m2".into()),
+            LedgerError::InvalidTransition {
+                assumption_id: "a3".into(),
+                from: AssumptionStatus::Active,
+                to: AssumptionStatus::Violated,
+            },
+        ];
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 5);
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: LedgerError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    // ── Enrichment: Full serde roundtrip with violations ────────────
+
+    #[test]
+    fn ledger_serde_roundtrip_with_violations() {
+        let mut ledger = default_ledger();
+        ledger
+            .record_assumption(make_assumption("a1", ViolationSeverity::Critical))
+            .unwrap();
+        ledger.register_monitor(make_monitor("m1", "a1")).unwrap();
+        ledger.observe("risk", 600_000, 1, 0);
+        let json = serde_json::to_string(&ledger).unwrap();
+        let back: AssumptionLedger = serde_json::from_str(&json).unwrap();
+        assert_eq!(ledger, back);
+        assert_eq!(back.violated_count(), 1);
+        assert_eq!(back.demotion_records().len(), 1);
+    }
 }

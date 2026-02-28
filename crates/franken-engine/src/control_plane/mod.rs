@@ -1273,4 +1273,532 @@ mod tests {
         let kernel_budget = b.as_budget();
         assert_eq!(kernel_budget.remaining_ms(), b.remaining_ms());
     }
+
+    // ── Batch 4: Copy semantics ─────────────────────────────────────
+
+    #[test]
+    fn decision_verdict_copy_semantics() {
+        // DecisionVerdict is Copy; moving it should leave original usable.
+        let v = DecisionVerdict::Deny;
+        let v2 = v; // copy, not move
+        assert_eq!(v, v2);
+        // Both still usable after "move"
+        assert_eq!(v, DecisionVerdict::Deny);
+        assert_eq!(v2, DecisionVerdict::Deny);
+    }
+
+    #[test]
+    fn decision_verdict_copy_allow_and_timeout() {
+        let a = DecisionVerdict::Allow;
+        let t = DecisionVerdict::Timeout;
+        let a2 = a;
+        let t2 = t;
+        assert_eq!(a, a2);
+        assert_eq!(t, t2);
+    }
+
+    // ── Batch 4: Debug distinctness ─────────────────────────────────
+
+    #[test]
+    fn decision_verdict_debug_strings_are_distinct() {
+        let allow_dbg = format!("{:?}", DecisionVerdict::Allow);
+        let deny_dbg = format!("{:?}", DecisionVerdict::Deny);
+        let timeout_dbg = format!("{:?}", DecisionVerdict::Timeout);
+        assert_ne!(allow_dbg, deny_dbg);
+        assert_ne!(allow_dbg, timeout_dbg);
+        assert_ne!(deny_dbg, timeout_dbg);
+    }
+
+    #[test]
+    fn decision_verdict_debug_nonempty() {
+        assert!(!format!("{:?}", DecisionVerdict::Allow).is_empty());
+        assert!(!format!("{:?}", DecisionVerdict::Deny).is_empty());
+        assert!(!format!("{:?}", DecisionVerdict::Timeout).is_empty());
+    }
+
+    #[test]
+    fn decision_request_debug_nonempty() {
+        let req = request(500);
+        let dbg = format!("{req:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("DecisionRequest"));
+    }
+
+    #[test]
+    fn adapter_event_debug_nonempty() {
+        let event = AdapterEvent {
+            trace_id: "dbg_t".to_string(),
+            decision_id: "dbg_d".to_string(),
+            policy_id: "dbg_p".to_string(),
+            component: "dbg_c".to_string(),
+            event: "dbg_ev".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+        };
+        let dbg = format!("{event:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("AdapterEvent"));
+    }
+
+    #[test]
+    fn control_plane_adapter_error_debug_nonempty() {
+        let e1 = ControlPlaneAdapterError::BudgetExhausted { requested_ms: 7 };
+        let e2 = ControlPlaneAdapterError::DecisionGateway { code: "gw_dbg" };
+        let e3 = ControlPlaneAdapterError::EvidenceEmission { code: "ee_dbg" };
+        for dbg in [format!("{e1:?}"), format!("{e2:?}"), format!("{e3:?}")] {
+            assert!(!dbg.is_empty());
+        }
+    }
+
+    #[test]
+    fn control_plane_adapter_error_debug_distinct_variants() {
+        let e1 = format!("{:?}", ControlPlaneAdapterError::BudgetExhausted { requested_ms: 1 });
+        let e2 = format!("{:?}", ControlPlaneAdapterError::DecisionGateway { code: "a" });
+        let e3 = format!("{:?}", ControlPlaneAdapterError::EvidenceEmission { code: "b" });
+        let mut set = std::collections::BTreeSet::new();
+        set.insert(e1);
+        set.insert(e2);
+        set.insert(e3);
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn mock_budget_debug_nonempty() {
+        let b = MockBudget::new(77);
+        assert!(!format!("{b:?}").is_empty());
+    }
+
+    #[test]
+    fn mock_cx_debug_nonempty() {
+        let cx = MockCx::new(trace_id_from_seed(42), MockBudget::new(10));
+        assert!(!format!("{cx:?}").is_empty());
+    }
+
+    // ── Batch 4: Serde variant distinctness ────────────────────────
+
+    #[test]
+    fn decision_verdict_serde_all_distinct() {
+        let jsons: Vec<String> = [
+            DecisionVerdict::Allow,
+            DecisionVerdict::Deny,
+            DecisionVerdict::Timeout,
+        ]
+        .iter()
+        .map(|v| serde_json::to_string(v).unwrap())
+        .collect();
+        let set: std::collections::BTreeSet<&str> = jsons.iter().map(|s| s.as_str()).collect();
+        assert_eq!(set.len(), 3, "all 3 verdict JSON serializations must differ");
+    }
+
+    #[test]
+    fn decision_verdict_serde_roundtrip_deny() {
+        let v = DecisionVerdict::Deny;
+        let json = serde_json::to_string(&v).unwrap();
+        let back: DecisionVerdict = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn decision_verdict_serde_roundtrip_timeout() {
+        let v = DecisionVerdict::Timeout;
+        let json = serde_json::to_string(&v).unwrap();
+        let back: DecisionVerdict = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    // ── Batch 4: Clone independence ─────────────────────────────────
+
+    #[test]
+    fn adapter_event_clone_independence() {
+        let original = AdapterEvent {
+            trace_id: "orig_t".to_string(),
+            decision_id: "orig_d".to_string(),
+            policy_id: "orig_p".to_string(),
+            component: "orig_c".to_string(),
+            event: "orig_ev".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+        };
+        let mut cloned = original.clone();
+        cloned.outcome = "mutated".to_string();
+        assert_eq!(original.outcome, "ok");
+        assert_eq!(cloned.outcome, "mutated");
+    }
+
+    #[test]
+    fn decision_request_clone_independence() {
+        let original = request(600);
+        let mut cloned = original.clone();
+        cloned.calibration_score_bps = 0;
+        assert_eq!(original.calibration_score_bps, 9_400);
+        assert_eq!(cloned.calibration_score_bps, 0);
+    }
+
+    #[test]
+    fn control_plane_adapter_error_clone_independence() {
+        let original = ControlPlaneAdapterError::BudgetExhausted { requested_ms: 10 };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        // Different requested_ms must not be equal after independent mutation (structural)
+        let other = ControlPlaneAdapterError::BudgetExhausted { requested_ms: 99 };
+        assert_ne!(original, other);
+    }
+
+    #[test]
+    fn in_memory_evidence_emitter_clone_independence() {
+        let req = request(700);
+        let mut original = InMemoryEvidenceEmitter::new();
+        original
+            .emit(&req, evidence(req.ts_unix_ms, "allow"))
+            .unwrap();
+        let cloned = original.clone();
+        // After clone, emitting into original doesn't affect clone
+        original
+            .emit(&req, evidence(req.ts_unix_ms + 1, "deny"))
+            .unwrap();
+        assert_eq!(original.entries().len(), 2);
+        assert_eq!(cloned.entries().len(), 1);
+    }
+
+    // ── Batch 4: JSON field-name stability ──────────────────────────
+
+    #[test]
+    fn adapter_event_json_field_names_stable() {
+        let event = AdapterEvent {
+            trace_id: "fs_t".to_string(),
+            decision_id: "fs_d".to_string(),
+            policy_id: "fs_p".to_string(),
+            component: "fs_c".to_string(),
+            event: "fs_ev".to_string(),
+            outcome: "fs_out".to_string(),
+            error_code: Some("fs_ec".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        // All six mandatory fields must appear by name
+        for field in &[
+            "trace_id",
+            "decision_id",
+            "policy_id",
+            "component",
+            "event",
+            "outcome",
+            "error_code",
+        ] {
+            assert!(
+                json.contains(&format!("\"{field}\"")),
+                "field {field} missing from JSON"
+            );
+        }
+    }
+
+    #[test]
+    fn decision_request_json_field_names_stable_keys() {
+        let req = request(800);
+        let json = serde_json::to_string(&req).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = value.as_object().unwrap();
+        for key in &[
+            "decision_id",
+            "policy_id",
+            "trace_id",
+            "ts_unix_ms",
+            "calibration_score_bps",
+            "e_process_milli",
+            "ci_width_milli",
+        ] {
+            assert!(obj.contains_key(*key), "key {key} not found");
+        }
+    }
+
+    // ── Batch 4: Display format checks ──────────────────────────────
+
+    #[test]
+    fn error_display_budget_exhausted_contains_ms_value() {
+        let err = ControlPlaneAdapterError::BudgetExhausted { requested_ms: 12345 };
+        let msg = err.to_string();
+        assert!(msg.contains("12345"), "display must include requested_ms");
+    }
+
+    #[test]
+    fn error_display_decision_gateway_contains_code() {
+        let err = ControlPlaneAdapterError::DecisionGateway {
+            code: "specific_gw_code",
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("specific_gw_code"),
+            "display must contain the error code"
+        );
+    }
+
+    #[test]
+    fn error_display_evidence_emission_contains_code() {
+        let err = ControlPlaneAdapterError::EvidenceEmission {
+            code: "specific_ee_code",
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("specific_ee_code"),
+            "display must contain the error code"
+        );
+    }
+
+    #[test]
+    fn error_display_budget_exhausted_zero_ms() {
+        let err = ControlPlaneAdapterError::BudgetExhausted { requested_ms: 0 };
+        let msg = err.to_string();
+        assert!(msg.contains("0"), "display must include 0ms");
+    }
+
+    // ── Batch 4: Hash-like consistency (via serde JSON) ────────────
+
+    #[test]
+    fn decision_verdict_json_consistent_allow() {
+        // Serializing the same variant twice must produce identical JSON.
+        let j1 = serde_json::to_string(&DecisionVerdict::Allow).unwrap();
+        let j2 = serde_json::to_string(&DecisionVerdict::Allow).unwrap();
+        assert_eq!(j1, j2);
+    }
+
+    #[test]
+    fn decision_verdict_json_consistent_deny_and_timeout() {
+        let j_deny_1 = serde_json::to_string(&DecisionVerdict::Deny).unwrap();
+        let j_deny_2 = serde_json::to_string(&DecisionVerdict::Deny).unwrap();
+        assert_eq!(j_deny_1, j_deny_2);
+        let j_t1 = serde_json::to_string(&DecisionVerdict::Timeout).unwrap();
+        let j_t2 = serde_json::to_string(&DecisionVerdict::Timeout).unwrap();
+        assert_eq!(j_t1, j_t2);
+    }
+
+    // ── Batch 4: Boundary / edge cases ──────────────────────────────
+
+    #[test]
+    fn decision_request_ts_unix_ms_max_serde() {
+        let req = DecisionRequest {
+            decision_id: decision_id_from_seed(0),
+            policy_id: policy_id_from_seed(0),
+            trace_id: trace_id_from_seed(0),
+            ts_unix_ms: u64::MAX,
+            calibration_score_bps: 1,
+            e_process_milli: 1,
+            ci_width_milli: 1,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: DecisionRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn action_to_verdict_whitespace_not_mapped() {
+        assert_eq!(action_to_verdict(" allow"), None);
+        assert_eq!(action_to_verdict("allow "), None);
+        assert_eq!(action_to_verdict(" "), None);
+    }
+
+    #[test]
+    fn action_to_verdict_numeric_string_returns_none() {
+        assert_eq!(action_to_verdict("0"), None);
+        assert_eq!(action_to_verdict("1"), None);
+        assert_eq!(action_to_verdict("allow1"), None);
+    }
+
+    #[test]
+    fn mock_budget_consume_exactly_zero_on_nonempty() {
+        let mut b = MockBudget::new(50);
+        b.consume(0).expect("zero consume on non-zero budget must succeed");
+        assert_eq!(b.remaining_ms(), 50);
+        assert_eq!(b.consumed_ms(), 0);
+    }
+
+    #[test]
+    fn in_memory_evidence_emitter_events_match_emit_count() {
+        let mut emitter = InMemoryEvidenceEmitter::new();
+        for seed in 1..=3 {
+            let req = request(seed * 1000);
+            emitter
+                .emit(&req, evidence(req.ts_unix_ms, "deny"))
+                .unwrap();
+        }
+        assert_eq!(emitter.entries().len(), emitter.events().len());
+    }
+
+    #[test]
+    fn adapter_event_error_code_none_vs_some_differ() {
+        let base = AdapterEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+        };
+        let mut with_code = base.clone();
+        with_code.error_code = Some("some_code".to_string());
+        assert_ne!(base, with_code);
+    }
+
+    // ── Batch 4: Serde roundtrips (additional) ──────────────────────
+
+    #[test]
+    fn decision_request_roundtrip_seed_zero() {
+        let req = request(0);
+        let json = serde_json::to_string(&req).unwrap();
+        let back: DecisionRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn decision_request_roundtrip_large_seed() {
+        let req = request(u64::MAX / 2);
+        let json = serde_json::to_string(&req).unwrap();
+        let back: DecisionRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn adapter_event_serde_roundtrip_all_fields_valued() {
+        let event = AdapterEvent {
+            trace_id: "rt_t".to_string(),
+            decision_id: "rt_d".to_string(),
+            policy_id: "rt_p".to_string(),
+            component: "rt_c".to_string(),
+            event: "rt_ev".to_string(),
+            outcome: "rt_out".to_string(),
+            error_code: Some("rt_ec".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: AdapterEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    // ── Batch 4: error_code passthrough checks ──────────────────────
+
+    #[test]
+    fn error_code_budget_exhausted_independent_of_ms() {
+        let e1 = ControlPlaneAdapterError::BudgetExhausted { requested_ms: 1 };
+        let e2 = ControlPlaneAdapterError::BudgetExhausted { requested_ms: 999 };
+        assert_eq!(e1.error_code(), e2.error_code());
+        assert_eq!(e1.error_code(), "budget_exhausted");
+    }
+
+    #[test]
+    fn error_code_decision_gateway_reflects_code_field() {
+        let e = ControlPlaneAdapterError::DecisionGateway { code: "my_gw_code" };
+        assert_eq!(e.error_code(), "my_gw_code");
+    }
+
+    #[test]
+    fn error_code_evidence_emission_reflects_code_field() {
+        let e = ControlPlaneAdapterError::EvidenceEmission { code: "my_ee_code" };
+        assert_eq!(e.error_code(), "my_ee_code");
+    }
+
+    // ── Batch 4: mock event presence after evaluate ──────────────────
+
+    #[test]
+    fn mock_decision_contract_records_event_per_evaluate() {
+        let req = request(900);
+        let mut contract = MockDecisionContract::new([
+            DecisionVerdict::Allow,
+            DecisionVerdict::Deny,
+            DecisionVerdict::Timeout,
+        ]);
+        assert!(contract.events().is_empty());
+        contract.evaluate(&req).unwrap();
+        assert_eq!(contract.events().len(), 1);
+        contract.evaluate(&req).unwrap();
+        assert_eq!(contract.events().len(), 2);
+        contract.evaluate(&req).unwrap();
+        assert_eq!(contract.events().len(), 3);
+    }
+
+    #[test]
+    fn mock_decision_contract_event_outcome_matches_verdict() {
+        let req = request(950);
+        let mut contract = MockDecisionContract::new([DecisionVerdict::Deny]);
+        contract.evaluate(&req).unwrap();
+        assert_eq!(contract.events()[0].outcome, "deny");
+    }
+
+    #[test]
+    fn mock_decision_contract_fail_always_records_error_event() {
+        let req = request(960);
+        let mut contract =
+            MockDecisionContract::new([]).with_failure_mode(MockFailureMode::FailAlways {
+                code: "fa_code",
+            });
+        let _ = contract.evaluate(&req);
+        assert_eq!(contract.events().len(), 1);
+        assert_eq!(contract.events()[0].outcome, "error");
+        assert_eq!(contract.events()[0].error_code.as_deref(), Some("fa_code"));
+    }
+
+    #[test]
+    fn mock_evidence_emitter_event_component_is_adapter() {
+        let req = request(970);
+        let mut emitter = MockEvidenceEmitter::new();
+        emitter
+            .emit(&req, evidence(req.ts_unix_ms, "allow"))
+            .unwrap();
+        assert_eq!(emitter.events()[0].component, ADAPTER_COMPONENT);
+    }
+
+    // ── Batch 4: MockFailureMode ────────────────────────────────────
+
+    #[test]
+    fn mock_failure_mode_clone_never() {
+        let m = MockFailureMode::Never;
+        let m2 = m.clone();
+        assert_eq!(m, m2);
+    }
+
+    #[test]
+    fn mock_failure_mode_clone_fail_always() {
+        let m = MockFailureMode::FailAlways { code: "fa" };
+        let m2 = m.clone();
+        assert_eq!(m, m2);
+    }
+
+    #[test]
+    fn mock_failure_mode_clone_fail_after_n() {
+        let m = MockFailureMode::FailAfterN {
+            remaining_successes: 5,
+            code: "fan",
+        };
+        let m2 = m.clone();
+        assert_eq!(m, m2);
+    }
+
+    #[test]
+    fn mock_failure_mode_clone_panic_on_call() {
+        let m = MockFailureMode::PanicOnCall;
+        let m2 = m.clone();
+        assert_eq!(m, m2);
+    }
+
+    #[test]
+    fn mock_failure_mode_debug_nonempty() {
+        for m in &[
+            MockFailureMode::Never,
+            MockFailureMode::FailAlways { code: "x" },
+            MockFailureMode::PanicOnCall,
+        ] {
+            assert!(!format!("{m:?}").is_empty());
+        }
+    }
+
+    #[test]
+    fn mock_budget_clone_eq() {
+        let b = MockBudget::new(123).panic_on_overspend(true);
+        let b2 = b.clone();
+        assert_eq!(b, b2);
+    }
+
+    #[test]
+    fn mock_cx_clone_eq() {
+        let cx = MockCx::new(trace_id_from_seed(7), MockBudget::new(77));
+        let cx2 = cx.clone();
+        assert_eq!(cx, cx2);
+    }
 }

@@ -1513,4 +1513,1246 @@ mod tests {
         let source = std::error::Error::source(&err);
         assert!(source.is_none());
     }
+
+    // ── Enrichment: Copy Semantics ──────────────────────────────────
+
+    #[test]
+    fn copy_semantics_claim_category() {
+        let a = ClaimCategory::Performance;
+        let b = a; // Copy
+        let c = a; // still valid after copy
+        assert_eq!(b, c);
+        assert_eq!(a, ClaimCategory::Performance);
+    }
+
+    #[test]
+    fn copy_semantics_evidence_kind() {
+        let a = EvidenceKind::FormalProof;
+        let b = a;
+        let c = a;
+        assert_eq!(b, c);
+        assert_eq!(a, EvidenceKind::FormalProof);
+    }
+
+    #[test]
+    fn copy_semantics_linkage_verdict() {
+        let a = LinkageVerdict::Fail;
+        let b = a;
+        let c = a;
+        assert_eq!(b, c);
+        assert_eq!(a, LinkageVerdict::Fail);
+    }
+
+    #[test]
+    fn copy_all_claim_categories() {
+        let variants = [
+            ClaimCategory::Performance,
+            ClaimCategory::Correctness,
+            ClaimCategory::Security,
+            ClaimCategory::Compatibility,
+            ClaimCategory::Reliability,
+            ClaimCategory::DeveloperExperience,
+        ];
+        for v in variants {
+            let copied = v;
+            assert_eq!(v, copied);
+        }
+    }
+
+    #[test]
+    fn copy_all_evidence_kinds() {
+        let variants = [
+            EvidenceKind::TestResult,
+            EvidenceKind::BenchmarkResult,
+            EvidenceKind::SecurityAudit,
+            EvidenceKind::FormalProof,
+            EvidenceKind::CodeReview,
+            EvidenceKind::DemoReplay,
+            EvidenceKind::ThirdPartyVerification,
+        ];
+        for v in variants {
+            let copied = v;
+            assert_eq!(v, copied);
+        }
+    }
+
+    #[test]
+    fn copy_all_linkage_verdicts() {
+        let variants = [
+            LinkageVerdict::Pass,
+            LinkageVerdict::Fail,
+            LinkageVerdict::Empty,
+        ];
+        for v in variants {
+            let copied = v;
+            assert_eq!(v, copied);
+        }
+    }
+
+    // ── Enrichment: Debug Distinctness ──────────────────────────────
+
+    #[test]
+    fn debug_distinct_claim_category() {
+        let variants: Vec<String> = [
+            ClaimCategory::Performance,
+            ClaimCategory::Correctness,
+            ClaimCategory::Security,
+            ClaimCategory::Compatibility,
+            ClaimCategory::Reliability,
+            ClaimCategory::DeveloperExperience,
+        ]
+        .iter()
+        .map(|v| format!("{:?}", v))
+        .collect();
+        let unique: BTreeSet<&String> = variants.iter().collect();
+        assert_eq!(unique.len(), 6);
+    }
+
+    #[test]
+    fn debug_distinct_evidence_kind() {
+        let variants: Vec<String> = [
+            EvidenceKind::TestResult,
+            EvidenceKind::BenchmarkResult,
+            EvidenceKind::SecurityAudit,
+            EvidenceKind::FormalProof,
+            EvidenceKind::CodeReview,
+            EvidenceKind::DemoReplay,
+            EvidenceKind::ThirdPartyVerification,
+        ]
+        .iter()
+        .map(|v| format!("{:?}", v))
+        .collect();
+        let unique: BTreeSet<&String> = variants.iter().collect();
+        assert_eq!(unique.len(), 7);
+    }
+
+    #[test]
+    fn debug_distinct_linkage_verdict() {
+        let variants: Vec<String> = [
+            LinkageVerdict::Pass,
+            LinkageVerdict::Fail,
+            LinkageVerdict::Empty,
+        ]
+        .iter()
+        .map(|v| format!("{:?}", v))
+        .collect();
+        let unique: BTreeSet<&String> = variants.iter().collect();
+        assert_eq!(unique.len(), 3);
+    }
+
+    #[test]
+    fn debug_distinct_linkage_gate_error() {
+        let variants: Vec<String> = [
+            LinkageGateError::NoClaims,
+            LinkageGateError::TooManyClaims {
+                count: 300,
+                max: 256,
+            },
+            LinkageGateError::DuplicateClaim {
+                claim_id: "c1".into(),
+            },
+            LinkageGateError::DuplicateDemo {
+                demo_id: "d1".into(),
+            },
+            LinkageGateError::TooManyEvidenceLinks {
+                claim_id: "c1".into(),
+                count: 100,
+                max: 64,
+            },
+            LinkageGateError::TooManyCommands {
+                demo_id: "d1".into(),
+                count: 50,
+                max: 32,
+            },
+            LinkageGateError::UnknownDemo {
+                claim_id: "c1".into(),
+                demo_id: "d1".into(),
+            },
+            LinkageGateError::InvalidConfig {
+                detail: "bad".into(),
+            },
+        ]
+        .iter()
+        .map(|v| format!("{:?}", v))
+        .collect();
+        let unique: BTreeSet<&String> = variants.iter().collect();
+        assert_eq!(unique.len(), 8);
+    }
+
+    // ── Enrichment: Serde Variant Distinctness ──────────────────────
+
+    #[test]
+    fn serde_distinct_claim_category() {
+        let variants = [
+            ClaimCategory::Performance,
+            ClaimCategory::Correctness,
+            ClaimCategory::Security,
+            ClaimCategory::Compatibility,
+            ClaimCategory::Reliability,
+            ClaimCategory::DeveloperExperience,
+        ];
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 6);
+    }
+
+    #[test]
+    fn serde_distinct_evidence_kind() {
+        let variants = [
+            EvidenceKind::TestResult,
+            EvidenceKind::BenchmarkResult,
+            EvidenceKind::SecurityAudit,
+            EvidenceKind::FormalProof,
+            EvidenceKind::CodeReview,
+            EvidenceKind::DemoReplay,
+            EvidenceKind::ThirdPartyVerification,
+        ];
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 7);
+    }
+
+    #[test]
+    fn serde_distinct_linkage_verdict() {
+        let variants = [
+            LinkageVerdict::Pass,
+            LinkageVerdict::Fail,
+            LinkageVerdict::Empty,
+        ];
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 3);
+    }
+
+    #[test]
+    fn serde_distinct_all_error_variants() {
+        let variants = [
+            LinkageGateError::NoClaims,
+            LinkageGateError::TooManyClaims {
+                count: 1,
+                max: 1,
+            },
+            LinkageGateError::DuplicateClaim {
+                claim_id: "x".into(),
+            },
+            LinkageGateError::DuplicateDemo {
+                demo_id: "x".into(),
+            },
+            LinkageGateError::TooManyEvidenceLinks {
+                claim_id: "x".into(),
+                count: 1,
+                max: 1,
+            },
+            LinkageGateError::TooManyCommands {
+                demo_id: "x".into(),
+                count: 1,
+                max: 1,
+            },
+            LinkageGateError::UnknownDemo {
+                claim_id: "x".into(),
+                demo_id: "x".into(),
+            },
+            LinkageGateError::InvalidConfig {
+                detail: "x".into(),
+            },
+        ];
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 8);
+    }
+
+    // ── Enrichment: Clone Independence ──────────────────────────────
+
+    #[test]
+    fn clone_independence_demo_specification() {
+        let demo = make_demo("d1", true);
+        let mut cloned = demo.clone();
+        cloned.demo_id = "d2".to_string();
+        cloned.title = "Changed".to_string();
+        assert_eq!(demo.demo_id, "d1");
+        assert_eq!(demo.title, "Demo d1");
+    }
+
+    #[test]
+    fn clone_independence_verification_command() {
+        let cmd = make_command("cmd1");
+        let mut cloned = cmd.clone();
+        cloned.command_id = "cmd2".to_string();
+        cloned.expected_exit_code = 1;
+        assert_eq!(cmd.command_id, "cmd1");
+        assert_eq!(cmd.expected_exit_code, 0);
+    }
+
+    #[test]
+    fn clone_independence_expected_output() {
+        let out = make_output("out1");
+        let mut cloned = out.clone();
+        cloned.name = "out2".to_string();
+        cloned.exact_match = false;
+        assert_eq!(out.name, "out1");
+        assert!(out.exact_match);
+    }
+
+    #[test]
+    fn clone_independence_milestone_claim() {
+        let claim = make_claim("c1", ClaimCategory::Security, vec!["d1"], vec!["e1"]);
+        let mut cloned = claim.clone();
+        cloned.claim_id = "c2".to_string();
+        cloned.evidence_links.clear();
+        assert_eq!(claim.claim_id, "c1");
+        assert_eq!(claim.evidence_links.len(), 1);
+    }
+
+    #[test]
+    fn clone_independence_evidence_link() {
+        let ev = make_evidence("e1");
+        let mut cloned = ev.clone();
+        cloned.evidence_id = "e2".to_string();
+        cloned.description = "Changed".to_string();
+        assert_eq!(ev.evidence_id, "e1");
+        assert_eq!(ev.description, "Evidence e1");
+    }
+
+    #[test]
+    fn clone_independence_linkage_gate_config() {
+        let cfg = LinkageGateConfig::default();
+        let mut cloned = cfg.clone();
+        cloned.min_completeness_millionths = 0;
+        cloned.require_evidence = false;
+        assert_eq!(cfg.min_completeness_millionths, MILLION);
+        assert!(cfg.require_evidence);
+    }
+
+    #[test]
+    fn clone_independence_claim_linkage_result() {
+        let result = ClaimLinkageResult {
+            claim_id: "c1".to_string(),
+            linked: true,
+            has_runnable_demo: true,
+            has_evidence: true,
+            demos_have_outputs: true,
+            demos_have_commands: true,
+            missing: Vec::new(),
+            completeness_millionths: MILLION,
+        };
+        let mut cloned = result.clone();
+        cloned.claim_id = "c2".to_string();
+        cloned.linked = false;
+        cloned.missing.push("something".to_string());
+        assert_eq!(result.claim_id, "c1");
+        assert!(result.linked);
+        assert!(result.missing.is_empty());
+    }
+
+    #[test]
+    fn clone_independence_linkage_gate_decision() {
+        let mut gate = default_gate();
+        let demos = vec![make_demo("d1", true)];
+        let claims = vec![make_claim(
+            "c1",
+            ClaimCategory::Performance,
+            vec!["d1"],
+            vec!["e1"],
+        )];
+        let decision = gate.evaluate("m1", &claims, &demos).unwrap();
+        let mut cloned = decision.clone();
+        cloned.milestone_id = "m2".to_string();
+        cloned.verdict = LinkageVerdict::Fail;
+        assert_eq!(decision.milestone_id, "m1");
+        assert_eq!(decision.verdict, LinkageVerdict::Pass);
+    }
+
+    #[test]
+    fn clone_independence_linkage_gate_error() {
+        let err = LinkageGateError::DuplicateClaim {
+            claim_id: "c1".to_string(),
+        };
+        let mut cloned = err.clone();
+        if let LinkageGateError::DuplicateClaim { ref mut claim_id } = cloned {
+            *claim_id = "c2".to_string();
+        }
+        assert_eq!(
+            err,
+            LinkageGateError::DuplicateClaim {
+                claim_id: "c1".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn clone_independence_gate_itself() {
+        let gate = default_gate();
+        let mut cloned = gate.clone();
+        // Evaluate on cloned to increment its count
+        let demos = vec![make_demo("d1", true)];
+        let claims = vec![make_claim(
+            "c1",
+            ClaimCategory::Performance,
+            vec!["d1"],
+            vec!["e1"],
+        )];
+        let _ = cloned.evaluate("m1", &claims, &demos);
+        assert_eq!(gate.evaluation_count(), 0);
+        assert_eq!(cloned.evaluation_count(), 1);
+    }
+
+    // ── Enrichment: JSON Field-Name Stability ───────────────────────
+
+    #[test]
+    fn json_field_names_verification_command() {
+        let cmd = make_command("cmd1");
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"command_id\""));
+        assert!(json.contains("\"command\""));
+        assert!(json.contains("\"expected_exit_code\""));
+        assert!(json.contains("\"timeout_ms\""));
+        assert!(json.contains("\"deterministic\""));
+    }
+
+    #[test]
+    fn json_field_names_expected_output() {
+        let out = make_output("out1");
+        let json = serde_json::to_string(&out).unwrap();
+        assert!(json.contains("\"name\""));
+        assert!(json.contains("\"expected_hash\""));
+        assert!(json.contains("\"exact_match\""));
+        assert!(json.contains("\"tolerance_millionths\""));
+    }
+
+    #[test]
+    fn json_field_names_milestone_claim() {
+        let claim = make_claim("c1", ClaimCategory::Performance, vec!["d1"], vec!["e1"]);
+        let json = serde_json::to_string(&claim).unwrap();
+        assert!(json.contains("\"claim_id\""));
+        assert!(json.contains("\"statement\""));
+        assert!(json.contains("\"milestone_id\""));
+        assert!(json.contains("\"category\""));
+        assert!(json.contains("\"evidence_links\""));
+        assert!(json.contains("\"demos\""));
+    }
+
+    #[test]
+    fn json_field_names_evidence_link() {
+        let ev = make_evidence("e1");
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.contains("\"evidence_id\""));
+        assert!(json.contains("\"kind\""));
+        assert!(json.contains("\"artifact_hash\""));
+        assert!(json.contains("\"description\""));
+    }
+
+    #[test]
+    fn json_field_names_claim_linkage_result() {
+        let result = ClaimLinkageResult {
+            claim_id: "c1".to_string(),
+            linked: true,
+            has_runnable_demo: true,
+            has_evidence: true,
+            demos_have_outputs: true,
+            demos_have_commands: true,
+            missing: Vec::new(),
+            completeness_millionths: MILLION,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"claim_id\""));
+        assert!(json.contains("\"linked\""));
+        assert!(json.contains("\"has_runnable_demo\""));
+        assert!(json.contains("\"has_evidence\""));
+        assert!(json.contains("\"demos_have_outputs\""));
+        assert!(json.contains("\"demos_have_commands\""));
+        assert!(json.contains("\"missing\""));
+        assert!(json.contains("\"completeness_millionths\""));
+    }
+
+    // ── Enrichment: Display Format Checks ───────────────────────────
+
+    #[test]
+    fn display_demo_specification_complete_format() {
+        let demo = make_demo("alpha", true);
+        let s = format!("{}", demo);
+        assert_eq!(s, "demo(alpha, Demo alpha, complete)");
+    }
+
+    #[test]
+    fn display_demo_specification_incomplete_format() {
+        let demo = make_demo("beta", false);
+        let s = format!("{}", demo);
+        assert_eq!(s, "demo(beta, Demo beta, incomplete)");
+    }
+
+    #[test]
+    fn display_verification_command_format() {
+        let cmd = VerificationCommand {
+            command_id: "vc-99".to_string(),
+            command: "cargo test".to_string(),
+            expected_exit_code: 42,
+            timeout_ms: 1000,
+            deterministic: false,
+        };
+        assert_eq!(format!("{}", cmd), "cmd(vc-99, exit=42)");
+    }
+
+    #[test]
+    fn display_evidence_link_format() {
+        let ev = EvidenceLink {
+            evidence_id: "ev-77".to_string(),
+            kind: EvidenceKind::SecurityAudit,
+            artifact_hash: ContentHash::compute(b"x"),
+            description: "desc".to_string(),
+        };
+        assert_eq!(format!("{}", ev), "evidence(ev-77, security-audit)");
+    }
+
+    #[test]
+    fn display_milestone_claim_format() {
+        let claim = MilestoneClaim {
+            claim_id: "mc-1".to_string(),
+            statement: "We do X".to_string(),
+            milestone_id: "m5".to_string(),
+            category: ClaimCategory::Reliability,
+            evidence_links: vec![make_evidence("e1"), make_evidence("e2")],
+            demos: vec!["d1".into(), "d2".into(), "d3".into()],
+        };
+        assert_eq!(
+            format!("{}", claim),
+            "claim(mc-1, reliability, evidence=2, demos=3)"
+        );
+    }
+
+    #[test]
+    fn display_linkage_gate_decision_format() {
+        let decision = LinkageGateDecision {
+            decision_id: "test".to_string(),
+            milestone_id: "m7".to_string(),
+            epoch: SecurityEpoch::from_raw(5),
+            verdict: LinkageVerdict::Fail,
+            claim_results: Vec::new(),
+            total_claims: 10,
+            linked_claims: 3,
+            unlinked_claims: 7,
+            aggregate_completeness_millionths: 300_000,
+            rationale: "some reason".to_string(),
+            artifact_hash: ContentHash::compute(b"x"),
+        };
+        assert_eq!(
+            format!("{}", decision),
+            "linkage-gate(m7, fail, linked=3/10, completeness=300000)"
+        );
+    }
+
+    #[test]
+    fn display_error_duplicate_claim() {
+        let err = LinkageGateError::DuplicateClaim {
+            claim_id: "abc".to_string(),
+        };
+        assert_eq!(format!("{}", err), "duplicate claim ID: abc");
+    }
+
+    #[test]
+    fn display_error_duplicate_demo() {
+        let err = LinkageGateError::DuplicateDemo {
+            demo_id: "xyz".to_string(),
+        };
+        assert_eq!(format!("{}", err), "duplicate demo ID: xyz");
+    }
+
+    #[test]
+    fn display_error_too_many_evidence_links() {
+        let err = LinkageGateError::TooManyEvidenceLinks {
+            claim_id: "c5".to_string(),
+            count: 80,
+            max: 64,
+        };
+        assert_eq!(
+            format!("{}", err),
+            "claim c5 has 80 evidence links, max 64"
+        );
+    }
+
+    #[test]
+    fn display_error_too_many_commands() {
+        let err = LinkageGateError::TooManyCommands {
+            demo_id: "d9".to_string(),
+            count: 40,
+            max: 32,
+        };
+        assert_eq!(format!("{}", err), "demo d9 has 40 commands, max 32");
+    }
+
+    #[test]
+    fn display_error_unknown_demo() {
+        let err = LinkageGateError::UnknownDemo {
+            claim_id: "c3".to_string(),
+            demo_id: "d_missing".to_string(),
+        };
+        assert_eq!(
+            format!("{}", err),
+            "claim c3 references unknown demo d_missing"
+        );
+    }
+
+    #[test]
+    fn display_error_invalid_config() {
+        let err = LinkageGateError::InvalidConfig {
+            detail: "bad range".to_string(),
+        };
+        assert_eq!(format!("{}", err), "invalid config: bad range");
+    }
+
+    // ── Enrichment: Hash Consistency ────────────────────────────────
+
+    #[test]
+    fn hash_consistency_claim_category() {
+        // ClaimCategory does not derive Hash, so we test serde stability instead
+        let a = serde_json::to_string(&ClaimCategory::Security).unwrap();
+        let b = serde_json::to_string(&ClaimCategory::Security).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn hash_consistency_evidence_kind() {
+        let a = serde_json::to_string(&EvidenceKind::CodeReview).unwrap();
+        let b = serde_json::to_string(&EvidenceKind::CodeReview).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn artifact_hash_differs_for_different_milestones() {
+        let demos = vec![make_demo("d1", true)];
+        let claims = vec![make_claim(
+            "c1",
+            ClaimCategory::Performance,
+            vec!["d1"],
+            vec!["e1"],
+        )];
+        let mut g1 = default_gate();
+        let d1 = g1.evaluate("m1", &claims, &demos).unwrap();
+        let mut g2 = default_gate();
+        let d2 = g2.evaluate("m2", &claims, &demos).unwrap();
+        assert_ne!(d1.artifact_hash, d2.artifact_hash);
+    }
+
+    #[test]
+    fn artifact_hash_differs_for_different_claims() {
+        let demos = vec![make_demo("d1", true), make_demo("d2", true)];
+        let claims_a = vec![make_claim(
+            "c1",
+            ClaimCategory::Performance,
+            vec!["d1"],
+            vec!["e1"],
+        )];
+        let claims_b = vec![make_claim(
+            "c2",
+            ClaimCategory::Security,
+            vec!["d2"],
+            vec!["e2"],
+        )];
+        let mut g1 = default_gate();
+        let d1 = g1.evaluate("m1", &claims_a, &demos).unwrap();
+        let mut g2 = default_gate();
+        let d2 = g2.evaluate("m1", &claims_b, &demos).unwrap();
+        assert_ne!(d1.artifact_hash, d2.artifact_hash);
+    }
+
+    // ── Enrichment: Boundary / Edge Cases ───────────────────────────
+
+    #[test]
+    fn boundary_max_timeout_u64() {
+        let cmd = VerificationCommand {
+            command_id: "cmd1".to_string(),
+            command: "test".to_string(),
+            expected_exit_code: 0,
+            timeout_ms: u64::MAX,
+            deterministic: true,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let back: VerificationCommand = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.timeout_ms, u64::MAX);
+    }
+
+    #[test]
+    fn boundary_tolerance_max_i64() {
+        let out = ExpectedOutput {
+            name: "out".to_string(),
+            expected_hash: None,
+            exact_match: false,
+            tolerance_millionths: i64::MAX,
+        };
+        let json = serde_json::to_string(&out).unwrap();
+        let back: ExpectedOutput = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tolerance_millionths, i64::MAX);
+    }
+
+    #[test]
+    fn boundary_tolerance_min_i64() {
+        let out = ExpectedOutput {
+            name: "out".to_string(),
+            expected_hash: None,
+            exact_match: false,
+            tolerance_millionths: i64::MIN,
+        };
+        let json = serde_json::to_string(&out).unwrap();
+        let back: ExpectedOutput = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tolerance_millionths, i64::MIN);
+    }
+
+    #[test]
+    fn boundary_empty_strings() {
+        let demo = DemoSpecification {
+            demo_id: String::new(),
+            title: String::new(),
+            description: String::new(),
+            milestone_id: String::new(),
+            runnable: false,
+            verification_commands: Vec::new(),
+            expected_outputs: BTreeMap::new(),
+            tags: BTreeSet::new(),
+        };
+        let json = serde_json::to_string(&demo).unwrap();
+        let back: DemoSpecification = serde_json::from_str(&json).unwrap();
+        assert_eq!(demo, back);
+    }
+
+    #[test]
+    fn boundary_empty_evidence_links() {
+        let claim = MilestoneClaim {
+            claim_id: "c1".to_string(),
+            statement: "s".to_string(),
+            milestone_id: "m1".to_string(),
+            category: ClaimCategory::Correctness,
+            evidence_links: Vec::new(),
+            demos: Vec::new(),
+        };
+        let json = serde_json::to_string(&claim).unwrap();
+        let back: MilestoneClaim = serde_json::from_str(&json).unwrap();
+        assert_eq!(claim, back);
+    }
+
+    #[test]
+    fn boundary_empty_missing_list() {
+        let result = ClaimLinkageResult {
+            claim_id: "c1".to_string(),
+            linked: true,
+            has_runnable_demo: true,
+            has_evidence: true,
+            demos_have_outputs: true,
+            demos_have_commands: true,
+            missing: Vec::new(),
+            completeness_millionths: MILLION,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"missing\":[]"));
+    }
+
+    #[test]
+    fn boundary_expected_output_no_hash() {
+        let out = ExpectedOutput {
+            name: "nullable".to_string(),
+            expected_hash: None,
+            exact_match: false,
+            tolerance_millionths: 500_000,
+        };
+        let json = serde_json::to_string(&out).unwrap();
+        assert!(json.contains("\"expected_hash\":null"));
+        let back: ExpectedOutput = serde_json::from_str(&json).unwrap();
+        assert_eq!(out, back);
+    }
+
+    #[test]
+    fn boundary_config_zero_completeness() {
+        let config = LinkageGateConfig {
+            min_completeness_millionths: 0,
+            ..Default::default()
+        };
+        let gate = DemoClaimLinkageGate::new(config);
+        assert!(gate.is_ok());
+    }
+
+    #[test]
+    fn boundary_config_exact_million_completeness() {
+        let config = LinkageGateConfig {
+            min_completeness_millionths: MILLION,
+            ..Default::default()
+        };
+        let gate = DemoClaimLinkageGate::new(config);
+        assert!(gate.is_ok());
+    }
+
+    #[test]
+    fn boundary_max_claims_exactly() {
+        let mut gate = default_gate();
+        let demo = make_demo("d1", true);
+        let claims: Vec<_> = (0..256)
+            .map(|i| {
+                make_claim(
+                    &format!("c{}", i),
+                    ClaimCategory::Performance,
+                    vec!["d1"],
+                    vec!["e1"],
+                )
+            })
+            .collect();
+        let result = gate.evaluate("m1", &claims, &[demo]);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().total_claims, 256);
+    }
+
+    #[test]
+    fn boundary_epoch_u64_max() {
+        let config = LinkageGateConfig {
+            epoch: SecurityEpoch::from_raw(u64::MAX),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: LinkageGateConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.epoch, SecurityEpoch::from_raw(u64::MAX));
+    }
+
+    #[test]
+    fn boundary_epoch_zero() {
+        let config = LinkageGateConfig {
+            epoch: SecurityEpoch::from_raw(0),
+            ..Default::default()
+        };
+        let gate = DemoClaimLinkageGate::new(config);
+        assert!(gate.is_ok());
+    }
+
+    #[test]
+    fn boundary_negative_exit_code() {
+        let cmd = VerificationCommand {
+            command_id: "c1".to_string(),
+            command: "fail".to_string(),
+            expected_exit_code: -1,
+            timeout_ms: 0,
+            deterministic: false,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let back: VerificationCommand = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.expected_exit_code, -1);
+    }
+
+    #[test]
+    fn boundary_demo_with_many_tags() {
+        let mut tags = BTreeSet::new();
+        for i in 0..100 {
+            tags.insert(format!("tag-{}", i));
+        }
+        let demo = DemoSpecification {
+            demo_id: "d1".to_string(),
+            title: "t".to_string(),
+            description: "d".to_string(),
+            milestone_id: "m1".to_string(),
+            runnable: true,
+            verification_commands: vec![make_command("cmd1")],
+            expected_outputs: {
+                let mut m = BTreeMap::new();
+                m.insert("o".to_string(), make_output("o"));
+                m
+            },
+            tags,
+        };
+        let json = serde_json::to_string(&demo).unwrap();
+        let back: DemoSpecification = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tags.len(), 100);
+    }
+
+    // ── Enrichment: Serde Roundtrips (complex structs) ──────────────
+
+    #[test]
+    fn serde_roundtrip_evidence_link() {
+        let ev = EvidenceLink {
+            evidence_id: "ev-complex".to_string(),
+            kind: EvidenceKind::ThirdPartyVerification,
+            artifact_hash: ContentHash::compute(b"complex-data"),
+            description: "Complex evidence with special chars: <>&\"".to_string(),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: EvidenceLink = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_verification_command() {
+        let cmd = VerificationCommand {
+            command_id: "vc-round".to_string(),
+            command: "echo 'hello world' | grep world".to_string(),
+            expected_exit_code: 0,
+            timeout_ms: 999_999,
+            deterministic: false,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let back: VerificationCommand = serde_json::from_str(&json).unwrap();
+        assert_eq!(cmd, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_expected_output() {
+        let out = ExpectedOutput {
+            name: "out-trip".to_string(),
+            expected_hash: Some(ContentHash::compute(b"trip")),
+            exact_match: true,
+            tolerance_millionths: 100,
+        };
+        let json = serde_json::to_string(&out).unwrap();
+        let back: ExpectedOutput = serde_json::from_str(&json).unwrap();
+        assert_eq!(out, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_claim_linkage_result() {
+        let result = ClaimLinkageResult {
+            claim_id: "clr-1".to_string(),
+            linked: false,
+            has_runnable_demo: false,
+            has_evidence: true,
+            demos_have_outputs: false,
+            demos_have_commands: false,
+            missing: vec!["no demo".to_string(), "no outputs".to_string()],
+            completeness_millionths: 250_000,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: ClaimLinkageResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_all_error_variants() {
+        let variants = vec![
+            LinkageGateError::NoClaims,
+            LinkageGateError::TooManyClaims {
+                count: 300,
+                max: 256,
+            },
+            LinkageGateError::DuplicateClaim {
+                claim_id: "dup".into(),
+            },
+            LinkageGateError::DuplicateDemo {
+                demo_id: "dup".into(),
+            },
+            LinkageGateError::TooManyEvidenceLinks {
+                claim_id: "c".into(),
+                count: 100,
+                max: 64,
+            },
+            LinkageGateError::TooManyCommands {
+                demo_id: "d".into(),
+                count: 50,
+                max: 32,
+            },
+            LinkageGateError::UnknownDemo {
+                claim_id: "c".into(),
+                demo_id: "d".into(),
+            },
+            LinkageGateError::InvalidConfig {
+                detail: "oops".into(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: LinkageGateError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn serde_roundtrip_gate_struct() {
+        let gate = default_gate();
+        let json = serde_json::to_string(&gate).unwrap();
+        let back: DemoClaimLinkageGate = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.evaluation_count(), 0);
+    }
+
+    #[test]
+    fn serde_roundtrip_decision_fail_verdict() {
+        let mut gate = default_gate();
+        let demos = vec![make_demo("d1", true)];
+        let claims = vec![make_claim("c1", ClaimCategory::Security, vec![], vec![])];
+        let decision = gate.evaluate("m1", &claims, &demos).unwrap();
+        assert_eq!(decision.verdict, LinkageVerdict::Fail);
+        let json = serde_json::to_string(&decision).unwrap();
+        let back: LinkageGateDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(decision, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_claim_all_categories() {
+        let categories = [
+            ClaimCategory::Performance,
+            ClaimCategory::Correctness,
+            ClaimCategory::Security,
+            ClaimCategory::Compatibility,
+            ClaimCategory::Reliability,
+            ClaimCategory::DeveloperExperience,
+        ];
+        for cat in &categories {
+            let json = serde_json::to_string(cat).unwrap();
+            let back: ClaimCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(*cat, back);
+        }
+    }
+
+    #[test]
+    fn serde_roundtrip_evidence_all_kinds() {
+        let kinds = [
+            EvidenceKind::TestResult,
+            EvidenceKind::BenchmarkResult,
+            EvidenceKind::SecurityAudit,
+            EvidenceKind::FormalProof,
+            EvidenceKind::CodeReview,
+            EvidenceKind::DemoReplay,
+            EvidenceKind::ThirdPartyVerification,
+        ];
+        for k in &kinds {
+            let json = serde_json::to_string(k).unwrap();
+            let back: EvidenceKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*k, back);
+        }
+    }
+
+    #[test]
+    fn serde_roundtrip_verdicts_all() {
+        let verdicts = [
+            LinkageVerdict::Pass,
+            LinkageVerdict::Fail,
+            LinkageVerdict::Empty,
+        ];
+        for v in &verdicts {
+            let json = serde_json::to_string(v).unwrap();
+            let back: LinkageVerdict = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    // ── Enrichment: Schema Version Constant ─────────────────────────
+
+    #[test]
+    fn schema_version_constant_is_stable() {
+        assert_eq!(
+            LINKAGE_GATE_SCHEMA_VERSION,
+            "franken-engine.demo-claim-linkage-gate.v1"
+        );
+    }
+
+    // ── Enrichment: Decision ID Format ──────────────────────────────
+
+    #[test]
+    fn decision_id_includes_milestone_and_epoch() {
+        let mut gate = default_gate();
+        let demos = vec![make_demo("d1", true)];
+        let claims = vec![make_claim(
+            "c1",
+            ClaimCategory::Performance,
+            vec!["d1"],
+            vec!["e1"],
+        )];
+        let decision = gate.evaluate("m1", &claims, &demos).unwrap();
+        assert!(decision.decision_id.starts_with("linkage-m1-1-"));
+    }
+
+    #[test]
+    fn decision_id_increments_with_evaluations() {
+        let mut gate = default_gate();
+        let demos = vec![make_demo("d1", true)];
+        let claims = vec![make_claim(
+            "c1",
+            ClaimCategory::Performance,
+            vec!["d1"],
+            vec!["e1"],
+        )];
+        let d1 = gate.evaluate("m1", &claims, &demos).unwrap();
+        let d2 = gate.evaluate("m1", &claims, &demos).unwrap();
+        assert_ne!(d1.decision_id, d2.decision_id);
+        assert!(d1.decision_id.ends_with("-1"));
+        assert!(d2.decision_id.ends_with("-2"));
+    }
+
+    // ── Enrichment: Relaxed Config Combinations ─────────────────────
+
+    #[test]
+    fn all_requirements_disabled_passes_empty_claim() {
+        let config = LinkageGateConfig {
+            require_runnable_demo: false,
+            require_evidence: false,
+            require_expected_outputs: false,
+            require_verification_commands: false,
+            ..Default::default()
+        };
+        let mut gate = DemoClaimLinkageGate::new(config).unwrap();
+        let claims = vec![make_claim(
+            "c1",
+            ClaimCategory::DeveloperExperience,
+            vec![],
+            vec![],
+        )];
+        let decision = gate.evaluate("m1", &claims, &[]).unwrap();
+        assert_eq!(decision.verdict, LinkageVerdict::Pass);
+    }
+
+    #[test]
+    fn only_evidence_required_passes_with_evidence() {
+        let config = LinkageGateConfig {
+            require_runnable_demo: false,
+            require_evidence: true,
+            require_expected_outputs: false,
+            require_verification_commands: false,
+            ..Default::default()
+        };
+        let mut gate = DemoClaimLinkageGate::new(config).unwrap();
+        let claims = vec![make_claim(
+            "c1",
+            ClaimCategory::Correctness,
+            vec![],
+            vec!["e1"],
+        )];
+        let decision = gate.evaluate("m1", &claims, &[]).unwrap();
+        assert_eq!(decision.verdict, LinkageVerdict::Pass);
+    }
+
+    // ── Enrichment: Missing Reasons ─────────────────────────────────
+
+    #[test]
+    fn missing_reasons_fully_incomplete() {
+        let mut gate = default_gate();
+        let claims = vec![make_claim(
+            "c1",
+            ClaimCategory::Performance,
+            vec![],
+            vec![],
+        )];
+        let decision = gate.evaluate("m1", &claims, &[]).unwrap();
+        let r = &decision.claim_results[0];
+        assert!(!r.linked);
+        assert!(!r.has_evidence);
+        assert!(!r.has_runnable_demo);
+        assert!(!r.demos_have_outputs);
+        assert!(!r.demos_have_commands);
+        assert!(r.missing.len() >= 4);
+    }
+
+    #[test]
+    fn missing_reasons_only_missing_evidence() {
+        let mut gate = default_gate();
+        let demos = vec![make_demo("d1", true)];
+        let claims = vec![make_claim(
+            "c1",
+            ClaimCategory::Performance,
+            vec!["d1"],
+            vec![], // no evidence
+        )];
+        let decision = gate.evaluate("m1", &claims, &demos).unwrap();
+        let r = &decision.claim_results[0];
+        assert!(!r.linked);
+        assert!(r.has_runnable_demo);
+        assert!(!r.has_evidence);
+        assert_eq!(r.missing.len(), 1);
+        assert!(r.missing[0].contains("evidence"));
+    }
+
+    // ── Enrichment: Demo is_complete Edge Cases ─────────────────────
+
+    #[test]
+    fn demo_runnable_but_no_commands_is_incomplete() {
+        let demo = DemoSpecification {
+            demo_id: "d1".to_string(),
+            title: "t".to_string(),
+            description: "d".to_string(),
+            milestone_id: "m1".to_string(),
+            runnable: true,
+            verification_commands: Vec::new(),
+            expected_outputs: {
+                let mut m = BTreeMap::new();
+                m.insert("o".into(), make_output("o"));
+                m
+            },
+            tags: BTreeSet::new(),
+        };
+        assert!(!demo.is_complete());
+    }
+
+    #[test]
+    fn demo_runnable_but_no_outputs_is_incomplete() {
+        let demo = DemoSpecification {
+            demo_id: "d1".to_string(),
+            title: "t".to_string(),
+            description: "d".to_string(),
+            milestone_id: "m1".to_string(),
+            runnable: true,
+            verification_commands: vec![make_command("cmd1")],
+            expected_outputs: BTreeMap::new(),
+            tags: BTreeSet::new(),
+        };
+        assert!(!demo.is_complete());
+    }
+
+    #[test]
+    fn demo_not_runnable_with_commands_and_outputs_is_incomplete() {
+        let demo = DemoSpecification {
+            demo_id: "d1".to_string(),
+            title: "t".to_string(),
+            description: "d".to_string(),
+            milestone_id: "m1".to_string(),
+            runnable: false,
+            verification_commands: vec![make_command("cmd1")],
+            expected_outputs: {
+                let mut m = BTreeMap::new();
+                m.insert("o".into(), make_output("o"));
+                m
+            },
+            tags: BTreeSet::new(),
+        };
+        assert!(!demo.is_complete());
+    }
+
+    #[test]
+    fn demo_command_count_zero() {
+        let demo = make_demo("d1", false);
+        assert_eq!(demo.command_count(), 0);
+    }
+
+    // ── Enrichment: Linkage Rate Fractions ──────────────────────────
+
+    #[test]
+    fn linkage_rate_one_of_three() {
+        let decision = LinkageGateDecision {
+            decision_id: "t".to_string(),
+            milestone_id: "m".to_string(),
+            epoch: SecurityEpoch::from_raw(1),
+            verdict: LinkageVerdict::Fail,
+            claim_results: Vec::new(),
+            total_claims: 3,
+            linked_claims: 1,
+            unlinked_claims: 2,
+            aggregate_completeness_millionths: 333_333,
+            rationale: "".to_string(),
+            artifact_hash: ContentHash::compute(b"x"),
+        };
+        assert_eq!(decision.linkage_rate_millionths(), 333_333); // 1/3
+    }
+
+    #[test]
+    fn linkage_rate_all_linked() {
+        let decision = LinkageGateDecision {
+            decision_id: "t".to_string(),
+            milestone_id: "m".to_string(),
+            epoch: SecurityEpoch::from_raw(1),
+            verdict: LinkageVerdict::Pass,
+            claim_results: Vec::new(),
+            total_claims: 5,
+            linked_claims: 5,
+            unlinked_claims: 0,
+            aggregate_completeness_millionths: MILLION,
+            rationale: "".to_string(),
+            artifact_hash: ContentHash::compute(b"x"),
+        };
+        assert_eq!(decision.linkage_rate_millionths(), MILLION);
+    }
 }

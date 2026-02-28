@@ -1625,4 +1625,1127 @@ mod tests {
         assert_eq!(ir3.proof_input_ids[0], "proof-a");
         assert_eq!(ir3.proof_input_ids[1], "proof-b");
     }
+
+    // ===================================================================
+    // Enrichment: PearlTower 2026-02-28
+    // ===================================================================
+
+    // -----------------------------------------------------------------------
+    // Copy semantics (PerformanceDelta is Copy)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn performance_delta_copy_semantics() {
+        let a = PerformanceDelta {
+            speedup_millionths: 2_000_000,
+            instruction_ratio_millionths: 500_000,
+        };
+        let b = a; // copy
+        let c = a; // still valid after copy
+        assert_eq!(b, c);
+        assert_eq!(a.speedup_millionths, 2_000_000);
+    }
+
+    #[test]
+    fn performance_delta_copy_into_fn() {
+        fn consume(d: PerformanceDelta) -> u64 {
+            d.speedup_millionths
+        }
+        let d = PerformanceDelta {
+            speedup_millionths: 3_000_000,
+            instruction_ratio_millionths: 600_000,
+        };
+        assert_eq!(consume(d), 3_000_000);
+        // d is still usable because Copy
+        assert_eq!(d.instruction_ratio_millionths, 600_000);
+    }
+
+    #[test]
+    fn performance_delta_neutral_is_copy() {
+        let a = PerformanceDelta::NEUTRAL;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    // -----------------------------------------------------------------------
+    // Debug distinctness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn invalidation_cause_debug_all_distinct() {
+        let variants: Vec<InvalidationCause> = vec![
+            InvalidationCause::EpochChange {
+                old_epoch: test_epoch(1),
+                new_epoch: test_epoch(2),
+            },
+            InvalidationCause::ProofRevoked {
+                proof_id: "p1".into(),
+            },
+            InvalidationCause::PolicyChange {
+                reason: "r1".into(),
+            },
+            InvalidationCause::ManualInvalidation {
+                operator_id: "op".into(),
+            },
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(format!("{v:?}"));
+        }
+        assert_eq!(set.len(), 4);
+    }
+
+    #[test]
+    fn linkage_error_debug_all_distinct() {
+        let variants: Vec<LinkageError> = vec![
+            LinkageError::DuplicateLinkage { id: "a".into() },
+            LinkageError::LinkageNotFound { id: "a".into() },
+            LinkageError::AlreadyInactive { id: "a".into() },
+            LinkageError::EmptyProofInputs,
+            LinkageError::EpochMismatch {
+                linkage_epoch: test_epoch(1),
+                current_epoch: test_epoch(2),
+            },
+            LinkageError::Ir3AlreadySpecialized,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(format!("{v:?}"));
+        }
+        assert_eq!(set.len(), 6);
+    }
+
+    #[test]
+    fn linkage_id_debug_contains_value() {
+        let id = LinkageId::new("my-link");
+        let dbg = format!("{id:?}");
+        assert!(dbg.contains("my-link"));
+    }
+
+    #[test]
+    fn proof_input_ref_debug_contains_fields() {
+        let input = make_proof_input("proof-xyz", 7);
+        let dbg = format!("{input:?}");
+        assert!(dbg.contains("proof-xyz"));
+        assert!(dbg.contains("CapabilityWitness"));
+    }
+
+    #[test]
+    fn performance_delta_debug_contains_fields() {
+        let d = PerformanceDelta {
+            speedup_millionths: 999,
+            instruction_ratio_millionths: 888,
+        };
+        let dbg = format!("{d:?}");
+        assert!(dbg.contains("999"));
+        assert!(dbg.contains("888"));
+    }
+
+    #[test]
+    fn rollback_state_debug_contains_tick() {
+        let rs = RollbackState {
+            baseline_ir3_hash: test_hash(b"bl"),
+            activation_epoch: test_epoch(7),
+            activation_tick: 12345,
+        };
+        let dbg = format!("{rs:?}");
+        assert!(dbg.contains("12345"));
+    }
+
+    #[test]
+    fn execution_record_debug_contains_fields() {
+        let er = ExecutionRecord {
+            linkage_id: LinkageId::new("er-1"),
+            witness_hash: test_hash(b"w"),
+            performance_delta: PerformanceDelta::NEUTRAL,
+            instructions_executed: 42,
+            duration_ticks: 99,
+        };
+        let dbg = format!("{er:?}");
+        assert!(dbg.contains("er-1"));
+        assert!(dbg.contains("42"));
+        assert!(dbg.contains("99"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Serde variant distinctness (enum variants serialize to distinct JSON)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn invalidation_cause_serde_all_variants_distinct() {
+        let variants: Vec<InvalidationCause> = vec![
+            InvalidationCause::EpochChange {
+                old_epoch: test_epoch(1),
+                new_epoch: test_epoch(2),
+            },
+            InvalidationCause::ProofRevoked {
+                proof_id: "p1".into(),
+            },
+            InvalidationCause::PolicyChange {
+                reason: "r1".into(),
+            },
+            InvalidationCause::ManualInvalidation {
+                operator_id: "op".into(),
+            },
+        ];
+        let mut jsons = std::collections::BTreeSet::new();
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            jsons.insert(json);
+        }
+        assert_eq!(jsons.len(), 4);
+    }
+
+    #[test]
+    fn linkage_error_serde_all_variants_distinct() {
+        let variants: Vec<LinkageError> = vec![
+            LinkageError::DuplicateLinkage { id: "x".into() },
+            LinkageError::LinkageNotFound { id: "x".into() },
+            LinkageError::AlreadyInactive { id: "x".into() },
+            LinkageError::EmptyProofInputs,
+            LinkageError::EpochMismatch {
+                linkage_epoch: test_epoch(1),
+                current_epoch: test_epoch(2),
+            },
+            LinkageError::Ir3AlreadySpecialized,
+        ];
+        let mut jsons = std::collections::BTreeSet::new();
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            jsons.insert(json);
+        }
+        assert_eq!(jsons.len(), 6);
+    }
+
+    // -----------------------------------------------------------------------
+    // Clone independence (mutate clone, original unchanged)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn linkage_id_clone_independence() {
+        let a = LinkageId::new("orig");
+        let mut b = a.clone();
+        b.0 = "mutated".to_string();
+        assert_eq!(a.as_str(), "orig");
+        assert_eq!(b.as_str(), "mutated");
+    }
+
+    #[test]
+    fn proof_input_ref_clone_independence() {
+        let a = make_proof_input("proof-1", 5);
+        let mut b = a.clone();
+        b.proof_id = "proof-2".to_string();
+        b.validity_window_ticks = 9999;
+        assert_eq!(a.proof_id, "proof-1");
+        assert_eq!(a.validity_window_ticks, 1000);
+    }
+
+    #[test]
+    fn rollback_state_clone_independence() {
+        let a = RollbackState {
+            baseline_ir3_hash: test_hash(b"base"),
+            activation_epoch: test_epoch(3),
+            activation_tick: 100,
+        };
+        let mut b = a.clone();
+        b.activation_tick = 999;
+        assert_eq!(a.activation_tick, 100);
+        assert_eq!(b.activation_tick, 999);
+    }
+
+    #[test]
+    fn linkage_record_clone_independence() {
+        let a = make_linkage("link-a", 5, &["proof-x"]);
+        let mut b = a.clone();
+        b.active = false;
+        b.execution_count = 100;
+        b.proof_inputs.clear();
+        assert!(a.active);
+        assert_eq!(a.execution_count, 0);
+        assert_eq!(a.proof_inputs.len(), 1);
+    }
+
+    #[test]
+    fn linkage_event_clone_independence() {
+        let a = LinkageEvent {
+            trace_id: "t1".into(),
+            decision_id: "d1".into(),
+            policy_id: "p1".into(),
+            component: "comp".into(),
+            event: "register".into(),
+            outcome: "ok".into(),
+            error_code: None,
+        };
+        let mut b = a.clone();
+        b.outcome = "rejected".into();
+        b.error_code = Some("ERR".into());
+        assert_eq!(a.outcome, "ok");
+        assert!(a.error_code.is_none());
+    }
+
+    #[test]
+    fn execution_record_clone_independence() {
+        let a = ExecutionRecord {
+            linkage_id: LinkageId::new("er-1"),
+            witness_hash: test_hash(b"w"),
+            performance_delta: PerformanceDelta::NEUTRAL,
+            instructions_executed: 42,
+            duration_ticks: 99,
+        };
+        let mut b = a.clone();
+        b.instructions_executed = 1000;
+        assert_eq!(a.instructions_executed, 42);
+    }
+
+    #[test]
+    fn invalidation_cause_clone_independence() {
+        let a = InvalidationCause::ProofRevoked {
+            proof_id: "proof-orig".into(),
+        };
+        let mut b = a.clone();
+        if let InvalidationCause::ProofRevoked { ref mut proof_id } = b {
+            *proof_id = "proof-mutated".to_string();
+        }
+        assert_eq!(
+            a,
+            InvalidationCause::ProofRevoked {
+                proof_id: "proof-orig".into()
+            }
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // JSON field-name stability (exact field names in serialized JSON)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proof_input_ref_json_field_names() {
+        let input = make_proof_input("proof-1", 5);
+        let json = serde_json::to_string(&input).unwrap();
+        assert!(json.contains("\"proof_id\""));
+        assert!(json.contains("\"proof_type\""));
+        assert!(json.contains("\"proof_epoch\""));
+        assert!(json.contains("\"validity_window_ticks\""));
+    }
+
+    #[test]
+    fn performance_delta_json_field_names() {
+        let d = PerformanceDelta {
+            speedup_millionths: 1_500_000,
+            instruction_ratio_millionths: 800_000,
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains("\"speedup_millionths\""));
+        assert!(json.contains("\"instruction_ratio_millionths\""));
+    }
+
+    #[test]
+    fn rollback_state_json_field_names() {
+        let rs = RollbackState {
+            baseline_ir3_hash: test_hash(b"bl"),
+            activation_epoch: test_epoch(3),
+            activation_tick: 42,
+        };
+        let json = serde_json::to_string(&rs).unwrap();
+        assert!(json.contains("\"baseline_ir3_hash\""));
+        assert!(json.contains("\"activation_epoch\""));
+        assert!(json.contains("\"activation_tick\""));
+    }
+
+    #[test]
+    fn linkage_record_json_field_names() {
+        let record = make_linkage("link-1", 5, &["proof-a"]);
+        let json = serde_json::to_string(&record).unwrap();
+        assert!(json.contains("\"id\""));
+        assert!(json.contains("\"proof_inputs\""));
+        assert!(json.contains("\"optimization_class\""));
+        assert!(json.contains("\"validity_epoch\""));
+        assert!(json.contains("\"specialized_ir3_hash\""));
+        assert!(json.contains("\"rollback\""));
+        assert!(json.contains("\"active\""));
+        assert!(json.contains("\"performance_delta\""));
+        assert!(json.contains("\"execution_count\""));
+    }
+
+    #[test]
+    fn linkage_event_json_field_names() {
+        let event = LinkageEvent {
+            trace_id: "t1".into(),
+            decision_id: "d1".into(),
+            policy_id: "p1".into(),
+            component: "comp".into(),
+            event: "register".into(),
+            outcome: "ok".into(),
+            error_code: Some("ERR".into()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"event\""));
+        assert!(json.contains("\"outcome\""));
+        assert!(json.contains("\"error_code\""));
+    }
+
+    #[test]
+    fn execution_record_json_field_names() {
+        let er = ExecutionRecord {
+            linkage_id: LinkageId::new("er-1"),
+            witness_hash: test_hash(b"w"),
+            performance_delta: PerformanceDelta::NEUTRAL,
+            instructions_executed: 42,
+            duration_ticks: 99,
+        };
+        let json = serde_json::to_string(&er).unwrap();
+        assert!(json.contains("\"linkage_id\""));
+        assert!(json.contains("\"witness_hash\""));
+        assert!(json.contains("\"performance_delta\""));
+        assert!(json.contains("\"instructions_executed\""));
+        assert!(json.contains("\"duration_ticks\""));
+    }
+
+    // -----------------------------------------------------------------------
+    // Display format checks
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn linkage_id_display_exact() {
+        let id = LinkageId::new("abc-123");
+        assert_eq!(format!("{id}"), "abc-123");
+    }
+
+    #[test]
+    fn linkage_id_display_empty_string() {
+        let id = LinkageId::new("");
+        assert_eq!(format!("{id}"), "");
+    }
+
+    #[test]
+    fn invalidation_cause_display_epoch_change_format() {
+        let cause = InvalidationCause::EpochChange {
+            old_epoch: test_epoch(10),
+            new_epoch: test_epoch(20),
+        };
+        let s = cause.to_string();
+        assert!(s.starts_with("epoch_change("));
+        assert!(s.contains("->"));
+        assert!(s.ends_with(')'));
+    }
+
+    #[test]
+    fn invalidation_cause_display_proof_revoked_format() {
+        let cause = InvalidationCause::ProofRevoked {
+            proof_id: "my-proof".into(),
+        };
+        assert_eq!(cause.to_string(), "proof_revoked(my-proof)");
+    }
+
+    #[test]
+    fn invalidation_cause_display_policy_change_format() {
+        let cause = InvalidationCause::PolicyChange {
+            reason: "upgraded".into(),
+        };
+        assert_eq!(cause.to_string(), "policy_change(upgraded)");
+    }
+
+    #[test]
+    fn invalidation_cause_display_manual_format() {
+        let cause = InvalidationCause::ManualInvalidation {
+            operator_id: "admin-42".into(),
+        };
+        assert_eq!(cause.to_string(), "manual_invalidation(admin-42)");
+    }
+
+    #[test]
+    fn linkage_error_display_duplicate() {
+        let err = LinkageError::DuplicateLinkage {
+            id: "link-99".into(),
+        };
+        assert_eq!(err.to_string(), "duplicate linkage: link-99");
+    }
+
+    #[test]
+    fn linkage_error_display_not_found() {
+        let err = LinkageError::LinkageNotFound {
+            id: "link-99".into(),
+        };
+        assert_eq!(err.to_string(), "linkage not found: link-99");
+    }
+
+    #[test]
+    fn linkage_error_display_already_inactive() {
+        let err = LinkageError::AlreadyInactive {
+            id: "link-99".into(),
+        };
+        assert_eq!(err.to_string(), "linkage already inactive: link-99");
+    }
+
+    #[test]
+    fn linkage_error_display_empty_proof_inputs() {
+        let err = LinkageError::EmptyProofInputs;
+        assert_eq!(err.to_string(), "no proof inputs provided");
+    }
+
+    #[test]
+    fn linkage_error_display_epoch_mismatch() {
+        let err = LinkageError::EpochMismatch {
+            linkage_epoch: test_epoch(3),
+            current_epoch: test_epoch(7),
+        };
+        let s = err.to_string();
+        assert!(s.contains("epoch mismatch"));
+        assert!(s.contains("linkage="));
+        assert!(s.contains("current="));
+    }
+
+    #[test]
+    fn linkage_error_display_ir3_already_specialized() {
+        let err = LinkageError::Ir3AlreadySpecialized;
+        assert_eq!(err.to_string(), "IR3 module already has specialization");
+    }
+
+    #[test]
+    fn linkage_error_is_std_error() {
+        let err: Box<dyn std::error::Error> =
+            Box::new(LinkageError::EmptyProofInputs);
+        assert!(err.to_string().contains("no proof inputs"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Hash consistency (LinkageId has Hash)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn linkage_id_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let id = LinkageId::new("link-hash-test");
+        let mut h1 = DefaultHasher::new();
+        id.hash(&mut h1);
+        let hash1 = h1.finish();
+
+        let mut h2 = DefaultHasher::new();
+        id.hash(&mut h2);
+        let hash2 = h2.finish();
+
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn linkage_id_different_values_different_hash() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let id_a = LinkageId::new("aaa");
+        let id_b = LinkageId::new("bbb");
+        let mut ha = DefaultHasher::new();
+        id_a.hash(&mut ha);
+        let mut hb = DefaultHasher::new();
+        id_b.hash(&mut hb);
+        assert_ne!(ha.finish(), hb.finish());
+    }
+
+    #[test]
+    fn linkage_id_equal_values_same_hash() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let a = LinkageId::new("same");
+        let b = LinkageId::new("same");
+        assert_eq!(a, b);
+        let mut ha = DefaultHasher::new();
+        a.hash(&mut ha);
+        let mut hb = DefaultHasher::new();
+        b.hash(&mut hb);
+        assert_eq!(ha.finish(), hb.finish());
+    }
+
+    // -----------------------------------------------------------------------
+    // Boundary/edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn performance_delta_zero_values() {
+        let d = PerformanceDelta {
+            speedup_millionths: 0,
+            instruction_ratio_millionths: 0,
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        let back: PerformanceDelta = serde_json::from_str(&json).unwrap();
+        assert_eq!(d, back);
+        assert_eq!(back.speedup_millionths, 0);
+    }
+
+    #[test]
+    fn performance_delta_u64_max_values() {
+        let d = PerformanceDelta {
+            speedup_millionths: u64::MAX,
+            instruction_ratio_millionths: u64::MAX,
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        let back: PerformanceDelta = serde_json::from_str(&json).unwrap();
+        assert_eq!(d, back);
+    }
+
+    #[test]
+    fn rollback_state_max_tick() {
+        let rs = RollbackState {
+            baseline_ir3_hash: test_hash(b"max"),
+            activation_epoch: SecurityEpoch::from_raw(u64::MAX),
+            activation_tick: u64::MAX,
+        };
+        let json = serde_json::to_string(&rs).unwrap();
+        let back: RollbackState = serde_json::from_str(&json).unwrap();
+        assert_eq!(rs, back);
+    }
+
+    #[test]
+    fn proof_input_ref_zero_validity_window() {
+        let input = ProofInputRef {
+            proof_id: "p".into(),
+            proof_type: ProofType::FlowProof,
+            proof_epoch: test_epoch(1),
+            validity_window_ticks: 0,
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let back: ProofInputRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+        assert_eq!(back.validity_window_ticks, 0);
+    }
+
+    #[test]
+    fn proof_input_ref_max_validity_window() {
+        let input = ProofInputRef {
+            proof_id: "p-max".into(),
+            proof_type: ProofType::ReplayMotif,
+            proof_epoch: test_epoch(u64::MAX),
+            validity_window_ticks: u64::MAX,
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let back: ProofInputRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+    }
+
+    #[test]
+    fn linkage_record_empty_id() {
+        let record = make_linkage("", 5, &["proof-a"]);
+        assert_eq!(record.id.as_str(), "");
+        let json = serde_json::to_string(&record).unwrap();
+        let back: LinkageRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(record, back);
+    }
+
+    #[test]
+    fn linkage_record_single_proof_input() {
+        let record = make_linkage("link-1", 5, &["single"]);
+        assert_eq!(record.proof_inputs.len(), 1);
+        assert!(record.proofs_valid_at(test_epoch(5)));
+    }
+
+    #[test]
+    fn linkage_record_many_proof_inputs() {
+        let ids: Vec<String> = (0..100).map(|i| format!("proof-{i}")).collect();
+        let id_refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let record = make_linkage("link-many", 5, &id_refs);
+        assert_eq!(record.proof_inputs.len(), 100);
+        let ir3 = record.to_ir3_linkage();
+        assert_eq!(ir3.proof_input_ids.len(), 100);
+    }
+
+    #[test]
+    fn engine_empty_state() {
+        let engine = make_engine(1);
+        assert_eq!(engine.total_count(), 0);
+        assert_eq!(engine.active_count(), 0);
+        assert_eq!(engine.inactive_count(), 0);
+        assert!(engine.consumed_proof_ids().is_empty());
+        assert!(engine.rollback_plan().is_empty());
+        assert!(engine.active_linkages().is_empty());
+        assert!(engine.events().is_empty());
+        assert!(engine.invalidations().is_empty());
+    }
+
+    #[test]
+    fn engine_epoch_change_on_empty_engine() {
+        let mut engine = make_engine(1);
+        let rollbacks = engine.on_epoch_change(test_epoch(2), "t1");
+        assert!(rollbacks.is_empty());
+        assert_eq!(engine.current_epoch(), test_epoch(2));
+    }
+
+    #[test]
+    fn engine_epoch_change_same_epoch_no_invalidation() {
+        let mut engine = make_engine(5);
+        engine
+            .register(make_linkage("link-1", 5, &["proof-a"]), "t1")
+            .unwrap();
+        let rollbacks = engine.on_epoch_change(test_epoch(5), "t2");
+        assert!(rollbacks.is_empty());
+        assert_eq!(engine.active_count(), 1);
+    }
+
+    #[test]
+    fn invalidate_by_proof_already_inactive_does_not_double_invalidate() {
+        let mut engine = make_engine(5);
+        engine
+            .register(make_linkage("link-1", 5, &["proof-a"]), "t1")
+            .unwrap();
+        let r1 = engine.invalidate_by_proof("proof-a", "t2");
+        assert_eq!(r1.len(), 1);
+        // Second call: already inactive, should not match
+        let r2 = engine.invalidate_by_proof("proof-a", "t3");
+        assert!(r2.is_empty());
+    }
+
+    #[test]
+    fn execution_record_zero_instructions() {
+        let er = ExecutionRecord {
+            linkage_id: LinkageId::new("link-0"),
+            witness_hash: test_hash(b"w0"),
+            performance_delta: PerformanceDelta::NEUTRAL,
+            instructions_executed: 0,
+            duration_ticks: 0,
+        };
+        let json = serde_json::to_string(&er).unwrap();
+        let back: ExecutionRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(er, back);
+    }
+
+    #[test]
+    fn execution_record_max_values() {
+        let er = ExecutionRecord {
+            linkage_id: LinkageId::new("link-max"),
+            witness_hash: test_hash(b"wmax"),
+            performance_delta: PerformanceDelta {
+                speedup_millionths: u64::MAX,
+                instruction_ratio_millionths: u64::MAX,
+            },
+            instructions_executed: u64::MAX,
+            duration_ticks: u64::MAX,
+        };
+        let json = serde_json::to_string(&er).unwrap();
+        let back: ExecutionRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(er, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Serde roundtrips for complex structs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn invalidation_cause_roundtrip_proof_revoked() {
+        let cause = InvalidationCause::ProofRevoked {
+            proof_id: "special-char-!@#$%".into(),
+        };
+        let json = serde_json::to_string(&cause).unwrap();
+        let back: InvalidationCause = serde_json::from_str(&json).unwrap();
+        assert_eq!(cause, back);
+    }
+
+    #[test]
+    fn invalidation_cause_roundtrip_policy_change() {
+        let cause = InvalidationCause::PolicyChange {
+            reason: "policy v2 deployed with breaking changes".into(),
+        };
+        let json = serde_json::to_string(&cause).unwrap();
+        let back: InvalidationCause = serde_json::from_str(&json).unwrap();
+        assert_eq!(cause, back);
+    }
+
+    #[test]
+    fn invalidation_cause_roundtrip_manual() {
+        let cause = InvalidationCause::ManualInvalidation {
+            operator_id: "ops-team/admin-42".into(),
+        };
+        let json = serde_json::to_string(&cause).unwrap();
+        let back: InvalidationCause = serde_json::from_str(&json).unwrap();
+        assert_eq!(cause, back);
+    }
+
+    #[test]
+    fn linkage_record_with_performance_delta_roundtrip() {
+        let mut record = make_linkage("link-perf", 5, &["proof-a", "proof-b"]);
+        record.performance_delta = Some(PerformanceDelta {
+            speedup_millionths: 2_500_000,
+            instruction_ratio_millionths: 400_000,
+        });
+        record.execution_count = 42;
+        let json = serde_json::to_string(&record).unwrap();
+        let back: LinkageRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(record, back);
+        assert_eq!(
+            back.performance_delta.unwrap().speedup_millionths,
+            2_500_000
+        );
+    }
+
+    #[test]
+    fn linkage_record_inactive_roundtrip() {
+        let mut record = make_linkage("link-inactive", 5, &["proof-a"]);
+        record.active = false;
+        let json = serde_json::to_string(&record).unwrap();
+        let back: LinkageRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(record, back);
+        assert!(!back.active);
+    }
+
+    #[test]
+    fn linkage_event_with_error_code_roundtrip() {
+        let event = LinkageEvent {
+            trace_id: "trace-42".into(),
+            decision_id: "decision-99".into(),
+            policy_id: "policy-main".into(),
+            component: "proof_specialization_linkage".into(),
+            event: "attach_to_ir3".into(),
+            outcome: "rejected".into(),
+            error_code: Some("LINKAGE_EPOCH_MISMATCH".into()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: LinkageEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Ordering semantics (PerformanceDelta Ord, LinkageId Ord)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn performance_delta_ordering() {
+        let low = PerformanceDelta {
+            speedup_millionths: 500_000,
+            instruction_ratio_millionths: 500_000,
+        };
+        let high = PerformanceDelta {
+            speedup_millionths: 2_000_000,
+            instruction_ratio_millionths: 500_000,
+        };
+        assert!(low < high);
+    }
+
+    #[test]
+    fn linkage_id_ordering() {
+        let a = LinkageId::new("aaa");
+        let b = LinkageId::new("bbb");
+        let c = LinkageId::new("ccc");
+        let mut ids = vec![c.clone(), a.clone(), b.clone()];
+        ids.sort();
+        assert_eq!(ids, vec![a, b, c]);
+    }
+
+    #[test]
+    fn proof_input_ref_ordering() {
+        let a = ProofInputRef {
+            proof_id: "a".into(),
+            proof_type: ProofType::CapabilityWitness,
+            proof_epoch: test_epoch(1),
+            validity_window_ticks: 100,
+        };
+        let b = ProofInputRef {
+            proof_id: "b".into(),
+            proof_type: ProofType::CapabilityWitness,
+            proof_epoch: test_epoch(1),
+            validity_window_ticks: 100,
+        };
+        assert!(a < b);
+    }
+
+    // -----------------------------------------------------------------------
+    // Engine query edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn consumed_proof_ids_empty_engine() {
+        let engine = make_engine(5);
+        assert!(engine.consumed_proof_ids().is_empty());
+    }
+
+    #[test]
+    fn consumed_proof_ids_only_inactive() {
+        let mut engine = make_engine(5);
+        let mut r = make_linkage("link-1", 5, &["proof-a"]);
+        r.active = false;
+        engine.register(r, "t1").unwrap();
+        assert!(engine.consumed_proof_ids().is_empty());
+    }
+
+    #[test]
+    fn produce_witness_events_empty_engine() {
+        let engine = make_engine(5);
+        let events = engine.produce_witness_events(0, 0);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn produce_witness_events_base_seq_offset() {
+        let mut engine = make_engine(5);
+        engine
+            .register(make_linkage("link-1", 5, &["proof-a"]), "t1")
+            .unwrap();
+        engine
+            .register(make_linkage("link-2", 5, &["proof-b"]), "t1")
+            .unwrap();
+        engine
+            .register(make_linkage("link-3", 5, &["proof-c"]), "t1")
+            .unwrap();
+        let events = engine.produce_witness_events(1000, 555);
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].seq, 1000);
+        assert_eq!(events[1].seq, 1001);
+        assert_eq!(events[2].seq, 1002);
+        assert_eq!(events[0].timestamp_tick, 555);
+    }
+
+    #[test]
+    fn engine_policy_id_accessible() {
+        let engine = make_engine(5);
+        assert_eq!(engine.policy_id(), "test-policy");
+    }
+
+    #[test]
+    fn engine_get_returns_none_for_missing() {
+        let engine = make_engine(5);
+        assert!(engine.get(&LinkageId::new("nonexistent")).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Multiple epoch changes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn multiple_epoch_changes_accumulate_invalidations() {
+        let mut engine = make_engine(1);
+        engine
+            .register(make_linkage("link-e1", 1, &["p1"]), "t1")
+            .unwrap();
+        let mut r2 = make_linkage("link-e2", 2, &["p2"]);
+        r2.validity_epoch = test_epoch(2);
+        engine.register(r2, "t1").unwrap();
+
+        // Epoch 1 -> 2: link-e1 invalidated
+        engine.on_epoch_change(test_epoch(2), "t2");
+        assert_eq!(engine.invalidations().len(), 1);
+        assert_eq!(engine.active_count(), 1);
+
+        // Epoch 2 -> 3: link-e2 invalidated
+        engine.on_epoch_change(test_epoch(3), "t3");
+        assert_eq!(engine.invalidations().len(), 2);
+        assert_eq!(engine.active_count(), 0);
+    }
+
+    #[test]
+    fn record_execution_increments_count_multiple_times() {
+        let mut engine = make_engine(5);
+        engine
+            .register(make_linkage("link-1", 5, &["proof-a"]), "t1")
+            .unwrap();
+        let lid = LinkageId::new("link-1");
+        let mut ir4 = make_ir4();
+        for i in 0..10 {
+            engine
+                .record_execution(&lid, &mut ir4, PerformanceDelta::NEUTRAL, &format!("t{i}"))
+                .unwrap();
+        }
+        assert_eq!(engine.get(&lid).unwrap().execution_count, 10);
+    }
+
+    #[test]
+    fn record_execution_overwrites_performance_delta() {
+        let mut engine = make_engine(5);
+        engine
+            .register(make_linkage("link-1", 5, &["proof-a"]), "t1")
+            .unwrap();
+        let lid = LinkageId::new("link-1");
+        let mut ir4 = make_ir4();
+
+        let perf1 = PerformanceDelta {
+            speedup_millionths: 1_100_000,
+            instruction_ratio_millionths: 900_000,
+        };
+        engine.record_execution(&lid, &mut ir4, perf1, "t2").unwrap();
+        assert_eq!(
+            engine.get(&lid).unwrap().performance_delta.unwrap().speedup_millionths,
+            1_100_000
+        );
+
+        let perf2 = PerformanceDelta {
+            speedup_millionths: 2_000_000,
+            instruction_ratio_millionths: 500_000,
+        };
+        engine.record_execution(&lid, &mut ir4, perf2, "t3").unwrap();
+        assert_eq!(
+            engine.get(&lid).unwrap().performance_delta.unwrap().speedup_millionths,
+            2_000_000
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Error code stability for all variants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_code_linkage_not_found_stable() {
+        assert_eq!(
+            error_code(&LinkageError::LinkageNotFound { id: "anything".into() }),
+            "LINKAGE_NOT_FOUND"
+        );
+    }
+
+    #[test]
+    fn error_code_already_inactive_stable() {
+        assert_eq!(
+            error_code(&LinkageError::AlreadyInactive { id: "z".into() }),
+            "LINKAGE_ALREADY_INACTIVE"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Proof revocation edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn invalidate_by_proof_multiple_linkages_sharing_proof() {
+        let mut engine = make_engine(5);
+        engine
+            .register(make_linkage("link-1", 5, &["shared-proof", "proof-b"]), "t1")
+            .unwrap();
+        engine
+            .register(make_linkage("link-2", 5, &["shared-proof", "proof-c"]), "t1")
+            .unwrap();
+        engine
+            .register(make_linkage("link-3", 5, &["proof-d"]), "t1")
+            .unwrap();
+
+        let rollbacks = engine.invalidate_by_proof("shared-proof", "t2");
+        assert_eq!(rollbacks.len(), 2);
+        assert_eq!(engine.active_count(), 1);
+        assert!(engine.get(&LinkageId::new("link-3")).unwrap().active);
+    }
+
+    #[test]
+    fn invalidate_manual_logs_cause() {
+        let mut engine = make_engine(5);
+        engine
+            .register(make_linkage("link-1", 5, &["proof-a"]), "t1")
+            .unwrap();
+        let lid = LinkageId::new("link-1");
+        engine.invalidate_manual(&lid, "admin-ops", "t2").unwrap();
+        assert_eq!(engine.invalidations().len(), 1);
+        match &engine.invalidations()[0].1 {
+            InvalidationCause::ManualInvalidation { operator_id } => {
+                assert_eq!(operator_id, "admin-ops");
+            }
+            other => panic!("expected ManualInvalidation, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // LinkageId newtype semantics
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn linkage_id_from_string() {
+        let id = LinkageId::new(String::from("owned-string"));
+        assert_eq!(id.as_str(), "owned-string");
+    }
+
+    #[test]
+    fn linkage_id_from_str_ref() {
+        let id = LinkageId::new("borrowed-str");
+        assert_eq!(id.as_str(), "borrowed-str");
+    }
+
+    #[test]
+    fn linkage_id_equality() {
+        let a = LinkageId::new("same");
+        let b = LinkageId::new("same");
+        let c = LinkageId::new("different");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    // -----------------------------------------------------------------------
+    // All ProofType variants in ProofInputRef
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn proof_input_ref_all_proof_types_roundtrip() {
+        let types = [
+            ProofType::CapabilityWitness,
+            ProofType::FlowProof,
+            ProofType::ReplayMotif,
+        ];
+        for pt in &types {
+            let input = ProofInputRef {
+                proof_id: "p1".into(),
+                proof_type: *pt,
+                proof_epoch: test_epoch(1),
+                validity_window_ticks: 100,
+            };
+            let json = serde_json::to_string(&input).unwrap();
+            let back: ProofInputRef = serde_json::from_str(&json).unwrap();
+            assert_eq!(input, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // All OptimizationClass variants in LinkageRecord
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn linkage_record_all_optimization_classes_roundtrip() {
+        let classes = [
+            OptimizationClass::HostcallDispatchSpecialization,
+            OptimizationClass::IfcCheckElision,
+            OptimizationClass::SuperinstructionFusion,
+            OptimizationClass::PathElimination,
+        ];
+        for oc in &classes {
+            let mut record = make_linkage("link-oc", 5, &["proof-a"]);
+            record.optimization_class = *oc;
+            let json = serde_json::to_string(&record).unwrap();
+            let back: LinkageRecord = serde_json::from_str(&json).unwrap();
+            assert_eq!(record, back);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Event audit trail completeness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn events_trace_id_preserved() {
+        let mut engine = make_engine(5);
+        engine
+            .register(make_linkage("link-1", 5, &["proof-a"]), "my-trace-42")
+            .unwrap();
+        let last = engine.events().last().unwrap();
+        assert_eq!(last.trace_id, "my-trace-42");
+    }
+
+    #[test]
+    fn events_policy_id_preserved() {
+        let mut engine = LinkageEngine::new("custom-policy-xyz", test_epoch(1));
+        engine
+            .register(make_linkage("link-1", 1, &["proof-a"]), "t1")
+            .unwrap();
+        let last = engine.events().last().unwrap();
+        assert_eq!(last.policy_id, "custom-policy-xyz");
+    }
+
+    #[test]
+    fn events_accumulate_across_operations() {
+        let mut engine = make_engine(5);
+        engine
+            .register(make_linkage("link-1", 5, &["proof-a"]), "t1")
+            .unwrap();
+        let lid = LinkageId::new("link-1");
+        let mut ir3 = make_ir3();
+        engine.attach_to_ir3(&lid, &mut ir3, "t2").unwrap();
+        let mut ir4 = make_ir4();
+        engine
+            .record_execution(&lid, &mut ir4, PerformanceDelta::NEUTRAL, "t3")
+            .unwrap();
+        engine.on_epoch_change(test_epoch(6), "t4");
+        // register + attach + record_execution + epoch_change = at least 4
+        assert!(engine.events().len() >= 4);
+    }
 }

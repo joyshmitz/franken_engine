@@ -466,6 +466,7 @@ impl Region {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     fn test_region() -> Region {
         Region::new("region-1", "extension_cell", "trace-1")
@@ -1256,5 +1257,484 @@ mod tests {
         region.register_obligation("ob-1", "first");
         region.register_obligation("ob-1", "replaced");
         assert_eq!(region.pending_obligations(), 1);
+    }
+
+    // ── Enrichment: Copy/Clone/Debug/Serde/Hash/Display/Edge ──
+
+    #[test]
+    fn region_state_copy_semantics() {
+        let a = RegionState::Running;
+        let b = a;
+        assert_eq!(a, b);
+        let c = RegionState::Closed;
+        let d = c;
+        assert_eq!(c, d);
+    }
+
+    #[test]
+    fn obligation_status_copy_semantics() {
+        let a = ObligationStatus::Pending;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn drain_deadline_copy_semantics() {
+        let a = DrainDeadline { max_ticks: 500 };
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn region_state_debug_distinct() {
+        let variants = [
+            RegionState::Running,
+            RegionState::CancelRequested,
+            RegionState::Draining,
+            RegionState::Finalizing,
+            RegionState::Closed,
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    #[test]
+    fn cancel_reason_debug_distinct() {
+        let variants = [
+            CancelReason::OperatorShutdown,
+            CancelReason::Quarantine,
+            CancelReason::Revocation,
+            CancelReason::BudgetExhausted,
+            CancelReason::ParentClosing,
+            CancelReason::Custom("x".to_string()),
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(set.len(), 6);
+    }
+
+    #[test]
+    fn obligation_status_debug_distinct() {
+        let variants = [
+            ObligationStatus::Pending,
+            ObligationStatus::Committed,
+            ObligationStatus::Aborted,
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn region_state_serde_variant_distinct() {
+        let variants = [
+            RegionState::Running,
+            RegionState::CancelRequested,
+            RegionState::Draining,
+            RegionState::Finalizing,
+            RegionState::Closed,
+        ];
+        let set: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    #[test]
+    fn cancel_reason_serde_variant_distinct() {
+        let variants = [
+            CancelReason::OperatorShutdown,
+            CancelReason::Quarantine,
+            CancelReason::Revocation,
+            CancelReason::BudgetExhausted,
+            CancelReason::ParentClosing,
+            CancelReason::Custom("x".to_string()),
+        ];
+        let set: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(set.len(), 6);
+    }
+
+    #[test]
+    fn obligation_status_serde_variant_distinct() {
+        let variants = [
+            ObligationStatus::Pending,
+            ObligationStatus::Committed,
+            ObligationStatus::Aborted,
+        ];
+        let set: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn cancel_reason_clone_independence() {
+        let a = CancelReason::Custom("original".to_string());
+        let b = a.clone();
+        assert_eq!(a, b);
+        let c = CancelReason::Custom("changed".to_string());
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn phase_order_violation_clone_independence() {
+        let a = PhaseOrderViolation {
+            current_state: RegionState::Running,
+            attempted_transition: "drain".to_string(),
+            region_id: "r1".to_string(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn obligation_clone_independence() {
+        let a = Obligation {
+            id: "ob-1".to_string(),
+            description: "flush".to_string(),
+            status: ObligationStatus::Pending,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn finalize_result_clone_independence() {
+        let a = FinalizeResult {
+            region_id: "r".to_string(),
+            success: true,
+            obligations_committed: 3,
+            obligations_aborted: 1,
+            drain_timeout_escalated: false,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn region_event_clone_independence() {
+        let a = RegionEvent {
+            trace_id: "t".to_string(),
+            region_id: "r".to_string(),
+            region_type: "ext".to_string(),
+            phase: RegionState::Running,
+            outcome: "ok".to_string(),
+            obligations_pending: 0,
+            drain_elapsed_ticks: 0,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn phase_order_violation_json_field_names() {
+        let v = PhaseOrderViolation {
+            current_state: RegionState::Running,
+            attempted_transition: "drain".to_string(),
+            region_id: "r".to_string(),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains("\"current_state\""));
+        assert!(json.contains("\"attempted_transition\""));
+        assert!(json.contains("\"region_id\""));
+    }
+
+    #[test]
+    fn obligation_json_field_names() {
+        let o = Obligation {
+            id: "o".to_string(),
+            description: "d".to_string(),
+            status: ObligationStatus::Pending,
+        };
+        let json = serde_json::to_string(&o).unwrap();
+        assert!(json.contains("\"id\""));
+        assert!(json.contains("\"description\""));
+        assert!(json.contains("\"status\""));
+    }
+
+    #[test]
+    fn finalize_result_json_field_names() {
+        let f = FinalizeResult {
+            region_id: "r".to_string(),
+            success: true,
+            obligations_committed: 0,
+            obligations_aborted: 0,
+            drain_timeout_escalated: false,
+        };
+        let json = serde_json::to_string(&f).unwrap();
+        assert!(json.contains("\"region_id\""));
+        assert!(json.contains("\"success\""));
+        assert!(json.contains("\"obligations_committed\""));
+        assert!(json.contains("\"obligations_aborted\""));
+        assert!(json.contains("\"drain_timeout_escalated\""));
+    }
+
+    #[test]
+    fn phase_order_violation_display_exact() {
+        let v = PhaseOrderViolation {
+            current_state: RegionState::CancelRequested,
+            attempted_transition: "cancel".to_string(),
+            region_id: "rgn-42".to_string(),
+        };
+        assert_eq!(
+            v.to_string(),
+            "phase order violation in region 'rgn-42': attempted 'cancel' from state 'cancel_requested'"
+        );
+    }
+
+    #[test]
+    fn phase_order_violation_std_error_source_none() {
+        let v = PhaseOrderViolation {
+            current_state: RegionState::Running,
+            attempted_transition: "finalize".to_string(),
+            region_id: "r".to_string(),
+        };
+        let e: &dyn std::error::Error = &v;
+        assert!(e.source().is_none());
+        assert!(!e.to_string().is_empty());
+    }
+
+    #[test]
+    fn region_state_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        let a = RegionState::Draining;
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        a.hash(&mut h1);
+        a.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn cancel_reason_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        let a = CancelReason::Quarantine;
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        a.hash(&mut h1);
+        a.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn region_state_ord_ordering() {
+        assert!(RegionState::Running < RegionState::CancelRequested);
+        assert!(RegionState::CancelRequested < RegionState::Draining);
+        assert!(RegionState::Draining < RegionState::Finalizing);
+        assert!(RegionState::Finalizing < RegionState::Closed);
+    }
+
+    #[test]
+    fn cancel_reason_ord_ordering() {
+        assert!(CancelReason::OperatorShutdown < CancelReason::Quarantine);
+    }
+
+    #[test]
+    fn region_state_serde_roundtrip() {
+        for state in [
+            RegionState::Running,
+            RegionState::CancelRequested,
+            RegionState::Draining,
+            RegionState::Finalizing,
+            RegionState::Closed,
+        ] {
+            let json = serde_json::to_string(&state).unwrap();
+            let back: RegionState = serde_json::from_str(&json).unwrap();
+            assert_eq!(state, back);
+        }
+    }
+
+    #[test]
+    fn cancel_reason_serde_roundtrip() {
+        for reason in [
+            CancelReason::OperatorShutdown,
+            CancelReason::Quarantine,
+            CancelReason::Revocation,
+            CancelReason::BudgetExhausted,
+            CancelReason::ParentClosing,
+            CancelReason::Custom("my-reason".to_string()),
+        ] {
+            let json = serde_json::to_string(&reason).unwrap();
+            let back: CancelReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(reason, back);
+        }
+    }
+
+    #[test]
+    fn finalize_result_serde_roundtrip() {
+        let f = FinalizeResult {
+            region_id: "r-42".to_string(),
+            success: false,
+            obligations_committed: 5,
+            obligations_aborted: 2,
+            drain_timeout_escalated: true,
+        };
+        let json = serde_json::to_string(&f).unwrap();
+        let back: FinalizeResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(f, back);
+    }
+
+    #[test]
+    fn debug_nonempty_region_state() {
+        assert!(!format!("{:?}", RegionState::Running).is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_cancel_reason() {
+        assert!(!format!("{:?}", CancelReason::Quarantine).is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_phase_order_violation() {
+        let v = PhaseOrderViolation {
+            current_state: RegionState::Running,
+            attempted_transition: "x".to_string(),
+            region_id: "r".to_string(),
+        };
+        assert!(!format!("{v:?}").is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_obligation() {
+        let o = Obligation {
+            id: "o".to_string(),
+            description: "d".to_string(),
+            status: ObligationStatus::Pending,
+        };
+        assert!(!format!("{o:?}").is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_drain_deadline() {
+        assert!(!format!("{:?}", DrainDeadline::default()).is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_finalize_result() {
+        let f = FinalizeResult {
+            region_id: "r".to_string(),
+            success: true,
+            obligations_committed: 0,
+            obligations_aborted: 0,
+            drain_timeout_escalated: false,
+        };
+        assert!(!format!("{f:?}").is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_region_event() {
+        let e = RegionEvent {
+            trace_id: "t".to_string(),
+            region_id: "r".to_string(),
+            region_type: "ext".to_string(),
+            phase: RegionState::Running,
+            outcome: "ok".to_string(),
+            obligations_pending: 0,
+            drain_elapsed_ticks: 0,
+        };
+        assert!(!format!("{e:?}").is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_region() {
+        let r = test_region();
+        assert!(!format!("{r:?}").is_empty());
+    }
+
+    #[test]
+    fn boundary_drain_deadline_default() {
+        let d = DrainDeadline::default();
+        assert_eq!(d.max_ticks, 10_000);
+    }
+
+    #[test]
+    fn boundary_drain_deadline_zero() {
+        let d = DrainDeadline { max_ticks: 0 };
+        assert_eq!(d.max_ticks, 0);
+    }
+
+    #[test]
+    fn boundary_drain_tick_on_non_draining_returns_false() {
+        let mut r = test_region();
+        assert!(!r.drain_tick());
+    }
+
+    #[test]
+    fn boundary_commit_nonexistent_obligation_returns_false() {
+        let mut r = test_region();
+        assert!(!r.commit_obligation("nonexistent"));
+    }
+
+    #[test]
+    fn boundary_abort_nonexistent_obligation_returns_false() {
+        let mut r = test_region();
+        assert!(!r.abort_obligation("nonexistent"));
+    }
+
+    #[test]
+    fn boundary_empty_region_event_count() {
+        let r = test_region();
+        assert_eq!(r.event_count(), 0);
+    }
+
+    #[test]
+    fn boundary_empty_region_child_count() {
+        let r = test_region();
+        assert_eq!(r.child_count(), 0);
+    }
+
+    #[test]
+    fn drain_timeout_escalation_aborts_pending() {
+        let mut r = test_region();
+        r.register_obligation("ob-1", "stuck");
+        r.cancel(CancelReason::OperatorShutdown).unwrap();
+        r.drain(DrainDeadline { max_ticks: 2 }).unwrap();
+        // Tick past deadline
+        r.drain_tick();
+        r.drain_tick();
+        assert!(r.drain_tick()); // timed out
+        let result = r.finalize().unwrap();
+        // obligation was force-aborted
+        assert_eq!(result.obligations_aborted, 1);
+        assert!(result.drain_timeout_escalated);
+    }
+
+    #[test]
+    fn region_new_starts_running() {
+        let r = Region::new("id", "type", "trace");
+        assert_eq!(r.state(), RegionState::Running);
+        assert!(r.cancel_reason().is_none());
+        assert_eq!(r.pending_obligations(), 0);
+        assert_eq!(r.child_count(), 0);
+    }
+
+    #[test]
+    fn drain_events_returns_child_events_too() {
+        let mut parent = Region::new("p", "svc", "t");
+        let child = Region::new("c", "ext", "t");
+        parent.add_child(child);
+        parent
+            .close(CancelReason::Quarantine, DrainDeadline::default())
+            .unwrap();
+        let events = parent.drain_events();
+        // Should have events from both parent and child
+        let parent_events: Vec<_> = events.iter().filter(|e| e.region_id == "p").collect();
+        let child_events: Vec<_> = events.iter().filter(|e| e.region_id == "c").collect();
+        assert!(!parent_events.is_empty());
+        assert!(!child_events.is_empty());
+    }
+
+    #[test]
+    fn drain_events_is_idempotent_empty_on_second_call() {
+        let mut r = test_region();
+        r.close(CancelReason::Revocation, DrainDeadline::default())
+            .unwrap();
+        let first = r.drain_events();
+        assert!(!first.is_empty());
+        let second = r.drain_events();
+        assert!(second.is_empty());
     }
 }

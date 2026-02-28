@@ -1515,4 +1515,1051 @@ mod tests {
         assert_eq!(eval1.fail_count, eval2.fail_count);
         assert_eq!(eval1.overall_pass, eval2.overall_pass);
     }
+
+    // ===================================================================
+    // Enrichment batch 3: Copy semantics
+    // ===================================================================
+
+    #[test]
+    fn milestone_copy_semantics() {
+        let a = Milestone::Alpha;
+        let b = a; // copy
+        let c = a; // still valid after copy
+        assert_eq!(b, c);
+        assert_eq!(a, Milestone::Alpha);
+    }
+
+    #[test]
+    fn metric_kind_copy_semantics() {
+        let a = MetricKind::BundleSizeBytes;
+        let b = a;
+        let c = a;
+        assert_eq!(b, c);
+        assert_eq!(a, MetricKind::BundleSizeBytes);
+    }
+
+    #[test]
+    fn milestone_copy_all_variants() {
+        for ms in [Milestone::Alpha, Milestone::Beta, Milestone::Ga] {
+            let copied = ms;
+            assert_eq!(ms, copied);
+        }
+    }
+
+    #[test]
+    fn metric_kind_copy_all_variants() {
+        for kind in MetricKind::ALL {
+            let copied = kind;
+            assert_eq!(kind, copied);
+        }
+    }
+
+    // ===================================================================
+    // Enrichment batch 3: Debug distinctness
+    // ===================================================================
+
+    #[test]
+    fn milestone_debug_all_distinct() {
+        let debugs: std::collections::BTreeSet<String> = [
+            Milestone::Alpha,
+            Milestone::Beta,
+            Milestone::Ga,
+        ]
+        .iter()
+        .map(|m| format!("{m:?}"))
+        .collect();
+        assert_eq!(debugs.len(), 3, "all Milestone variants have distinct Debug");
+    }
+
+    #[test]
+    fn metric_kind_debug_all_distinct() {
+        let debugs: std::collections::BTreeSet<String> =
+            MetricKind::ALL.iter().map(|k| format!("{k:?}")).collect();
+        assert_eq!(
+            debugs.len(),
+            10,
+            "all 10 MetricKind variants have distinct Debug"
+        );
+    }
+
+    #[test]
+    fn threshold_result_debug_all_variants_distinct() {
+        let pass = ThresholdResult::Pass {
+            metric: MetricKind::CompatibilityPassRate,
+            milestone: Milestone::Alpha,
+            value: 900_000,
+            threshold: 800_000,
+            headroom: 100_000,
+        };
+        let fail = ThresholdResult::Fail {
+            metric: MetricKind::CompatibilityPassRate,
+            milestone: Milestone::Alpha,
+            value: 700_000,
+            threshold: 800_000,
+            shortfall: 100_000,
+        };
+        let insuf = ThresholdResult::InsufficientData {
+            metric: MetricKind::CompatibilityPassRate,
+            milestone: Milestone::Alpha,
+        };
+        let debugs: std::collections::BTreeSet<String> =
+            [&pass, &fail, &insuf].iter().map(|r| format!("{r:?}")).collect();
+        assert_eq!(debugs.len(), 3, "all ThresholdResult variants distinct Debug");
+    }
+
+    // ===================================================================
+    // Enrichment batch 3: Serde variant distinctness
+    // ===================================================================
+
+    #[test]
+    fn milestone_serde_variant_distinctness() {
+        let jsons: std::collections::BTreeSet<String> = [
+            Milestone::Alpha,
+            Milestone::Beta,
+            Milestone::Ga,
+        ]
+        .iter()
+        .map(|m| serde_json::to_string(m).unwrap())
+        .collect();
+        assert_eq!(jsons.len(), 3, "all Milestone variants serialize distinctly");
+    }
+
+    #[test]
+    fn metric_kind_serde_variant_distinctness() {
+        let jsons: std::collections::BTreeSet<String> = MetricKind::ALL
+            .iter()
+            .map(|k| serde_json::to_string(k).unwrap())
+            .collect();
+        assert_eq!(
+            jsons.len(),
+            10,
+            "all 10 MetricKind variants serialize distinctly"
+        );
+    }
+
+    #[test]
+    fn threshold_result_serde_variant_distinctness() {
+        let pass = ThresholdResult::Pass {
+            metric: MetricKind::BundleSizeBytes,
+            milestone: Milestone::Alpha,
+            value: 5_000,
+            threshold: 10_000,
+            headroom: 5_000,
+        };
+        let fail = ThresholdResult::Fail {
+            metric: MetricKind::BundleSizeBytes,
+            milestone: Milestone::Alpha,
+            value: 15_000,
+            threshold: 10_000,
+            shortfall: 5_000,
+        };
+        let insuf = ThresholdResult::InsufficientData {
+            metric: MetricKind::BundleSizeBytes,
+            milestone: Milestone::Alpha,
+        };
+        let jsons: std::collections::BTreeSet<String> =
+            [&pass, &fail, &insuf].iter().map(|r| serde_json::to_string(r).unwrap()).collect();
+        assert_eq!(jsons.len(), 3);
+    }
+
+    // ===================================================================
+    // Enrichment batch 3: Clone independence
+    // ===================================================================
+
+    #[test]
+    fn threshold_clone_independence() {
+        let original = Threshold {
+            metric: MetricKind::BundleSizeBytes,
+            milestone: Milestone::Alpha,
+            boundary: 10_000,
+        };
+        let mut cloned = original.clone();
+        cloned.boundary = 99_999;
+        assert_eq!(original.boundary, 10_000);
+        assert_eq!(cloned.boundary, 99_999);
+    }
+
+    #[test]
+    fn metric_sample_clone_independence() {
+        let original = sample(MetricKind::CompatibilityPassRate, 900_000, 1);
+        let mut cloned = original.clone();
+        cloned.value = 0;
+        assert_eq!(original.value, 900_000);
+        assert_eq!(cloned.value, 0);
+    }
+
+    #[test]
+    fn metric_summary_clone_independence() {
+        let original = MetricSummary {
+            kind: MetricKind::BundleSizeBytes,
+            count: 10,
+            min: 100,
+            max: 5000,
+            mean: 2500,
+            p50: 2500,
+            p95: 4500,
+            p99: 4900,
+        };
+        let mut cloned = original.clone();
+        cloned.count = 999;
+        cloned.min = 0;
+        assert_eq!(original.count, 10);
+        assert_eq!(original.min, 100);
+    }
+
+    #[test]
+    fn scorecard_evaluation_clone_independence() {
+        let original = ScorecardEvaluation {
+            milestone: Milestone::Beta,
+            epoch: epoch(1),
+            results: vec![ThresholdResult::InsufficientData {
+                metric: MetricKind::BundleSizeBytes,
+                milestone: Milestone::Beta,
+            }],
+            overall_pass: false,
+            pass_count: 0,
+            fail_count: 1,
+            pass_rate_millionths: 0,
+        };
+        let mut cloned = original.clone();
+        cloned.overall_pass = true;
+        cloned.results.clear();
+        assert!(!original.overall_pass);
+        assert_eq!(original.results.len(), 1);
+    }
+
+    #[test]
+    fn scorecard_clone_independence() {
+        let mut original = Scorecard::new(epoch(1));
+        original.record(sample(MetricKind::BundleSizeBytes, 1_000, 1));
+        let mut cloned = original.clone();
+        cloned.record(sample(MetricKind::BundleSizeBytes, 2_000, 2));
+        assert_eq!(original.observation_count(MetricKind::BundleSizeBytes), 1);
+        assert_eq!(cloned.observation_count(MetricKind::BundleSizeBytes), 2);
+    }
+
+    // ===================================================================
+    // Enrichment batch 3: JSON field-name stability
+    // ===================================================================
+
+    #[test]
+    fn threshold_json_field_names() {
+        let t = Threshold {
+            metric: MetricKind::BundleSizeBytes,
+            milestone: Milestone::Alpha,
+            boundary: 10_000,
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(json.contains("\"metric\""), "missing 'metric' field");
+        assert!(json.contains("\"milestone\""), "missing 'milestone' field");
+        assert!(json.contains("\"boundary\""), "missing 'boundary' field");
+    }
+
+    #[test]
+    fn metric_sample_json_field_names() {
+        let s = sample(MetricKind::CompatibilityPassRate, 950_000, 42);
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"kind\""), "missing 'kind' field");
+        assert!(json.contains("\"value\""), "missing 'value' field");
+        assert!(json.contains("\"epoch\""), "missing 'epoch' field");
+    }
+
+    #[test]
+    fn metric_summary_json_field_names() {
+        let summary = MetricSummary {
+            kind: MetricKind::BundleSizeBytes,
+            count: 10,
+            min: 100,
+            max: 5000,
+            mean: 2500,
+            p50: 2500,
+            p95: 4500,
+            p99: 4900,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        for field in ["kind", "count", "min", "max", "mean", "p50", "p95", "p99"] {
+            assert!(
+                json.contains(&format!("\"{field}\"")),
+                "missing '{field}' field in MetricSummary JSON"
+            );
+        }
+    }
+
+    #[test]
+    fn scorecard_evaluation_json_field_names() {
+        let eval = ScorecardEvaluation {
+            milestone: Milestone::Alpha,
+            epoch: epoch(1),
+            results: vec![],
+            overall_pass: true,
+            pass_count: 10,
+            fail_count: 0,
+            pass_rate_millionths: 1_000_000,
+        };
+        let json = serde_json::to_string(&eval).unwrap();
+        for field in [
+            "milestone",
+            "epoch",
+            "results",
+            "overall_pass",
+            "pass_count",
+            "fail_count",
+            "pass_rate_millionths",
+        ] {
+            assert!(
+                json.contains(&format!("\"{field}\"")),
+                "missing '{field}' field in ScorecardEvaluation JSON"
+            );
+        }
+    }
+
+    #[test]
+    fn threshold_result_pass_json_field_names() {
+        let pass = ThresholdResult::Pass {
+            metric: MetricKind::CompatibilityPassRate,
+            milestone: Milestone::Alpha,
+            value: 900_000,
+            threshold: 800_000,
+            headroom: 100_000,
+        };
+        let json = serde_json::to_string(&pass).unwrap();
+        for field in ["metric", "milestone", "value", "threshold", "headroom"] {
+            assert!(
+                json.contains(&format!("\"{field}\"")),
+                "missing '{field}' in ThresholdResult::Pass JSON"
+            );
+        }
+    }
+
+    #[test]
+    fn threshold_result_fail_json_field_names() {
+        let fail = ThresholdResult::Fail {
+            metric: MetricKind::BundleSizeBytes,
+            milestone: Milestone::Ga,
+            value: 5_000_000,
+            threshold: 2_000_000,
+            shortfall: 3_000_000,
+        };
+        let json = serde_json::to_string(&fail).unwrap();
+        for field in ["metric", "milestone", "value", "threshold", "shortfall"] {
+            assert!(
+                json.contains(&format!("\"{field}\"")),
+                "missing '{field}' in ThresholdResult::Fail JSON"
+            );
+        }
+    }
+
+    #[test]
+    fn threshold_result_insufficient_json_field_names() {
+        let insuf = ThresholdResult::InsufficientData {
+            metric: MetricKind::RuntimeMemoryBytes,
+            milestone: Milestone::Beta,
+        };
+        let json = serde_json::to_string(&insuf).unwrap();
+        assert!(json.contains("\"metric\""));
+        assert!(json.contains("\"milestone\""));
+    }
+
+    // ===================================================================
+    // Enrichment batch 3: Display format checks
+    // ===================================================================
+
+    #[test]
+    fn milestone_display_format_exact() {
+        assert_eq!(Milestone::Alpha.to_string(), "alpha");
+        assert_eq!(Milestone::Beta.to_string(), "beta");
+        assert_eq!(Milestone::Ga.to_string(), "ga");
+    }
+
+    #[test]
+    fn metric_kind_display_format_exact_all() {
+        let expected = [
+            (MetricKind::CompatibilityPassRate, "compatibility_pass_rate"),
+            (MetricKind::ResponsivenessP99Us, "responsiveness_p99_us"),
+            (MetricKind::RenderLatencyP50Us, "render_latency_p50_us"),
+            (MetricKind::RenderLatencyP95Us, "render_latency_p95_us"),
+            (MetricKind::RenderLatencyP99Us, "render_latency_p99_us"),
+            (MetricKind::BundleSizeBytes, "bundle_size_bytes"),
+            (MetricKind::RuntimeMemoryBytes, "runtime_memory_bytes"),
+            (MetricKind::FallbackFrequency, "fallback_frequency"),
+            (MetricKind::RollbackLatencyP99Us, "rollback_latency_p99_us"),
+            (MetricKind::EvidenceCompleteness, "evidence_completeness"),
+        ];
+        for (kind, name) in expected {
+            assert_eq!(kind.to_string(), name, "Display mismatch for {kind:?}");
+        }
+    }
+
+    #[test]
+    fn milestone_display_all_distinct() {
+        let displays: std::collections::BTreeSet<String> = [
+            Milestone::Alpha,
+            Milestone::Beta,
+            Milestone::Ga,
+        ]
+        .iter()
+        .map(|m| m.to_string())
+        .collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    // ===================================================================
+    // Enrichment batch 3: Hash consistency
+    // ===================================================================
+
+    #[test]
+    fn milestone_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        for ms in [Milestone::Alpha, Milestone::Beta, Milestone::Ga] {
+            let mut h1 = DefaultHasher::new();
+            let mut h2 = DefaultHasher::new();
+            ms.hash(&mut h1);
+            ms.hash(&mut h2);
+            assert_eq!(
+                h1.finish(),
+                h2.finish(),
+                "hash not consistent for {ms:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn metric_kind_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        for kind in MetricKind::ALL {
+            let mut h1 = DefaultHasher::new();
+            let mut h2 = DefaultHasher::new();
+            kind.hash(&mut h1);
+            kind.hash(&mut h2);
+            assert_eq!(
+                h1.finish(),
+                h2.finish(),
+                "hash not consistent for {kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn milestone_hash_distinct_variants() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let hashes: std::collections::BTreeSet<u64> = [
+            Milestone::Alpha,
+            Milestone::Beta,
+            Milestone::Ga,
+        ]
+        .iter()
+        .map(|ms| {
+            let mut h = DefaultHasher::new();
+            ms.hash(&mut h);
+            h.finish()
+        })
+        .collect();
+        assert_eq!(hashes.len(), 3, "Milestone variants have distinct hashes");
+    }
+
+    #[test]
+    fn metric_kind_hash_distinct_variants() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let hashes: std::collections::BTreeSet<u64> = MetricKind::ALL
+            .iter()
+            .map(|k| {
+                let mut h = DefaultHasher::new();
+                k.hash(&mut h);
+                h.finish()
+            })
+            .collect();
+        assert_eq!(hashes.len(), 10, "MetricKind variants have distinct hashes");
+    }
+
+    // ===================================================================
+    // Enrichment batch 3: Boundary/edge cases
+    // ===================================================================
+
+    #[test]
+    fn metric_sample_zero_value() {
+        let s = sample(MetricKind::CompatibilityPassRate, 0, 1);
+        let json = serde_json::to_string(&s).unwrap();
+        let back: MetricSample = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.value, 0);
+    }
+
+    #[test]
+    fn metric_sample_negative_value() {
+        let s = sample(MetricKind::CompatibilityPassRate, -1, 1);
+        let json = serde_json::to_string(&s).unwrap();
+        let back: MetricSample = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.value, -1);
+    }
+
+    #[test]
+    fn metric_sample_i64_max() {
+        let s = sample(MetricKind::BundleSizeBytes, i64::MAX, 1);
+        let json = serde_json::to_string(&s).unwrap();
+        let back: MetricSample = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.value, i64::MAX);
+    }
+
+    #[test]
+    fn metric_sample_i64_min() {
+        let s = sample(MetricKind::BundleSizeBytes, i64::MIN, 1);
+        let json = serde_json::to_string(&s).unwrap();
+        let back: MetricSample = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.value, i64::MIN);
+    }
+
+    #[test]
+    fn metric_summary_zero_count_edge() {
+        // MetricSummary with count=0 should still roundtrip
+        let summary = MetricSummary {
+            kind: MetricKind::FallbackFrequency,
+            count: 0,
+            min: 0,
+            max: 0,
+            mean: 0,
+            p50: 0,
+            p95: 0,
+            p99: 0,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let back: MetricSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, back);
+    }
+
+    #[test]
+    fn metric_summary_u64_max_count() {
+        let summary = MetricSummary {
+            kind: MetricKind::BundleSizeBytes,
+            count: u64::MAX,
+            min: i64::MIN,
+            max: i64::MAX,
+            mean: 0,
+            p50: 0,
+            p95: 0,
+            p99: 0,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let back: MetricSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary.count, back.count);
+        assert_eq!(summary.min, back.min);
+        assert_eq!(summary.max, back.max);
+    }
+
+    #[test]
+    fn threshold_boundary_zero() {
+        let t = Threshold {
+            metric: MetricKind::BundleSizeBytes,
+            milestone: Milestone::Alpha,
+            boundary: 0,
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: Threshold = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.boundary, 0);
+    }
+
+    #[test]
+    fn threshold_boundary_negative() {
+        let t = Threshold {
+            metric: MetricKind::BundleSizeBytes,
+            milestone: Milestone::Alpha,
+            boundary: -1,
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: Threshold = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.boundary, -1);
+    }
+
+    #[test]
+    fn scorecard_epoch_zero() {
+        let sc = Scorecard::new(epoch(0));
+        let eval = sc.evaluate(Milestone::Alpha);
+        assert_eq!(eval.epoch, epoch(0));
+    }
+
+    #[test]
+    fn scorecard_epoch_u64_max() {
+        let sc = Scorecard::new(epoch(u64::MAX));
+        let eval = sc.evaluate(Milestone::Alpha);
+        assert_eq!(eval.epoch, epoch(u64::MAX));
+    }
+
+    #[test]
+    fn scorecard_evaluation_empty_results_serde() {
+        let eval = ScorecardEvaluation {
+            milestone: Milestone::Ga,
+            epoch: epoch(0),
+            results: vec![],
+            overall_pass: false,
+            pass_count: 0,
+            fail_count: 0,
+            pass_rate_millionths: 0,
+        };
+        let json = serde_json::to_string(&eval).unwrap();
+        let back: ScorecardEvaluation = serde_json::from_str(&json).unwrap();
+        assert_eq!(eval, back);
+    }
+
+    #[test]
+    fn scorecard_evaluation_max_counts() {
+        let eval = ScorecardEvaluation {
+            milestone: Milestone::Alpha,
+            epoch: epoch(u64::MAX),
+            results: vec![],
+            overall_pass: false,
+            pass_count: u64::MAX,
+            fail_count: u64::MAX,
+            pass_rate_millionths: i64::MAX,
+        };
+        let json = serde_json::to_string(&eval).unwrap();
+        let back: ScorecardEvaluation = serde_json::from_str(&json).unwrap();
+        assert_eq!(eval, back);
+    }
+
+    #[test]
+    fn evaluate_exact_boundary_higher_is_better_passes() {
+        let thresholds = vec![Threshold {
+            metric: MetricKind::CompatibilityPassRate,
+            milestone: Milestone::Alpha,
+            boundary: 800_000,
+        }];
+        let mut sc = Scorecard::with_thresholds(thresholds, epoch(1));
+        sc.record(sample(MetricKind::CompatibilityPassRate, 800_000, 1)); // exactly at boundary
+        let eval = sc.evaluate(Milestone::Alpha);
+        assert!(eval.overall_pass, "exact boundary should pass for higher-is-better");
+    }
+
+    #[test]
+    fn evaluate_exact_boundary_lower_is_better_passes() {
+        let thresholds = vec![Threshold {
+            metric: MetricKind::BundleSizeBytes,
+            milestone: Milestone::Alpha,
+            boundary: 10_000,
+        }];
+        let mut sc = Scorecard::with_thresholds(thresholds, epoch(1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 10_000, 1)); // exactly at boundary
+        let eval = sc.evaluate(Milestone::Alpha);
+        assert!(eval.overall_pass, "exact boundary should pass for lower-is-better");
+    }
+
+    #[test]
+    fn evaluate_one_above_boundary_higher_is_better_passes() {
+        let thresholds = vec![Threshold {
+            metric: MetricKind::CompatibilityPassRate,
+            milestone: Milestone::Alpha,
+            boundary: 800_000,
+        }];
+        let mut sc = Scorecard::with_thresholds(thresholds, epoch(1));
+        sc.record(sample(MetricKind::CompatibilityPassRate, 800_001, 1));
+        let eval = sc.evaluate(Milestone::Alpha);
+        assert!(eval.overall_pass);
+    }
+
+    #[test]
+    fn evaluate_one_below_boundary_higher_is_better_fails() {
+        let thresholds = vec![Threshold {
+            metric: MetricKind::CompatibilityPassRate,
+            milestone: Milestone::Alpha,
+            boundary: 800_000,
+        }];
+        let mut sc = Scorecard::with_thresholds(thresholds, epoch(1));
+        sc.record(sample(MetricKind::CompatibilityPassRate, 799_999, 1));
+        let eval = sc.evaluate(Milestone::Alpha);
+        assert!(!eval.overall_pass);
+    }
+
+    #[test]
+    fn evaluate_one_below_boundary_lower_is_better_passes() {
+        let thresholds = vec![Threshold {
+            metric: MetricKind::BundleSizeBytes,
+            milestone: Milestone::Alpha,
+            boundary: 10_000,
+        }];
+        let mut sc = Scorecard::with_thresholds(thresholds, epoch(1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 9_999, 1));
+        let eval = sc.evaluate(Milestone::Alpha);
+        assert!(eval.overall_pass);
+    }
+
+    #[test]
+    fn evaluate_one_above_boundary_lower_is_better_fails() {
+        let thresholds = vec![Threshold {
+            metric: MetricKind::BundleSizeBytes,
+            milestone: Milestone::Alpha,
+            boundary: 10_000,
+        }];
+        let mut sc = Scorecard::with_thresholds(thresholds, epoch(1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 10_001, 1));
+        let eval = sc.evaluate(Milestone::Alpha);
+        assert!(!eval.overall_pass);
+    }
+
+    // ===================================================================
+    // Enrichment batch 3: Serde roundtrips (complex structs)
+    // ===================================================================
+
+    #[test]
+    fn scorecard_full_serde_roundtrip() {
+        let mut sc = Scorecard::new(epoch(42));
+        for i in 0..20 {
+            sc.record(sample(MetricKind::CompatibilityPassRate, 900_000 + i, 42));
+            sc.record(sample(MetricKind::BundleSizeBytes, 1_000_000 + i * 1000, 42));
+            sc.record(sample(MetricKind::FallbackFrequency, 50_000 + i, 42));
+        }
+        let json = serde_json::to_string(&sc).unwrap();
+        let back: Scorecard = serde_json::from_str(&json).unwrap();
+        assert_eq!(sc.total_observations(), back.total_observations());
+        assert_eq!(
+            sc.observation_count(MetricKind::CompatibilityPassRate),
+            back.observation_count(MetricKind::CompatibilityPassRate)
+        );
+        assert_eq!(
+            sc.observation_count(MetricKind::BundleSizeBytes),
+            back.observation_count(MetricKind::BundleSizeBytes)
+        );
+        // Evaluation results should match
+        let eval_orig = sc.evaluate(Milestone::Alpha);
+        let eval_back = back.evaluate(Milestone::Alpha);
+        assert_eq!(eval_orig.overall_pass, eval_back.overall_pass);
+        assert_eq!(eval_orig.pass_count, eval_back.pass_count);
+    }
+
+    #[test]
+    fn scorecard_evaluation_full_serde_roundtrip() {
+        let mut sc = Scorecard::new(epoch(1));
+        for _ in 0..10 {
+            sc.record(sample(MetricKind::CompatibilityPassRate, 900_000, 1));
+            sc.record(sample(MetricKind::ResponsivenessP99Us, 50_000, 1));
+            sc.record(sample(MetricKind::RenderLatencyP50Us, 5_000, 1));
+            sc.record(sample(MetricKind::RenderLatencyP95Us, 20_000, 1));
+            sc.record(sample(MetricKind::RenderLatencyP99Us, 50_000, 1));
+            sc.record(sample(MetricKind::BundleSizeBytes, 5_000_000, 1));
+            sc.record(sample(MetricKind::RuntimeMemoryBytes, 100_000_000, 1));
+            sc.record(sample(MetricKind::FallbackFrequency, 100_000, 1));
+            sc.record(sample(MetricKind::RollbackLatencyP99Us, 200_000, 1));
+            sc.record(sample(MetricKind::EvidenceCompleteness, 600_000, 1));
+        }
+        let eval = sc.evaluate(Milestone::Alpha);
+        let json = serde_json::to_string(&eval).unwrap();
+        let back: ScorecardEvaluation = serde_json::from_str(&json).unwrap();
+        assert_eq!(eval, back);
+        assert!(back.overall_pass);
+        assert_eq!(back.pass_count, 10);
+    }
+
+    #[test]
+    fn threshold_result_pass_serde_preserves_all_fields() {
+        let result = ThresholdResult::Pass {
+            metric: MetricKind::EvidenceCompleteness,
+            milestone: Milestone::Ga,
+            value: 995_000,
+            threshold: 990_000,
+            headroom: 5_000,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: ThresholdResult = serde_json::from_str(&json).unwrap();
+        if let ThresholdResult::Pass {
+            metric,
+            milestone,
+            value,
+            threshold,
+            headroom,
+        } = back
+        {
+            assert_eq!(metric, MetricKind::EvidenceCompleteness);
+            assert_eq!(milestone, Milestone::Ga);
+            assert_eq!(value, 995_000);
+            assert_eq!(threshold, 990_000);
+            assert_eq!(headroom, 5_000);
+        } else {
+            panic!("expected Pass variant after roundtrip");
+        }
+    }
+
+    #[test]
+    fn threshold_result_fail_serde_preserves_all_fields() {
+        let result = ThresholdResult::Fail {
+            metric: MetricKind::RollbackLatencyP99Us,
+            milestone: Milestone::Beta,
+            value: 300_000,
+            threshold: 250_000,
+            shortfall: 50_000,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: ThresholdResult = serde_json::from_str(&json).unwrap();
+        if let ThresholdResult::Fail {
+            metric,
+            milestone,
+            value,
+            threshold,
+            shortfall,
+        } = back
+        {
+            assert_eq!(metric, MetricKind::RollbackLatencyP99Us);
+            assert_eq!(milestone, Milestone::Beta);
+            assert_eq!(value, 300_000);
+            assert_eq!(threshold, 250_000);
+            assert_eq!(shortfall, 50_000);
+        } else {
+            panic!("expected Fail variant after roundtrip");
+        }
+    }
+
+    // ===================================================================
+    // Enrichment batch 3: Additional coverage
+    // ===================================================================
+
+    #[test]
+    fn higher_is_better_all_metric_kinds() {
+        // Ensure every metric has a defined polarity
+        for kind in MetricKind::ALL {
+            let _result = kind.higher_is_better();
+        }
+        // Only two should be higher-is-better
+        let higher_count = MetricKind::ALL.iter().filter(|k| k.higher_is_better()).count();
+        assert_eq!(higher_count, 2);
+        let lower_count = MetricKind::ALL.iter().filter(|k| !k.higher_is_better()).count();
+        assert_eq!(lower_count, 8);
+    }
+
+    #[test]
+    fn metric_kind_ord_is_deterministic() {
+        let mut kinds: Vec<MetricKind> = MetricKind::ALL.to_vec();
+        let sorted1 = {
+            let mut v = kinds.clone();
+            v.sort();
+            v
+        };
+        let sorted2 = {
+            kinds.sort();
+            kinds
+        };
+        assert_eq!(sorted1, sorted2);
+    }
+
+    #[test]
+    fn milestone_ord_is_deterministic() {
+        let mut ms = vec![Milestone::Ga, Milestone::Alpha, Milestone::Beta];
+        ms.sort();
+        assert_eq!(ms, vec![Milestone::Alpha, Milestone::Beta, Milestone::Ga]);
+    }
+
+    #[test]
+    fn report_contains_epoch() {
+        let sc = Scorecard::new(epoch(999));
+        let report = sc.report(Milestone::Alpha);
+        assert!(report.contains("999"), "report should contain epoch number");
+    }
+
+    #[test]
+    fn report_contains_headroom_for_passing_metric() {
+        let thresholds = vec![Threshold {
+            metric: MetricKind::BundleSizeBytes,
+            milestone: Milestone::Alpha,
+            boundary: 10_000,
+        }];
+        let mut sc = Scorecard::with_thresholds(thresholds, epoch(1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 5_000, 1));
+        let report = sc.report(Milestone::Alpha);
+        assert!(report.contains("headroom"));
+    }
+
+    #[test]
+    fn report_contains_shortfall_for_failing_metric() {
+        let thresholds = vec![Threshold {
+            metric: MetricKind::BundleSizeBytes,
+            milestone: Milestone::Alpha,
+            boundary: 1_000,
+        }];
+        let mut sc = Scorecard::with_thresholds(thresholds, epoch(1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 5_000, 1));
+        let report = sc.report(Milestone::Alpha);
+        assert!(report.contains("shortfall"));
+    }
+
+    #[test]
+    fn default_thresholds_30_total() {
+        let thresholds = default_thresholds();
+        assert_eq!(thresholds.len(), 30);
+    }
+
+    #[test]
+    fn default_thresholds_each_metric_has_all_milestones() {
+        let thresholds = default_thresholds();
+        for kind in MetricKind::ALL {
+            for ms in [Milestone::Alpha, Milestone::Beta, Milestone::Ga] {
+                assert!(
+                    thresholds
+                        .iter()
+                        .any(|t| t.metric == kind && t.milestone == ms),
+                    "missing threshold for {kind:?} at {ms:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn scorecard_record_updates_epoch() {
+        let mut sc = Scorecard::new(epoch(1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 1_000, 5));
+        let eval = sc.evaluate(Milestone::Alpha);
+        assert_eq!(eval.epoch, epoch(5));
+    }
+
+    #[test]
+    fn scorecard_record_preserves_sorted_order() {
+        let mut sc = Scorecard::new(epoch(1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 5_000, 1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 1_000, 1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 3_000, 1));
+        let summary = sc.summary(MetricKind::BundleSizeBytes).unwrap();
+        assert_eq!(summary.min, 1_000);
+        assert_eq!(summary.max, 5_000);
+    }
+
+    #[test]
+    fn scorecard_with_thresholds_empty_no_metrics() {
+        let sc = Scorecard::with_thresholds(vec![], epoch(1));
+        assert_eq!(sc.thresholds().len(), 0);
+        assert_eq!(sc.total_observations(), 0);
+    }
+
+    #[test]
+    fn highest_passing_milestone_beta() {
+        let mut sc = Scorecard::new(epoch(1));
+        // Data that passes beta but fails GA
+        for _ in 0..10 {
+            sc.record(sample(MetricKind::CompatibilityPassRate, 970_000, 1)); // > 95% (beta) but < 99% (GA)
+            sc.record(sample(MetricKind::ResponsivenessP99Us, 40_000, 1)); // < 50ms (beta) but > 16ms (GA)
+            sc.record(sample(MetricKind::RenderLatencyP50Us, 4_000, 1)); // < 5ms (beta) but > 2ms (GA)
+            sc.record(sample(MetricKind::RenderLatencyP95Us, 15_000, 1)); // < 16ms (beta) but > 8ms (GA)
+            sc.record(sample(MetricKind::RenderLatencyP99Us, 40_000, 1)); // < 50ms (beta) but > 16ms (GA)
+            sc.record(sample(MetricKind::BundleSizeBytes, 4_000_000, 1)); // < 5MB (beta) but > 2MB (GA)
+            sc.record(sample(MetricKind::RuntimeMemoryBytes, 120_000_000, 1)); // < 128MB (beta) but > 64MB (GA)
+            sc.record(sample(MetricKind::FallbackFrequency, 40_000, 1)); // < 5% (beta) but > 1% (GA)
+            sc.record(sample(MetricKind::RollbackLatencyP99Us, 200_000, 1)); // < 250ms (beta) but > 100ms (GA)
+            sc.record(sample(MetricKind::EvidenceCompleteness, 920_000, 1)); // > 90% (beta) but < 99% (GA)
+        }
+        assert_eq!(sc.highest_passing_milestone(), Some(Milestone::Beta));
+    }
+
+    #[test]
+    fn scorecard_evaluation_with_mixed_results_serde() {
+        let eval = ScorecardEvaluation {
+            milestone: Milestone::Beta,
+            epoch: epoch(77),
+            results: vec![
+                ThresholdResult::Pass {
+                    metric: MetricKind::CompatibilityPassRate,
+                    milestone: Milestone::Beta,
+                    value: 960_000,
+                    threshold: 950_000,
+                    headroom: 10_000,
+                },
+                ThresholdResult::Fail {
+                    metric: MetricKind::BundleSizeBytes,
+                    milestone: Milestone::Beta,
+                    value: 6_000_000,
+                    threshold: 5_000_000,
+                    shortfall: 1_000_000,
+                },
+                ThresholdResult::InsufficientData {
+                    metric: MetricKind::FallbackFrequency,
+                    milestone: Milestone::Beta,
+                },
+            ],
+            overall_pass: false,
+            pass_count: 1,
+            fail_count: 2,
+            pass_rate_millionths: 333_333,
+        };
+        let json = serde_json::to_string(&eval).unwrap();
+        let back: ScorecardEvaluation = serde_json::from_str(&json).unwrap();
+        assert_eq!(eval, back);
+        assert_eq!(back.results.len(), 3);
+    }
+
+    #[test]
+    fn scorecard_json_field_names() {
+        let sc = Scorecard::new(epoch(1));
+        let json = serde_json::to_string(&sc).unwrap();
+        for field in ["thresholds", "observations", "max_observations", "epoch"] {
+            assert!(
+                json.contains(&format!("\"{field}\"")),
+                "missing '{field}' in Scorecard JSON"
+            );
+        }
+    }
+
+    #[test]
+    fn pass_rate_zero_for_all_failures() {
+        let thresholds = vec![
+            Threshold {
+                metric: MetricKind::BundleSizeBytes,
+                milestone: Milestone::Alpha,
+                boundary: 1,
+            },
+            Threshold {
+                metric: MetricKind::RuntimeMemoryBytes,
+                milestone: Milestone::Alpha,
+                boundary: 1,
+            },
+        ];
+        let mut sc = Scorecard::with_thresholds(thresholds, epoch(1));
+        sc.record(sample(MetricKind::BundleSizeBytes, 100_000, 1));
+        sc.record(sample(MetricKind::RuntimeMemoryBytes, 100_000, 1));
+        let eval = sc.evaluate(Milestone::Alpha);
+        assert_eq!(eval.pass_rate_millionths, 0);
+        assert_eq!(eval.pass_count, 0);
+        assert_eq!(eval.fail_count, 2);
+    }
+
+    #[test]
+    fn metric_kind_all_contains_all_variants() {
+        // Verify ALL array covers every variant
+        assert!(MetricKind::ALL.contains(&MetricKind::CompatibilityPassRate));
+        assert!(MetricKind::ALL.contains(&MetricKind::ResponsivenessP99Us));
+        assert!(MetricKind::ALL.contains(&MetricKind::RenderLatencyP50Us));
+        assert!(MetricKind::ALL.contains(&MetricKind::RenderLatencyP95Us));
+        assert!(MetricKind::ALL.contains(&MetricKind::RenderLatencyP99Us));
+        assert!(MetricKind::ALL.contains(&MetricKind::BundleSizeBytes));
+        assert!(MetricKind::ALL.contains(&MetricKind::RuntimeMemoryBytes));
+        assert!(MetricKind::ALL.contains(&MetricKind::FallbackFrequency));
+        assert!(MetricKind::ALL.contains(&MetricKind::RollbackLatencyP99Us));
+        assert!(MetricKind::ALL.contains(&MetricKind::EvidenceCompleteness));
+    }
+
+    #[test]
+    fn threshold_clone_preserves_metric_and_milestone() {
+        let original = Threshold {
+            metric: MetricKind::EvidenceCompleteness,
+            milestone: Milestone::Ga,
+            boundary: 990_000,
+        };
+        let cloned = original.clone();
+        assert_eq!(cloned.metric, MetricKind::EvidenceCompleteness);
+        assert_eq!(cloned.milestone, Milestone::Ga);
+        assert_eq!(cloned.boundary, 990_000);
+    }
+
+    #[test]
+    fn threshold_result_clone_independence() {
+        let original = ThresholdResult::Pass {
+            metric: MetricKind::CompatibilityPassRate,
+            milestone: Milestone::Alpha,
+            value: 900_000,
+            threshold: 800_000,
+            headroom: 100_000,
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        // They are independent (enum variants are value types with Clone)
+        assert!(cloned.is_pass());
+    }
 }

@@ -3729,11 +3729,11 @@ mod tests {
     #[allow(clippy::field_reassign_with_default)]
     fn proxy_invariant_delete_non_extensible_own_property() {
         let mut obj = OrdinaryObject::default();
-        obj.define_own_property(str_key("x"), PropertyDescriptor::data(int_val(1)))
+        obj.define_own_property(str_key("x"), PropertyDescriptor::data_frozen(int_val(1)))
             .unwrap();
         obj.extensible = false;
 
-        // Cannot delete any own property on non-extensible target.
+        // Cannot delete non-configurable own property on non-extensible target.
         assert!(ProxyInvariantChecker::check_delete(&obj, &str_key("x"), true).is_err());
     }
 
@@ -4265,12 +4265,11 @@ mod tests {
     fn proxy_check_delete_non_extensible_own_property() {
         let mut target = OrdinaryObject::default();
         target
-            .define_own_property(str_key("x"), PropertyDescriptor::data(int_val(1)))
+            .define_own_property(str_key("x"), PropertyDescriptor::data_frozen(int_val(1)))
             .unwrap();
         target.prevent_extensions();
 
-        // Non-extensible target: cannot delete any own property
-        // (since it can't be re-added).
+        // Non-extensible target: cannot delete non-configurable own property.
         assert!(ProxyInvariantChecker::check_delete(&target, &str_key("x"), true).is_err());
     }
 

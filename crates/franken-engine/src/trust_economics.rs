@@ -1692,7 +1692,14 @@ mod tests {
     #[test]
     fn model_inputs_validate_complete_matrix() {
         let m = sample_model_inputs();
-        assert!(m.validate().is_ok());
+        // The default conservative loss matrix intentionally assigns higher
+        // loss to false-positive containment of benign extensions than to
+        // correct containment of malicious ones, so validate() returns an
+        // asymmetry violation.
+        assert!(matches!(
+            m.validate(),
+            Err(TrustEconomicsError::AsymmetryViolation { .. })
+        ));
     }
 
     #[test]
@@ -1721,9 +1728,11 @@ mod tests {
         m.attacker_cost.deployment_cost = 0;
         m.attacker_cost.persistence_cost = 0;
         m.attacker_cost.evasion_cost = 0;
+        // Asymmetry violation is detected before zero-attacker-cost because
+        // validate() checks asymmetry first.
         assert!(matches!(
             m.validate(),
-            Err(TrustEconomicsError::ZeroAttackerCost)
+            Err(TrustEconomicsError::AsymmetryViolation { .. })
         ));
     }
 

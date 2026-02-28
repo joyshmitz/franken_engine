@@ -1743,4 +1743,1041 @@ mod tests {
         let s = classify_divergence(&NondeterminismSource::ResourceCheck, &[1], &[2]);
         assert_eq!(s, DivergenceSeverity::Critical);
     }
+
+    // ── JSON field-name stability ──────────────────────────────
+
+    #[test]
+    fn json_field_names_trace_event() {
+        let ev = TraceEvent {
+            sequence: 7,
+            source: NondeterminismSource::TimerRead,
+            value: vec![0xAB],
+            virtual_ts: 999,
+            component: "clk".to_string(),
+        };
+        let json = serde_json::to_value(&ev).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("sequence"));
+        assert!(obj.contains_key("source"));
+        assert!(obj.contains_key("value"));
+        assert!(obj.contains_key("virtual_ts"));
+        assert!(obj.contains_key("component"));
+        assert_eq!(obj.len(), 5);
+    }
+
+    #[test]
+    fn json_field_names_nondeterminism_trace() {
+        let t = NondeterminismTrace::new("sess");
+        let json = serde_json::to_value(&t).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("session_id"));
+        assert!(obj.contains_key("events"));
+        assert!(obj.contains_key("next_sequence"));
+        assert!(obj.contains_key("capture_started_vts"));
+        assert!(obj.contains_key("capture_ended_vts"));
+        assert_eq!(obj.len(), 5);
+    }
+
+    #[test]
+    fn json_field_names_replay_divergence() {
+        let d = ReplayDivergence {
+            sequence: 0,
+            source: NondeterminismSource::TimerRead,
+            expected_value: vec![1],
+            actual_value: vec![2],
+            virtual_ts: 50,
+            severity: DivergenceSeverity::Benign,
+        };
+        let json = serde_json::to_value(&d).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("sequence"));
+        assert!(obj.contains_key("source"));
+        assert!(obj.contains_key("expected_value"));
+        assert!(obj.contains_key("actual_value"));
+        assert!(obj.contains_key("virtual_ts"));
+        assert!(obj.contains_key("severity"));
+        assert_eq!(obj.len(), 6);
+    }
+
+    #[test]
+    fn json_field_names_replay_engine() {
+        let trace = NondeterminismTrace::new("s");
+        let eng = ReplayEngine::new(trace, ReplayMode::Strict);
+        let json = serde_json::to_value(&eng).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("mode"));
+        assert!(obj.contains_key("trace"));
+        assert!(obj.contains_key("cursor"));
+        assert!(obj.contains_key("divergences"));
+        assert!(obj.contains_key("replayed_events"));
+        assert!(obj.contains_key("virtual_ts"));
+        assert_eq!(obj.len(), 6);
+    }
+
+    #[test]
+    fn json_field_names_failover_record() {
+        let rec = FailoverRecord {
+            sequence: 0,
+            reason: FailoverReason::Manual,
+            strategy: FailoverStrategy::Halt,
+            from_component: "a".into(),
+            to_component: "b".into(),
+            virtual_ts: 10,
+            success: false,
+        };
+        let json = serde_json::to_value(&rec).unwrap();
+        let obj = json.as_object().unwrap();
+        for key in &[
+            "sequence",
+            "reason",
+            "strategy",
+            "from_component",
+            "to_component",
+            "virtual_ts",
+            "success",
+        ] {
+            assert!(obj.contains_key(*key), "missing key: {key}");
+        }
+        assert_eq!(obj.len(), 7);
+    }
+
+    #[test]
+    fn json_field_names_failover_controller() {
+        let fc = FailoverController::with_defaults();
+        let json = serde_json::to_value(&fc).unwrap();
+        let obj = json.as_object().unwrap();
+        for key in &[
+            "default_strategy",
+            "strategy_overrides",
+            "records",
+            "next_sequence",
+            "total_failovers",
+            "successful_failovers",
+            "max_failovers",
+            "halted",
+        ] {
+            assert!(obj.contains_key(*key), "missing key: {key}");
+        }
+        assert_eq!(obj.len(), 8);
+    }
+
+    #[test]
+    fn json_field_names_incident_artifact() {
+        let art = IncidentArtifact::new("nm", ArtifactKind::DecisionLog, vec![9]);
+        let json = serde_json::to_value(&art).unwrap();
+        let obj = json.as_object().unwrap();
+        for key in &["name", "kind", "data", "content_hash"] {
+            assert!(obj.contains_key(*key), "missing key: {key}");
+        }
+        assert_eq!(obj.len(), 4);
+    }
+
+    #[test]
+    fn json_field_names_incident_bundle() {
+        let b = IncidentBundle::new("id", IncidentSeverity::Info, "s", "c", 0);
+        let json = serde_json::to_value(&b).unwrap();
+        let obj = json.as_object().unwrap();
+        for key in &[
+            "incident_id",
+            "severity",
+            "summary",
+            "trigger_component",
+            "virtual_ts",
+            "artifacts",
+            "tags",
+            "bundle_hash",
+        ] {
+            assert!(obj.contains_key(*key), "missing key: {key}");
+        }
+        assert_eq!(obj.len(), 8);
+    }
+
+    #[test]
+    fn json_field_names_incident_bundle_builder() {
+        let bb = IncidentBundleBuilder::new("id", IncidentSeverity::Info, "s", "c", 0);
+        let json = serde_json::to_value(&bb).unwrap();
+        let obj = json.as_object().unwrap();
+        for key in &[
+            "incident_id",
+            "severity",
+            "summary",
+            "trigger_component",
+            "virtual_ts",
+            "include_trace",
+            "include_decisions",
+            "include_failovers",
+            "include_divergences",
+        ] {
+            assert!(obj.contains_key(*key), "missing key: {key}");
+        }
+        assert_eq!(obj.len(), 9);
+    }
+
+    // ── Debug distinctness ──────────────────────────────────────
+
+    #[test]
+    fn debug_nondeterminism_source_all_distinct() {
+        let dbgs: std::collections::BTreeSet<String> = NondeterminismSource::ALL
+            .iter()
+            .map(|s| format!("{s:?}"))
+            .collect();
+        assert_eq!(dbgs.len(), 6);
+    }
+
+    #[test]
+    fn debug_replay_mode_all_distinct() {
+        let dbgs: std::collections::BTreeSet<String> = [
+            ReplayMode::Strict,
+            ReplayMode::BestEffort,
+            ReplayMode::Validate,
+        ]
+        .iter()
+        .map(|m| format!("{m:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 3);
+    }
+
+    #[test]
+    fn debug_divergence_severity_all_distinct() {
+        let dbgs: std::collections::BTreeSet<String> = [
+            DivergenceSeverity::Benign,
+            DivergenceSeverity::Warning,
+            DivergenceSeverity::Critical,
+        ]
+        .iter()
+        .map(|s| format!("{s:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 3);
+    }
+
+    #[test]
+    fn debug_failover_strategy_all_distinct() {
+        let dbgs: std::collections::BTreeSet<String> = [
+            FailoverStrategy::ImmediateBaseline,
+            FailoverStrategy::RetryThenBaseline,
+            FailoverStrategy::Halt,
+        ]
+        .iter()
+        .map(|s| format!("{s:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 3);
+    }
+
+    #[test]
+    fn debug_incident_severity_all_distinct() {
+        let dbgs: std::collections::BTreeSet<String> = [
+            IncidentSeverity::Info,
+            IncidentSeverity::Warning,
+            IncidentSeverity::Error,
+            IncidentSeverity::Critical,
+        ]
+        .iter()
+        .map(|s| format!("{s:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 4);
+    }
+
+    #[test]
+    fn debug_artifact_kind_all_distinct() {
+        let dbgs: std::collections::BTreeSet<String> = [
+            ArtifactKind::NondeterminismTrace,
+            ArtifactKind::DecisionLog,
+            ArtifactKind::FailoverLog,
+            ArtifactKind::SignalGraphSnapshot,
+            ArtifactKind::DomSnapshot,
+            ArtifactKind::PerformanceMetrics,
+            ArtifactKind::Configuration,
+            ArtifactKind::DivergenceReport,
+        ]
+        .iter()
+        .map(|k| format!("{k:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 8);
+    }
+
+    // ── Clone independence ──────────────────────────────────────
+
+    #[test]
+    fn clone_nondeterminism_trace_independent() {
+        let mut orig = NondeterminismTrace::new("sess-clone");
+        orig.capture(NondeterminismSource::TimerRead, vec![1], 10, "c");
+        let mut cloned = orig.clone();
+        cloned.capture(NondeterminismSource::ResourceCheck, vec![2], 20, "d");
+        assert_eq!(orig.event_count(), 1);
+        assert_eq!(cloned.event_count(), 2);
+    }
+
+    #[test]
+    fn clone_replay_engine_independent() {
+        let mut trace = NondeterminismTrace::new("s");
+        trace.capture(NondeterminismSource::TimerRead, vec![1], 10, "c");
+        trace.capture(NondeterminismSource::TimerRead, vec![2], 20, "c");
+        let mut eng = ReplayEngine::new(trace, ReplayMode::BestEffort);
+        let cloned = eng.clone();
+        eng.replay_next(NondeterminismSource::TimerRead, &[1])
+            .unwrap();
+        assert_eq!(eng.cursor, 1);
+        assert_eq!(cloned.cursor, 0);
+    }
+
+    #[test]
+    fn clone_failover_controller_independent() {
+        let mut fc = FailoverController::with_defaults();
+        fc.record_failover(FailoverReason::Manual, "a", "b", 10, true)
+            .unwrap();
+        let cloned = fc.clone();
+        fc.record_failover(FailoverReason::Manual, "a", "b", 20, false)
+            .unwrap();
+        assert_eq!(fc.total_failovers, 2);
+        assert_eq!(cloned.total_failovers, 1);
+    }
+
+    #[test]
+    fn clone_incident_bundle_independent() {
+        let mut b = IncidentBundle::new("INC-CL", IncidentSeverity::Info, "s", "c", 0);
+        b.add_artifact(IncidentArtifact::new(
+            "a1",
+            ArtifactKind::DecisionLog,
+            vec![1],
+        ));
+        let mut cloned = b.clone();
+        cloned.add_artifact(IncidentArtifact::new(
+            "a2",
+            ArtifactKind::Configuration,
+            vec![2],
+        ));
+        assert_eq!(b.artifact_count(), 1);
+        assert_eq!(cloned.artifact_count(), 2);
+    }
+
+    // ── Copy semantics ─────────────────────────────────────────
+
+    #[test]
+    fn copy_replay_mode() {
+        let m = ReplayMode::Validate;
+        let m2 = m;
+        assert_eq!(m, m2);
+    }
+
+    #[test]
+    fn copy_divergence_severity() {
+        let s = DivergenceSeverity::Warning;
+        let s2 = s;
+        assert_eq!(s, s2);
+    }
+
+    #[test]
+    fn copy_failover_strategy() {
+        let s = FailoverStrategy::Halt;
+        let s2 = s;
+        assert_eq!(s, s2);
+    }
+
+    #[test]
+    fn copy_incident_severity() {
+        let s = IncidentSeverity::Critical;
+        let s2 = s;
+        assert_eq!(s, s2);
+    }
+
+    #[test]
+    fn copy_artifact_kind() {
+        let k = ArtifactKind::DomSnapshot;
+        let k2 = k;
+        assert_eq!(k, k2);
+    }
+
+    // ── Serde variant distinctness ─────────────────────────────
+
+    #[test]
+    fn serde_nondeterminism_source_variant_strings_distinct() {
+        let jsons: std::collections::BTreeSet<String> = NondeterminismSource::ALL
+            .iter()
+            .map(|s| serde_json::to_string(s).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 6);
+    }
+
+    #[test]
+    fn serde_replay_mode_variant_strings_distinct() {
+        let jsons: std::collections::BTreeSet<String> = [
+            ReplayMode::Strict,
+            ReplayMode::BestEffort,
+            ReplayMode::Validate,
+        ]
+        .iter()
+        .map(|m| serde_json::to_string(m).unwrap())
+        .collect();
+        assert_eq!(jsons.len(), 3);
+    }
+
+    #[test]
+    fn serde_divergence_severity_variant_strings_distinct() {
+        let jsons: std::collections::BTreeSet<String> = [
+            DivergenceSeverity::Benign,
+            DivergenceSeverity::Warning,
+            DivergenceSeverity::Critical,
+        ]
+        .iter()
+        .map(|s| serde_json::to_string(s).unwrap())
+        .collect();
+        assert_eq!(jsons.len(), 3);
+    }
+
+    #[test]
+    fn serde_failover_strategy_variant_strings_distinct() {
+        let jsons: std::collections::BTreeSet<String> = [
+            FailoverStrategy::ImmediateBaseline,
+            FailoverStrategy::RetryThenBaseline,
+            FailoverStrategy::Halt,
+        ]
+        .iter()
+        .map(|s| serde_json::to_string(s).unwrap())
+        .collect();
+        assert_eq!(jsons.len(), 3);
+    }
+
+    #[test]
+    fn serde_incident_severity_variant_strings_distinct() {
+        let jsons: std::collections::BTreeSet<String> = [
+            IncidentSeverity::Info,
+            IncidentSeverity::Warning,
+            IncidentSeverity::Error,
+            IncidentSeverity::Critical,
+        ]
+        .iter()
+        .map(|s| serde_json::to_string(s).unwrap())
+        .collect();
+        assert_eq!(jsons.len(), 4);
+    }
+
+    #[test]
+    fn serde_artifact_kind_variant_strings_distinct() {
+        let jsons: std::collections::BTreeSet<String> = [
+            ArtifactKind::NondeterminismTrace,
+            ArtifactKind::DecisionLog,
+            ArtifactKind::FailoverLog,
+            ArtifactKind::SignalGraphSnapshot,
+            ArtifactKind::DomSnapshot,
+            ArtifactKind::PerformanceMetrics,
+            ArtifactKind::Configuration,
+            ArtifactKind::DivergenceReport,
+        ]
+        .iter()
+        .map(|k| serde_json::to_string(k).unwrap())
+        .collect();
+        assert_eq!(jsons.len(), 8);
+    }
+
+    // ── Hash consistency ────────────────────────────────────────
+
+    #[test]
+    fn hash_nondeterminism_source_consistent() {
+        use std::hash::{Hash, Hasher};
+        for s in &NondeterminismSource::ALL {
+            let mut h1 = std::collections::hash_map::DefaultHasher::new();
+            let mut h2 = std::collections::hash_map::DefaultHasher::new();
+            s.hash(&mut h1);
+            s.hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish());
+        }
+    }
+
+    #[test]
+    fn hash_replay_mode_consistent() {
+        use std::hash::{Hash, Hasher};
+        for m in [
+            ReplayMode::Strict,
+            ReplayMode::BestEffort,
+            ReplayMode::Validate,
+        ] {
+            let mut h1 = std::collections::hash_map::DefaultHasher::new();
+            let mut h2 = std::collections::hash_map::DefaultHasher::new();
+            m.hash(&mut h1);
+            m.hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish());
+        }
+    }
+
+    #[test]
+    fn hash_divergence_severity_consistent() {
+        use std::hash::{Hash, Hasher};
+        for s in [
+            DivergenceSeverity::Benign,
+            DivergenceSeverity::Warning,
+            DivergenceSeverity::Critical,
+        ] {
+            let mut h1 = std::collections::hash_map::DefaultHasher::new();
+            let mut h2 = std::collections::hash_map::DefaultHasher::new();
+            s.hash(&mut h1);
+            s.hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish());
+        }
+    }
+
+    #[test]
+    fn hash_failover_strategy_consistent() {
+        use std::hash::{Hash, Hasher};
+        for s in [
+            FailoverStrategy::ImmediateBaseline,
+            FailoverStrategy::RetryThenBaseline,
+            FailoverStrategy::Halt,
+        ] {
+            let mut h1 = std::collections::hash_map::DefaultHasher::new();
+            let mut h2 = std::collections::hash_map::DefaultHasher::new();
+            s.hash(&mut h1);
+            s.hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish());
+        }
+    }
+
+    #[test]
+    fn hash_incident_severity_consistent() {
+        use std::hash::{Hash, Hasher};
+        for s in [
+            IncidentSeverity::Info,
+            IncidentSeverity::Warning,
+            IncidentSeverity::Error,
+            IncidentSeverity::Critical,
+        ] {
+            let mut h1 = std::collections::hash_map::DefaultHasher::new();
+            let mut h2 = std::collections::hash_map::DefaultHasher::new();
+            s.hash(&mut h1);
+            s.hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish());
+        }
+    }
+
+    #[test]
+    fn hash_artifact_kind_consistent() {
+        use std::hash::{Hash, Hasher};
+        for k in [
+            ArtifactKind::NondeterminismTrace,
+            ArtifactKind::DecisionLog,
+            ArtifactKind::FailoverLog,
+            ArtifactKind::SignalGraphSnapshot,
+            ArtifactKind::DomSnapshot,
+            ArtifactKind::PerformanceMetrics,
+            ArtifactKind::Configuration,
+            ArtifactKind::DivergenceReport,
+        ] {
+            let mut h1 = std::collections::hash_map::DefaultHasher::new();
+            let mut h2 = std::collections::hash_map::DefaultHasher::new();
+            k.hash(&mut h1);
+            k.hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish());
+        }
+    }
+
+    // ── Serde roundtrips for remaining structs ──────────────────
+
+    #[test]
+    fn serde_roundtrip_trace_event() {
+        let ev = TraceEvent {
+            sequence: 42,
+            source: NondeterminismSource::ExternalApiResponse,
+            value: vec![0xFF, 0x00, 0xAB],
+            virtual_ts: 12345,
+            component: "api-proxy".to_string(),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: TraceEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_replay_divergence() {
+        let d = ReplayDivergence {
+            sequence: 7,
+            source: NondeterminismSource::ResourceCheck,
+            expected_value: vec![1, 2],
+            actual_value: vec![3, 4],
+            virtual_ts: 500,
+            severity: DivergenceSeverity::Critical,
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        let back: ReplayDivergence = serde_json::from_str(&json).unwrap();
+        assert_eq!(d, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_replay_engine_with_divergences() {
+        let mut trace = NondeterminismTrace::new("srd");
+        trace.capture(NondeterminismSource::TimerRead, vec![1], 10, "clk");
+        let mut eng = ReplayEngine::new(trace, ReplayMode::BestEffort);
+        eng.replay_next(NondeterminismSource::TimerRead, &[2])
+            .unwrap();
+        assert_eq!(eng.divergence_count(), 1);
+        let json = serde_json::to_string(&eng).unwrap();
+        let back: ReplayEngine = serde_json::from_str(&json).unwrap();
+        assert_eq!(eng, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_failover_record() {
+        let rec = FailoverRecord {
+            sequence: 3,
+            reason: FailoverReason::Timeout {
+                elapsed_us: 50_000,
+                limit_us: 30_000,
+            },
+            strategy: FailoverStrategy::RetryThenBaseline,
+            from_component: "wasm".into(),
+            to_component: "js".into(),
+            virtual_ts: 777,
+            success: true,
+        };
+        let json = serde_json::to_string(&rec).unwrap();
+        let back: FailoverRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(rec, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_incident_artifact() {
+        let art =
+            IncidentArtifact::new("perf", ArtifactKind::PerformanceMetrics, vec![9, 8, 7]);
+        let json = serde_json::to_string(&art).unwrap();
+        let back: IncidentArtifact = serde_json::from_str(&json).unwrap();
+        assert_eq!(art, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_incident_bundle_builder() {
+        let bb = IncidentBundleBuilder::new(
+            "INC-BB",
+            IncidentSeverity::Warning,
+            "test",
+            "comp",
+            999,
+        )
+        .with_trace(false)
+        .with_decisions(true)
+        .with_failovers(false)
+        .with_divergences(true);
+        let json = serde_json::to_string(&bb).unwrap();
+        let back: IncidentBundleBuilder = serde_json::from_str(&json).unwrap();
+        assert_eq!(bb, back);
+    }
+
+    // ── Boundary / edge cases ──────────────────────────────────
+
+    #[test]
+    fn trace_event_empty_value() {
+        let ev = TraceEvent {
+            sequence: 0,
+            source: NondeterminismSource::LaneSelectionRandom,
+            value: vec![],
+            virtual_ts: 0,
+            component: String::new(),
+        };
+        let id = ev.derive_id();
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: TraceEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, back);
+        assert_eq!(id, back.derive_id());
+    }
+
+    #[test]
+    fn trace_max_virtual_ts() {
+        let mut trace = NondeterminismTrace::new("max-vts");
+        trace.capture(NondeterminismSource::TimerRead, vec![1], u64::MAX, "clk");
+        assert_eq!(trace.events[0].virtual_ts, u64::MAX);
+        let json = serde_json::to_string(&trace).unwrap();
+        let back: NondeterminismTrace = serde_json::from_str(&json).unwrap();
+        assert_eq!(trace, back);
+    }
+
+    #[test]
+    fn replay_engine_remaining_after_partial() {
+        let mut trace = NondeterminismTrace::new("s");
+        for i in 0..5u64 {
+            trace.capture(
+                NondeterminismSource::TimerRead,
+                vec![i as u8],
+                i * 10,
+                "clk",
+            );
+        }
+        let mut eng = ReplayEngine::new(trace, ReplayMode::BestEffort);
+        assert_eq!(eng.remaining(), 5);
+        eng.replay_next(NondeterminismSource::TimerRead, &[0])
+            .unwrap();
+        eng.replay_next(NondeterminismSource::TimerRead, &[1])
+            .unwrap();
+        assert_eq!(eng.remaining(), 3);
+        assert!(!eng.is_complete());
+    }
+
+    #[test]
+    fn failover_success_rate_all_failures() {
+        let mut fc = FailoverController::new(FailoverStrategy::ImmediateBaseline, 10);
+        for _ in 0..5 {
+            fc.record_failover(FailoverReason::Manual, "a", "b", 100, false)
+                .unwrap();
+        }
+        assert_eq!(fc.success_rate_millionths(), 0);
+    }
+
+    #[test]
+    fn failover_success_rate_all_successes() {
+        let mut fc = FailoverController::new(FailoverStrategy::ImmediateBaseline, 10);
+        for _ in 0..5 {
+            fc.record_failover(FailoverReason::Manual, "a", "b", 100, true)
+                .unwrap();
+        }
+        assert_eq!(fc.success_rate_millionths(), MILLION);
+    }
+
+    #[test]
+    fn failover_max_zero_rejects_immediately() {
+        let mut fc = FailoverController::new(FailoverStrategy::ImmediateBaseline, 0);
+        let err = fc
+            .record_failover(FailoverReason::Manual, "a", "b", 10, true)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            FailoverError::MaxFailoversExceeded {
+                count: 0,
+                limit: 0
+            }
+        ));
+    }
+
+    #[test]
+    fn incident_bundle_total_data_size_empty() {
+        let b = IncidentBundle::new("INC-SZ", IncidentSeverity::Info, "s", "c", 0);
+        assert_eq!(b.total_data_size(), 0);
+    }
+
+    #[test]
+    fn incident_bundle_tag_order_preserved() {
+        let mut b = IncidentBundle::new("INC-ORD", IncidentSeverity::Info, "s", "c", 0);
+        b.add_tag("alpha");
+        b.add_tag("beta");
+        b.add_tag("gamma");
+        assert_eq!(b.tags, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn hash_empty_data() {
+        let h = compute_simple_hash(&[]);
+        assert_eq!(h.len(), 16);
+        let h2 = compute_simple_hash(&[]);
+        assert_eq!(h, h2);
+    }
+
+    #[test]
+    fn hash_single_byte_distinct() {
+        let hashes: std::collections::BTreeSet<String> =
+            (0..=255u8).map(|b| compute_simple_hash(&[b])).collect();
+        assert_eq!(hashes.len(), 256);
+    }
+
+    #[test]
+    fn derive_id_trace_different_sessions() {
+        let t1 = NondeterminismTrace::new("session-a");
+        let t2 = NondeterminismTrace::new("session-b");
+        assert_ne!(t1.derive_id(), t2.derive_id());
+    }
+
+    #[test]
+    fn derive_id_trace_different_event_counts() {
+        let t1 = NondeterminismTrace::new("s");
+        let mut t2 = NondeterminismTrace::new("s");
+        t2.capture(NondeterminismSource::TimerRead, vec![1], 10, "c");
+        assert_ne!(t1.derive_id(), t2.derive_id());
+    }
+
+    #[test]
+    fn derive_id_replay_engine_different_cursors() {
+        let mut trace = NondeterminismTrace::new("s");
+        trace.capture(NondeterminismSource::TimerRead, vec![1], 10, "c");
+        let eng0 = ReplayEngine::new(trace.clone(), ReplayMode::Strict);
+        let mut eng1 = ReplayEngine::new(trace, ReplayMode::Strict);
+        eng1.replay_next(NondeterminismSource::TimerRead, &[1])
+            .unwrap();
+        assert_ne!(eng0.derive_id(), eng1.derive_id());
+    }
+
+    #[test]
+    fn derive_id_failover_controller_advances() {
+        let mut fc = FailoverController::with_defaults();
+        let id0 = fc.derive_id();
+        fc.record_failover(FailoverReason::Manual, "a", "b", 10, true)
+            .unwrap();
+        let id1 = fc.derive_id();
+        assert_ne!(id0, id1);
+    }
+
+    // ── Ordering tests ─────────────────────────────────────────
+
+    #[test]
+    fn nondeterminism_source_ord_total() {
+        let mut sorted = NondeterminismSource::ALL.to_vec();
+        sorted.sort();
+        assert_eq!(sorted, NondeterminismSource::ALL.to_vec());
+    }
+
+    #[test]
+    fn replay_mode_ordering() {
+        assert!(ReplayMode::Strict < ReplayMode::BestEffort);
+        assert!(ReplayMode::BestEffort < ReplayMode::Validate);
+    }
+
+    #[test]
+    fn failover_strategy_ordering() {
+        assert!(FailoverStrategy::ImmediateBaseline < FailoverStrategy::RetryThenBaseline);
+        assert!(FailoverStrategy::RetryThenBaseline < FailoverStrategy::Halt);
+    }
+
+    #[test]
+    fn incident_severity_ordering() {
+        assert!(IncidentSeverity::Info < IncidentSeverity::Warning);
+        assert!(IncidentSeverity::Warning < IncidentSeverity::Error);
+        assert!(IncidentSeverity::Error < IncidentSeverity::Critical);
+    }
+
+    #[test]
+    fn artifact_kind_ordering() {
+        assert!(ArtifactKind::NondeterminismTrace < ArtifactKind::DecisionLog);
+        assert!(ArtifactKind::DecisionLog < ArtifactKind::FailoverLog);
+    }
+
+    // ── Replay error variant coverage ──────────────────────────
+
+    #[test]
+    fn replay_error_trace_not_finalised_serde() {
+        let err = ReplayError::TraceNotFinalised;
+        let json = serde_json::to_string(&err).unwrap();
+        let back: ReplayError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    #[test]
+    fn replay_error_all_variants_debug_distinct() {
+        let errs: Vec<ReplayError> = vec![
+            ReplayError::TraceExhausted {
+                cursor: 0,
+                total: 0,
+            },
+            ReplayError::CriticalDivergence {
+                sequence: 0,
+                source: NondeterminismSource::TimerRead,
+            },
+            ReplayError::SourceMismatch {
+                sequence: 0,
+                expected: NondeterminismSource::TimerRead,
+                actual: NondeterminismSource::ResourceCheck,
+            },
+            ReplayError::TraceNotFinalised,
+        ];
+        let dbgs: std::collections::BTreeSet<String> =
+            errs.iter().map(|e| format!("{e:?}")).collect();
+        assert_eq!(dbgs.len(), 4);
+    }
+
+    // ── FailoverReason Debug ───────────────────────────────────
+
+    #[test]
+    fn failover_reason_debug_distinct() {
+        let reasons = vec![
+            FailoverReason::BudgetExhausted {
+                metric: "m".into(),
+                value: 1,
+                limit: 0,
+            },
+            FailoverReason::LaneError {
+                message: "e".into(),
+            },
+            FailoverReason::SafeModeTriggered,
+            FailoverReason::Timeout {
+                elapsed_us: 1,
+                limit_us: 0,
+            },
+            FailoverReason::ReplayDivergence {
+                divergence_count: 1,
+            },
+            FailoverReason::Manual,
+        ];
+        let dbgs: std::collections::BTreeSet<String> =
+            reasons.iter().map(|r| format!("{r:?}")).collect();
+        assert_eq!(dbgs.len(), 6);
+    }
+
+    // ── Builder edge cases ─────────────────────────────────────
+
+    #[test]
+    fn builder_no_divergences_skips_divergence_artifact() {
+        let mut trace = NondeterminismTrace::new("s");
+        trace.capture(NondeterminismSource::TimerRead, vec![1], 10, "c");
+        let mut eng = ReplayEngine::new(trace.clone(), ReplayMode::Strict);
+        eng.replay_next(NondeterminismSource::TimerRead, &[1])
+            .unwrap();
+        assert_eq!(eng.divergence_count(), 0);
+
+        let bb =
+            IncidentBundleBuilder::new("INC-NODIV", IncidentSeverity::Info, "s", "c", 0);
+        let bundle = bb.build(Some(&trace), Some(&eng), None);
+        let has_div = bundle
+            .artifacts
+            .iter()
+            .any(|a| a.kind == ArtifactKind::DivergenceReport);
+        assert!(!has_div);
+    }
+
+    #[test]
+    fn builder_none_sources_produces_no_artifacts() {
+        let bb =
+            IncidentBundleBuilder::new("INC-NONE", IncidentSeverity::Info, "s", "c", 0);
+        let bundle = bb.build(None, None, None);
+        assert_eq!(bundle.artifact_count(), 0);
+        assert!(bundle.is_finalised());
+    }
+
+    #[test]
+    fn incident_artifact_content_hash_deterministic() {
+        let a1 = IncidentArtifact::new("nm", ArtifactKind::DecisionLog, vec![1, 2, 3]);
+        let a2 = IncidentArtifact::new("nm", ArtifactKind::DecisionLog, vec![1, 2, 3]);
+        assert_eq!(a1.content_hash, a2.content_hash);
+    }
+
+    #[test]
+    fn incident_artifact_different_data_different_hash() {
+        let a1 = IncidentArtifact::new("nm", ArtifactKind::DecisionLog, vec![1, 2, 3]);
+        let a2 = IncidentArtifact::new("nm", ArtifactKind::DecisionLog, vec![4, 5, 6]);
+        assert_ne!(a1.content_hash, a2.content_hash);
+    }
+
+    #[test]
+    fn incident_bundle_finalise_deterministic() {
+        let mut b1 = IncidentBundle::new("INC-D", IncidentSeverity::Error, "s", "c", 0);
+        b1.add_artifact(IncidentArtifact::new(
+            "a",
+            ArtifactKind::DecisionLog,
+            vec![1],
+        ));
+        b1.finalise();
+
+        let mut b2 = IncidentBundle::new("INC-D", IncidentSeverity::Error, "s", "c", 0);
+        b2.add_artifact(IncidentArtifact::new(
+            "a",
+            ArtifactKind::DecisionLog,
+            vec![1],
+        ));
+        b2.finalise();
+
+        assert_eq!(b1.bundle_hash, b2.bundle_hash);
+    }
+
+    #[test]
+    fn incident_bundle_different_artifacts_different_hash() {
+        let mut b1 = IncidentBundle::new("INC-D", IncidentSeverity::Error, "s", "c", 0);
+        b1.add_artifact(IncidentArtifact::new(
+            "a",
+            ArtifactKind::DecisionLog,
+            vec![1],
+        ));
+        b1.finalise();
+
+        let mut b2 = IncidentBundle::new("INC-D", IncidentSeverity::Error, "s", "c", 0);
+        b2.add_artifact(IncidentArtifact::new(
+            "a",
+            ArtifactKind::DecisionLog,
+            vec![2],
+        ));
+        b2.finalise();
+
+        assert_ne!(b1.bundle_hash, b2.bundle_hash);
+    }
+
+    // ── classify_divergence remaining source ────────────────────
+
+    #[test]
+    fn classify_divergence_external_api_is_critical() {
+        let s =
+            classify_divergence(&NondeterminismSource::ExternalApiResponse, &[1], &[2]);
+        assert_eq!(s, DivergenceSeverity::Critical);
+    }
+
+    // ── Failover with diverse reasons ───────────────────────────
+
+    #[test]
+    fn failover_records_all_reason_types() {
+        let mut fc = FailoverController::new(FailoverStrategy::RetryThenBaseline, 100);
+        let reasons = vec![
+            FailoverReason::BudgetExhausted {
+                metric: "mem".into(),
+                value: 100,
+                limit: 50,
+            },
+            FailoverReason::LaneError {
+                message: "oops".into(),
+            },
+            FailoverReason::SafeModeTriggered,
+            FailoverReason::Timeout {
+                elapsed_us: 20_000,
+                limit_us: 10_000,
+            },
+            FailoverReason::ReplayDivergence {
+                divergence_count: 5,
+            },
+            FailoverReason::Manual,
+        ];
+        for (i, reason) in reasons.into_iter().enumerate() {
+            let rec = fc
+                .record_failover(reason, "src", "dst", (i as u64) * 100, true)
+                .unwrap();
+            assert_eq!(rec.sequence, i as u64);
+        }
+        assert_eq!(fc.total_failovers, 6);
+        assert_eq!(fc.records.len(), 6);
+    }
+
+    #[test]
+    fn failover_strategy_override_multiple_components() {
+        let mut fc = FailoverController::with_defaults();
+        fc.set_override("wasm-lane", FailoverStrategy::Halt);
+        fc.set_override("gpu-lane", FailoverStrategy::ImmediateBaseline);
+        assert_eq!(fc.strategy_for("wasm-lane"), FailoverStrategy::Halt);
+        assert_eq!(
+            fc.strategy_for("gpu-lane"),
+            FailoverStrategy::ImmediateBaseline
+        );
+        assert_eq!(
+            fc.strategy_for("unknown"),
+            FailoverStrategy::RetryThenBaseline
+        );
+    }
+
+    #[test]
+    fn failover_strategy_override_replacement() {
+        let mut fc = FailoverController::with_defaults();
+        fc.set_override("comp", FailoverStrategy::Halt);
+        assert_eq!(fc.strategy_for("comp"), FailoverStrategy::Halt);
+        fc.set_override("comp", FailoverStrategy::ImmediateBaseline);
+        assert_eq!(
+            fc.strategy_for("comp"),
+            FailoverStrategy::ImmediateBaseline
+        );
+    }
+
+    // ── ArtifactKind as_str stability ───────────────────────────
+
+    #[test]
+    fn artifact_kind_as_str_all_unique() {
+        let strs: std::collections::BTreeSet<&str> = [
+            ArtifactKind::NondeterminismTrace,
+            ArtifactKind::DecisionLog,
+            ArtifactKind::FailoverLog,
+            ArtifactKind::SignalGraphSnapshot,
+            ArtifactKind::DomSnapshot,
+            ArtifactKind::PerformanceMetrics,
+            ArtifactKind::Configuration,
+            ArtifactKind::DivergenceReport,
+        ]
+        .iter()
+        .map(|k| k.as_str())
+        .collect();
+        assert_eq!(strs.len(), 8);
+    }
 }

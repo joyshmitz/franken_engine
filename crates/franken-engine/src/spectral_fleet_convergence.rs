@@ -1583,4 +1583,370 @@ mod tests {
         let analysis = analyzer.analyze(&topo).unwrap();
         assert_eq!(analysis.schema, SPECTRAL_SCHEMA_VERSION);
     }
+
+    // ── Enrichment: Copy/Clone/Debug/Serde/Display/Hash/Edge ──
+
+    #[test]
+    fn spectral_error_debug_distinct() {
+        let variants: Vec<SpectralError> = vec![
+            SpectralError::TooManyNodes { count: 1, max: 1 },
+            SpectralError::EmptyGraph,
+            SpectralError::Disconnected { components: 2 },
+            SpectralError::NodeOutOfBounds { index: 0, size: 0 },
+            SpectralError::InvalidEdgeWeight { weight_millionths: -1 },
+            SpectralError::ConvergenceFailure { iterations: 10 },
+            SpectralError::DegenerateSpectralGap,
+        ];
+        let set: std::collections::BTreeSet<String> = variants
+            .iter()
+            .map(|v| format!("{v:?}"))
+            .collect();
+        assert_eq!(set.len(), 7);
+    }
+
+    #[test]
+    fn spectral_error_serde_variant_distinct() {
+        let variants: Vec<SpectralError> = vec![
+            SpectralError::TooManyNodes { count: 1, max: 1 },
+            SpectralError::EmptyGraph,
+            SpectralError::Disconnected { components: 2 },
+            SpectralError::NodeOutOfBounds { index: 0, size: 0 },
+            SpectralError::InvalidEdgeWeight { weight_millionths: -1 },
+            SpectralError::ConvergenceFailure { iterations: 10 },
+            SpectralError::DegenerateSpectralGap,
+        ];
+        let set: std::collections::BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(set.len(), 7);
+    }
+
+    #[test]
+    fn spectral_error_display_exact_too_many_nodes() {
+        let e = SpectralError::TooManyNodes { count: 2000, max: 1024 };
+        assert_eq!(e.to_string(), "2000 nodes exceeds limit 1024");
+    }
+
+    #[test]
+    fn spectral_error_display_exact_empty_graph() {
+        assert_eq!(SpectralError::EmptyGraph.to_string(), "empty graph");
+    }
+
+    #[test]
+    fn spectral_error_display_exact_disconnected() {
+        let e = SpectralError::Disconnected { components: 3 };
+        assert_eq!(e.to_string(), "graph is disconnected (3 components)");
+    }
+
+    #[test]
+    fn spectral_error_display_exact_node_out_of_bounds() {
+        let e = SpectralError::NodeOutOfBounds { index: 5, size: 3 };
+        assert_eq!(e.to_string(), "node 5 out of bounds (size 3)");
+    }
+
+    #[test]
+    fn spectral_error_display_exact_invalid_edge_weight() {
+        let e = SpectralError::InvalidEdgeWeight { weight_millionths: -100 };
+        assert_eq!(e.to_string(), "invalid edge weight -100; expected > 0");
+    }
+
+    #[test]
+    fn spectral_error_display_exact_convergence_failure() {
+        let e = SpectralError::ConvergenceFailure { iterations: 100 };
+        assert_eq!(e.to_string(), "power iteration did not converge after 100 iterations");
+    }
+
+    #[test]
+    fn spectral_error_display_exact_degenerate() {
+        assert_eq!(SpectralError::DegenerateSpectralGap.to_string(), "spectral gap is zero or negative");
+    }
+
+    #[test]
+    fn spectral_error_clone_independence() {
+        let a = SpectralError::Disconnected { components: 5 };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn spectral_error_std_error_source_is_none() {
+        let e: &dyn std::error::Error = &SpectralError::EmptyGraph;
+        assert!(e.source().is_none());
+        assert!(!e.to_string().is_empty());
+    }
+
+    #[test]
+    fn gossip_topology_clone_independence() {
+        let t = make_complete_graph(3);
+        let t2 = t.clone();
+        assert_eq!(t, t2);
+    }
+
+    #[test]
+    fn gossip_topology_json_field_names() {
+        let t = GossipTopology::new(vec!["a".to_string()]).unwrap();
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(json.contains("\"num_nodes\""));
+        assert!(json.contains("\"node_ids\""));
+        assert!(json.contains("\"adjacency\""));
+    }
+
+    #[test]
+    fn spectral_analysis_clone_independence() {
+        let topo = make_complete_graph(3);
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        let clone = analysis.clone();
+        assert_eq!(analysis, clone);
+    }
+
+    #[test]
+    fn spectral_analysis_json_field_names() {
+        let topo = make_complete_graph(3);
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        let json = serde_json::to_string(&analysis).unwrap();
+        assert!(json.contains("\"schema\""));
+        assert!(json.contains("\"num_nodes\""));
+        assert!(json.contains("\"algebraic_connectivity_millionths\""));
+        assert!(json.contains("\"spectral_gap_millionths\""));
+        assert!(json.contains("\"mixing_time_bound\""));
+        assert!(json.contains("\"lambda_max_millionths\""));
+        assert!(json.contains("\"fiedler_vector_millionths\""));
+        assert!(json.contains("\"partition_a\""));
+        assert!(json.contains("\"partition_b\""));
+        assert!(json.contains("\"laplacian_hash\""));
+    }
+
+    #[test]
+    fn spectral_analysis_serde_roundtrip_enriched() {
+        let topo = make_complete_graph(3);
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        let json = serde_json::to_string(&analysis).unwrap();
+        let back: SpectralAnalysis = serde_json::from_str(&json).unwrap();
+        assert_eq!(analysis, back);
+    }
+
+    #[test]
+    fn spectral_analyzer_default_values() {
+        let a = SpectralAnalyzer::default();
+        assert_eq!(a.max_iterations, POWER_ITERATIONS);
+        assert_eq!(a.convergence_threshold_millionths, CONVERGENCE_THRESHOLD_MILLIONTHS);
+    }
+
+    #[test]
+    fn spectral_analyzer_json_field_names() {
+        let a = SpectralAnalyzer::default();
+        let json = serde_json::to_string(&a).unwrap();
+        assert!(json.contains("\"max_iterations\""));
+        assert!(json.contains("\"convergence_threshold_millionths\""));
+    }
+
+    #[test]
+    fn laplacian_matrix_clone_independence() {
+        let topo = make_complete_graph(3);
+        let l = LaplacianMatrix::from_topology(&topo).unwrap();
+        let l2 = l.clone();
+        assert_eq!(l, l2);
+    }
+
+    #[test]
+    fn laplacian_matrix_serde_roundtrip_enriched() {
+        let topo = make_complete_graph(3);
+        let l = LaplacianMatrix::from_topology(&topo).unwrap();
+        let json = serde_json::to_string(&l).unwrap();
+        let back: LaplacianMatrix = serde_json::from_str(&json).unwrap();
+        assert_eq!(l, back);
+    }
+
+    #[test]
+    fn laplacian_content_hash_deterministic_enriched() {
+        let topo = make_complete_graph(3);
+        let l = LaplacianMatrix::from_topology(&topo).unwrap();
+        let h1 = l.content_hash();
+        let h2 = l.content_hash();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn debug_nonempty_spectral_error() {
+        assert!(!format!("{:?}", SpectralError::EmptyGraph).is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_gossip_topology() {
+        let t = GossipTopology::new(vec!["a".to_string()]).unwrap();
+        assert!(!format!("{t:?}").is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_laplacian_matrix() {
+        let topo = make_complete_graph(2);
+        let l = LaplacianMatrix::from_topology(&topo).unwrap();
+        assert!(!format!("{l:?}").is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_spectral_analyzer() {
+        assert!(!format!("{:?}", SpectralAnalyzer::default()).is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_spectral_analysis() {
+        let topo = make_complete_graph(3);
+        let analyzer = SpectralAnalyzer::default();
+        let a = analyzer.analyze(&topo).unwrap();
+        assert!(!format!("{a:?}").is_empty());
+    }
+
+    #[test]
+    fn boundary_single_node_graph() {
+        let topo = GossipTopology::new(vec!["solo".to_string()]).unwrap();
+        assert!(topo.is_connected());
+        assert_eq!(topo.connected_components(), 1);
+        assert_eq!(topo.degree(0), 0);
+    }
+
+    #[test]
+    fn boundary_self_loop_edge() {
+        let mut topo = GossipTopology::new(vec!["a".to_string()]).unwrap();
+        topo.add_edge(0, 0, MILLION).unwrap();
+        assert_eq!(topo.degree(0), MILLION);
+    }
+
+    #[test]
+    fn boundary_edge_weight_zero_rejected() {
+        let mut topo = GossipTopology::new(vec!["a".to_string(), "b".to_string()]).unwrap();
+        let err = topo.add_edge(0, 1, 0).unwrap_err();
+        assert!(matches!(err, SpectralError::InvalidEdgeWeight { weight_millionths: 0 }));
+    }
+
+    #[test]
+    fn boundary_negative_edge_weight_rejected() {
+        let mut topo = GossipTopology::new(vec!["a".to_string(), "b".to_string()]).unwrap();
+        let err = topo.add_edge(0, 1, -1).unwrap_err();
+        assert!(matches!(err, SpectralError::InvalidEdgeWeight { weight_millionths: -1 }));
+    }
+
+    #[test]
+    fn boundary_node_out_of_bounds_from() {
+        let mut topo = GossipTopology::new(vec!["a".to_string()]).unwrap();
+        let err = topo.add_edge(5, 0, MILLION).unwrap_err();
+        assert!(matches!(err, SpectralError::NodeOutOfBounds { index: 5, .. }));
+    }
+
+    #[test]
+    fn boundary_node_out_of_bounds_to() {
+        let mut topo = GossipTopology::new(vec!["a".to_string()]).unwrap();
+        let err = topo.add_edge(0, 5, MILLION).unwrap_err();
+        assert!(matches!(err, SpectralError::NodeOutOfBounds { index: 5, .. }));
+    }
+
+    #[test]
+    fn disconnected_graph_analysis_error() {
+        let topo = GossipTopology::new(vec!["a".to_string(), "b".to_string()]).unwrap();
+        assert!(!topo.is_connected());
+        assert_eq!(topo.connected_components(), 2);
+        let analyzer = SpectralAnalyzer::default();
+        let err = analyzer.analyze(&topo).unwrap_err();
+        assert!(matches!(err, SpectralError::Disconnected { components: 2 }));
+    }
+
+    #[test]
+    fn schema_version_constant_stable() {
+        assert_eq!(SPECTRAL_SCHEMA_VERSION, "franken-engine.spectral-fleet-convergence.v1");
+    }
+
+    #[test]
+    fn partitions_cover_all_nodes_k4() {
+        let topo = make_complete_graph(4);
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        let total = analysis.partition_a.len() + analysis.partition_b.len();
+        assert_eq!(total, 4);
+    }
+
+    #[test]
+    fn spectral_error_serde_roundtrip_all_variants() {
+        let variants: Vec<SpectralError> = vec![
+            SpectralError::TooManyNodes { count: 2000, max: 1024 },
+            SpectralError::EmptyGraph,
+            SpectralError::Disconnected { components: 3 },
+            SpectralError::NodeOutOfBounds { index: 5, size: 3 },
+            SpectralError::InvalidEdgeWeight { weight_millionths: -100 },
+            SpectralError::ConvergenceFailure { iterations: 100 },
+            SpectralError::DegenerateSpectralGap,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: SpectralError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn complete_graph_k4_positive_algebraic_connectivity() {
+        let topo = make_complete_graph(4);
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        assert!(analysis.algebraic_connectivity_millionths > 0);
+        assert!(analysis.mixing_time_bound >= 1);
+    }
+
+    #[test]
+    fn complete_graph_k4_cheeger_bounds_ordered() {
+        let topo = make_complete_graph(4);
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        assert!(analysis.cheeger_lower_bound_millionths <= analysis.cheeger_upper_bound_millionths);
+    }
+
+    #[test]
+    fn gossip_topology_serde_roundtrip() {
+        let topo = make_complete_graph(3);
+        let json = serde_json::to_string(&topo).unwrap();
+        let back: GossipTopology = serde_json::from_str(&json).unwrap();
+        assert_eq!(topo, back);
+    }
+
+    #[test]
+    fn spectral_analyzer_serde_roundtrip() {
+        let a = SpectralAnalyzer::default();
+        let json = serde_json::to_string(&a).unwrap();
+        let back: SpectralAnalyzer = serde_json::from_str(&json).unwrap();
+        assert_eq!(a.max_iterations, back.max_iterations);
+        assert_eq!(a.convergence_threshold_millionths, back.convergence_threshold_millionths);
+    }
+
+    #[test]
+    fn laplacian_from_empty_topology_fails() {
+        let err = LaplacianMatrix::from_topology(&GossipTopology {
+            num_nodes: 0,
+            node_ids: vec![],
+            adjacency: BTreeMap::new(),
+        }).unwrap_err();
+        assert!(matches!(err, SpectralError::EmptyGraph));
+    }
+
+    #[test]
+    fn laplacian_diagonal_equals_degree() {
+        let mut topo = GossipTopology::new(vec!["a".to_string(), "b".to_string()]).unwrap();
+        topo.add_edge(0, 1, 500_000).unwrap();
+        let l = LaplacianMatrix::from_topology(&topo).unwrap();
+        assert_eq!(l.get(0, 0), 500_000);
+        assert_eq!(l.get(1, 1), 500_000);
+        assert_eq!(l.get(0, 1), -500_000);
+        assert_eq!(l.get(1, 0), -500_000);
+    }
+
+    #[test]
+    fn analysis_fiedler_residual_is_small() {
+        let topo = make_complete_graph(4);
+        let analyzer = SpectralAnalyzer::default();
+        let analysis = analyzer.analyze(&topo).unwrap();
+        // Residual should be small for well-converged solutions
+        assert!(analysis.fiedler_residual_millionths < 100_000);
+    }
 }

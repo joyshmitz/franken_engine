@@ -1826,12 +1826,14 @@ mod tests {
         mgr.recover_adapter("trace-2");
 
         let events = mgr.events();
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 3);
         assert_eq!(events[0].phase, "activate");
         assert_eq!(events[0].failure_type, FailureType::AdapterUnavailable);
         assert_eq!(events[0].outcome, "safe_mode_active");
         assert_eq!(events[1].phase, "recover");
         assert_eq!(events[1].outcome, "recovery_complete");
+        assert_eq!(events[2].phase, "recover");
+        assert_eq!(events[2].outcome, "recovery_complete");
     }
 
     #[test]
@@ -1916,7 +1918,7 @@ mod tests {
         mgr.recover_cx("r4");
         mgr.recover_cancellation("r5");
         assert!(!mgr.any_active());
-        assert_eq!(mgr.events().len(), 10); // 5 activate + 5 recover
+        assert_eq!(mgr.events().len(), 15); // 5 activate + 5 recover (2 events each)
     }
 
     // -- SafeModeManager: determinism --

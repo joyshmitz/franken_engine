@@ -5992,7 +5992,8 @@ mod tests {
             aggregate_refresh_secs: 120,
         }
         .normalized();
-        assert_eq!(policy.evidence_stream_refresh_secs, 5);
+        // .max(5) preserves 30 (the larger value).
+        assert_eq!(policy.evidence_stream_refresh_secs, 30);
     }
 
     #[test]

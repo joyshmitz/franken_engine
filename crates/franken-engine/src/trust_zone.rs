@@ -1353,4 +1353,928 @@ mod tests {
             .with_declared_ceiling(custom.clone());
         assert_eq!(req.declared_ceiling, Some(custom));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2 — PearlTower 2026-02-28
+    // -----------------------------------------------------------------------
+
+    // ── Copy semantics ──────────────────────────────────────────────
+
+    #[test]
+    fn trust_zone_class_copy_semantics() {
+        let a = TrustZoneClass::Owner;
+        let b = a; // Copy
+        assert_eq!(a, b);
+        // a is still usable after copy
+        assert_eq!(a.as_str(), "owner");
+    }
+
+    #[test]
+    fn zone_event_type_copy_semantics() {
+        let a = ZoneEventType::Assignment;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn zone_event_outcome_copy_semantics() {
+        let a = ZoneEventOutcome::Pass;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn trust_zone_class_copy_all_variants() {
+        for class in TrustZoneClass::ORDERED {
+            let copied = class;
+            assert_eq!(class, copied);
+            assert_eq!(class.as_str(), copied.as_str());
+        }
+    }
+
+    #[test]
+    fn zone_event_type_copy_all_variants() {
+        let variants = [
+            ZoneEventType::Assignment,
+            ZoneEventType::CeilingCheck,
+            ZoneEventType::ZoneTransition,
+        ];
+        for v in variants {
+            let copied = v;
+            assert_eq!(v, copied);
+        }
+    }
+
+    #[test]
+    fn zone_event_outcome_copy_all_variants() {
+        let variants = [
+            ZoneEventOutcome::Pass,
+            ZoneEventOutcome::Assigned,
+            ZoneEventOutcome::Migrated,
+            ZoneEventOutcome::CeilingExceeded,
+            ZoneEventOutcome::Denied,
+        ];
+        for v in variants {
+            let copied = v;
+            assert_eq!(v, copied);
+        }
+    }
+
+    // ── Debug distinctness ──────────────────────────────────────────
+
+    #[test]
+    fn trust_zone_class_debug_distinct() {
+        let mut debug_strings = BTreeSet::new();
+        for class in TrustZoneClass::ORDERED {
+            debug_strings.insert(format!("{class:?}"));
+        }
+        assert_eq!(debug_strings.len(), 4);
+    }
+
+    #[test]
+    fn zone_event_type_debug_distinct() {
+        let variants = [
+            ZoneEventType::Assignment,
+            ZoneEventType::CeilingCheck,
+            ZoneEventType::ZoneTransition,
+        ];
+        let mut debug_strings = BTreeSet::new();
+        for v in variants {
+            debug_strings.insert(format!("{v:?}"));
+        }
+        assert_eq!(debug_strings.len(), 3);
+    }
+
+    #[test]
+    fn zone_event_outcome_debug_distinct() {
+        let variants = [
+            ZoneEventOutcome::Pass,
+            ZoneEventOutcome::Assigned,
+            ZoneEventOutcome::Migrated,
+            ZoneEventOutcome::CeilingExceeded,
+            ZoneEventOutcome::Denied,
+        ];
+        let mut debug_strings = BTreeSet::new();
+        for v in variants {
+            debug_strings.insert(format!("{v:?}"));
+        }
+        assert_eq!(debug_strings.len(), 5);
+    }
+
+    #[test]
+    fn trust_zone_error_debug_distinct_all_variants() {
+        let variants: Vec<TrustZoneError> = vec![
+            TrustZoneError::ZoneAlreadyExists {
+                zone_name: "z".into(),
+            },
+            TrustZoneError::ParentZoneMissing {
+                zone_name: "z".into(),
+                parent_zone: "p".into(),
+            },
+            TrustZoneError::ZoneMissing {
+                zone_name: "z".into(),
+            },
+            TrustZoneError::CeilingExceedsParent {
+                zone_name: "z".into(),
+                exceeded: BTreeSet::new(),
+            },
+            TrustZoneError::CapabilityCeilingExceeded {
+                zone_name: "z".into(),
+                requested: BTreeSet::new(),
+                ceiling: BTreeSet::new(),
+            },
+            TrustZoneError::PolicyGateDenied {
+                entity_id: "e".into(),
+                from_zone: "a".into(),
+                to_zone: "b".into(),
+            },
+        ];
+        let mut debug_strings = BTreeSet::new();
+        for v in &variants {
+            debug_strings.insert(format!("{v:?}"));
+        }
+        assert_eq!(debug_strings.len(), 6);
+    }
+
+    // ── Serde variant distinctness ──────────────────────────────────
+
+    #[test]
+    fn trust_zone_class_serde_distinct() {
+        let mut jsons = BTreeSet::new();
+        for class in TrustZoneClass::ORDERED {
+            jsons.insert(serde_json::to_string(&class).unwrap());
+        }
+        assert_eq!(jsons.len(), 4);
+    }
+
+    #[test]
+    fn zone_event_type_serde_distinct() {
+        let variants = [
+            ZoneEventType::Assignment,
+            ZoneEventType::CeilingCheck,
+            ZoneEventType::ZoneTransition,
+        ];
+        let mut jsons = BTreeSet::new();
+        for v in variants {
+            jsons.insert(serde_json::to_string(&v).unwrap());
+        }
+        assert_eq!(jsons.len(), 3);
+    }
+
+    #[test]
+    fn zone_event_outcome_serde_distinct() {
+        let variants = [
+            ZoneEventOutcome::Pass,
+            ZoneEventOutcome::Assigned,
+            ZoneEventOutcome::Migrated,
+            ZoneEventOutcome::CeilingExceeded,
+            ZoneEventOutcome::Denied,
+        ];
+        let mut jsons = BTreeSet::new();
+        for v in variants {
+            jsons.insert(serde_json::to_string(&v).unwrap());
+        }
+        assert_eq!(jsons.len(), 5);
+    }
+
+    #[test]
+    fn trust_zone_error_serde_distinct_all_variants() {
+        let variants: Vec<TrustZoneError> = vec![
+            TrustZoneError::ZoneAlreadyExists {
+                zone_name: "z".into(),
+            },
+            TrustZoneError::ParentZoneMissing {
+                zone_name: "z".into(),
+                parent_zone: "p".into(),
+            },
+            TrustZoneError::ZoneMissing {
+                zone_name: "z".into(),
+            },
+            TrustZoneError::CeilingExceedsParent {
+                zone_name: "z".into(),
+                exceeded: BTreeSet::new(),
+            },
+            TrustZoneError::CapabilityCeilingExceeded {
+                zone_name: "z".into(),
+                requested: BTreeSet::new(),
+                ceiling: BTreeSet::new(),
+            },
+            TrustZoneError::PolicyGateDenied {
+                entity_id: "e".into(),
+                from_zone: "a".into(),
+                to_zone: "b".into(),
+            },
+        ];
+        let mut jsons = BTreeSet::new();
+        for v in &variants {
+            jsons.insert(serde_json::to_string(v).unwrap());
+        }
+        assert_eq!(jsons.len(), 6);
+    }
+
+    // ── Clone independence ──────────────────────────────────────────
+
+    #[test]
+    fn trust_zone_clone_independence() {
+        let hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        let zone = hierarchy.zone("team").unwrap();
+        let mut cloned = zone.clone();
+        cloned.zone_name = "mutated".into();
+        assert_eq!(zone.zone_name, "team");
+        assert_ne!(zone.zone_name, cloned.zone_name);
+    }
+
+    #[test]
+    fn zone_hierarchy_clone_independence() {
+        let hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        let mut cloned = hierarchy.clone();
+        cloned
+            .assign_entity("ext-clone-test", "owner", "trace-clone")
+            .unwrap();
+        // Original should have no events (beyond creation), clone has one
+        assert!(hierarchy.events().is_empty());
+        assert!(!cloned.events().is_empty());
+    }
+
+    #[test]
+    fn zone_create_request_clone_independence() {
+        let req = ZoneCreateRequest::new("orig", TrustZoneClass::Team, 1, "admin");
+        let mut cloned = req.clone();
+        cloned.zone_name = "mutated".into();
+        assert_eq!(req.zone_name, "orig");
+    }
+
+    #[test]
+    fn zone_transition_request_clone_independence() {
+        let req = ZoneTransitionRequest::new("ent-1", "team", "t", "p", "d", true);
+        let mut cloned = req.clone();
+        cloned.entity_id = "ent-mutated".into();
+        assert_eq!(req.entity_id, "ent-1");
+    }
+
+    #[test]
+    fn zone_event_clone_independence() {
+        let event = ZoneEvent::base("trace-1", ZoneEventType::Assignment, ZoneEventOutcome::Pass);
+        let mut cloned = event.clone();
+        cloned.trace_id = "trace-mutated".into();
+        assert_eq!(event.trace_id, "trace-1");
+    }
+
+    #[test]
+    fn trust_zone_error_clone_independence() {
+        let err = TrustZoneError::ZoneAlreadyExists {
+            zone_name: "orig".into(),
+        };
+        let cloned = err.clone();
+        assert_eq!(err, cloned);
+        // They are equal but independent allocations
+        if let TrustZoneError::ZoneAlreadyExists { zone_name } = &cloned {
+            assert_eq!(zone_name, "orig");
+        }
+    }
+
+    // ── JSON field-name stability ───────────────────────────────────
+
+    #[test]
+    fn trust_zone_class_serde_snake_case_field_values() {
+        assert_eq!(
+            serde_json::to_string(&TrustZoneClass::Owner).unwrap(),
+            "\"owner\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TrustZoneClass::Private).unwrap(),
+            "\"private\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TrustZoneClass::Team).unwrap(),
+            "\"team\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TrustZoneClass::Community).unwrap(),
+            "\"community\""
+        );
+    }
+
+    #[test]
+    fn zone_event_type_serde_snake_case_field_values() {
+        assert_eq!(
+            serde_json::to_string(&ZoneEventType::Assignment).unwrap(),
+            "\"assignment\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ZoneEventType::CeilingCheck).unwrap(),
+            "\"ceiling_check\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ZoneEventType::ZoneTransition).unwrap(),
+            "\"zone_transition\""
+        );
+    }
+
+    #[test]
+    fn zone_event_outcome_serde_snake_case_field_values() {
+        assert_eq!(
+            serde_json::to_string(&ZoneEventOutcome::Pass).unwrap(),
+            "\"pass\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ZoneEventOutcome::Assigned).unwrap(),
+            "\"assigned\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ZoneEventOutcome::Migrated).unwrap(),
+            "\"migrated\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ZoneEventOutcome::CeilingExceeded).unwrap(),
+            "\"ceiling_exceeded\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ZoneEventOutcome::Denied).unwrap(),
+            "\"denied\""
+        );
+    }
+
+    #[test]
+    fn trust_zone_json_field_names() {
+        let hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        let zone = hierarchy.zone("owner").unwrap();
+        let json = serde_json::to_string(zone).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("zone_id"));
+        assert!(obj.contains_key("zone_name"));
+        assert!(obj.contains_key("class"));
+        assert!(obj.contains_key("parent_zone"));
+        assert!(obj.contains_key("policy_version"));
+        assert!(obj.contains_key("created_by"));
+        assert!(obj.contains_key("declared_ceiling"));
+        assert!(obj.contains_key("effective_ceiling"));
+        assert_eq!(obj.len(), 8);
+    }
+
+    #[test]
+    fn zone_create_request_json_field_names() {
+        let req = ZoneCreateRequest::new("z", TrustZoneClass::Team, 1, "a")
+            .with_parent("p")
+            .with_declared_ceiling(capset(&[RuntimeCapability::VmDispatch]));
+        let json = serde_json::to_string(&req).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("zone_name"));
+        assert!(obj.contains_key("class"));
+        assert!(obj.contains_key("parent_zone_name"));
+        assert!(obj.contains_key("declared_ceiling"));
+        assert!(obj.contains_key("policy_version"));
+        assert!(obj.contains_key("created_by"));
+        assert_eq!(obj.len(), 6);
+    }
+
+    #[test]
+    fn zone_transition_request_json_field_names() {
+        let req = ZoneTransitionRequest::new("e", "z", "t", "p", "d", true);
+        let json = serde_json::to_string(&req).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("entity_id"));
+        assert!(obj.contains_key("to_zone_name"));
+        assert!(obj.contains_key("trace_id"));
+        assert!(obj.contains_key("policy_id"));
+        assert!(obj.contains_key("decision_id"));
+        assert!(obj.contains_key("policy_gate_approved"));
+        assert_eq!(obj.len(), 6);
+    }
+
+    #[test]
+    fn zone_event_json_field_names() {
+        let event =
+            ZoneEvent::base("trace-1", ZoneEventType::Assignment, ZoneEventOutcome::Assigned);
+        let json = serde_json::to_string(&event).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("trace_id"));
+        assert!(obj.contains_key("decision_id"));
+        assert!(obj.contains_key("policy_id"));
+        assert!(obj.contains_key("component"));
+        assert!(obj.contains_key("event"));
+        assert!(obj.contains_key("outcome"));
+        assert!(obj.contains_key("error_code"));
+        assert!(obj.contains_key("entity_id"));
+        assert!(obj.contains_key("zone_name"));
+        assert!(obj.contains_key("from_zone"));
+        assert!(obj.contains_key("to_zone"));
+        assert_eq!(obj.len(), 11);
+    }
+
+    #[test]
+    fn zone_hierarchy_json_field_names() {
+        let hierarchy = ZoneHierarchy::new("default");
+        let json = serde_json::to_string(&hierarchy).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("zones"));
+        assert!(obj.contains_key("assignments"));
+        assert!(obj.contains_key("default_zone"));
+        assert!(obj.contains_key("events"));
+        assert_eq!(obj.len(), 4);
+    }
+
+    // ── Display format checks ───────────────────────────────────────
+
+    #[test]
+    fn trust_zone_class_display_exact_values() {
+        assert_eq!(TrustZoneClass::Owner.to_string(), "owner");
+        assert_eq!(TrustZoneClass::Private.to_string(), "private");
+        assert_eq!(TrustZoneClass::Team.to_string(), "team");
+        assert_eq!(TrustZoneClass::Community.to_string(), "community");
+    }
+
+    #[test]
+    fn trust_zone_error_display_zone_already_exists_format() {
+        let err = TrustZoneError::ZoneAlreadyExists {
+            zone_name: "alpha".into(),
+        };
+        assert_eq!(err.to_string(), "zone already exists: alpha");
+    }
+
+    #[test]
+    fn trust_zone_error_display_parent_missing_format() {
+        let err = TrustZoneError::ParentZoneMissing {
+            zone_name: "child".into(),
+            parent_zone: "missing-parent".into(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "cannot create zone 'child': missing parent zone 'missing-parent'"
+        );
+    }
+
+    #[test]
+    fn trust_zone_error_display_zone_missing_format() {
+        let err = TrustZoneError::ZoneMissing {
+            zone_name: "ghost".into(),
+        };
+        assert_eq!(err.to_string(), "unknown zone: ghost");
+    }
+
+    #[test]
+    fn trust_zone_error_display_policy_gate_denied_format() {
+        let err = TrustZoneError::PolicyGateDenied {
+            entity_id: "ext-99".into(),
+            from_zone: "community".into(),
+            to_zone: "owner".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.starts_with("policy gate denied"));
+        assert!(msg.contains("ext-99"));
+        assert!(msg.contains("community"));
+        assert!(msg.contains("owner"));
+    }
+
+    #[test]
+    fn trust_zone_error_display_id_derivation() {
+        let id_err = IdError::EmptyCanonicalBytes;
+        let err = TrustZoneError::IdDerivation(id_err);
+        let msg = err.to_string();
+        assert!(msg.contains("zone id derivation failed"));
+    }
+
+    // ── Boundary / edge cases ───────────────────────────────────────
+
+    #[test]
+    fn zone_hierarchy_empty_default_zone() {
+        let hierarchy = ZoneHierarchy::new("");
+        assert_eq!(hierarchy.events().len(), 0);
+        // Looking up entity should fail because the empty default zone does not exist
+        let err = hierarchy.zone_for_entity("anything").unwrap_err();
+        assert!(matches!(err, TrustZoneError::ZoneMissing { .. }));
+    }
+
+    #[test]
+    fn zone_create_request_empty_name() {
+        let mut hierarchy = ZoneHierarchy::new("community");
+        // Empty zone name should still work (no validation against empty names)
+        let result = hierarchy.add_zone(ZoneCreateRequest::new(
+            "",
+            TrustZoneClass::Community,
+            1,
+            "admin",
+        ));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn zone_create_request_max_policy_version() {
+        let mut hierarchy = ZoneHierarchy::new("community");
+        let result = hierarchy.add_zone(ZoneCreateRequest::new(
+            "max-ver",
+            TrustZoneClass::Owner,
+            u64::MAX,
+            "admin",
+        ));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn zone_create_request_zero_policy_version() {
+        let mut hierarchy = ZoneHierarchy::new("community");
+        let result = hierarchy.add_zone(ZoneCreateRequest::new(
+            "zero-ver",
+            TrustZoneClass::Owner,
+            0,
+            "admin",
+        ));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn enforce_ceiling_with_empty_requested_set() {
+        let mut hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        // Empty set should always pass (empty is subset of everything)
+        hierarchy
+            .enforce_ceiling("community", &BTreeSet::new(), "trace-empty")
+            .unwrap();
+    }
+
+    #[test]
+    fn enforce_ceiling_missing_zone() {
+        let mut hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        let err = hierarchy
+            .enforce_ceiling("nonexistent", &BTreeSet::new(), "t")
+            .unwrap_err();
+        assert!(matches!(err, TrustZoneError::ZoneMissing { .. }));
+    }
+
+    #[test]
+    fn assign_entity_empty_entity_id() {
+        let mut hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        hierarchy.assign_entity("", "community", "t").unwrap();
+        let zone = hierarchy.zone_for_entity("").unwrap();
+        assert_eq!(zone.zone_name, "community");
+    }
+
+    #[test]
+    fn assign_entity_reassignment_updates_zone() {
+        let mut hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        hierarchy
+            .assign_entity("ext-1", "community", "t1")
+            .unwrap();
+        hierarchy.assign_entity("ext-1", "team", "t2").unwrap();
+        let zone = hierarchy.zone_for_entity("ext-1").unwrap();
+        assert_eq!(zone.zone_name, "team");
+    }
+
+    #[test]
+    fn drain_events_returns_empty_when_no_events() {
+        let mut hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        let events = hierarchy.drain_events();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn drain_events_twice_second_is_empty() {
+        let mut hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        hierarchy
+            .assign_entity("ext-1", "community", "t")
+            .unwrap();
+        let events1 = hierarchy.drain_events();
+        assert!(!events1.is_empty());
+        let events2 = hierarchy.drain_events();
+        assert!(events2.is_empty());
+    }
+
+    #[test]
+    fn zone_allows_exact_ceiling() {
+        // Requesting exactly the full ceiling should pass
+        let hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        let community = hierarchy.zone("community").unwrap();
+        let full_ceiling = community.effective_ceiling.clone();
+        assert!(community.allows(&full_ceiling));
+    }
+
+    #[test]
+    fn zone_allows_single_extra_beyond_ceiling_fails() {
+        let hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        let community = hierarchy.zone("community").unwrap();
+        let mut requested = community.effective_ceiling.clone();
+        requested.insert(RuntimeCapability::FsWrite);
+        assert!(!community.allows(&requested));
+    }
+
+    // ── Serde roundtrips (complex structs) ──────────────────────────
+
+    #[test]
+    fn zone_hierarchy_with_assignments_serde_roundtrip() {
+        let mut hierarchy = ZoneHierarchy::standard("admin", 1).unwrap();
+        hierarchy
+            .assign_entity("ext-1", "community", "t1")
+            .unwrap();
+        hierarchy.assign_entity("ext-2", "team", "t2").unwrap();
+        hierarchy
+            .assign_entity("ext-3", "private", "t3")
+            .unwrap();
+        let json = serde_json::to_string(&hierarchy).unwrap();
+        let back: ZoneHierarchy = serde_json::from_str(&json).unwrap();
+        assert_eq!(hierarchy, back);
+    }
+
+    #[test]
+    fn zone_hierarchy_with_events_serde_roundtrip() {
+        let mut hierarchy = ZoneHierarchy::standard("admin", 1).unwrap();
+        hierarchy
+            .assign_entity("ext-1", "community", "t1")
+            .unwrap();
+        hierarchy
+            .enforce_ceiling(
+                "community",
+                &capset(&[RuntimeCapability::VmDispatch]),
+                "t2",
+            )
+            .unwrap();
+        let json = serde_json::to_string(&hierarchy).unwrap();
+        let back: ZoneHierarchy = serde_json::from_str(&json).unwrap();
+        assert_eq!(hierarchy, back);
+    }
+
+    #[test]
+    fn trust_zone_error_serde_roundtrip_all_variants() {
+        let variants: Vec<TrustZoneError> = vec![
+            TrustZoneError::ZoneAlreadyExists {
+                zone_name: "z".into(),
+            },
+            TrustZoneError::ParentZoneMissing {
+                zone_name: "z".into(),
+                parent_zone: "p".into(),
+            },
+            TrustZoneError::ZoneMissing {
+                zone_name: "z".into(),
+            },
+            TrustZoneError::CeilingExceedsParent {
+                zone_name: "z".into(),
+                exceeded: capset(&[RuntimeCapability::FsWrite, RuntimeCapability::NetworkEgress]),
+            },
+            TrustZoneError::CapabilityCeilingExceeded {
+                zone_name: "z".into(),
+                requested: capset(&[RuntimeCapability::FsWrite]),
+                ceiling: capset(&[RuntimeCapability::VmDispatch]),
+            },
+            TrustZoneError::PolicyGateDenied {
+                entity_id: "e".into(),
+                from_zone: "a".into(),
+                to_zone: "b".into(),
+            },
+        ];
+        for err in &variants {
+            let json = serde_json::to_string(err).unwrap();
+            let back: TrustZoneError = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, err);
+        }
+    }
+
+    #[test]
+    fn zone_event_with_all_fields_set_serde_roundtrip() {
+        let event = ZoneEvent {
+            trace_id: "trace-123".into(),
+            decision_id: Some("dec-456".into()),
+            policy_id: Some("pol-789".into()),
+            component: "trust_zone".into(),
+            event: ZoneEventType::ZoneTransition,
+            outcome: ZoneEventOutcome::Migrated,
+            error_code: Some("FE-6001".into()),
+            entity_id: Some("ext-alpha".into()),
+            zone_name: Some("team".into()),
+            from_zone: Some("community".into()),
+            to_zone: Some("private".into()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: ZoneEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, event);
+    }
+
+    #[test]
+    fn zone_event_minimal_fields_serde_roundtrip() {
+        let event = ZoneEvent::base("t", ZoneEventType::Assignment, ZoneEventOutcome::Pass);
+        let json = serde_json::to_string(&event).unwrap();
+        let back: ZoneEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, event);
+    }
+
+    // ── Additional edge cases & behavioral tests ────────────────────
+
+    #[test]
+    fn zone_id_differs_per_zone_in_standard_hierarchy() {
+        let hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        let mut zone_ids = BTreeSet::new();
+        for class in TrustZoneClass::ORDERED {
+            let zone = hierarchy.zone(class.as_str()).unwrap();
+            zone_ids.insert(zone.zone_id.clone());
+        }
+        assert_eq!(zone_ids.len(), 4, "all 4 zones should have distinct IDs");
+    }
+
+    #[test]
+    fn zone_scoped_id_differs_by_domain() {
+        let hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        let zone = hierarchy.zone("team").unwrap();
+        let schema = SchemaId::from_definition(b"test-domain-v1");
+        let id_a = derive_zone_scoped_object_id(
+            zone,
+            ObjectDomain::EvidenceRecord,
+            &schema,
+            b"data",
+        )
+        .unwrap();
+        let id_b = derive_zone_scoped_object_id(
+            zone,
+            ObjectDomain::PolicyObject,
+            &schema,
+            b"data",
+        )
+        .unwrap();
+        assert_ne!(id_a, id_b);
+    }
+
+    #[test]
+    fn zone_scoped_id_differs_by_canonical_bytes() {
+        let hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        let zone = hierarchy.zone("owner").unwrap();
+        let schema = SchemaId::from_definition(b"test-schema-v1");
+        let id_a = derive_zone_scoped_object_id(
+            zone,
+            ObjectDomain::EvidenceRecord,
+            &schema,
+            b"data-a",
+        )
+        .unwrap();
+        let id_b = derive_zone_scoped_object_id(
+            zone,
+            ObjectDomain::EvidenceRecord,
+            &schema,
+            b"data-b",
+        )
+        .unwrap();
+        assert_ne!(id_a, id_b);
+    }
+
+    #[test]
+    fn transition_approved_then_denied_preserves_first_move() {
+        let mut hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        hierarchy
+            .assign_entity("ext-1", "community", "t1")
+            .unwrap();
+
+        // Approve transition to team
+        hierarchy
+            .transition_entity(ZoneTransitionRequest::new(
+                "ext-1", "team", "t2", "p", "d1", true,
+            ))
+            .unwrap();
+        assert_eq!(
+            hierarchy.zone_for_entity("ext-1").unwrap().zone_name,
+            "team"
+        );
+
+        // Deny transition to owner
+        let err = hierarchy
+            .transition_entity(ZoneTransitionRequest::new(
+                "ext-1", "owner", "t3", "p", "d2", false,
+            ))
+            .unwrap_err();
+        assert!(matches!(err, TrustZoneError::PolicyGateDenied { .. }));
+        // Should still be in team
+        assert_eq!(
+            hierarchy.zone_for_entity("ext-1").unwrap().zone_name,
+            "team"
+        );
+    }
+
+    #[test]
+    fn multiple_entities_independent_assignments() {
+        let mut hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        hierarchy
+            .assign_entity("ext-1", "community", "t1")
+            .unwrap();
+        hierarchy.assign_entity("ext-2", "team", "t2").unwrap();
+        hierarchy.assign_entity("ext-3", "owner", "t3").unwrap();
+        assert_eq!(
+            hierarchy.zone_for_entity("ext-1").unwrap().zone_name,
+            "community"
+        );
+        assert_eq!(
+            hierarchy.zone_for_entity("ext-2").unwrap().zone_name,
+            "team"
+        );
+        assert_eq!(
+            hierarchy.zone_for_entity("ext-3").unwrap().zone_name,
+            "owner"
+        );
+    }
+
+    #[test]
+    fn event_count_matches_operations() {
+        let mut hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        assert_eq!(hierarchy.events().len(), 0);
+
+        hierarchy
+            .assign_entity("ext-1", "community", "t1")
+            .unwrap();
+        assert_eq!(hierarchy.events().len(), 1);
+
+        hierarchy
+            .enforce_ceiling(
+                "community",
+                &capset(&[RuntimeCapability::VmDispatch]),
+                "t2",
+            )
+            .unwrap();
+        assert_eq!(hierarchy.events().len(), 2);
+
+        // Failed enforce should also emit an event
+        let _ = hierarchy.enforce_ceiling(
+            "community",
+            &capset(&[RuntimeCapability::FsWrite]),
+            "t3",
+        );
+        assert_eq!(hierarchy.events().len(), 3);
+    }
+
+    #[test]
+    fn zone_with_declared_ceiling_empty_set() {
+        let mut hierarchy = ZoneHierarchy::new("community");
+        hierarchy
+            .add_zone(ZoneCreateRequest::new(
+                "owner",
+                TrustZoneClass::Owner,
+                1,
+                "root",
+            ))
+            .unwrap();
+        // Child with empty declared ceiling => effective is intersection of empty + parent = empty
+        hierarchy
+            .add_zone(
+                ZoneCreateRequest::new("child", TrustZoneClass::Private, 1, "root")
+                    .with_parent("owner")
+                    .with_declared_ceiling(BTreeSet::new()),
+            )
+            .unwrap();
+        let child = hierarchy.zone("child").unwrap();
+        assert!(child.effective_ceiling.is_empty());
+    }
+
+    #[test]
+    fn parent_zone_field_set_correctly() {
+        let hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        let owner = hierarchy.zone("owner").unwrap();
+        assert!(owner.parent_zone.is_none());
+
+        let private = hierarchy.zone("private").unwrap();
+        assert_eq!(private.parent_zone, Some(owner.zone_id.clone()));
+    }
+
+    #[test]
+    fn created_by_preserved_in_zone() {
+        let hierarchy = ZoneHierarchy::standard("test-creator", 1).unwrap();
+        for class in TrustZoneClass::ORDERED {
+            let zone = hierarchy.zone(class.as_str()).unwrap();
+            assert_eq!(zone.created_by, "test-creator");
+        }
+    }
+
+    #[test]
+    fn zone_event_component_is_trust_zone() {
+        let mut hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
+        hierarchy
+            .assign_entity("ext-1", "community", "t")
+            .unwrap();
+        for event in hierarchy.events() {
+            assert_eq!(event.component, "trust_zone");
+        }
+    }
+
+    #[test]
+    fn standard_hierarchy_policy_version_propagated() {
+        let hierarchy = ZoneHierarchy::standard("m", 42).unwrap();
+        for class in TrustZoneClass::ORDERED {
+            let zone = hierarchy.zone(class.as_str()).unwrap();
+            assert_eq!(zone.policy_version, 42);
+        }
+    }
+
+    #[test]
+    fn from_id_error_conversion() {
+        let id_err = IdError::EmptyCanonicalBytes;
+        let zone_err: TrustZoneError = id_err.into();
+        assert!(matches!(zone_err, TrustZoneError::IdDerivation(_)));
+    }
+
+    #[test]
+    fn zone_hierarchy_deterministic_serialization_with_events() {
+        let mut a = ZoneHierarchy::standard("m", 1).unwrap();
+        let mut b = ZoneHierarchy::standard("m", 1).unwrap();
+        a.assign_entity("ext-1", "community", "t1").unwrap();
+        b.assign_entity("ext-1", "community", "t1").unwrap();
+        let json_a = serde_json::to_string(&a).unwrap();
+        let json_b = serde_json::to_string(&b).unwrap();
+        assert_eq!(json_a, json_b);
+    }
 }

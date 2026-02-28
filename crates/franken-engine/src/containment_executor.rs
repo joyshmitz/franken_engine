@@ -1435,4 +1435,839 @@ mod tests {
         };
         assert!(!err.to_string().is_empty());
     }
+
+    // -----------------------------------------------------------------------
+    // Category 1: Copy semantics — ContainmentState and ContainmentAction are Copy
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn containment_state_copy_survives() {
+        let original = ContainmentState::Sandboxed;
+        let copy = original;
+        assert_eq!(original, copy);
+        // Both usable after copy.
+        assert!(original.is_alive());
+        assert!(copy.is_alive());
+    }
+
+    #[test]
+    fn containment_action_copy_survives() {
+        let original = ContainmentAction::Terminate;
+        let copy = original;
+        assert_eq!(original, copy);
+        assert_eq!(original.severity(), copy.severity());
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 2: Debug distinctness — all enum variants produce distinct Debug
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn containment_state_debug_distinct() {
+        use std::collections::BTreeSet;
+        let variants = [
+            ContainmentState::Running,
+            ContainmentState::Challenged,
+            ContainmentState::Sandboxed,
+            ContainmentState::Suspended,
+            ContainmentState::Terminated,
+            ContainmentState::Quarantined,
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(set.len(), variants.len(), "Debug strings must be distinct");
+    }
+
+    #[test]
+    fn containment_error_debug_distinct() {
+        use std::collections::BTreeSet;
+        let variants = [
+            ContainmentError::ExtensionNotFound {
+                extension_id: "e".to_string(),
+            },
+            ContainmentError::AlreadyContained {
+                extension_id: "e".to_string(),
+                current_state: ContainmentState::Sandboxed,
+            },
+            ContainmentError::InvalidTransition {
+                from: ContainmentState::Running,
+                action: ContainmentAction::Allow,
+            },
+            ContainmentError::GracePeriodExpired {
+                extension_id: "e".to_string(),
+                elapsed_ns: 1000,
+            },
+            ContainmentError::ChallengeTimeout {
+                extension_id: "e".to_string(),
+            },
+            ContainmentError::Internal {
+                detail: "x".to_string(),
+            },
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn containment_action_debug_distinct() {
+        use std::collections::BTreeSet;
+        let set: BTreeSet<String> = ContainmentAction::ALL
+            .iter()
+            .map(|a| format!("{a:?}"))
+            .collect();
+        assert_eq!(set.len(), ContainmentAction::ALL.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 3: Serde variant distinctness — all enum variants serialize distinctly
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn containment_state_serde_distinct() {
+        use std::collections::BTreeSet;
+        let variants = [
+            ContainmentState::Running,
+            ContainmentState::Challenged,
+            ContainmentState::Sandboxed,
+            ContainmentState::Suspended,
+            ContainmentState::Terminated,
+            ContainmentState::Quarantined,
+        ];
+        let set: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(set.len(), variants.len(), "all states serialize distinctly");
+    }
+
+    #[test]
+    fn containment_action_serde_distinct() {
+        use std::collections::BTreeSet;
+        let set: BTreeSet<String> = ContainmentAction::ALL
+            .iter()
+            .map(|a| serde_json::to_string(a).unwrap())
+            .collect();
+        assert_eq!(
+            set.len(),
+            ContainmentAction::ALL.len(),
+            "all actions serialize distinctly"
+        );
+    }
+
+    #[test]
+    fn containment_error_serde_distinct() {
+        use std::collections::BTreeSet;
+        let variants = [
+            ContainmentError::ExtensionNotFound {
+                extension_id: "e".to_string(),
+            },
+            ContainmentError::AlreadyContained {
+                extension_id: "e".to_string(),
+                current_state: ContainmentState::Terminated,
+            },
+            ContainmentError::InvalidTransition {
+                from: ContainmentState::Running,
+                action: ContainmentAction::Sandbox,
+            },
+            ContainmentError::GracePeriodExpired {
+                extension_id: "e".to_string(),
+                elapsed_ns: 99,
+            },
+            ContainmentError::ChallengeTimeout {
+                extension_id: "e".to_string(),
+            },
+            ContainmentError::Internal {
+                detail: "detail".to_string(),
+            },
+        ];
+        let set: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 4: Clone independence
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sandbox_policy_clone_independence() {
+        let original = SandboxPolicy {
+            allowed_capabilities: vec!["fs-read".to_string()],
+            allow_network: false,
+            allow_fs_write: false,
+            allow_process_spawn: false,
+            max_memory_bytes: 1024,
+        };
+        let mut cloned = original.clone();
+        cloned.allowed_capabilities.push("net-all".to_string());
+        cloned.allow_network = true;
+        // Original is unchanged.
+        assert_eq!(original.allowed_capabilities.len(), 1);
+        assert!(!original.allow_network);
+    }
+
+    #[test]
+    fn forensic_snapshot_clone_independence() {
+        let snap = ForensicSnapshot {
+            memory_hash: ContentHash::compute(b"data"),
+            hostcall_count: 10,
+            snapshot_ns: 5_000,
+            manifest_hash: ContentHash::compute(b"manifest"),
+        };
+        let mut cloned = snap.clone();
+        cloned.hostcall_count = 999;
+        // Original is unaffected; clone has the new value.
+        assert_eq!(snap.hostcall_count, 10);
+        assert_eq!(cloned.hostcall_count, 999);
+    }
+
+    #[test]
+    fn containment_context_clone_independence() {
+        let ctx = test_context();
+        let mut cloned = ctx.clone();
+        cloned.decision_id = "mutated".to_string();
+        cloned.evidence_refs.push("extra-ev".to_string());
+        assert_eq!(ctx.decision_id, "dec-001");
+        assert_eq!(ctx.evidence_refs.len(), 1);
+    }
+
+    #[test]
+    fn executor_clone_independence() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        executor
+            .execute(ContainmentAction::Sandbox, "ext-001", &ctx)
+            .unwrap();
+        let mut cloned = executor.clone();
+        // Mutate clone only.
+        cloned.register("ext-clone-only");
+        assert_eq!(executor.extension_count(), 2);
+        assert_eq!(cloned.extension_count(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 5: JSON field-name stability
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sandbox_policy_json_field_names() {
+        let policy = SandboxPolicy::default();
+        let json = serde_json::to_string(&policy).unwrap();
+        assert!(json.contains("\"allowed_capabilities\""));
+        assert!(json.contains("\"allow_network\""));
+        assert!(json.contains("\"allow_fs_write\""));
+        assert!(json.contains("\"allow_process_spawn\""));
+        assert!(json.contains("\"max_memory_bytes\""));
+    }
+
+    #[test]
+    fn forensic_snapshot_json_field_names() {
+        let snap = ForensicSnapshot {
+            memory_hash: ContentHash::compute(b"m"),
+            hostcall_count: 1,
+            snapshot_ns: 0,
+            manifest_hash: ContentHash::compute(b"mf"),
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        assert!(json.contains("\"memory_hash\""));
+        assert!(json.contains("\"hostcall_count\""));
+        assert!(json.contains("\"snapshot_ns\""));
+        assert!(json.contains("\"manifest_hash\""));
+    }
+
+    #[test]
+    fn containment_context_json_field_names() {
+        let ctx = ContainmentContext::default();
+        let json = serde_json::to_string(&ctx).unwrap();
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"timestamp_ns\""));
+        assert!(json.contains("\"epoch\""));
+        assert!(json.contains("\"evidence_refs\""));
+        assert!(json.contains("\"grace_period_ns\""));
+        assert!(json.contains("\"challenge_timeout_ns\""));
+        assert!(json.contains("\"sandbox_policy\""));
+    }
+
+    #[test]
+    fn receipt_json_field_names_complete() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        let receipt = executor
+            .execute(ContainmentAction::Quarantine, "ext-001", &ctx)
+            .unwrap();
+        let json = serde_json::to_string(&receipt).unwrap();
+        assert!(json.contains("\"receipt_id\""));
+        assert!(json.contains("\"action\""));
+        assert!(json.contains("\"target_extension_id\""));
+        assert!(json.contains("\"previous_state\""));
+        assert!(json.contains("\"new_state\""));
+        assert!(json.contains("\"timestamp_ns\""));
+        assert!(json.contains("\"duration_ns\""));
+        assert!(json.contains("\"success\""));
+        assert!(json.contains("\"cooperative\""));
+        assert!(json.contains("\"evidence_refs\""));
+        assert!(json.contains("\"epoch\""));
+        assert!(json.contains("\"content_hash\""));
+        assert!(json.contains("\"metadata\""));
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 6: Display format checks — exact string assertions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn containment_state_display_exact() {
+        assert_eq!(ContainmentState::Running.to_string(), "running");
+        assert_eq!(ContainmentState::Challenged.to_string(), "challenged");
+        assert_eq!(ContainmentState::Sandboxed.to_string(), "sandboxed");
+        assert_eq!(ContainmentState::Suspended.to_string(), "suspended");
+        assert_eq!(ContainmentState::Terminated.to_string(), "terminated");
+        assert_eq!(ContainmentState::Quarantined.to_string(), "quarantined");
+    }
+
+    #[test]
+    fn error_display_extension_not_found_exact() {
+        let err = ContainmentError::ExtensionNotFound {
+            extension_id: "my-ext".to_string(),
+        };
+        assert_eq!(err.to_string(), "extension not found: my-ext");
+    }
+
+    #[test]
+    fn error_display_already_contained_exact() {
+        let err = ContainmentError::AlreadyContained {
+            extension_id: "my-ext".to_string(),
+            current_state: ContainmentState::Sandboxed,
+        };
+        assert_eq!(err.to_string(), "my-ext already in state: sandboxed");
+    }
+
+    #[test]
+    fn error_display_invalid_transition_exact() {
+        let err = ContainmentError::InvalidTransition {
+            from: ContainmentState::Terminated,
+            action: ContainmentAction::Sandbox,
+        };
+        assert_eq!(
+            err.to_string(),
+            "cannot apply sandbox from state terminated"
+        );
+    }
+
+    #[test]
+    fn error_display_grace_period_expired_exact() {
+        let err = ContainmentError::GracePeriodExpired {
+            extension_id: "ext-x".to_string(),
+            elapsed_ns: 7_000_000_000,
+        };
+        assert_eq!(
+            err.to_string(),
+            "grace period expired for ext-x after 7000000000ns"
+        );
+    }
+
+    #[test]
+    fn error_display_challenge_timeout_exact() {
+        let err = ContainmentError::ChallengeTimeout {
+            extension_id: "ext-y".to_string(),
+        };
+        assert_eq!(err.to_string(), "challenge timeout for ext-y");
+    }
+
+    #[test]
+    fn error_display_internal_exact() {
+        let err = ContainmentError::Internal {
+            detail: "disk full".to_string(),
+        };
+        assert_eq!(err.to_string(), "internal error: disk full");
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 7: Hash consistency — same value hashes identically
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn containment_state_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let state = ContainmentState::Quarantined;
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        state.hash(&mut h1);
+        state.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn containment_action_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let action = ContainmentAction::Quarantine;
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        action.hash(&mut h1);
+        action.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn containment_state_hash_all_distinct() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::collections::BTreeSet;
+        use std::hash::{Hash, Hasher};
+        let variants = [
+            ContainmentState::Running,
+            ContainmentState::Challenged,
+            ContainmentState::Sandboxed,
+            ContainmentState::Suspended,
+            ContainmentState::Terminated,
+            ContainmentState::Quarantined,
+        ];
+        let hashes: BTreeSet<u64> = variants
+            .iter()
+            .map(|v| {
+                let mut h = DefaultHasher::new();
+                v.hash(&mut h);
+                h.finish()
+            })
+            .collect();
+        assert_eq!(hashes.len(), variants.len(), "all state hashes distinct");
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 8: Boundary / edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn extension_id_empty_string() {
+        let mut executor = ContainmentExecutor::new();
+        executor.register("");
+        assert_eq!(executor.extension_count(), 1);
+        assert_eq!(executor.state(""), Some(ContainmentState::Running));
+    }
+
+    #[test]
+    fn sandbox_policy_empty_capabilities() {
+        let policy = SandboxPolicy {
+            allowed_capabilities: vec![],
+            allow_network: false,
+            allow_fs_write: false,
+            allow_process_spawn: false,
+            max_memory_bytes: 0,
+        };
+        assert!(!policy.is_allowed("fs-read"));
+        assert!(!policy.is_allowed(""));
+    }
+
+    #[test]
+    fn sandbox_policy_max_memory_zero() {
+        let policy = SandboxPolicy {
+            allowed_capabilities: vec![],
+            allow_network: false,
+            allow_fs_write: false,
+            allow_process_spawn: false,
+            max_memory_bytes: 0,
+        };
+        assert_eq!(policy.max_memory_bytes, 0);
+    }
+
+    #[test]
+    fn sandbox_policy_max_memory_u64_max() {
+        let policy = SandboxPolicy {
+            allowed_capabilities: vec!["all".to_string()],
+            allow_network: true,
+            allow_fs_write: true,
+            allow_process_spawn: true,
+            max_memory_bytes: u64::MAX,
+        };
+        assert_eq!(policy.max_memory_bytes, u64::MAX);
+        let json = serde_json::to_string(&policy).unwrap();
+        let back: SandboxPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.max_memory_bytes, u64::MAX);
+    }
+
+    #[test]
+    fn forensic_snapshot_zero_hostcall_count() {
+        let snap = ForensicSnapshot {
+            memory_hash: ContentHash::compute(b""),
+            hostcall_count: 0,
+            snapshot_ns: 0,
+            manifest_hash: ContentHash::compute(b""),
+        };
+        assert_eq!(snap.hostcall_count, 0);
+    }
+
+    #[test]
+    fn forensic_snapshot_u64_max_snapshot_ns() {
+        let snap = ForensicSnapshot {
+            memory_hash: ContentHash::compute(b"x"),
+            hostcall_count: u64::MAX,
+            snapshot_ns: u64::MAX,
+            manifest_hash: ContentHash::compute(b"y"),
+        };
+        assert_eq!(snap.snapshot_ns, u64::MAX);
+        assert_eq!(snap.hostcall_count, u64::MAX);
+    }
+
+    #[test]
+    fn context_with_empty_evidence_refs() {
+        let ctx = ContainmentContext {
+            evidence_refs: vec![],
+            ..test_context()
+        };
+        let mut executor = setup_executor();
+        let receipt = executor
+            .execute(ContainmentAction::Sandbox, "ext-001", &ctx)
+            .unwrap();
+        assert!(receipt.evidence_refs.is_empty());
+        assert!(receipt.verify_integrity());
+    }
+
+    #[test]
+    fn context_with_multiple_evidence_refs() {
+        let ctx = ContainmentContext {
+            evidence_refs: vec![
+                "ev-001".to_string(),
+                "ev-002".to_string(),
+                "ev-003".to_string(),
+            ],
+            ..test_context()
+        };
+        let mut executor = setup_executor();
+        let receipt = executor
+            .execute(ContainmentAction::Challenge, "ext-001", &ctx)
+            .unwrap();
+        assert_eq!(receipt.evidence_refs.len(), 3);
+        assert!(receipt.verify_integrity());
+    }
+
+    #[test]
+    fn grace_period_and_timeout_u64_max() {
+        let ctx = ContainmentContext {
+            grace_period_ns: u64::MAX,
+            challenge_timeout_ns: u64::MAX,
+            ..test_context()
+        };
+        assert_eq!(ctx.grace_period_ns, u64::MAX);
+        assert_eq!(ctx.challenge_timeout_ns, u64::MAX);
+        let json = serde_json::to_string(&ctx).unwrap();
+        let back: ContainmentContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.grace_period_ns, u64::MAX);
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 9: Serde roundtrips — complex populated structs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn containment_context_full_serde_roundtrip() {
+        let ctx = ContainmentContext {
+            decision_id: "full-dec-42".to_string(),
+            timestamp_ns: 9_999_999_999,
+            epoch: SecurityEpoch::from_raw(7),
+            evidence_refs: vec!["ev-a".to_string(), "ev-b".to_string()],
+            grace_period_ns: 1_000_000,
+            challenge_timeout_ns: 2_000_000,
+            sandbox_policy: SandboxPolicy {
+                allowed_capabilities: vec!["net".to_string(), "disk".to_string()],
+                allow_network: true,
+                allow_fs_write: true,
+                allow_process_spawn: false,
+                max_memory_bytes: 65536,
+            },
+        };
+        let json = serde_json::to_string(&ctx).unwrap();
+        let back: ContainmentContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(ctx.decision_id, back.decision_id);
+        assert_eq!(ctx.timestamp_ns, back.timestamp_ns);
+        assert_eq!(ctx.epoch, back.epoch);
+        assert_eq!(ctx.evidence_refs, back.evidence_refs);
+        assert_eq!(ctx.grace_period_ns, back.grace_period_ns);
+        assert_eq!(ctx.sandbox_policy, back.sandbox_policy);
+    }
+
+    #[test]
+    fn receipt_quarantine_serde_roundtrip() {
+        let mut executor = setup_executor();
+        let ctx = ContainmentContext {
+            decision_id: "quar-dec".to_string(),
+            timestamp_ns: 42_000,
+            epoch: SecurityEpoch::from_raw(3),
+            evidence_refs: vec!["ev-q1".to_string()],
+            ..ContainmentContext::default()
+        };
+        let receipt = executor
+            .execute(ContainmentAction::Quarantine, "ext-001", &ctx)
+            .unwrap();
+        let json = serde_json::to_string(&receipt).unwrap();
+        let back: ContainmentReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(receipt, back);
+        assert!(back.verify_integrity());
+    }
+
+    #[test]
+    fn receipt_terminate_serde_roundtrip() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        let receipt = executor
+            .execute(ContainmentAction::Terminate, "ext-001", &ctx)
+            .unwrap();
+        let json = serde_json::to_string(&receipt).unwrap();
+        let back: ContainmentReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(receipt, back);
+        assert!(!back.cooperative);
+    }
+
+    #[test]
+    fn forensic_snapshot_full_serde_roundtrip() {
+        let snap = ForensicSnapshot {
+            memory_hash: ContentHash::compute(b"memory-data-full"),
+            hostcall_count: 1_000_000,
+            snapshot_ns: 123_456_789,
+            manifest_hash: ContentHash::compute(b"manifest-hash-full"),
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        let back: ForensicSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(snap, back);
+    }
+
+    #[test]
+    fn executor_full_serde_roundtrip_state_preserved() {
+        let mut executor = ContainmentExecutor::new();
+        let ctx = test_context();
+        executor.register("alpha");
+        executor.register("beta");
+        executor.register("gamma");
+        executor
+            .execute(ContainmentAction::Sandbox, "alpha", &ctx)
+            .unwrap();
+        executor
+            .execute(ContainmentAction::Terminate, "beta", &ctx)
+            .unwrap();
+        let json = serde_json::to_string(&executor).unwrap();
+        let back: ContainmentExecutor = serde_json::from_str(&json).unwrap();
+        assert_eq!(executor.extension_count(), back.extension_count());
+        assert_eq!(back.state("alpha"), Some(ContainmentState::Sandboxed));
+        assert_eq!(back.state("beta"), Some(ContainmentState::Terminated));
+        assert_eq!(back.state("gamma"), Some(ContainmentState::Running));
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 10: Debug nonempty — all types produce non-empty Debug output
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sandbox_policy_debug_nonempty() {
+        let policy = SandboxPolicy::default();
+        assert!(!format!("{policy:?}").is_empty());
+    }
+
+    #[test]
+    fn forensic_snapshot_debug_nonempty() {
+        let snap = ForensicSnapshot {
+            memory_hash: ContentHash::compute(b"d"),
+            hostcall_count: 0,
+            snapshot_ns: 0,
+            manifest_hash: ContentHash::compute(b"m"),
+        };
+        assert!(!format!("{snap:?}").is_empty());
+    }
+
+    #[test]
+    fn containment_context_debug_nonempty() {
+        let ctx = ContainmentContext::default();
+        assert!(!format!("{ctx:?}").is_empty());
+    }
+
+    #[test]
+    fn containment_receipt_debug_nonempty() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        let receipt = executor
+            .execute(ContainmentAction::Challenge, "ext-001", &ctx)
+            .unwrap();
+        assert!(!format!("{receipt:?}").is_empty());
+    }
+
+    #[test]
+    fn executor_debug_nonempty() {
+        let executor = ContainmentExecutor::new();
+        assert!(!format!("{executor:?}").is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Extra targeted tests: transition table, cooperative flag, escalation paths
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cooperative_flag_is_true_for_non_terminal_actions() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        let r = executor
+            .execute(ContainmentAction::Challenge, "ext-001", &ctx)
+            .unwrap();
+        assert!(r.cooperative);
+        let r2 = executor
+            .execute(ContainmentAction::Sandbox, "ext-001", &ctx)
+            .unwrap();
+        assert!(r2.cooperative);
+    }
+
+    #[test]
+    fn cooperative_flag_is_false_for_terminate_and_quarantine() {
+        let mut executor = ContainmentExecutor::new();
+        let ctx = test_context();
+        executor.register("ext-t");
+        executor.register("ext-q");
+        let rt = executor
+            .execute(ContainmentAction::Terminate, "ext-t", &ctx)
+            .unwrap();
+        assert!(!rt.cooperative);
+        let rq = executor
+            .execute(ContainmentAction::Quarantine, "ext-q", &ctx)
+            .unwrap();
+        assert!(!rq.cooperative);
+    }
+
+    #[test]
+    fn challenged_then_quarantine() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        executor
+            .execute(ContainmentAction::Challenge, "ext-001", &ctx)
+            .unwrap();
+        let receipt = executor
+            .execute(ContainmentAction::Quarantine, "ext-001", &ctx)
+            .unwrap();
+        assert_eq!(receipt.previous_state, ContainmentState::Challenged);
+        assert_eq!(receipt.new_state, ContainmentState::Quarantined);
+        assert!(executor.forensic_snapshot("ext-001").is_some());
+        assert!(receipt.verify_integrity());
+    }
+
+    #[test]
+    fn sandboxed_then_suspend() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        executor
+            .execute(ContainmentAction::Sandbox, "ext-001", &ctx)
+            .unwrap();
+        let receipt = executor
+            .execute(ContainmentAction::Suspend, "ext-001", &ctx)
+            .unwrap();
+        assert_eq!(receipt.previous_state, ContainmentState::Sandboxed);
+        assert_eq!(receipt.new_state, ContainmentState::Suspended);
+        assert!(receipt.verify_integrity());
+    }
+
+    #[test]
+    fn cannot_challenge_from_sandboxed() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        executor
+            .execute(ContainmentAction::Sandbox, "ext-001", &ctx)
+            .unwrap();
+        let err = executor
+            .execute(ContainmentAction::Challenge, "ext-001", &ctx)
+            .unwrap_err();
+        assert!(matches!(err, ContainmentError::InvalidTransition { .. }));
+    }
+
+    #[test]
+    fn cannot_allow_from_sandboxed() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        executor
+            .execute(ContainmentAction::Sandbox, "ext-001", &ctx)
+            .unwrap();
+        let err = executor
+            .execute(ContainmentAction::Allow, "ext-001", &ctx)
+            .unwrap_err();
+        assert!(matches!(err, ContainmentError::InvalidTransition { .. }));
+    }
+
+    #[test]
+    fn cannot_transition_from_quarantined() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        executor
+            .execute(ContainmentAction::Quarantine, "ext-001", &ctx)
+            .unwrap();
+        for action in ContainmentAction::ALL {
+            let result = executor.execute(action, "ext-001", &ctx);
+            // Either idempotency (same Quarantine) or InvalidTransition.
+            if action == ContainmentAction::Quarantine {
+                // Idempotent: returns last receipt.
+                assert!(result.is_ok());
+            } else {
+                assert!(
+                    matches!(result, Err(ContainmentError::InvalidTransition { .. })),
+                    "expected InvalidTransition for {action}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sandbox_policy_applied_to_extension_record() {
+        let custom_policy = SandboxPolicy {
+            allowed_capabilities: vec!["custom-cap".to_string()],
+            allow_network: true,
+            allow_fs_write: false,
+            allow_process_spawn: false,
+            max_memory_bytes: 8192,
+        };
+        let ctx = ContainmentContext {
+            sandbox_policy: custom_policy.clone(),
+            ..test_context()
+        };
+        let mut executor = setup_executor();
+        executor
+            .execute(ContainmentAction::Sandbox, "ext-001", &ctx)
+            .unwrap();
+        let policy = executor.sandbox_policy("ext-001").unwrap();
+        assert_eq!(*policy, custom_policy);
+        assert!(policy.is_allowed("custom-cap"));
+    }
+
+    #[test]
+    fn receipts_empty_for_no_actions() {
+        let executor = setup_executor();
+        assert!(executor.receipts("ext-001").is_empty());
+    }
+
+    #[test]
+    fn by_state_returns_empty_when_none_match() {
+        let executor = setup_executor();
+        let dead = executor.by_state(ContainmentState::Terminated);
+        assert!(dead.is_empty());
+    }
+
+    #[test]
+    fn receipt_id_format_prefix() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        let receipt = executor
+            .execute(ContainmentAction::Sandbox, "ext-001", &ctx)
+            .unwrap();
+        assert!(
+            receipt.receipt_id.starts_with("cr-"),
+            "receipt ID must start with 'cr-'"
+        );
+    }
+
+    #[test]
+    fn receipt_id_increments_sequentially() {
+        let mut executor = setup_executor();
+        let ctx = test_context();
+        let r1 = executor
+            .execute(ContainmentAction::Challenge, "ext-001", &ctx)
+            .unwrap();
+        let r2 = executor
+            .execute(ContainmentAction::Sandbox, "ext-001", &ctx)
+            .unwrap();
+        // The second receipt ID should be strictly different from the first.
+        assert_ne!(r1.receipt_id, r2.receipt_id);
+    }
 }

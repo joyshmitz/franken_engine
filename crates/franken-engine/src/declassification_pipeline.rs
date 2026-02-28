@@ -1618,4 +1618,1048 @@ mod tests {
         let back: PipelineStats = serde_json::from_str(&json).unwrap();
         assert_eq!(stats, back);
     }
+
+    // ===================================================================
+    // Enrichment batch 4: ~55 new tests across all 10 categories
+    // ===================================================================
+
+    // -- Category 1: Copy semantics --
+
+    #[test]
+    fn declass_decision_copy_semantics() {
+        let a = DeclassificationDecision::Allow;
+        let b = a; // copy
+        assert_eq!(a, b);
+        let c = DeclassificationDecision::Deny;
+        let d = c;
+        assert_eq!(c, d);
+    }
+
+    #[test]
+    fn ifc_schema_version_copy_semantics() {
+        let v = IfcSchemaVersion::CURRENT;
+        let w = v; // copy
+        assert_eq!(v, w);
+    }
+
+    // -- Category 2: Debug distinctness --
+
+    #[test]
+    fn policy_eval_result_debug_distinctness() {
+        use std::collections::BTreeSet;
+        let variants = vec![
+            PolicyEvalResult::RouteApproved {
+                route_id: "r1".into(),
+                conditions_met: vec!["c".into()],
+            },
+            PolicyEvalResult::ConditionsNotMet {
+                route_id: "r1".into(),
+                failed_conditions: vec!["f".into()],
+            },
+            PolicyEvalResult::NoMatchingRoute,
+            PolicyEvalResult::PolicyUnavailable {
+                reason: "gone".into(),
+            },
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn pipeline_error_debug_distinctness() {
+        use std::collections::BTreeSet;
+        let variants: Vec<PipelineError> = vec![
+            PipelineError::FlowAlreadyLegal {
+                source: Label::Public,
+                sink: Label::Internal,
+            },
+            PipelineError::PolicyUnavailable {
+                reason: "x".into(),
+            },
+            PipelineError::NoMatchingRoute {
+                source: Label::Secret,
+                sink: Label::Public,
+            },
+            PipelineError::LossExceedsThreshold {
+                expected_loss_milli: 500,
+                threshold_milli: 100,
+            },
+            PipelineError::EmergencyExpired {
+                request_id: "r".into(),
+                expiry_ms: 1,
+            },
+            PipelineError::SigningError {
+                detail: "d".into(),
+            },
+            PipelineError::ValidationError(IfcValidationError::EmptyClaim {
+                claim_id: "c".into(),
+            }),
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn declass_decision_debug_distinctness() {
+        use std::collections::BTreeSet;
+        let set: BTreeSet<String> = [
+            DeclassificationDecision::Allow,
+            DeclassificationDecision::Deny,
+        ]
+        .iter()
+        .map(|v| format!("{v:?}"))
+        .collect();
+        assert_eq!(set.len(), 2);
+    }
+
+    // -- Category 3: Serde variant distinctness --
+
+    #[test]
+    fn pipeline_error_serde_variant_distinctness() {
+        use std::collections::BTreeSet;
+        let variants: Vec<PipelineError> = vec![
+            PipelineError::FlowAlreadyLegal {
+                source: Label::Public,
+                sink: Label::Internal,
+            },
+            PipelineError::PolicyUnavailable {
+                reason: "x".into(),
+            },
+            PipelineError::NoMatchingRoute {
+                source: Label::Secret,
+                sink: Label::Public,
+            },
+            PipelineError::LossExceedsThreshold {
+                expected_loss_milli: 500,
+                threshold_milli: 100,
+            },
+            PipelineError::EmergencyExpired {
+                request_id: "r".into(),
+                expiry_ms: 1,
+            },
+            PipelineError::SigningError {
+                detail: "d".into(),
+            },
+            PipelineError::ValidationError(IfcValidationError::EmptyClaim {
+                claim_id: "c".into(),
+            }),
+        ];
+        let set: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn declass_decision_serde_variant_distinctness() {
+        use std::collections::BTreeSet;
+        let set: BTreeSet<String> = [
+            DeclassificationDecision::Allow,
+            DeclassificationDecision::Deny,
+        ]
+        .iter()
+        .map(|v| serde_json::to_string(v).unwrap())
+        .collect();
+        assert_eq!(set.len(), 2);
+    }
+
+    // -- Category 4: Clone independence --
+
+    #[test]
+    fn request_clone_independence() {
+        let original = make_request("declass-secret-internal", Label::Secret, Label::Internal);
+        let mut cloned = original.clone();
+        cloned.request_id = "mutated".to_string();
+        cloned.is_emergency = true;
+        assert_ne!(original.request_id, cloned.request_id);
+        assert!(!original.is_emergency);
+    }
+
+    #[test]
+    fn loss_assessment_clone_independence() {
+        let original = low_loss();
+        let mut cloned = original.clone();
+        cloned.expected_loss_milli = 999_999;
+        cloned.historical_abuse_detected = true;
+        assert_eq!(original.expected_loss_milli, 10_000);
+        assert!(!original.historical_abuse_detected);
+    }
+
+    #[test]
+    fn pipeline_config_clone_independence() {
+        let original = PipelineConfig::default();
+        let mut cloned = original.clone();
+        cloned.loss_threshold_milli = 0;
+        cloned.emit_stage_events = false;
+        assert_eq!(
+            original.loss_threshold_milli,
+            LossAssessment::DEFAULT_THRESHOLD_MILLI
+        );
+        assert!(original.emit_stage_events);
+        // Use cloned to silence warning
+        assert_eq!(cloned.loss_threshold_milli, 0);
+        assert!(!cloned.emit_stage_events);
+    }
+
+    #[test]
+    fn emergency_grant_clone_independence() {
+        let original = EmergencyGrant {
+            grant_id: "g-1".to_string(),
+            request_id: "r-1".to_string(),
+            source_label: Label::Secret,
+            sink_clearance: Label::Public,
+            expiry_ms: 5000,
+            review_completed: false,
+        };
+        let mut cloned = original.clone();
+        cloned.review_completed = true;
+        cloned.expiry_ms = 0;
+        assert!(!original.review_completed);
+        assert_eq!(original.expiry_ms, 5000);
+    }
+
+    #[test]
+    fn pipeline_event_clone_independence() {
+        let original = PipelineEvent {
+            request_id: "r1".to_string(),
+            trace_id: "t1".to_string(),
+            stage: "loss_assessment".to_string(),
+            outcome: "below_threshold".to_string(),
+            component: "declassification_pipeline".to_string(),
+            error_code: None,
+        };
+        let mut cloned = original.clone();
+        cloned.outcome = "exceeded".to_string();
+        cloned.error_code = Some("ERR".to_string());
+        assert_eq!(original.outcome, "below_threshold");
+        assert!(original.error_code.is_none());
+    }
+
+    #[test]
+    fn pipeline_stats_clone_independence() {
+        let original = PipelineStats {
+            decision_count: 10,
+            allow_count: 7,
+            deny_count: 3,
+            emergency_grants_active: 1,
+        };
+        let mut cloned = original.clone();
+        cloned.decision_count = 0;
+        assert_eq!(original.decision_count, 10);
+        assert_eq!(cloned.decision_count, 0);
+    }
+
+    #[test]
+    fn policy_eval_result_clone_independence() {
+        let original = PolicyEvalResult::RouteApproved {
+            route_id: "r1".to_string(),
+            conditions_met: vec!["c1".to_string()],
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        // The Clone should produce an equal but independent value
+        let json_orig = serde_json::to_string(&original).unwrap();
+        let json_clone = serde_json::to_string(&cloned).unwrap();
+        assert_eq!(json_orig, json_clone);
+    }
+
+    // -- Category 5: JSON field-name stability --
+
+    #[test]
+    fn request_json_field_names_stable() {
+        let req = make_request("r1", Label::Secret, Label::Internal);
+        let json = serde_json::to_string(&req).unwrap();
+        for field in &[
+            "request_id",
+            "source_label",
+            "sink_clearance",
+            "extension_id",
+            "code_location",
+            "trace_id",
+            "requested_route_id",
+            "is_emergency",
+            "timestamp_ms",
+        ] {
+            assert!(json.contains(field), "missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn loss_assessment_json_field_names_stable() {
+        let loss = low_loss();
+        let json = serde_json::to_string(&loss).unwrap();
+        for field in &[
+            "expected_loss_milli",
+            "data_sensitivity_bps",
+            "sink_exposure_bps",
+            "historical_abuse_detected",
+            "summary",
+        ] {
+            assert!(json.contains(field), "missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn pipeline_event_json_field_names_stable() {
+        let event = PipelineEvent {
+            request_id: "r".into(),
+            trace_id: "t".into(),
+            stage: "s".into(),
+            outcome: "o".into(),
+            component: "c".into(),
+            error_code: Some("e".into()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        for field in &[
+            "request_id",
+            "trace_id",
+            "stage",
+            "outcome",
+            "component",
+            "error_code",
+        ] {
+            assert!(json.contains(field), "missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn pipeline_config_json_field_names_stable() {
+        let cfg = PipelineConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        for field in &[
+            "loss_threshold_milli",
+            "emergency_max_duration_ms",
+            "emit_stage_events",
+        ] {
+            assert!(json.contains(field), "missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn emergency_grant_json_field_names_stable() {
+        let grant = EmergencyGrant {
+            grant_id: "g".into(),
+            request_id: "r".into(),
+            source_label: Label::Secret,
+            sink_clearance: Label::Public,
+            expiry_ms: 100,
+            review_completed: false,
+        };
+        let json = serde_json::to_string(&grant).unwrap();
+        for field in &[
+            "grant_id",
+            "request_id",
+            "source_label",
+            "sink_clearance",
+            "expiry_ms",
+            "review_completed",
+        ] {
+            assert!(json.contains(field), "missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn pipeline_stats_json_field_names_stable() {
+        let stats = PipelineStats {
+            decision_count: 1,
+            allow_count: 2,
+            deny_count: 3,
+            emergency_grants_active: 4,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        for field in &[
+            "decision_count",
+            "allow_count",
+            "deny_count",
+            "emergency_grants_active",
+        ] {
+            assert!(json.contains(field), "missing field: {field}");
+        }
+    }
+
+    // -- Category 6: Display format checks --
+
+    #[test]
+    fn pipeline_error_display_flow_already_legal_exact() {
+        let err = PipelineError::FlowAlreadyLegal {
+            source: Label::Public,
+            sink: Label::Internal,
+        };
+        assert_eq!(
+            err.to_string(),
+            "flow from public to internal is already lattice-legal"
+        );
+    }
+
+    #[test]
+    fn pipeline_error_display_policy_unavailable_exact() {
+        let err = PipelineError::PolicyUnavailable {
+            reason: "network timeout".to_string(),
+        };
+        assert_eq!(err.to_string(), "policy unavailable: network timeout");
+    }
+
+    #[test]
+    fn pipeline_error_display_no_matching_route_exact() {
+        let err = PipelineError::NoMatchingRoute {
+            source: Label::Secret,
+            sink: Label::Public,
+        };
+        assert_eq!(
+            err.to_string(),
+            "no declassification route from secret to public"
+        );
+    }
+
+    #[test]
+    fn pipeline_error_display_loss_exceeds_threshold_exact() {
+        let err = PipelineError::LossExceedsThreshold {
+            expected_loss_milli: 200_000,
+            threshold_milli: 100_000,
+        };
+        assert_eq!(err.to_string(), "loss 200000 exceeds threshold 100000");
+    }
+
+    #[test]
+    fn pipeline_error_display_emergency_expired_exact() {
+        let err = PipelineError::EmergencyExpired {
+            request_id: "req-42".to_string(),
+            expiry_ms: 1_700_000_300_000,
+        };
+        assert_eq!(
+            err.to_string(),
+            "emergency declassification req-42 expired at 1700000300000"
+        );
+    }
+
+    #[test]
+    fn pipeline_error_display_signing_error_exact() {
+        let err = PipelineError::SigningError {
+            detail: "invalid key material".to_string(),
+        };
+        assert_eq!(err.to_string(), "signing error: invalid key material");
+    }
+
+    #[test]
+    fn pipeline_error_display_validation_error_contains_prefix() {
+        let err = PipelineError::ValidationError(IfcValidationError::EmptyClaim {
+            claim_id: "c-99".to_string(),
+        });
+        let s = err.to_string();
+        assert!(s.starts_with("validation error:"));
+        assert!(s.contains("c-99"));
+    }
+
+    // -- Category 7: Hash consistency --
+
+    #[test]
+    fn declass_decision_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        for decision in &[DeclassificationDecision::Allow, DeclassificationDecision::Deny] {
+            let mut h1 = DefaultHasher::new();
+            let mut h2 = DefaultHasher::new();
+            decision.hash(&mut h1);
+            decision.hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish());
+        }
+    }
+
+    #[test]
+    fn ifc_schema_version_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let v = IfcSchemaVersion::CURRENT;
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        v.hash(&mut h1);
+        v.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn label_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        for label in &[
+            Label::Public,
+            Label::Internal,
+            Label::Confidential,
+            Label::Secret,
+            Label::TopSecret,
+        ] {
+            let mut h1 = DefaultHasher::new();
+            let mut h2 = DefaultHasher::new();
+            label.hash(&mut h1);
+            label.hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish());
+        }
+    }
+
+    // -- Category 8: Boundary / edge cases --
+
+    #[test]
+    fn loss_assessment_zero_loss() {
+        let loss = LossAssessment {
+            expected_loss_milli: 0,
+            data_sensitivity_bps: 0,
+            sink_exposure_bps: 0,
+            historical_abuse_detected: false,
+            summary: String::new(),
+        };
+        assert!(loss.below_threshold(1));
+        assert!(!loss.below_threshold(0)); // 0 < 0 is false
+    }
+
+    #[test]
+    fn loss_assessment_u64_max() {
+        let loss = LossAssessment {
+            expected_loss_milli: u64::MAX,
+            data_sensitivity_bps: u16::MAX,
+            sink_exposure_bps: u16::MAX,
+            historical_abuse_detected: true,
+            summary: "extreme".to_string(),
+        };
+        assert!(!loss.below_threshold(u64::MAX)); // u64::MAX < u64::MAX is false
+        let json = serde_json::to_string(&loss).unwrap();
+        let back: LossAssessment = serde_json::from_str(&json).unwrap();
+        assert_eq!(loss, back);
+    }
+
+    #[test]
+    fn emergency_grant_zero_expiry() {
+        let grant = EmergencyGrant {
+            grant_id: "g".into(),
+            request_id: "r".into(),
+            source_label: Label::Secret,
+            sink_clearance: Label::Public,
+            expiry_ms: 0,
+            review_completed: false,
+        };
+        assert!(grant.is_expired(0)); // 0 >= 0 is true
+        assert!(grant.is_expired(1));
+    }
+
+    #[test]
+    fn emergency_grant_u64_max_expiry() {
+        let grant = EmergencyGrant {
+            grant_id: "g".into(),
+            request_id: "r".into(),
+            source_label: Label::Secret,
+            sink_clearance: Label::Public,
+            expiry_ms: u64::MAX,
+            review_completed: false,
+        };
+        assert!(!grant.is_expired(0));
+        assert!(!grant.is_expired(u64::MAX - 1));
+        assert!(grant.is_expired(u64::MAX)); // equal
+    }
+
+    #[test]
+    fn request_with_empty_strings() {
+        let req = DeclassificationRequest {
+            request_id: String::new(),
+            source_label: Label::Secret,
+            sink_clearance: Label::Public,
+            extension_id: String::new(),
+            code_location: String::new(),
+            trace_id: String::new(),
+            requested_route_id: String::new(),
+            is_emergency: false,
+            timestamp_ms: 0,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: DeclassificationRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn request_with_u64_max_timestamp() {
+        let req = DeclassificationRequest {
+            request_id: "max-ts".into(),
+            source_label: Label::Secret,
+            sink_clearance: Label::Internal,
+            extension_id: "ext".into(),
+            code_location: "loc".into(),
+            trace_id: "trace".into(),
+            requested_route_id: "route".into(),
+            is_emergency: false,
+            timestamp_ms: u64::MAX,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: DeclassificationRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn pipeline_event_none_error_code_roundtrip() {
+        let event = PipelineEvent {
+            request_id: "r".into(),
+            trace_id: "t".into(),
+            stage: "s".into(),
+            outcome: "o".into(),
+            component: "c".into(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: PipelineEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+        assert!(back.error_code.is_none());
+    }
+
+    #[test]
+    fn pipeline_event_some_error_code_roundtrip() {
+        let event = PipelineEvent {
+            request_id: "r".into(),
+            trace_id: "t".into(),
+            stage: "s".into(),
+            outcome: "o".into(),
+            component: "c".into(),
+            error_code: Some("ERR_99".into()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: PipelineEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event.error_code, back.error_code);
+    }
+
+    #[test]
+    fn pipeline_config_zero_threshold() {
+        let cfg = PipelineConfig {
+            loss_threshold_milli: 0,
+            emergency_max_duration_ms: 0,
+            emit_stage_events: false,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: PipelineConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, back);
+    }
+
+    #[test]
+    fn pipeline_config_u64_max_values() {
+        let cfg = PipelineConfig {
+            loss_threshold_milli: u64::MAX,
+            emergency_max_duration_ms: u64::MAX,
+            emit_stage_events: true,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: PipelineConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, back);
+    }
+
+    #[test]
+    fn pipeline_stats_all_zero() {
+        let stats = PipelineStats {
+            decision_count: 0,
+            allow_count: 0,
+            deny_count: 0,
+            emergency_grants_active: 0,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        let back: PipelineStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(stats, back);
+    }
+
+    #[test]
+    fn pipeline_stats_u64_max_values() {
+        let stats = PipelineStats {
+            decision_count: u64::MAX,
+            allow_count: u64::MAX,
+            deny_count: u64::MAX,
+            emergency_grants_active: u64::MAX,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        let back: PipelineStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(stats, back);
+    }
+
+    #[test]
+    fn custom_label_in_request_roundtrip() {
+        let req = DeclassificationRequest {
+            request_id: "custom-label-req".into(),
+            source_label: Label::Custom {
+                name: "project-x".into(),
+                level: 10,
+            },
+            sink_clearance: Label::Public,
+            extension_id: "ext".into(),
+            code_location: "loc".into(),
+            trace_id: "trace".into(),
+            requested_route_id: "r".into(),
+            is_emergency: false,
+            timestamp_ms: 100,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: DeclassificationRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, back);
+    }
+
+    // -- Category 9: Serde roundtrips (complex structs) --
+
+    #[test]
+    fn emergency_grant_reviewed_roundtrip() {
+        let grant = EmergencyGrant {
+            grant_id: "emg-review".into(),
+            request_id: "r-review".into(),
+            source_label: Label::TopSecret,
+            sink_clearance: Label::Internal,
+            expiry_ms: u64::MAX,
+            review_completed: true,
+        };
+        let json = serde_json::to_string(&grant).unwrap();
+        let back: EmergencyGrant = serde_json::from_str(&json).unwrap();
+        assert_eq!(grant, back);
+        assert!(back.review_completed);
+    }
+
+    #[test]
+    fn policy_eval_route_approved_empty_conditions_roundtrip() {
+        let r = PolicyEvalResult::RouteApproved {
+            route_id: "empty-conds".into(),
+            conditions_met: vec![],
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: PolicyEvalResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn policy_eval_conditions_not_met_many_conditions_roundtrip() {
+        let r = PolicyEvalResult::ConditionsNotMet {
+            route_id: "r-many".into(),
+            failed_conditions: (0..20).map(|i| format!("cond_{i}")).collect(),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: PolicyEvalResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn pipeline_error_validation_serde_all_ifc_variants() {
+        let ifc_errors = vec![
+            IfcValidationError::FullClaimHasUncoveredFlows {
+                claim_id: "c1".into(),
+                uncovered_count: 42,
+            },
+            IfcValidationError::EmptyClaim {
+                claim_id: "c2".into(),
+            },
+            IfcValidationError::IncompatibleSchema {
+                expected: IfcSchemaVersion::CURRENT,
+                actual: IfcSchemaVersion {
+                    major: 2,
+                    minor: 0,
+                    patch: 0,
+                },
+            },
+            IfcValidationError::FlowProhibited {
+                source: Label::Secret,
+                sink: Label::Public,
+            },
+        ];
+        for e in ifc_errors {
+            let pe = PipelineError::ValidationError(e);
+            let json = serde_json::to_string(&pe).unwrap();
+            let back: PipelineError = serde_json::from_str(&json).unwrap();
+            assert_eq!(pe, back);
+        }
+    }
+
+    #[test]
+    fn loss_assessment_high_bps_roundtrip() {
+        let loss = LossAssessment {
+            expected_loss_milli: 1_000_000,
+            data_sensitivity_bps: 10_000,
+            sink_exposure_bps: 10_000,
+            historical_abuse_detected: true,
+            summary: "maximum exposure scenario with long description text".to_string(),
+        };
+        let json = serde_json::to_string(&loss).unwrap();
+        let back: LossAssessment = serde_json::from_str(&json).unwrap();
+        assert_eq!(loss, back);
+    }
+
+    // -- Category 10: Debug nonempty --
+
+    #[test]
+    fn request_debug_nonempty() {
+        let req = make_request("r1", Label::Secret, Label::Internal);
+        assert!(!format!("{req:?}").is_empty());
+    }
+
+    #[test]
+    fn policy_eval_result_debug_nonempty_all() {
+        let variants = [
+            PolicyEvalResult::RouteApproved {
+                route_id: "r".into(),
+                conditions_met: vec![],
+            },
+            PolicyEvalResult::ConditionsNotMet {
+                route_id: "r".into(),
+                failed_conditions: vec![],
+            },
+            PolicyEvalResult::NoMatchingRoute,
+            PolicyEvalResult::PolicyUnavailable {
+                reason: "x".into(),
+            },
+        ];
+        for v in &variants {
+            assert!(!format!("{v:?}").is_empty());
+        }
+    }
+
+    #[test]
+    fn loss_assessment_debug_nonempty() {
+        let loss = low_loss();
+        assert!(!format!("{loss:?}").is_empty());
+    }
+
+    #[test]
+    fn pipeline_event_debug_nonempty() {
+        let event = PipelineEvent {
+            request_id: "r".into(),
+            trace_id: "t".into(),
+            stage: "s".into(),
+            outcome: "o".into(),
+            component: "c".into(),
+            error_code: None,
+        };
+        assert!(!format!("{event:?}").is_empty());
+    }
+
+    #[test]
+    fn pipeline_config_debug_nonempty() {
+        let cfg = PipelineConfig::default();
+        assert!(!format!("{cfg:?}").is_empty());
+    }
+
+    #[test]
+    fn emergency_grant_debug_nonempty() {
+        let grant = EmergencyGrant {
+            grant_id: "g".into(),
+            request_id: "r".into(),
+            source_label: Label::Secret,
+            sink_clearance: Label::Public,
+            expiry_ms: 100,
+            review_completed: false,
+        };
+        assert!(!format!("{grant:?}").is_empty());
+    }
+
+    #[test]
+    fn pipeline_debug_nonempty() {
+        let pipeline = DeclassificationPipeline::default();
+        assert!(!format!("{pipeline:?}").is_empty());
+    }
+
+    #[test]
+    fn pipeline_stats_debug_nonempty() {
+        let stats = PipelineStats {
+            decision_count: 0,
+            allow_count: 0,
+            deny_count: 0,
+            emergency_grants_active: 0,
+        };
+        assert!(!format!("{stats:?}").is_empty());
+    }
+
+    #[test]
+    fn pipeline_error_debug_nonempty_all() {
+        let variants: Vec<PipelineError> = vec![
+            PipelineError::FlowAlreadyLegal {
+                source: Label::Public,
+                sink: Label::Internal,
+            },
+            PipelineError::PolicyUnavailable {
+                reason: "x".into(),
+            },
+            PipelineError::NoMatchingRoute {
+                source: Label::Secret,
+                sink: Label::Public,
+            },
+            PipelineError::LossExceedsThreshold {
+                expected_loss_milli: 1,
+                threshold_milli: 0,
+            },
+            PipelineError::EmergencyExpired {
+                request_id: "r".into(),
+                expiry_ms: 0,
+            },
+            PipelineError::SigningError {
+                detail: "d".into(),
+            },
+            PipelineError::ValidationError(IfcValidationError::EmptyClaim {
+                claim_id: "c".into(),
+            }),
+        ];
+        for v in &variants {
+            assert!(!format!("{v:?}").is_empty());
+        }
+    }
+
+    // -- Additional functional / edge-case enrichment --
+
+    #[test]
+    fn emergency_pathway_with_mismatched_extension() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let mut request = make_request("nonexistent", Label::Secret, Label::Public);
+        request.extension_id = "wrong-ext".to_string();
+        request.is_emergency = true;
+
+        // Extension mismatch => PolicyUnavailable, but emergency still fires
+        let result = pipeline.process(&request, &policy, &low_loss(), &test_key());
+        // Emergency pathway should bypass the PolicyUnavailable error
+        let receipt = result.unwrap();
+        assert_eq!(receipt.decision, DeclassificationDecision::Allow);
+    }
+
+    #[test]
+    fn multiple_emergency_grants_tracked() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let key = test_key();
+
+        for i in 0..3 {
+            let mut req = make_request(&format!("bad-route-{i}"), Label::Secret, Label::Public);
+            req.request_id = format!("req-emg-{i}");
+            req.is_emergency = true;
+            pipeline.process(&req, &policy, &low_loss(), &key).unwrap();
+        }
+
+        let stats = pipeline.stats();
+        assert_eq!(stats.emergency_grants_active, 3);
+        assert_eq!(stats.allow_count, 3);
+    }
+
+    #[test]
+    fn deny_receipt_stored_in_pipeline() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let request = make_request("declass-secret-internal", Label::Secret, Label::Internal);
+        let receipt = pipeline
+            .process(&request, &policy, &high_loss(), &test_key())
+            .unwrap();
+        assert_eq!(receipt.decision, DeclassificationDecision::Deny);
+        assert_eq!(pipeline.receipts().len(), 1);
+        assert_eq!(
+            pipeline.receipts()[0].decision,
+            DeclassificationDecision::Deny
+        );
+    }
+
+    #[test]
+    fn emergency_grant_expiry_uses_config_duration() {
+        let config = PipelineConfig {
+            emergency_max_duration_ms: 60_000,
+            ..PipelineConfig::default()
+        };
+        let mut pipeline = DeclassificationPipeline::new(config);
+        let policy = make_policy();
+        let mut request = make_request("bad-route", Label::Secret, Label::Public);
+        request.is_emergency = true;
+        request.timestamp_ms = 1_000_000;
+
+        pipeline
+            .process(&request, &policy, &low_loss(), &test_key())
+            .unwrap();
+
+        // Grant should be active at timestamp + 59_999
+        assert!(
+            pipeline
+                .check_emergency_grant(&Label::Secret, &Label::Public, 1_059_999)
+                .is_some()
+        );
+        // Grant should be expired at timestamp + 60_000
+        assert!(
+            pipeline
+                .check_emergency_grant(&Label::Secret, &Label::Public, 1_060_000)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn check_emergency_grant_wrong_labels_returns_none() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let mut request = make_request("bad-route", Label::Secret, Label::Public);
+        request.is_emergency = true;
+
+        pipeline
+            .process(&request, &policy, &low_loss(), &test_key())
+            .unwrap();
+
+        // Correct labels find the grant
+        assert!(
+            pipeline
+                .check_emergency_grant(&Label::Secret, &Label::Public, request.timestamp_ms)
+                .is_some()
+        );
+        // Wrong source label
+        assert!(
+            pipeline
+                .check_emergency_grant(&Label::Internal, &Label::Public, request.timestamp_ms)
+                .is_none()
+        );
+        // Wrong sink label
+        assert!(
+            pipeline
+                .check_emergency_grant(&Label::Secret, &Label::Internal, request.timestamp_ms)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn conf_public_route_produces_correct_receipt() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let request = make_request("declass-conf-public", Label::Confidential, Label::Public);
+        let receipt = pipeline
+            .process(&request, &policy, &low_loss(), &test_key())
+            .unwrap();
+        assert_eq!(receipt.decision, DeclassificationDecision::Allow);
+        assert_eq!(receipt.source_label, Label::Confidential);
+        assert_eq!(receipt.sink_clearance, Label::Public);
+        assert_eq!(receipt.declassification_route_ref, "declass-conf-public");
+    }
+
+    #[test]
+    fn receipt_id_prefixed_with_rcpt() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let request = make_request("declass-secret-internal", Label::Secret, Label::Internal);
+        let receipt = pipeline
+            .process(&request, &policy, &low_loss(), &test_key())
+            .unwrap();
+        assert!(
+            receipt.receipt_id.starts_with("rcpt-"),
+            "receipt_id should start with 'rcpt-'"
+        );
+    }
+
+    #[test]
+    fn receipt_timestamp_matches_request() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let request = make_request("declass-secret-internal", Label::Secret, Label::Internal);
+        let receipt = pipeline
+            .process(&request, &policy, &low_loss(), &test_key())
+            .unwrap();
+        assert_eq!(receipt.timestamp_ms, request.timestamp_ms);
+    }
+
+    #[test]
+    fn receipt_loss_assessment_matches_input() {
+        let mut pipeline = DeclassificationPipeline::default();
+        let policy = make_policy();
+        let request = make_request("declass-secret-internal", Label::Secret, Label::Internal);
+        let loss = low_loss();
+        let receipt = pipeline
+            .process(&request, &policy, &loss, &test_key())
+            .unwrap();
+        assert_eq!(receipt.loss_assessment_milli, loss.expected_loss_milli);
+    }
 }

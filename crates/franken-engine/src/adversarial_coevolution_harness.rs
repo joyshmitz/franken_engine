@@ -1770,4 +1770,700 @@ mod tests {
         // But it does implement Display
         assert!(!std_err.to_string().is_empty());
     }
+
+    // ── Enrichment: Copy/Clone/Debug/Serde/Hash/Edge/Display ──
+
+    #[test]
+    fn player_role_copy_semantics() {
+        let a = PlayerRole::Attacker;
+        let b = a;
+        assert_eq!(a, b);
+        let d = PlayerRole::Defender;
+        let e = d;
+        assert_eq!(d, e);
+    }
+
+    #[test]
+    fn player_role_debug_distinct() {
+        let set: BTreeSet<String> = [PlayerRole::Attacker, PlayerRole::Defender]
+            .iter()
+            .map(|v| format!("{v:?}"))
+            .collect();
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn player_role_serde_variant_distinct() {
+        let set: BTreeSet<String> = [PlayerRole::Attacker, PlayerRole::Defender]
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn player_role_display_exact() {
+        assert_eq!(PlayerRole::Attacker.to_string(), "attacker");
+        assert_eq!(PlayerRole::Defender.to_string(), "defender");
+    }
+
+    #[test]
+    fn exploit_class_serde_variant_distinct() {
+        let variants = vec![
+            ExploitClass::CapabilityEscalation,
+            ExploitClass::PolicyBypass,
+            ExploitClass::ResourceExhaustion,
+            ExploitClass::InformationLeakage,
+            ExploitClass::ReplayAttack,
+            ExploitClass::Novel("x".to_string()),
+        ];
+        let set: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn exploit_class_display_exact_known() {
+        assert_eq!(ExploitClass::CapabilityEscalation.to_string(), "capability_escalation");
+        assert_eq!(ExploitClass::PolicyBypass.to_string(), "policy_bypass");
+        assert_eq!(ExploitClass::ResourceExhaustion.to_string(), "resource_exhaustion");
+        assert_eq!(ExploitClass::InformationLeakage.to_string(), "information_leakage");
+        assert_eq!(ExploitClass::ReplayAttack.to_string(), "replay_attack");
+        assert_eq!(ExploitClass::Novel("foo".to_string()).to_string(), "novel:foo");
+    }
+
+    #[test]
+    fn exploit_class_clone_independence() {
+        let a = ExploitClass::Novel("original".to_string());
+        let b = a.clone();
+        assert_eq!(a, b);
+        // Mutate clone via reconstruct
+        let c = ExploitClass::Novel("changed".to_string());
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn strategy_id_display_matches_inner() {
+        let id = StrategyId("hello".to_string());
+        assert_eq!(id.to_string(), "hello");
+    }
+
+    #[test]
+    fn strategy_id_serde_roundtrip() {
+        let id = StrategyId("test-strategy".to_string());
+        let json = serde_json::to_string(&id).unwrap();
+        let back: StrategyId = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, back);
+    }
+
+    #[test]
+    fn strategy_id_ord_deterministic() {
+        let a = StrategyId("aaa".to_string());
+        let b = StrategyId("bbb".to_string());
+        assert!(a < b);
+    }
+
+    #[test]
+    fn payoff_entry_clone_independence() {
+        let a = PayoffEntry {
+            attacker: StrategyId("a".to_string()),
+            defender: StrategyId("d".to_string()),
+            attacker_payoff_millionths: 500_000,
+            defender_payoff_millionths: 500_000,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn payoff_entry_json_field_names() {
+        let e = PayoffEntry {
+            attacker: StrategyId("a".to_string()),
+            defender: StrategyId("d".to_string()),
+            attacker_payoff_millionths: 0,
+            defender_payoff_millionths: 0,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        assert!(json.contains("\"attacker\""));
+        assert!(json.contains("\"defender\""));
+        assert!(json.contains("\"attacker_payoff_millionths\""));
+        assert!(json.contains("\"defender_payoff_millionths\""));
+    }
+
+    #[test]
+    fn payoff_matrix_clone_independence() {
+        let m = rock_paper_scissors_matrix();
+        let m2 = m.clone();
+        assert_eq!(m, m2);
+    }
+
+    #[test]
+    fn payoff_matrix_json_field_names() {
+        let m = rock_paper_scissors_matrix();
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"attacker_strategies\""));
+        assert!(json.contains("\"defender_strategies\""));
+        assert!(json.contains("\"entries\""));
+    }
+
+    #[test]
+    fn payoff_matrix_lookup_missing_returns_none() {
+        let m = rock_paper_scissors_matrix();
+        let result = m.lookup(
+            &StrategyId("nonexistent".to_string()),
+            &StrategyId("rock".to_string()),
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn tournament_config_default_values() {
+        let c = TournamentConfig::default();
+        assert_eq!(c.rounds, 1000);
+        assert_eq!(c.gamma_millionths, DEFAULT_GAMMA_MILLIONTHS);
+        assert_eq!(c.epoch, SecurityEpoch::GENESIS);
+        assert_eq!(c.seed, 42);
+        assert!(c.track_trajectory);
+    }
+
+    #[test]
+    fn tournament_config_clone_independence() {
+        let a = TournamentConfig::default();
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn tournament_config_json_field_names() {
+        let c = TournamentConfig::default();
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains("\"rounds\""));
+        assert!(json.contains("\"gamma_millionths\""));
+        assert!(json.contains("\"epoch\""));
+        assert!(json.contains("\"seed\""));
+        assert!(json.contains("\"exploration_budget_millionths\""));
+        assert!(json.contains("\"track_trajectory\""));
+    }
+
+    #[test]
+    fn round_outcome_clone_independence() {
+        let r = RoundOutcome {
+            round: 0,
+            attacker_strategy: StrategyId("a".to_string()),
+            defender_strategy: StrategyId("d".to_string()),
+            attacker_payoff_millionths: 100,
+            defender_payoff_millionths: 200,
+            exploit_discovered: Some(ExploitClass::ReplayAttack),
+        };
+        let r2 = r.clone();
+        assert_eq!(r, r2);
+    }
+
+    #[test]
+    fn round_outcome_json_field_names() {
+        let r = RoundOutcome {
+            round: 1,
+            attacker_strategy: StrategyId("a".to_string()),
+            defender_strategy: StrategyId("d".to_string()),
+            attacker_payoff_millionths: 0,
+            defender_payoff_millionths: 0,
+            exploit_discovered: None,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"round\""));
+        assert!(json.contains("\"attacker_strategy\""));
+        assert!(json.contains("\"defender_strategy\""));
+        assert!(json.contains("\"attacker_payoff_millionths\""));
+        assert!(json.contains("\"defender_payoff_millionths\""));
+        assert!(json.contains("\"exploit_discovered\""));
+    }
+
+    #[test]
+    fn trajectory_ledger_empty_regret_defaults() {
+        let t = TrajectoryLedger::new();
+        assert_eq!(t.round_count(), 0);
+        assert_eq!(t.final_attacker_regret(), 0);
+        assert_eq!(t.final_defender_regret(), 0);
+    }
+
+    #[test]
+    fn trajectory_ledger_serde_roundtrip() {
+        let t = TrajectoryLedger {
+            rounds: vec![RoundOutcome {
+                round: 0,
+                attacker_strategy: StrategyId("a".to_string()),
+                defender_strategy: StrategyId("d".to_string()),
+                attacker_payoff_millionths: 500,
+                defender_payoff_millionths: -500,
+                exploit_discovered: None,
+            }],
+            attacker_cumulative_regret: vec![100],
+            defender_cumulative_regret: vec![50],
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: TrajectoryLedger = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+    }
+
+    #[test]
+    fn convergence_diagnostic_clone_independence() {
+        let c = ConvergenceDiagnostic {
+            attacker_avg_regret_millionths: 1000,
+            defender_avg_regret_millionths: 2000,
+            attacker_regret_bounded: true,
+            defender_regret_bounded: false,
+            exploit_classes: BTreeSet::from(["replay_attack".to_string()]),
+            attacker_frequency: BTreeMap::from([("rock".to_string(), 50)]),
+            defender_frequency: BTreeMap::from([("paper".to_string(), 50)]),
+        };
+        let c2 = c.clone();
+        assert_eq!(c, c2);
+    }
+
+    #[test]
+    fn convergence_diagnostic_json_field_names() {
+        let c = ConvergenceDiagnostic {
+            attacker_avg_regret_millionths: 0,
+            defender_avg_regret_millionths: 0,
+            attacker_regret_bounded: true,
+            defender_regret_bounded: true,
+            exploit_classes: BTreeSet::new(),
+            attacker_frequency: BTreeMap::new(),
+            defender_frequency: BTreeMap::new(),
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains("\"attacker_avg_regret_millionths\""));
+        assert!(json.contains("\"defender_avg_regret_millionths\""));
+        assert!(json.contains("\"attacker_regret_bounded\""));
+        assert!(json.contains("\"defender_regret_bounded\""));
+        assert!(json.contains("\"exploit_classes\""));
+        assert!(json.contains("\"attacker_frequency\""));
+        assert!(json.contains("\"defender_frequency\""));
+    }
+
+    #[test]
+    fn policy_delta_clone_independence() {
+        let d = PolicyDelta {
+            delta_id: "d-1".to_string(),
+            recommended_mix: BTreeMap::from([("s".to_string(), MILLION)]),
+            addressed_exploits: BTreeSet::from(["x".to_string()]),
+            expected_improvement_millionths: 50_000,
+            source_epoch: SecurityEpoch::GENESIS,
+            artifact_hash: ContentHash::compute(b"test"),
+        };
+        let d2 = d.clone();
+        assert_eq!(d, d2);
+    }
+
+    #[test]
+    fn policy_delta_json_field_names() {
+        let d = PolicyDelta {
+            delta_id: "d-0".to_string(),
+            recommended_mix: BTreeMap::new(),
+            addressed_exploits: BTreeSet::new(),
+            expected_improvement_millionths: 0,
+            source_epoch: SecurityEpoch::GENESIS,
+            artifact_hash: ContentHash::compute(b"field-names"),
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains("\"delta_id\""));
+        assert!(json.contains("\"recommended_mix\""));
+        assert!(json.contains("\"addressed_exploits\""));
+        assert!(json.contains("\"expected_improvement_millionths\""));
+        assert!(json.contains("\"source_epoch\""));
+        assert!(json.contains("\"artifact_hash\""));
+    }
+
+    #[test]
+    fn tournament_result_json_field_names() {
+        let config = TournamentConfig {
+            rounds: 10,
+            ..TournamentConfig::default()
+        };
+        let m = rock_paper_scissors_matrix();
+        let mut harness = CoevolutionHarness::new(config, m).unwrap();
+        let result = harness.run().unwrap();
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"schema_version\""));
+        assert!(json.contains("\"rounds_played\""));
+        assert!(json.contains("\"total_attacker_payoff_millionths\""));
+        assert!(json.contains("\"total_defender_payoff_millionths\""));
+        assert!(json.contains("\"convergence\""));
+        assert!(json.contains("\"policy_delta\""));
+        assert!(json.contains("\"artifact_hash\""));
+    }
+
+    #[test]
+    fn tournament_result_serde_roundtrip_enriched() {
+        let config = TournamentConfig {
+            rounds: 10,
+            ..TournamentConfig::default()
+        };
+        let m = rock_paper_scissors_matrix();
+        let mut harness = CoevolutionHarness::new(config, m).unwrap();
+        let result = harness.run().unwrap();
+        let json = serde_json::to_string(&result).unwrap();
+        let back: TournamentResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    #[test]
+    fn coevolution_error_display_exact_empty_strategies() {
+        let e = CoevolutionError::EmptyStrategies { player: PlayerRole::Attacker };
+        assert_eq!(e.to_string(), "no strategies defined for attacker");
+        let e2 = CoevolutionError::EmptyStrategies { player: PlayerRole::Defender };
+        assert_eq!(e2.to_string(), "no strategies defined for defender");
+    }
+
+    #[test]
+    fn coevolution_error_display_exact_too_many_strategies() {
+        let e = CoevolutionError::TooManyStrategies { count: 100, max: 64 };
+        assert_eq!(e.to_string(), "strategy count 100 exceeds maximum 64");
+    }
+
+    #[test]
+    fn coevolution_error_display_exact_incomplete_matrix() {
+        let e = CoevolutionError::IncompletePayoffMatrix { expected: 9, actual: 6 };
+        assert_eq!(e.to_string(), "payoff matrix has 6 entries, expected 9");
+    }
+
+    #[test]
+    fn coevolution_error_display_exact_invalid_gamma() {
+        let e = CoevolutionError::InvalidGamma { value: -1 };
+        assert_eq!(e.to_string(), "gamma out of range (0, MILLION): -1");
+    }
+
+    #[test]
+    fn coevolution_error_display_exact_too_many_rounds() {
+        let e = CoevolutionError::TooManyRounds { rounds: 200_000, max: 100_000 };
+        assert_eq!(e.to_string(), "rounds 200000 exceed maximum 100000");
+    }
+
+    #[test]
+    fn coevolution_error_display_exact_budget_exhausted() {
+        let e = CoevolutionError::BudgetExhausted { spent: 5_000_000, budget: 3_000_000 };
+        assert_eq!(e.to_string(), "exploration budget exhausted: spent 5000000, budget 3000000");
+    }
+
+    #[test]
+    fn coevolution_error_display_exact_zero_rounds() {
+        let e = CoevolutionError::ZeroRounds;
+        assert_eq!(e.to_string(), "zero rounds requested");
+    }
+
+    #[test]
+    fn coevolution_error_serde_variant_distinct() {
+        let variants: Vec<CoevolutionError> = vec![
+            CoevolutionError::EmptyStrategies { player: PlayerRole::Attacker },
+            CoevolutionError::TooManyStrategies { count: 1, max: 1 },
+            CoevolutionError::IncompletePayoffMatrix { expected: 1, actual: 0 },
+            CoevolutionError::InvalidGamma { value: 0 },
+            CoevolutionError::TooManyRounds { rounds: 1, max: 1 },
+            CoevolutionError::BudgetExhausted { spent: 1, budget: 0 },
+            CoevolutionError::ZeroRounds,
+        ];
+        let set: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn coevolution_error_debug_distinct() {
+        let variants: Vec<CoevolutionError> = vec![
+            CoevolutionError::EmptyStrategies { player: PlayerRole::Attacker },
+            CoevolutionError::TooManyStrategies { count: 1, max: 1 },
+            CoevolutionError::IncompletePayoffMatrix { expected: 1, actual: 0 },
+            CoevolutionError::InvalidGamma { value: 0 },
+            CoevolutionError::TooManyRounds { rounds: 1, max: 1 },
+            CoevolutionError::BudgetExhausted { spent: 1, budget: 0 },
+            CoevolutionError::ZeroRounds,
+        ];
+        let set: BTreeSet<String> = variants
+            .iter()
+            .map(|v| format!("{v:?}"))
+            .collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn debug_nonempty_strategy_id() {
+        assert!(!format!("{:?}", StrategyId("x".to_string())).is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_payoff_entry() {
+        let e = PayoffEntry {
+            attacker: StrategyId("a".to_string()),
+            defender: StrategyId("d".to_string()),
+            attacker_payoff_millionths: 0,
+            defender_payoff_millionths: 0,
+        };
+        assert!(!format!("{e:?}").is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_payoff_matrix() {
+        let m = rock_paper_scissors_matrix();
+        assert!(!format!("{m:?}").is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_tournament_config() {
+        assert!(!format!("{:?}", TournamentConfig::default()).is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_trajectory_ledger() {
+        assert!(!format!("{:?}", TrajectoryLedger::new()).is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_convergence_diagnostic() {
+        let c = ConvergenceDiagnostic {
+            attacker_avg_regret_millionths: 0,
+            defender_avg_regret_millionths: 0,
+            attacker_regret_bounded: true,
+            defender_regret_bounded: true,
+            exploit_classes: BTreeSet::new(),
+            attacker_frequency: BTreeMap::new(),
+            defender_frequency: BTreeMap::new(),
+        };
+        assert!(!format!("{c:?}").is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_coevolution_harness() {
+        let h = CoevolutionHarness::new(
+            TournamentConfig::default(),
+            rock_paper_scissors_matrix(),
+        ).unwrap();
+        assert!(!format!("{h:?}").is_empty());
+    }
+
+    #[test]
+    fn harness_accessors_reflect_config() {
+        let config = TournamentConfig {
+            rounds: 50,
+            seed: 99,
+            ..TournamentConfig::default()
+        };
+        let m = rock_paper_scissors_matrix();
+        let h = CoevolutionHarness::new(config.clone(), m.clone()).unwrap();
+        assert_eq!(*h.config(), config);
+        assert_eq!(*h.payoff_matrix(), m);
+        assert_eq!(h.tournament_count(), 0);
+    }
+
+    #[test]
+    fn harness_tournament_count_increments() {
+        let config = TournamentConfig {
+            rounds: 5,
+            ..TournamentConfig::default()
+        };
+        let m = rock_paper_scissors_matrix();
+        let mut h = CoevolutionHarness::new(config, m).unwrap();
+        assert_eq!(h.tournament_count(), 0);
+        let _ = h.run().unwrap();
+        assert_eq!(h.tournament_count(), 1);
+        let _ = h.run().unwrap();
+        assert_eq!(h.tournament_count(), 2);
+    }
+
+    #[test]
+    fn run_without_trajectory_tracking() {
+        let config = TournamentConfig {
+            rounds: 10,
+            track_trajectory: false,
+            ..TournamentConfig::default()
+        };
+        let m = rock_paper_scissors_matrix();
+        let mut h = CoevolutionHarness::new(config, m).unwrap();
+        let result = h.run().unwrap();
+        assert!(result.trajectory.is_none());
+    }
+
+    #[test]
+    fn schema_version_constant_stable() {
+        assert_eq!(COEVOLUTION_SCHEMA_VERSION, "franken-engine.adversarial-coevolution.v1");
+    }
+
+    #[test]
+    fn component_constant_stable() {
+        assert_eq!(COEVOLUTION_COMPONENT, "adversarial_coevolution_harness");
+    }
+
+    #[test]
+    fn minimax_defender_with_dominant_strategy() {
+        // 1v2 game: defender "safe" always gives attacker payoff 100,
+        // defender "risky" gives attacker 900 in one case.
+        let m = PayoffMatrix {
+            attacker_strategies: vec![StrategyId("a1".to_string())],
+            defender_strategies: vec![
+                StrategyId("safe".to_string()),
+                StrategyId("risky".to_string()),
+            ],
+            entries: vec![
+                PayoffEntry {
+                    attacker: StrategyId("a1".to_string()),
+                    defender: StrategyId("safe".to_string()),
+                    attacker_payoff_millionths: 100_000,
+                    defender_payoff_millionths: 900_000,
+                },
+                PayoffEntry {
+                    attacker: StrategyId("a1".to_string()),
+                    defender: StrategyId("risky".to_string()),
+                    attacker_payoff_millionths: 900_000,
+                    defender_payoff_millionths: 100_000,
+                },
+            ],
+        };
+        let minimax = m.minimax_defender().unwrap();
+        assert_eq!(minimax, StrategyId("safe".to_string()));
+    }
+
+    #[test]
+    fn exploit_class_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        let a = ExploitClass::CapabilityEscalation;
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        a.hash(&mut h1);
+        a.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn player_role_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        let a = PlayerRole::Attacker;
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        a.hash(&mut h1);
+        a.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn boundary_single_round_tournament() {
+        let config = TournamentConfig {
+            rounds: 1,
+            ..TournamentConfig::default()
+        };
+        let m = rock_paper_scissors_matrix();
+        let mut h = CoevolutionHarness::new(config, m).unwrap();
+        let r = h.run().unwrap();
+        assert_eq!(r.rounds_played, 1);
+        assert!(r.trajectory.is_some());
+        assert_eq!(r.trajectory.as_ref().unwrap().round_count(), 1);
+    }
+
+    #[test]
+    fn boundary_max_rounds_validation() {
+        let config = TournamentConfig {
+            rounds: MAX_TOURNAMENT_ROUNDS + 1,
+            ..TournamentConfig::default()
+        };
+        let m = rock_paper_scissors_matrix();
+        let err = CoevolutionHarness::new(config, m).unwrap_err();
+        assert!(matches!(err, CoevolutionError::TooManyRounds { .. }));
+    }
+
+    #[test]
+    fn boundary_gamma_zero_rejected() {
+        let config = TournamentConfig {
+            gamma_millionths: 0,
+            ..TournamentConfig::default()
+        };
+        let m = rock_paper_scissors_matrix();
+        let err = CoevolutionHarness::new(config, m).unwrap_err();
+        assert!(matches!(err, CoevolutionError::InvalidGamma { .. }));
+    }
+
+    #[test]
+    fn boundary_gamma_million_rejected() {
+        let config = TournamentConfig {
+            gamma_millionths: MILLION,
+            ..TournamentConfig::default()
+        };
+        let m = rock_paper_scissors_matrix();
+        let err = CoevolutionHarness::new(config, m).unwrap_err();
+        assert!(matches!(err, CoevolutionError::InvalidGamma { .. }));
+    }
+
+    #[test]
+    fn run_deterministic_same_seed() {
+        let config1 = TournamentConfig {
+            rounds: 20,
+            seed: 123,
+            ..TournamentConfig::default()
+        };
+        let config2 = config1.clone();
+        let m = rock_paper_scissors_matrix();
+        let mut h1 = CoevolutionHarness::new(config1, m.clone()).unwrap();
+        let mut h2 = CoevolutionHarness::new(config2, m).unwrap();
+        let r1 = h1.run().unwrap();
+        let r2 = h2.run().unwrap();
+        assert_eq!(r1.artifact_hash, r2.artifact_hash);
+        assert_eq!(r1.total_attacker_payoff_millionths, r2.total_attacker_payoff_millionths);
+    }
+
+    #[test]
+    fn run_different_seed_different_hash() {
+        let m = rock_paper_scissors_matrix();
+        let mut h1 = CoevolutionHarness::new(
+            TournamentConfig { rounds: 50, seed: 1, ..TournamentConfig::default() },
+            m.clone(),
+        ).unwrap();
+        let mut h2 = CoevolutionHarness::new(
+            TournamentConfig { rounds: 50, seed: 999, ..TournamentConfig::default() },
+            m,
+        ).unwrap();
+        let r1 = h1.run().unwrap();
+        let r2 = h2.run().unwrap();
+        // Different seeds should (almost certainly) produce different results
+        assert_ne!(r1.artifact_hash, r2.artifact_hash);
+    }
+
+    #[test]
+    fn result_schema_version_matches_constant() {
+        let config = TournamentConfig { rounds: 5, ..TournamentConfig::default() };
+        let m = rock_paper_scissors_matrix();
+        let mut h = CoevolutionHarness::new(config, m).unwrap();
+        let r = h.run().unwrap();
+        assert_eq!(r.schema_version, COEVOLUTION_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn exploit_classification_capability_escalation() {
+        let ex = classify_exploit(
+            &StrategyId("capability-escalation-v2".to_string()),
+            MILLION,
+            MILLION / 2,
+        );
+        assert_eq!(ex, Some(ExploitClass::CapabilityEscalation));
+    }
+
+    #[test]
+    fn exploit_classification_below_threshold_none() {
+        let ex = classify_exploit(
+            &StrategyId("capability-escalation".to_string()),
+            100_000,
+            MILLION / 2,
+        );
+        assert!(ex.is_none());
+    }
+
+    #[test]
+    fn exploit_classification_novel_fallback() {
+        let ex = classify_exploit(
+            &StrategyId("unknown-fancy-attack".to_string()),
+            MILLION,
+            MILLION / 2,
+        );
+        assert!(matches!(ex, Some(ExploitClass::Novel(_))));
+    }
 }

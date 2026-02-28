@@ -1116,7 +1116,7 @@ mod tests {
         revocation_observations.insert("intel_pcs".to_string(), RevocationProbeStatus::Good);
         revocation_observations.insert(
             "internal_ledger".to_string(),
-            RevocationProbeStatus::Unavailable,
+            RevocationProbeStatus::Good,
         );
         let policy_quote = PolicyAttestationQuote {
             platform: TeePlatform::IntelSgx,

@@ -1678,4 +1678,597 @@ mod tests {
         assert_eq!(sorted_a[0], ClosureHandle(0));
         assert_eq!(sorted_a[4], ClosureHandle(9));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: JSON field-name stability, serde variant
+    // distinctness, Debug distinctness, Copy semantics, Hash consistency,
+    // boundary/edge cases, Clone independence, Display format checks
+    // -----------------------------------------------------------------------
+
+    // --- JSON field-name stability (5 tests) ---
+
+    #[test]
+    fn json_field_names_closure_capture() {
+        let cap = ClosureCapture {
+            name: "x".into(),
+            binding_id: 1,
+            source_scope: ScopeId { depth: 0, index: 0 },
+            label: Label::Public,
+        };
+        let json = serde_json::to_string(&cap).unwrap();
+        assert!(json.contains("\"name\""));
+        assert!(json.contains("\"binding_id\""));
+        assert!(json.contains("\"source_scope\""));
+        assert!(json.contains("\"label\""));
+    }
+
+    #[test]
+    fn json_field_names_scope_chain() {
+        let chain = fresh_chain();
+        let json = serde_json::to_string(&chain).unwrap();
+        assert!(json.contains("\"environments\""));
+        assert!(json.contains("\"chain\""));
+        assert!(json.contains("\"next_handle\""));
+    }
+
+    #[test]
+    fn json_field_names_closure_store() {
+        let store = ClosureStore::new();
+        let json = serde_json::to_string(&store).unwrap();
+        assert!(json.contains("\"closures\""));
+    }
+
+    #[test]
+    fn json_field_names_scope_error_tdz() {
+        let err = ScopeError::TemporalDeadZone { name: "abc".into() };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"TemporalDeadZone\""));
+        assert!(json.contains("\"name\""));
+    }
+
+    #[test]
+    fn json_field_names_scope_error_label_violation() {
+        let err = ScopeError::LabelViolation {
+            name: "x".into(),
+            value_label: Label::Secret,
+            scope_max: Label::Public,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"LabelViolation\""));
+        assert!(json.contains("\"name\""));
+        assert!(json.contains("\"value_label\""));
+        assert!(json.contains("\"scope_max\""));
+    }
+
+    // --- Serde variant distinctness (3 tests) ---
+
+    #[test]
+    fn serde_env_value_variants_distinct_json() {
+        let variants = vec![
+            EnvValue::Undefined,
+            EnvValue::Null,
+            EnvValue::Bool(true),
+            EnvValue::Number(1),
+            EnvValue::Str("s".into()),
+            EnvValue::ObjectRef(1),
+            EnvValue::ClosureRef(ClosureHandle(1)),
+            EnvValue::Tdz,
+        ];
+        let jsons: std::collections::BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 8, "all 8 EnvValue variants must serialize to distinct JSON");
+    }
+
+    #[test]
+    fn serde_environment_kind_variants_distinct_json() {
+        let variants = vec![
+            EnvironmentKind::Declarative,
+            EnvironmentKind::Object,
+            EnvironmentKind::Global,
+            EnvironmentKind::Module,
+            EnvironmentKind::Function,
+        ];
+        let jsons: std::collections::BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 5, "all 5 EnvironmentKind variants must produce distinct JSON");
+    }
+
+    #[test]
+    fn serde_scope_error_variants_distinct_json() {
+        let variants = vec![
+            ScopeError::TemporalDeadZone { name: "a".into() },
+            ScopeError::ConstAssignment { name: "a".into() },
+            ScopeError::UndeclaredVariable { name: "a".into() },
+            ScopeError::EmptyScopeChain,
+            ScopeError::LabelViolation {
+                name: "a".into(),
+                value_label: Label::Public,
+                scope_max: Label::Public,
+            },
+            ScopeError::DuplicateBinding { name: "a".into() },
+            ScopeError::InvalidEnvironment { handle: EnvironmentHandle(0) },
+        ];
+        let jsons: std::collections::BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 7, "all 7 ScopeError variants must produce distinct JSON");
+    }
+
+    // --- Debug distinctness (3 tests) ---
+
+    #[test]
+    fn debug_env_value_variants_distinct() {
+        let variants: Vec<EnvValue> = vec![
+            EnvValue::Undefined,
+            EnvValue::Null,
+            EnvValue::Bool(false),
+            EnvValue::Number(0),
+            EnvValue::Str(String::new()),
+            EnvValue::ObjectRef(0),
+            EnvValue::ClosureRef(ClosureHandle(0)),
+            EnvValue::Tdz,
+        ];
+        let debugs: std::collections::BTreeSet<String> =
+            variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(debugs.len(), 8, "all 8 EnvValue variants must have distinct Debug");
+    }
+
+    #[test]
+    fn debug_environment_kind_variants_distinct() {
+        let variants = vec![
+            EnvironmentKind::Declarative,
+            EnvironmentKind::Object,
+            EnvironmentKind::Global,
+            EnvironmentKind::Module,
+            EnvironmentKind::Function,
+        ];
+        let debugs: std::collections::BTreeSet<String> =
+            variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(debugs.len(), 5, "all 5 EnvironmentKind variants must have distinct Debug");
+    }
+
+    #[test]
+    fn debug_scope_error_variants_distinct() {
+        let variants = vec![
+            ScopeError::TemporalDeadZone { name: "n".into() },
+            ScopeError::ConstAssignment { name: "n".into() },
+            ScopeError::UndeclaredVariable { name: "n".into() },
+            ScopeError::EmptyScopeChain,
+            ScopeError::LabelViolation {
+                name: "n".into(),
+                value_label: Label::Public,
+                scope_max: Label::Public,
+            },
+            ScopeError::DuplicateBinding { name: "n".into() },
+            ScopeError::InvalidEnvironment { handle: EnvironmentHandle(0) },
+        ];
+        let debugs: std::collections::BTreeSet<String> =
+            variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(debugs.len(), 7, "all 7 ScopeError variants must have distinct Debug");
+    }
+
+    // --- Copy semantics (2 tests) ---
+
+    #[test]
+    fn copy_semantics_closure_handle() {
+        let a = ClosureHandle(42);
+        let b = a; // Copy
+        let c = a; // still valid — Copy
+        assert_eq!(b, c);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn copy_semantics_environment_handle() {
+        let a = EnvironmentHandle(99);
+        let b = a; // Copy
+        let c = a; // still valid
+        assert_eq!(b, c);
+        assert_eq!(a, b);
+    }
+
+    // --- Hash consistency (2 tests) ---
+
+    #[test]
+    fn hash_consistency_closure_handle() {
+        use std::hash::{Hash, Hasher};
+        let h1 = ClosureHandle(17);
+        let h2 = ClosureHandle(17);
+        let mut hasher1 = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher2 = std::collections::hash_map::DefaultHasher::new();
+        h1.hash(&mut hasher1);
+        h2.hash(&mut hasher2);
+        assert_eq!(hasher1.finish(), hasher2.finish(), "equal ClosureHandles must hash equally");
+    }
+
+    #[test]
+    fn hash_consistency_environment_handle() {
+        use std::hash::{Hash, Hasher};
+        let h1 = EnvironmentHandle(255);
+        let h2 = EnvironmentHandle(255);
+        let mut hasher1 = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher2 = std::collections::hash_map::DefaultHasher::new();
+        h1.hash(&mut hasher1);
+        h2.hash(&mut hasher2);
+        assert_eq!(
+            hasher1.finish(),
+            hasher2.finish(),
+            "equal EnvironmentHandles must hash equally"
+        );
+    }
+
+    // --- Clone independence (3 tests) ---
+
+    #[test]
+    fn clone_independence_binding_slot_mutation() {
+        let a = BindingSlot::new_hoisted("x".into(), 1, BindingKind::Var);
+        let mut b = a.clone();
+        b.value = EnvValue::Number(999);
+        b.label = Label::Secret;
+        // a is unchanged
+        assert_eq!(a.value, EnvValue::Undefined);
+        assert_eq!(a.label, Label::Public);
+        assert_ne!(a.value, b.value);
+    }
+
+    #[test]
+    fn clone_independence_closure() {
+        let a = Closure {
+            handle: ClosureHandle(0),
+            name: "orig".into(),
+            arity: 1,
+            strict: false,
+            captures: vec![ClosureCapture {
+                name: "c".into(),
+                binding_id: 1,
+                source_scope: ScopeId { depth: 0, index: 0 },
+                label: Label::Public,
+            }],
+            max_capture_label: Label::Public,
+            creation_env: EnvironmentHandle(0),
+        };
+        let mut b = a.clone();
+        b.name = "modified".into();
+        b.captures.clear();
+        assert_eq!(a.name, "orig");
+        assert_eq!(a.captures.len(), 1);
+    }
+
+    #[test]
+    fn clone_independence_scope_chain() {
+        let mut a = fresh_chain();
+        a.declare_var("v".into(), 1).unwrap();
+        let mut b = a.clone();
+        b.declare_let("extra".into(), 2).unwrap();
+        // a should not have the new binding
+        assert!(a.get_value("extra").is_err());
+        assert!(b.get_value("v").is_ok());
+    }
+
+    // --- Display format checks (5 tests) ---
+
+    #[test]
+    fn display_env_value_objectref_format() {
+        let v = EnvValue::ObjectRef(12345);
+        assert_eq!(v.to_string(), "ObjectRef(12345)");
+    }
+
+    #[test]
+    fn display_env_value_closureref_format() {
+        let v = EnvValue::ClosureRef(ClosureHandle(7));
+        assert_eq!(v.to_string(), "ClosureRef(7)");
+    }
+
+    #[test]
+    fn display_scope_error_invalid_environment() {
+        let err = ScopeError::InvalidEnvironment {
+            handle: EnvironmentHandle(42),
+        };
+        let s = err.to_string();
+        assert!(s.contains("42"), "Display should include handle value");
+        assert!(s.contains("invalid environment handle"));
+    }
+
+    #[test]
+    fn display_scope_error_label_violation_format() {
+        let err = ScopeError::LabelViolation {
+            name: "secret_data".into(),
+            value_label: Label::TopSecret,
+            scope_max: Label::Internal,
+        };
+        let s = err.to_string();
+        assert!(s.contains("secret_data"));
+        assert!(s.contains("TopSecret"));
+        assert!(s.contains("Internal"));
+    }
+
+    #[test]
+    fn display_env_value_str_with_quotes() {
+        let v = EnvValue::Str("hello world".into());
+        assert_eq!(v.to_string(), "\"hello world\"");
+    }
+
+    // --- Serde roundtrip additional (4 tests) ---
+
+    #[test]
+    fn serde_roundtrip_environment_kind_all_variants() {
+        let variants = vec![
+            EnvironmentKind::Declarative,
+            EnvironmentKind::Object,
+            EnvironmentKind::Global,
+            EnvironmentKind::Module,
+            EnvironmentKind::Function,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: EnvironmentKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn serde_roundtrip_closure_capture() {
+        let cap = ClosureCapture {
+            name: "deep_var".into(),
+            binding_id: 777,
+            source_scope: ScopeId { depth: 5, index: 3 },
+            label: Label::TopSecret,
+        };
+        let json = serde_json::to_string(&cap).unwrap();
+        let back: ClosureCapture = serde_json::from_str(&json).unwrap();
+        assert_eq!(cap, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_closure_store() {
+        let mut store = ClosureStore::new();
+        store.create_closure("f".into(), 2, true, vec![], EnvironmentHandle(0));
+        store.create_closure(
+            "g".into(),
+            1,
+            false,
+            vec![ClosureCapture {
+                name: "z".into(),
+                binding_id: 99,
+                source_scope: ScopeId { depth: 1, index: 0 },
+                label: Label::Confidential,
+            }],
+            EnvironmentHandle(3),
+        );
+        let json = serde_json::to_string(&store).unwrap();
+        let back: ClosureStore = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.len(), 2);
+        assert_eq!(back.get(ClosureHandle(0)).unwrap().name, "f");
+        assert_eq!(back.get(ClosureHandle(1)).unwrap().name, "g");
+        assert_eq!(
+            back.get(ClosureHandle(1)).unwrap().max_capture_label,
+            Label::Confidential
+        );
+    }
+
+    #[test]
+    fn serde_roundtrip_scope_error_label_violation() {
+        let err = ScopeError::LabelViolation {
+            name: "x".into(),
+            value_label: Label::TopSecret,
+            scope_max: Label::Internal,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let back: ScopeError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    // --- Boundary/edge cases (8 tests) ---
+
+    #[test]
+    fn boundary_binding_slot_empty_name() {
+        let slot = BindingSlot::new_lexical(String::new(), 0, BindingKind::Let);
+        assert_eq!(slot.name, "");
+        assert_eq!(slot.value, EnvValue::Tdz);
+        assert!(!slot.initialized);
+    }
+
+    #[test]
+    fn boundary_env_value_number_extremes() {
+        let min_val = EnvValue::Number(i64::MIN);
+        let max_val = EnvValue::Number(i64::MAX);
+        let json_min = serde_json::to_string(&min_val).unwrap();
+        let json_max = serde_json::to_string(&max_val).unwrap();
+        let back_min: EnvValue = serde_json::from_str(&json_min).unwrap();
+        let back_max: EnvValue = serde_json::from_str(&json_max).unwrap();
+        assert_eq!(back_min, min_val);
+        assert_eq!(back_max, max_val);
+    }
+
+    #[test]
+    fn boundary_env_value_objectref_zero_and_max() {
+        let zero = EnvValue::ObjectRef(0);
+        let max = EnvValue::ObjectRef(u64::MAX);
+        let j0 = serde_json::to_string(&zero).unwrap();
+        let jm = serde_json::to_string(&max).unwrap();
+        let b0: EnvValue = serde_json::from_str(&j0).unwrap();
+        let bm: EnvValue = serde_json::from_str(&jm).unwrap();
+        assert_eq!(b0, zero);
+        assert_eq!(bm, max);
+    }
+
+    #[test]
+    fn boundary_closure_handle_zero() {
+        let h = ClosureHandle(0);
+        assert_eq!(h.0, 0);
+        let json = serde_json::to_string(&h).unwrap();
+        let back: ClosureHandle = serde_json::from_str(&json).unwrap();
+        assert_eq!(h, back);
+    }
+
+    #[test]
+    fn boundary_closure_handle_max() {
+        let h = ClosureHandle(u32::MAX);
+        assert_eq!(h.0, u32::MAX);
+        let json = serde_json::to_string(&h).unwrap();
+        let back: ClosureHandle = serde_json::from_str(&json).unwrap();
+        assert_eq!(h, back);
+    }
+
+    #[test]
+    fn boundary_deep_scope_nesting() {
+        let mut chain = fresh_chain();
+        // Push 50 nested block scopes
+        for i in 0..50u32 {
+            chain.push_scope(ScopeId { depth: i + 1, index: 0 }, ScopeKind::Block);
+        }
+        assert_eq!(chain.depth(), 51); // 1 global + 50 blocks
+        // Declare var in deepest — should hoist to global
+        chain.declare_var("deep".into(), 1).unwrap();
+        let global = chain.get_env(EnvironmentHandle(0)).unwrap();
+        assert!(global.get_binding("deep").is_some());
+        // Pop all
+        for _ in 0..50 {
+            chain.pop_scope().unwrap();
+        }
+        assert_eq!(chain.depth(), 1);
+    }
+
+    #[test]
+    fn boundary_many_bindings_in_single_scope() {
+        let mut chain = fresh_chain();
+        for i in 0..100u32 {
+            let name = format!("v{i}");
+            chain.declare_var(name, i).unwrap();
+        }
+        let global = chain.get_env(EnvironmentHandle(0)).unwrap();
+        assert_eq!(global.bindings.len(), 100);
+        // BTreeMap keeps them sorted
+        let first_key = global.bindings.keys().next().unwrap();
+        assert_eq!(first_key, "v0");
+    }
+
+    #[test]
+    fn boundary_scope_id_zero_zero() {
+        let sid = ScopeId { depth: 0, index: 0 };
+        let json = serde_json::to_string(&sid).unwrap();
+        let back: ScopeId = serde_json::from_str(&json).unwrap();
+        assert_eq!(sid, back);
+    }
+
+    // --- Behavioral edge cases (5 tests) ---
+
+    #[test]
+    fn duplicate_const_in_same_scope_fails() {
+        let mut chain = fresh_chain();
+        chain.declare_const("C".into(), 1).unwrap();
+        let result = chain.declare_const("C".into(), 2);
+        assert!(matches!(result, Err(ScopeError::DuplicateBinding { .. })));
+    }
+
+    #[test]
+    fn get_env_invalid_handle_returns_error() {
+        let chain = fresh_chain();
+        let result = chain.get_env(EnvironmentHandle(999));
+        assert!(matches!(result, Err(ScopeError::InvalidEnvironment { .. })));
+    }
+
+    #[test]
+    fn get_env_mut_invalid_handle_returns_error() {
+        let mut chain = fresh_chain();
+        let result = chain.get_env_mut(EnvironmentHandle(999));
+        assert!(matches!(result, Err(ScopeError::InvalidEnvironment { .. })));
+    }
+
+    #[test]
+    fn closure_store_get_out_of_bounds_returns_none() {
+        let store = ClosureStore::new();
+        assert!(store.get(ClosureHandle(0)).is_none());
+        assert!(store.get(ClosureHandle(u32::MAX)).is_none());
+    }
+
+    #[test]
+    fn env_record_max_label_tracks_highest_binding() {
+        let mut env = EnvironmentRecord::new(
+            EnvironmentHandle(0),
+            ScopeId { depth: 0, index: 0 },
+            ScopeKind::Global,
+            EnvironmentKind::Global,
+        );
+        assert_eq!(env.max_label, Label::Public);
+        let mut slot = BindingSlot::new_hoisted("a".into(), 1, BindingKind::Var);
+        slot.label = Label::Internal;
+        env.add_binding(slot);
+        assert_eq!(env.max_label, Label::Internal);
+        let mut slot2 = BindingSlot::new_hoisted("b".into(), 2, BindingKind::Var);
+        slot2.label = Label::Secret;
+        env.add_binding(slot2);
+        assert_eq!(env.max_label, Label::Secret);
+        // Adding a lower label binding doesn't reduce max_label
+        let slot3 = BindingSlot::new_hoisted("c".into(), 3, BindingKind::Var);
+        env.add_binding(slot3);
+        assert_eq!(env.max_label, Label::Secret);
+    }
+
+    // --- Ord determinism additional (2 tests) ---
+
+    #[test]
+    fn ord_determinism_environment_handle() {
+        let handles = vec![
+            EnvironmentHandle(10),
+            EnvironmentHandle(3),
+            EnvironmentHandle(7),
+            EnvironmentHandle(0),
+            EnvironmentHandle(5),
+        ];
+        let mut sorted_a = handles.clone();
+        sorted_a.sort();
+        let mut sorted_b = handles.clone();
+        sorted_b.sort();
+        assert_eq!(sorted_a, sorted_b);
+        assert_eq!(sorted_a[0], EnvironmentHandle(0));
+        assert_eq!(sorted_a[4], EnvironmentHandle(10));
+    }
+
+    #[test]
+    fn ord_closure_handle_in_btreeset() {
+        let mut set = std::collections::BTreeSet::new();
+        set.insert(ClosureHandle(3));
+        set.insert(ClosureHandle(1));
+        set.insert(ClosureHandle(3)); // duplicate
+        set.insert(ClosureHandle(5));
+        assert_eq!(set.len(), 3);
+        let as_vec: Vec<_> = set.into_iter().collect();
+        assert_eq!(as_vec, vec![ClosureHandle(1), ClosureHandle(3), ClosureHandle(5)]);
+    }
+
+    // --- ClosureStore default/new equivalence (1 test) ---
+
+    #[test]
+    fn closure_store_default_eq_new() {
+        let a = ClosureStore::new();
+        let b = ClosureStore::default();
+        assert_eq!(a.len(), b.len());
+        assert!(a.is_empty());
+        assert!(b.is_empty());
+    }
+
+    // --- BindingSlot constructor correctness (2 tests) ---
+
+    #[test]
+    fn binding_slot_lexical_let_is_mutable() {
+        let slot = BindingSlot::new_lexical("x".into(), 1, BindingKind::Let);
+        assert!(slot.mutable, "let bindings should be mutable");
+        assert!(!slot.initialized, "let starts uninitialized");
+        assert_eq!(slot.value, EnvValue::Tdz);
+        assert_eq!(slot.label, Label::Public);
+    }
+
+    #[test]
+    fn binding_slot_lexical_const_is_immutable() {
+        let slot = BindingSlot::new_lexical("C".into(), 2, BindingKind::Const);
+        assert!(!slot.mutable, "const bindings should be immutable");
+        assert!(!slot.initialized);
+        assert_eq!(slot.value, EnvValue::Tdz);
+    }
 }

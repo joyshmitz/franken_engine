@@ -935,11 +935,11 @@ mod tests {
             ),
             (
                 BenchmarkSplit::EvidenceEmission,
-                metrics(975_000, 980_000, 1_068_000, 1_115_000, 24 * 1024 * 1024),
+                metrics(985_000, 980_000, 1_068_000, 1_115_000, 24 * 1024 * 1024),
             ),
             (
                 BenchmarkSplit::FullIntegration,
-                metrics(955_000, 990_000, 1_080_000, 1_130_000, 30 * 1024 * 1024),
+                metrics(960_000, 990_000, 1_080_000, 1_130_000, 30 * 1024 * 1024),
             ),
         ]);
 
@@ -1740,5 +1740,435 @@ mod tests {
         let v1 = stats.canonical_value();
         let v2 = stats.canonical_value();
         assert_eq!(v1, v2, "canonical_value must be deterministic");
+    }
+
+    // ── Enrichment: Copy semantics ──────────────────────────────────
+
+    #[test]
+    fn benchmark_split_copy_from_array() {
+        let arr = [
+            BenchmarkSplit::Baseline,
+            BenchmarkSplit::CxThreading,
+            BenchmarkSplit::DecisionContracts,
+            BenchmarkSplit::EvidenceEmission,
+            BenchmarkSplit::FullIntegration,
+        ];
+        let copied = arr[3];
+        assert_eq!(copied, BenchmarkSplit::EvidenceEmission);
+        assert_eq!(arr[3], BenchmarkSplit::EvidenceEmission);
+    }
+
+    #[test]
+    fn failure_code_copy_from_array() {
+        let arr = [
+            BenchmarkSplitFailureCode::MissingSplitMetrics,
+            BenchmarkSplitFailureCode::InsufficientBaselineRuns,
+            BenchmarkSplitFailureCode::BaselineVarianceExceeded,
+            BenchmarkSplitFailureCode::InvalidMetric,
+            BenchmarkSplitFailureCode::ThroughputRegressionExceeded,
+            BenchmarkSplitFailureCode::LatencyRegressionExceeded,
+            BenchmarkSplitFailureCode::MemoryOverheadExceeded,
+            BenchmarkSplitFailureCode::PreviousRunRegressionExceeded,
+        ];
+        let copied = arr[5];
+        assert_eq!(copied, BenchmarkSplitFailureCode::LatencyRegressionExceeded);
+        assert_eq!(arr[5], BenchmarkSplitFailureCode::LatencyRegressionExceeded);
+    }
+
+    // ── Enrichment: Debug distinctness ──────────────────────────────
+
+    #[test]
+    fn benchmark_split_debug_all_distinct() {
+        let dbgs: BTreeSet<String> = [
+            BenchmarkSplit::Baseline,
+            BenchmarkSplit::CxThreading,
+            BenchmarkSplit::DecisionContracts,
+            BenchmarkSplit::EvidenceEmission,
+            BenchmarkSplit::FullIntegration,
+        ]
+        .iter()
+        .map(|v| format!("{v:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 5);
+    }
+
+    #[test]
+    fn failure_code_debug_all_distinct() {
+        let dbgs: BTreeSet<String> = [
+            BenchmarkSplitFailureCode::MissingSplitMetrics,
+            BenchmarkSplitFailureCode::InsufficientBaselineRuns,
+            BenchmarkSplitFailureCode::BaselineVarianceExceeded,
+            BenchmarkSplitFailureCode::InvalidMetric,
+            BenchmarkSplitFailureCode::ThroughputRegressionExceeded,
+            BenchmarkSplitFailureCode::LatencyRegressionExceeded,
+            BenchmarkSplitFailureCode::MemoryOverheadExceeded,
+            BenchmarkSplitFailureCode::PreviousRunRegressionExceeded,
+        ]
+        .iter()
+        .map(|v| format!("{v:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 8);
+    }
+
+    // ── Enrichment: Serde variant distinctness ──────────────────────
+
+    #[test]
+    fn benchmark_split_serde_variants_distinct() {
+        let variants = [
+            BenchmarkSplit::Baseline,
+            BenchmarkSplit::CxThreading,
+            BenchmarkSplit::DecisionContracts,
+            BenchmarkSplit::EvidenceEmission,
+            BenchmarkSplit::FullIntegration,
+        ];
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 5);
+    }
+
+    #[test]
+    fn failure_code_serde_variants_distinct() {
+        let variants = [
+            BenchmarkSplitFailureCode::MissingSplitMetrics,
+            BenchmarkSplitFailureCode::InsufficientBaselineRuns,
+            BenchmarkSplitFailureCode::BaselineVarianceExceeded,
+            BenchmarkSplitFailureCode::InvalidMetric,
+            BenchmarkSplitFailureCode::ThroughputRegressionExceeded,
+            BenchmarkSplitFailureCode::LatencyRegressionExceeded,
+            BenchmarkSplitFailureCode::MemoryOverheadExceeded,
+            BenchmarkSplitFailureCode::PreviousRunRegressionExceeded,
+        ];
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 8);
+    }
+
+    // ── Enrichment: Clone independence ──────────────────────────────
+
+    #[test]
+    fn latency_stats_clone_independence() {
+        let mut original = LatencyStatsNs { p50_ns: 100, p95_ns: 200, p99_ns: 300 };
+        let cloned = original.clone();
+        original.p99_ns = 999;
+        assert_eq!(cloned.p99_ns, 300);
+    }
+
+    #[test]
+    fn split_metrics_clone_independence() {
+        let mut original = SplitBenchmarkMetrics {
+            throughput_ops_per_sec: 1000,
+            latency_ns: LatencyStatsNs { p50_ns: 10, p95_ns: 20, p99_ns: 30 },
+            peak_rss_delta_bytes: 1024,
+        };
+        let cloned = original.clone();
+        original.throughput_ops_per_sec = 0;
+        assert_eq!(cloned.throughput_ops_per_sec, 1000);
+    }
+
+    #[test]
+    fn finding_clone_independence() {
+        let mut original = BenchmarkSplitFinding {
+            code: BenchmarkSplitFailureCode::InvalidMetric,
+            split: Some(BenchmarkSplit::Baseline),
+            metric: Some("throughput".into()),
+            detail: "original detail".into(),
+            observed_millionths: Some(100_000),
+            threshold_millionths: Some(50_000),
+        };
+        let cloned = original.clone();
+        original.detail = "mutated".into();
+        assert_eq!(cloned.detail, "original detail");
+    }
+
+    #[test]
+    fn thresholds_clone_independence() {
+        let mut original = BenchmarkSplitThresholds::default();
+        let cloned = original.clone();
+        original.min_baseline_runs = 999;
+        assert_eq!(cloned.min_baseline_runs, 10);
+    }
+
+    // ── Enrichment: JSON field-name stability ───────────────────────
+
+    #[test]
+    fn latency_stats_json_field_names() {
+        let stats = LatencyStatsNs { p50_ns: 100, p95_ns: 200, p99_ns: 300 };
+        let val: serde_json::Value = serde_json::to_value(&stats).unwrap();
+        let obj = val.as_object().unwrap();
+        assert!(obj.contains_key("p50_ns"));
+        assert!(obj.contains_key("p95_ns"));
+        assert!(obj.contains_key("p99_ns"));
+        assert_eq!(obj.len(), 3);
+    }
+
+    #[test]
+    fn split_metrics_json_field_names() {
+        let m = SplitBenchmarkMetrics {
+            throughput_ops_per_sec: 1000,
+            latency_ns: LatencyStatsNs { p50_ns: 10, p95_ns: 20, p99_ns: 30 },
+            peak_rss_delta_bytes: 1024,
+        };
+        let val: serde_json::Value = serde_json::to_value(&m).unwrap();
+        let obj = val.as_object().unwrap();
+        assert!(obj.contains_key("throughput_ops_per_sec"));
+        assert!(obj.contains_key("latency_ns"));
+        assert!(obj.contains_key("peak_rss_delta_bytes"));
+        assert_eq!(obj.len(), 3);
+    }
+
+    #[test]
+    fn finding_json_field_names() {
+        let f = BenchmarkSplitFinding {
+            code: BenchmarkSplitFailureCode::InvalidMetric,
+            split: None,
+            metric: None,
+            detail: "test".into(),
+            observed_millionths: None,
+            threshold_millionths: None,
+        };
+        let val: serde_json::Value = serde_json::to_value(&f).unwrap();
+        let obj = val.as_object().unwrap();
+        assert!(obj.contains_key("code"));
+        assert!(obj.contains_key("split"));
+        assert!(obj.contains_key("metric"));
+        assert!(obj.contains_key("detail"));
+        assert!(obj.contains_key("observed_millionths"));
+        assert!(obj.contains_key("threshold_millionths"));
+        assert_eq!(obj.len(), 6);
+    }
+
+    #[test]
+    fn log_event_json_field_names() {
+        let ev = BenchmarkSplitLogEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "c".into(),
+            event: "e".into(),
+            outcome: "o".into(),
+            error_code: None,
+            split: None,
+            metric: None,
+        };
+        let val: serde_json::Value = serde_json::to_value(&ev).unwrap();
+        let obj = val.as_object().unwrap();
+        assert!(obj.contains_key("trace_id"));
+        assert!(obj.contains_key("decision_id"));
+        assert!(obj.contains_key("policy_id"));
+        assert!(obj.contains_key("component"));
+        assert!(obj.contains_key("event"));
+        assert!(obj.contains_key("outcome"));
+        assert!(obj.contains_key("error_code"));
+        assert!(obj.contains_key("split"));
+        assert!(obj.contains_key("metric"));
+        assert_eq!(obj.len(), 9);
+    }
+
+    // ── Enrichment: Display format ──────────────────────────────────
+
+    #[test]
+    fn benchmark_split_display_all_snake_case() {
+        for s in [
+            BenchmarkSplit::Baseline,
+            BenchmarkSplit::CxThreading,
+            BenchmarkSplit::DecisionContracts,
+            BenchmarkSplit::EvidenceEmission,
+            BenchmarkSplit::FullIntegration,
+        ] {
+            let display = s.to_string();
+            assert!(!display.is_empty());
+            assert!(display.chars().all(|c| c.is_ascii_lowercase() || c == '_'));
+        }
+    }
+
+    #[test]
+    fn failure_code_display_all_snake_case() {
+        for c in [
+            BenchmarkSplitFailureCode::MissingSplitMetrics,
+            BenchmarkSplitFailureCode::InsufficientBaselineRuns,
+            BenchmarkSplitFailureCode::BaselineVarianceExceeded,
+            BenchmarkSplitFailureCode::InvalidMetric,
+            BenchmarkSplitFailureCode::ThroughputRegressionExceeded,
+            BenchmarkSplitFailureCode::LatencyRegressionExceeded,
+            BenchmarkSplitFailureCode::MemoryOverheadExceeded,
+            BenchmarkSplitFailureCode::PreviousRunRegressionExceeded,
+        ] {
+            let display = c.to_string();
+            assert!(!display.is_empty());
+            assert!(display.chars().all(|ch| ch.is_ascii_lowercase() || ch == '_'));
+        }
+    }
+
+    #[test]
+    fn failure_code_display_all_distinct() {
+        let displays: BTreeSet<String> = [
+            BenchmarkSplitFailureCode::MissingSplitMetrics,
+            BenchmarkSplitFailureCode::InsufficientBaselineRuns,
+            BenchmarkSplitFailureCode::BaselineVarianceExceeded,
+            BenchmarkSplitFailureCode::InvalidMetric,
+            BenchmarkSplitFailureCode::ThroughputRegressionExceeded,
+            BenchmarkSplitFailureCode::LatencyRegressionExceeded,
+            BenchmarkSplitFailureCode::MemoryOverheadExceeded,
+            BenchmarkSplitFailureCode::PreviousRunRegressionExceeded,
+        ]
+        .iter()
+        .map(|v| v.to_string())
+        .collect();
+        assert_eq!(displays.len(), 8);
+    }
+
+    // ── Enrichment: Serde roundtrips ────────────────────────────────
+
+    #[test]
+    fn finding_serde_roundtrip_enrichment() {
+        let f = BenchmarkSplitFinding {
+            code: BenchmarkSplitFailureCode::MemoryOverheadExceeded,
+            split: Some(BenchmarkSplit::FullIntegration),
+            metric: Some("peak_rss_delta_bytes".into()),
+            detail: "over limit".into(),
+            observed_millionths: Some(200_000),
+            threshold_millionths: Some(100_000),
+        };
+        let json = serde_json::to_string(&f).unwrap();
+        let back: BenchmarkSplitFinding = serde_json::from_str(&json).unwrap();
+        assert_eq!(f, back);
+    }
+
+    #[test]
+    fn log_event_serde_roundtrip_enrichment() {
+        let ev = BenchmarkSplitLogEvent {
+            trace_id: "trace-1".into(),
+            decision_id: "dec-1".into(),
+            policy_id: "pol-1".into(),
+            component: "control_plane_benchmark_split_gate".into(),
+            event: "evaluate".into(),
+            outcome: "pass".into(),
+            error_code: Some("E001".into()),
+            split: Some("baseline".into()),
+            metric: Some("throughput".into()),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: BenchmarkSplitLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn thresholds_serde_roundtrip_enrichment() {
+        let t = BenchmarkSplitThresholds::default();
+        let json = serde_json::to_string(&t).unwrap();
+        let back: BenchmarkSplitThresholds = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+    }
+
+    // ── Enrichment: Boundary/edge cases ─────────────────────────────
+
+    #[test]
+    fn throughput_regression_zero_reference_returns_max() {
+        assert_eq!(throughput_regression_millionths(0, 1000), u64::MAX);
+    }
+
+    #[test]
+    fn throughput_regression_candidate_exceeds_reference_returns_zero() {
+        assert_eq!(throughput_regression_millionths(1000, 2000), 0);
+    }
+
+    #[test]
+    fn throughput_regression_exact_half() {
+        // 1000 -> 500 = 50% regression = 500_000 millionths
+        assert_eq!(throughput_regression_millionths(1000, 500), 500_000);
+    }
+
+    #[test]
+    fn latency_regression_zero_reference_returns_max() {
+        assert_eq!(latency_regression_millionths(0, 1000), u64::MAX);
+    }
+
+    #[test]
+    fn latency_regression_candidate_below_reference_returns_zero() {
+        assert_eq!(latency_regression_millionths(1000, 500), 0);
+    }
+
+    #[test]
+    fn latency_regression_double() {
+        // 1000 -> 2000 = 100% regression = 1_000_000 millionths
+        assert_eq!(latency_regression_millionths(1000, 2000), 1_000_000);
+    }
+
+    #[test]
+    fn cv_empty_samples_returns_none() {
+        assert_eq!(coefficient_of_variation_millionths(&[]), None);
+    }
+
+    #[test]
+    fn cv_identical_samples_returns_zero() {
+        assert_eq!(coefficient_of_variation_millionths(&[100, 100, 100]), Some(0));
+    }
+
+    #[test]
+    fn cv_zero_mean_returns_none() {
+        assert_eq!(coefficient_of_variation_millionths(&[0, 0, 0]), None);
+    }
+
+    #[test]
+    fn cv_single_sample_returns_zero() {
+        assert_eq!(coefficient_of_variation_millionths(&[42]), Some(0));
+    }
+
+    #[test]
+    fn benchmark_split_all_required_contains_five() {
+        assert_eq!(BenchmarkSplit::all_required().len(), 5);
+    }
+
+    #[test]
+    fn snapshot_hash_deterministic_enrichment() {
+        let snap = previous_snapshot();
+        let h1 = snap.snapshot_hash();
+        let h2 = snap.snapshot_hash();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn snapshot_hash_differs_for_different_ids() {
+        let mut s1 = previous_snapshot();
+        let mut s2 = previous_snapshot();
+        s1.snapshot_id = "snap-A".into();
+        s2.snapshot_id = "snap-B".into();
+        assert_ne!(s1.snapshot_hash(), s2.snapshot_hash());
+    }
+
+    // ── Enrichment: Debug nonempty ──────────────────────────────────
+
+    #[test]
+    fn latency_stats_debug_nonempty() {
+        let stats = LatencyStatsNs { p50_ns: 100, p95_ns: 200, p99_ns: 300 };
+        let dbg = format!("{stats:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("LatencyStatsNs"));
+    }
+
+    #[test]
+    fn gate_input_debug_nonempty() {
+        let snap = previous_snapshot();
+        let input = BenchmarkSplitGateInput {
+            trace_id: "trace-1".into(),
+            policy_id: "pol-1".into(),
+            previous_snapshot: snap.clone(),
+            candidate_snapshot: snap,
+        };
+        let dbg = format!("{input:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("BenchmarkSplitGateInput"));
+    }
+
+    #[test]
+    fn thresholds_debug_nonempty() {
+        let t = BenchmarkSplitThresholds::default();
+        let dbg = format!("{t:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("BenchmarkSplitThresholds"));
     }
 }

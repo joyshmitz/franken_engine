@@ -1114,4 +1114,1291 @@ mod tests {
         let pkg = HandoffPackage::baseline();
         assert_eq!(pkg.wave_id, WaveId::Wave1);
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Enrichment tests — Copy semantics
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn wave_id_copy_semantics() {
+        let a = WaveId::Wave2;
+        let b = a; // Copy
+        let c = a; // still valid after copy
+        assert_eq!(b, c);
+        assert_eq!(a, WaveId::Wave2);
+    }
+
+    #[test]
+    fn required_bead_status_copy_semantics() {
+        let a = RequiredBeadStatus::Closed;
+        let b = a;
+        let c = a;
+        assert_eq!(b, c);
+        assert_eq!(a, RequiredBeadStatus::Closed);
+    }
+
+    #[test]
+    fn handoff_validation_error_code_copy_semantics() {
+        let a = HandoffValidationErrorCode::WeakHandoffPackage;
+        let b = a;
+        let c = a;
+        assert_eq!(b, c);
+        assert_eq!(a, HandoffValidationErrorCode::WeakHandoffPackage);
+    }
+
+    #[test]
+    fn wave_id_copy_into_function() {
+        fn consume(w: WaveId) -> &'static str {
+            w.as_str()
+        }
+        let w = WaveId::Wave3;
+        let s1 = consume(w);
+        let s2 = consume(w); // still usable after consume
+        assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn required_bead_status_copy_in_vec() {
+        let s = RequiredBeadStatus::InProgress;
+        let v = vec![s, s, s]; // Copy into vec multiple times
+        assert_eq!(v.len(), 3);
+        assert!(v.iter().all(|x| *x == RequiredBeadStatus::InProgress));
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Debug distinctness
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn wave_id_debug_all_distinct() {
+        let variants = [WaveId::Wave0, WaveId::Wave1, WaveId::Wave2, WaveId::Wave3];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            let dbg = format!("{:?}", v);
+            assert!(seen.insert(dbg.clone()), "duplicate Debug for {:?}", v);
+        }
+        assert_eq!(seen.len(), 4);
+    }
+
+    #[test]
+    fn required_bead_status_debug_all_distinct() {
+        let variants = [
+            RequiredBeadStatus::Open,
+            RequiredBeadStatus::InProgress,
+            RequiredBeadStatus::Closed,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            let dbg = format!("{:?}", v);
+            assert!(seen.insert(dbg.clone()), "duplicate Debug for {:?}", v);
+        }
+        assert_eq!(seen.len(), 3);
+    }
+
+    #[test]
+    fn handoff_validation_error_code_debug_all_distinct() {
+        let variants = [
+            HandoffValidationErrorCode::MissingRequiredField,
+            HandoffValidationErrorCode::WeakHandoffPackage,
+            HandoffValidationErrorCode::MissingCriterionAttestation,
+            HandoffValidationErrorCode::CriterionStatusMismatch,
+            HandoffValidationErrorCode::CriterionArtifactMissing,
+            HandoffValidationErrorCode::CriterionBeadMissing,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            let dbg = format!("{:?}", v);
+            assert!(seen.insert(dbg.clone()), "duplicate Debug for {:?}", v);
+        }
+        assert_eq!(seen.len(), 6);
+    }
+
+    #[test]
+    fn wave_id_debug_contains_variant_name() {
+        assert!(format!("{:?}", WaveId::Wave0).contains("Wave0"));
+        assert!(format!("{:?}", WaveId::Wave3).contains("Wave3"));
+    }
+
+    #[test]
+    fn required_bead_status_debug_contains_variant_name() {
+        assert!(format!("{:?}", RequiredBeadStatus::Open).contains("Open"));
+        assert!(
+            format!("{:?}", RequiredBeadStatus::InProgress).contains("InProgress")
+        );
+        assert!(format!("{:?}", RequiredBeadStatus::Closed).contains("Closed"));
+    }
+
+    #[test]
+    fn handoff_validation_error_code_debug_contains_variant_name() {
+        assert!(
+            format!("{:?}", HandoffValidationErrorCode::MissingRequiredField)
+                .contains("MissingRequiredField")
+        );
+        assert!(
+            format!("{:?}", HandoffValidationErrorCode::CriterionBeadMissing)
+                .contains("CriterionBeadMissing")
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Serde variant distinctness
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn wave_id_serde_all_variants_distinct_json() {
+        let variants = [WaveId::Wave0, WaveId::Wave1, WaveId::Wave2, WaveId::Wave3];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            assert!(seen.insert(json.clone()), "duplicate JSON for {:?}", v);
+        }
+        assert_eq!(seen.len(), 4);
+    }
+
+    #[test]
+    fn required_bead_status_serde_all_variants_distinct_json() {
+        let variants = [
+            RequiredBeadStatus::Open,
+            RequiredBeadStatus::InProgress,
+            RequiredBeadStatus::Closed,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            assert!(seen.insert(json.clone()), "duplicate JSON for {:?}", v);
+        }
+        assert_eq!(seen.len(), 3);
+    }
+
+    #[test]
+    fn handoff_validation_error_code_serde_all_variants_distinct_json() {
+        let variants = [
+            HandoffValidationErrorCode::MissingRequiredField,
+            HandoffValidationErrorCode::WeakHandoffPackage,
+            HandoffValidationErrorCode::MissingCriterionAttestation,
+            HandoffValidationErrorCode::CriterionStatusMismatch,
+            HandoffValidationErrorCode::CriterionArtifactMissing,
+            HandoffValidationErrorCode::CriterionBeadMissing,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            assert!(seen.insert(json.clone()), "duplicate JSON for {:?}", v);
+        }
+        assert_eq!(seen.len(), 6);
+    }
+
+    #[test]
+    fn required_bead_status_serde_snake_case_values() {
+        assert_eq!(
+            serde_json::to_string(&RequiredBeadStatus::Open).unwrap(),
+            "\"open\""
+        );
+        assert_eq!(
+            serde_json::to_string(&RequiredBeadStatus::InProgress).unwrap(),
+            "\"in_progress\""
+        );
+        assert_eq!(
+            serde_json::to_string(&RequiredBeadStatus::Closed).unwrap(),
+            "\"closed\""
+        );
+    }
+
+    #[test]
+    fn handoff_validation_error_code_serde_snake_case_values() {
+        assert_eq!(
+            serde_json::to_string(&HandoffValidationErrorCode::MissingRequiredField).unwrap(),
+            "\"missing_required_field\""
+        );
+        assert_eq!(
+            serde_json::to_string(&HandoffValidationErrorCode::WeakHandoffPackage).unwrap(),
+            "\"weak_handoff_package\""
+        );
+        assert_eq!(
+            serde_json::to_string(&HandoffValidationErrorCode::MissingCriterionAttestation)
+                .unwrap(),
+            "\"missing_criterion_attestation\""
+        );
+        assert_eq!(
+            serde_json::to_string(&HandoffValidationErrorCode::CriterionStatusMismatch).unwrap(),
+            "\"criterion_status_mismatch\""
+        );
+        assert_eq!(
+            serde_json::to_string(&HandoffValidationErrorCode::CriterionArtifactMissing).unwrap(),
+            "\"criterion_artifact_missing\""
+        );
+        assert_eq!(
+            serde_json::to_string(&HandoffValidationErrorCode::CriterionBeadMissing).unwrap(),
+            "\"criterion_bead_missing\""
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Clone independence
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn wave_criterion_clone_independence() {
+        let original = WaveCriterion {
+            criterion_id: "c1".to_string(),
+            bead_id: "bd-1".to_string(),
+            required_status: RequiredBeadStatus::Open,
+            required_artifact: "art.json".to_string(),
+            mandatory: true,
+        };
+        let mut cloned = original.clone();
+        cloned.criterion_id = "c2".to_string();
+        cloned.mandatory = false;
+        assert_eq!(original.criterion_id, "c1");
+        assert!(original.mandatory);
+    }
+
+    #[test]
+    fn wave_transition_contract_clone_independence() {
+        let original = WaveTransitionContract::baseline(WaveId::Wave0);
+        let mut cloned = original.clone();
+        cloned.wave_id = WaveId::Wave3;
+        cloned.minimum_handoff_score_milli = 999;
+        cloned.entry_criteria.clear();
+        assert_eq!(original.wave_id, WaveId::Wave0);
+        assert_eq!(original.minimum_handoff_score_milli, 850);
+        assert!(!original.entry_criteria.is_empty());
+    }
+
+    #[test]
+    fn handoff_package_clone_independence() {
+        let original = HandoffPackage::baseline();
+        let mut cloned = original.clone();
+        cloned.packet_id = "pkt-modified".to_string();
+        cloned.changed_beads.clear();
+        cloned.completeness_score_milli = 0;
+        assert_eq!(original.packet_id, "pkt-rgc-wave-1-demo");
+        assert!(!original.changed_beads.is_empty());
+        assert_eq!(original.completeness_score_milli, 920);
+    }
+
+    #[test]
+    fn criterion_attestation_clone_independence() {
+        let original = CriterionAttestation {
+            criterion_id: "c1".to_string(),
+            bead_id: "bd-1".to_string(),
+            bead_status: RequiredBeadStatus::InProgress,
+            artifact_ref: "art.json".to_string(),
+        };
+        let mut cloned = original.clone();
+        cloned.bead_status = RequiredBeadStatus::Closed;
+        cloned.artifact_ref = "other.json".to_string();
+        assert_eq!(original.bead_status, RequiredBeadStatus::InProgress);
+        assert_eq!(original.artifact_ref, "art.json");
+    }
+
+    #[test]
+    fn handoff_validation_failure_clone_independence() {
+        let original = HandoffValidationFailure {
+            code: HandoffValidationErrorCode::MissingRequiredField,
+            message: "original".to_string(),
+        };
+        let mut cloned = original.clone();
+        cloned.code = HandoffValidationErrorCode::WeakHandoffPackage;
+        cloned.message = "modified".to_string();
+        assert_eq!(original.code, HandoffValidationErrorCode::MissingRequiredField);
+        assert_eq!(original.message, "original");
+    }
+
+    #[test]
+    fn handoff_validation_report_clone_independence() {
+        let original = HandoffValidationReport {
+            contract_version: "v1".to_string(),
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: "comp".to_string(),
+            event: "evt".to_string(),
+            outcome: "pass".to_string(),
+            error_code: "none".to_string(),
+            valid: true,
+            failures: Vec::new(),
+        };
+        let mut cloned = original.clone();
+        cloned.valid = false;
+        cloned.outcome = "fail".to_string();
+        cloned.failures.push(HandoffValidationFailure {
+            code: HandoffValidationErrorCode::WeakHandoffPackage,
+            message: "weak".to_string(),
+        });
+        assert!(original.valid);
+        assert_eq!(original.outcome, "pass");
+        assert!(original.failures.is_empty());
+    }
+
+    #[test]
+    fn handoff_event_clone_independence() {
+        let original = HandoffEvent {
+            schema_version: "v1".to_string(),
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: "comp".to_string(),
+            event: "evt".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            wave_id: "wave_0".to_string(),
+            packet_id: "pkt-1".to_string(),
+        };
+        let mut cloned = original.clone();
+        cloned.event = "modified".to_string();
+        cloned.error_code = Some("err".to_string());
+        assert_eq!(original.event, "evt");
+        assert_eq!(original.error_code, None);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // JSON field-name stability
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn wave_criterion_json_field_names() {
+        let c = WaveCriterion {
+            criterion_id: "c".to_string(),
+            bead_id: "b".to_string(),
+            required_status: RequiredBeadStatus::Open,
+            required_artifact: "a".to_string(),
+            mandatory: false,
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("criterion_id"));
+        assert!(obj.contains_key("bead_id"));
+        assert!(obj.contains_key("required_status"));
+        assert!(obj.contains_key("required_artifact"));
+        assert!(obj.contains_key("mandatory"));
+        assert_eq!(obj.len(), 5);
+    }
+
+    #[test]
+    fn wave_transition_contract_json_field_names() {
+        let c = WaveTransitionContract::baseline(WaveId::Wave0);
+        let json = serde_json::to_string(&c).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("contract_version"));
+        assert!(obj.contains_key("packet_schema_version"));
+        assert!(obj.contains_key("wave_id"));
+        assert!(obj.contains_key("minimum_handoff_score_milli"));
+        assert!(obj.contains_key("entry_criteria"));
+        assert!(obj.contains_key("exit_criteria"));
+        assert_eq!(obj.len(), 6);
+    }
+
+    #[test]
+    fn criterion_attestation_json_field_names() {
+        let a = CriterionAttestation {
+            criterion_id: "c".to_string(),
+            bead_id: "b".to_string(),
+            bead_status: RequiredBeadStatus::Open,
+            artifact_ref: "a".to_string(),
+        };
+        let json = serde_json::to_string(&a).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("criterion_id"));
+        assert!(obj.contains_key("bead_id"));
+        assert!(obj.contains_key("bead_status"));
+        assert!(obj.contains_key("artifact_ref"));
+        assert_eq!(obj.len(), 4);
+    }
+
+    #[test]
+    fn handoff_package_json_field_names() {
+        let pkg = HandoffPackage::baseline();
+        let json = serde_json::to_string(&pkg).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("packet_id"));
+        assert!(obj.contains_key("wave_id"));
+        assert!(obj.contains_key("producer_owner"));
+        assert!(obj.contains_key("consumer_owner"));
+        assert!(obj.contains_key("changed_beads"));
+        assert!(obj.contains_key("artifact_links"));
+        assert!(obj.contains_key("open_risks"));
+        assert!(obj.contains_key("next_step_recommendations"));
+        assert!(obj.contains_key("criteria_attestations"));
+        assert!(obj.contains_key("completeness_score_milli"));
+        assert_eq!(obj.len(), 10);
+    }
+
+    #[test]
+    fn handoff_validation_failure_json_field_names() {
+        let f = HandoffValidationFailure {
+            code: HandoffValidationErrorCode::MissingRequiredField,
+            message: "msg".to_string(),
+        };
+        let json = serde_json::to_string(&f).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("code"));
+        assert!(obj.contains_key("message"));
+        assert_eq!(obj.len(), 2);
+    }
+
+    #[test]
+    fn handoff_validation_report_json_field_names() {
+        let r = HandoffValidationReport {
+            contract_version: "v".to_string(),
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "o".to_string(),
+            error_code: "ec".to_string(),
+            valid: true,
+            failures: Vec::new(),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("contract_version"));
+        assert!(obj.contains_key("trace_id"));
+        assert!(obj.contains_key("decision_id"));
+        assert!(obj.contains_key("policy_id"));
+        assert!(obj.contains_key("component"));
+        assert!(obj.contains_key("event"));
+        assert!(obj.contains_key("outcome"));
+        assert!(obj.contains_key("error_code"));
+        assert!(obj.contains_key("valid"));
+        assert!(obj.contains_key("failures"));
+        assert_eq!(obj.len(), 10);
+    }
+
+    #[test]
+    fn handoff_event_json_field_names() {
+        let e = HandoffEvent {
+            schema_version: "sv".to_string(),
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "o".to_string(),
+            error_code: None,
+            wave_id: "w".to_string(),
+            packet_id: "pk".to_string(),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("schema_version"));
+        assert!(obj.contains_key("trace_id"));
+        assert!(obj.contains_key("decision_id"));
+        assert!(obj.contains_key("policy_id"));
+        assert!(obj.contains_key("component"));
+        assert!(obj.contains_key("event"));
+        assert!(obj.contains_key("outcome"));
+        assert!(obj.contains_key("error_code"));
+        assert!(obj.contains_key("wave_id"));
+        assert!(obj.contains_key("packet_id"));
+        assert_eq!(obj.len(), 10);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Hash consistency (via BTreeSet dedup as proxy)
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn wave_id_ord_consistency_across_calls() {
+        let a = WaveId::Wave1;
+        let b = WaveId::Wave1;
+        assert_eq!(a.cmp(&b), std::cmp::Ordering::Equal);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn wave_id_btreeset_dedup() {
+        let mut set = std::collections::BTreeSet::new();
+        set.insert(WaveId::Wave0);
+        set.insert(WaveId::Wave0);
+        set.insert(WaveId::Wave1);
+        set.insert(WaveId::Wave1);
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn required_bead_status_btreeset_dedup() {
+        let mut set = std::collections::BTreeSet::new();
+        set.insert(RequiredBeadStatus::Open);
+        set.insert(RequiredBeadStatus::Open);
+        set.insert(RequiredBeadStatus::Closed);
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn handoff_validation_error_code_eq_reflexive() {
+        let codes = [
+            HandoffValidationErrorCode::MissingRequiredField,
+            HandoffValidationErrorCode::WeakHandoffPackage,
+            HandoffValidationErrorCode::MissingCriterionAttestation,
+            HandoffValidationErrorCode::CriterionStatusMismatch,
+            HandoffValidationErrorCode::CriterionArtifactMissing,
+            HandoffValidationErrorCode::CriterionBeadMissing,
+        ];
+        for code in &codes {
+            assert_eq!(code, code);
+        }
+    }
+
+    #[test]
+    fn wave_id_all_variants_in_btreeset() {
+        let mut set = std::collections::BTreeSet::new();
+        set.insert(WaveId::Wave0);
+        set.insert(WaveId::Wave1);
+        set.insert(WaveId::Wave2);
+        set.insert(WaveId::Wave3);
+        assert_eq!(set.len(), 4);
+        // Verify ordering is correct
+        let v: Vec<_> = set.into_iter().collect();
+        assert_eq!(v, vec![WaveId::Wave0, WaveId::Wave1, WaveId::Wave2, WaveId::Wave3]);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Boundary / edge cases
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn handoff_package_with_empty_open_risks() {
+        let mut pkg = HandoffPackage::baseline();
+        pkg.open_risks.clear();
+        // open_risks is not checked by validate_handoff, so it should still pass
+        let contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        let report = validate_handoff("t", "d", "p", &contract, &pkg);
+        assert!(report.valid);
+    }
+
+    #[test]
+    fn handoff_package_completeness_score_at_u16_max() {
+        let mut pkg = HandoffPackage::baseline();
+        pkg.completeness_score_milli = u16::MAX;
+        let contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        let report = validate_handoff("t", "d", "p", &contract, &pkg);
+        // u16::MAX well above 850 threshold, should pass score check
+        let weak = report
+            .failures
+            .iter()
+            .any(|f| matches!(f.code, HandoffValidationErrorCode::WeakHandoffPackage));
+        assert!(!weak);
+    }
+
+    #[test]
+    fn handoff_package_completeness_score_zero() {
+        let mut pkg = HandoffPackage::baseline();
+        pkg.completeness_score_milli = 0;
+        let contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        let report = validate_handoff("t", "d", "p", &contract, &pkg);
+        assert!(
+            report
+                .failures
+                .iter()
+                .any(|f| matches!(f.code, HandoffValidationErrorCode::WeakHandoffPackage))
+        );
+    }
+
+    #[test]
+    fn contract_minimum_score_at_u16_max() {
+        let mut contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        contract.minimum_handoff_score_milli = u16::MAX;
+        let mut pkg = HandoffPackage::baseline();
+        pkg.completeness_score_milli = u16::MAX;
+        let report = validate_handoff("t", "d", "p", &contract, &pkg);
+        let weak = report
+            .failures
+            .iter()
+            .any(|f| matches!(f.code, HandoffValidationErrorCode::WeakHandoffPackage));
+        assert!(!weak, "u16::MAX >= u16::MAX should pass");
+    }
+
+    #[test]
+    fn contract_minimum_score_at_u16_max_pkg_below() {
+        let mut contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        contract.minimum_handoff_score_milli = u16::MAX;
+        let mut pkg = HandoffPackage::baseline();
+        pkg.completeness_score_milli = u16::MAX - 1;
+        let report = validate_handoff("t", "d", "p", &contract, &pkg);
+        assert!(
+            report
+                .failures
+                .iter()
+                .any(|f| matches!(f.code, HandoffValidationErrorCode::WeakHandoffPackage))
+        );
+    }
+
+    #[test]
+    fn validate_handoff_whitespace_only_producer_owner() {
+        let contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        let mut pkg = HandoffPackage::baseline();
+        pkg.producer_owner = " \t\n ".to_string();
+        let report = validate_handoff("t", "d", "p", &contract, &pkg);
+        assert!(!report.valid);
+        assert!(report.failures.iter().any(|f| {
+            matches!(f.code, HandoffValidationErrorCode::MissingRequiredField)
+                && f.message.contains("producer_owner")
+        }));
+    }
+
+    #[test]
+    fn validate_handoff_whitespace_only_consumer_owner() {
+        let contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        let mut pkg = HandoffPackage::baseline();
+        pkg.consumer_owner = "\t".to_string();
+        let report = validate_handoff("t", "d", "p", &contract, &pkg);
+        assert!(!report.valid);
+        assert!(report.failures.iter().any(|f| {
+            matches!(f.code, HandoffValidationErrorCode::MissingRequiredField)
+                && f.message.contains("consumer_owner")
+        }));
+    }
+
+    #[test]
+    fn validate_handoff_many_empty_fields_at_once() {
+        let contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        let mut pkg = HandoffPackage::baseline();
+        pkg.packet_id.clear();
+        pkg.producer_owner.clear();
+        pkg.consumer_owner.clear();
+        pkg.changed_beads.clear();
+        pkg.artifact_links.clear();
+        pkg.next_step_recommendations.clear();
+        pkg.completeness_score_milli = 0;
+        pkg.criteria_attestations.clear();
+        let report = validate_handoff("t", "d", "p", &contract, &pkg);
+        assert!(!report.valid);
+        // At least 6 MissingRequiredField + 1 WeakHandoffPackage + criterion failures
+        assert!(report.failures.len() >= 7);
+    }
+
+    #[test]
+    fn handoff_package_very_long_strings() {
+        let long_str = "x".repeat(10_000);
+        let mut pkg = HandoffPackage::baseline();
+        pkg.packet_id = long_str.clone();
+        pkg.producer_owner = long_str.clone();
+        pkg.consumer_owner = long_str;
+        let contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        let report = validate_handoff("t", "d", "p", &contract, &pkg);
+        // Long strings are valid — no MissingRequiredField for these fields
+        let missing = report.failures.iter().any(|f| {
+            matches!(f.code, HandoffValidationErrorCode::MissingRequiredField)
+                && (f.message.contains("packet_id")
+                    || f.message.contains("producer_owner")
+                    || f.message.contains("consumer_owner"))
+        });
+        assert!(!missing);
+    }
+
+    #[test]
+    fn handoff_package_empty_criteria_attestations_serde_roundtrip() {
+        let mut pkg = HandoffPackage::baseline();
+        pkg.criteria_attestations.clear();
+        let json = serde_json::to_string(&pkg).unwrap();
+        let back: HandoffPackage = serde_json::from_str(&json).unwrap();
+        assert_eq!(pkg, back);
+        assert!(back.criteria_attestations.is_empty());
+    }
+
+    #[test]
+    fn wave_transition_contract_empty_criteria_serde_roundtrip() {
+        let mut contract = WaveTransitionContract::baseline(WaveId::Wave2);
+        contract.entry_criteria.clear();
+        contract.exit_criteria.clear();
+        let json = serde_json::to_string(&contract).unwrap();
+        let back: WaveTransitionContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(contract, back);
+    }
+
+    #[test]
+    fn handoff_package_many_changed_beads() {
+        let mut pkg = HandoffPackage::baseline();
+        for i in 0..100 {
+            pkg.changed_beads.push(format!("bd-gen-{}", i));
+        }
+        let json = serde_json::to_string(&pkg).unwrap();
+        let back: HandoffPackage = serde_json::from_str(&json).unwrap();
+        assert_eq!(pkg, back);
+    }
+
+    #[test]
+    fn handoff_package_many_artifact_links() {
+        let mut pkg = HandoffPackage::baseline();
+        for i in 0..100 {
+            pkg.artifact_links.push(format!("artifacts/gen/{}.json", i));
+        }
+        let json = serde_json::to_string(&pkg).unwrap();
+        let back: HandoffPackage = serde_json::from_str(&json).unwrap();
+        assert_eq!(pkg, back);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Serde roundtrips (complex structs)
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn handoff_validation_report_with_failures_roundtrip() {
+        let report = HandoffValidationReport {
+            contract_version: WAVE_HANDOFF_CONTRACT_VERSION.to_string(),
+            trace_id: "trace-complex".to_string(),
+            decision_id: "decision-complex".to_string(),
+            policy_id: "policy-complex".to_string(),
+            component: WAVE_HANDOFF_COMPONENT.to_string(),
+            event: "validate_handoff".to_string(),
+            outcome: "fail".to_string(),
+            error_code: WAVE_HANDOFF_FAILURE_CODE.to_string(),
+            valid: false,
+            failures: vec![
+                HandoffValidationFailure {
+                    code: HandoffValidationErrorCode::MissingRequiredField,
+                    message: "packet_id must not be empty".to_string(),
+                },
+                HandoffValidationFailure {
+                    code: HandoffValidationErrorCode::WeakHandoffPackage,
+                    message: "score too low".to_string(),
+                },
+                HandoffValidationFailure {
+                    code: HandoffValidationErrorCode::CriterionBeadMissing,
+                    message: "bead missing".to_string(),
+                },
+            ],
+        };
+        let json = serde_json::to_string_pretty(&report).unwrap();
+        let back: HandoffValidationReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(report, back);
+    }
+
+    #[test]
+    fn simulate_transition_report_and_events_roundtrip() {
+        let contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        let pkg = HandoffPackage::baseline();
+        let (report, events) = simulate_wave_transition("t", "d", "p", &contract, &pkg);
+        let report_json = serde_json::to_string(&report).unwrap();
+        let report_back: HandoffValidationReport =
+            serde_json::from_str(&report_json).unwrap();
+        assert_eq!(report, report_back);
+        for event in &events {
+            let ej = serde_json::to_string(event).unwrap();
+            let eb: HandoffEvent = serde_json::from_str(&ej).unwrap();
+            assert_eq!(*event, eb);
+        }
+    }
+
+    #[test]
+    fn full_contract_with_many_criteria_roundtrip() {
+        let mut contract = WaveTransitionContract::baseline(WaveId::Wave3);
+        for i in 0u64..10 {
+            contract.entry_criteria.push(WaveCriterion {
+                criterion_id: format!("entry-gen-{}", i),
+                bead_id: format!("bd-entry-{}", i),
+                required_status: RequiredBeadStatus::Closed,
+                required_artifact: format!("artifacts/entry_{}.json", i),
+                mandatory: i.is_multiple_of(2),
+            });
+            contract.exit_criteria.push(WaveCriterion {
+                criterion_id: format!("exit-gen-{}", i),
+                bead_id: format!("bd-exit-{}", i),
+                required_status: RequiredBeadStatus::InProgress,
+                required_artifact: format!("artifacts/exit_{}.json", i),
+                mandatory: true,
+            });
+        }
+        let json = serde_json::to_string(&contract).unwrap();
+        let back: WaveTransitionContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(contract, back);
+    }
+
+    #[test]
+    fn handoff_event_none_error_code_serializes_as_null() {
+        let event = HandoffEvent {
+            schema_version: "v".to_string(),
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "o".to_string(),
+            error_code: None,
+            wave_id: "w".to_string(),
+            packet_id: "pk".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v["error_code"].is_null());
+    }
+
+    #[test]
+    fn handoff_event_some_error_code_serializes_as_string() {
+        let event = HandoffEvent {
+            schema_version: "v".to_string(),
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "o".to_string(),
+            error_code: Some("ERR-001".to_string()),
+            wave_id: "w".to_string(),
+            packet_id: "pk".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["error_code"].as_str().unwrap(), "ERR-001");
+    }
+
+    #[test]
+    fn wave_criterion_with_unicode_strings_roundtrip() {
+        let c = WaveCriterion {
+            criterion_id: "\u{1f680}-crit".to_string(),
+            bead_id: "bd-\u{00e9}".to_string(),
+            required_status: RequiredBeadStatus::Open,
+            required_artifact: "artifacts/\u{4e16}\u{754c}.json".to_string(),
+            mandatory: true,
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let back: WaveCriterion = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Validation logic — additional coverage
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn validate_handoff_report_event_is_validate_handoff() {
+        let contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        let pkg = HandoffPackage::baseline();
+        let report = validate_handoff("t", "d", "p", &contract, &pkg);
+        assert_eq!(report.event, "validate_handoff");
+    }
+
+    #[test]
+    fn simulate_transition_first_event_is_handoff_received_with_ok() {
+        let contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        let mut pkg = HandoffPackage::baseline();
+        pkg.packet_id = "".to_string();
+        let (_report, events) = simulate_wave_transition("t", "d", "p", &contract, &pkg);
+        assert_eq!(events[0].event, "handoff_received");
+        assert_eq!(events[0].outcome, "ok");
+        assert_eq!(events[0].error_code, None);
+    }
+
+    #[test]
+    fn simulate_transition_with_wave0() {
+        let contract = WaveTransitionContract::baseline(WaveId::Wave0);
+        let mut pkg = HandoffPackage::baseline();
+        pkg.wave_id = WaveId::Wave0;
+        let (_report, events) = simulate_wave_transition("t", "d", "p", &contract, &pkg);
+        for event in &events {
+            assert_eq!(event.wave_id, "wave_0");
+        }
+    }
+
+    #[test]
+    fn simulate_transition_with_wave3() {
+        let contract = WaveTransitionContract::baseline(WaveId::Wave3);
+        let mut pkg = HandoffPackage::baseline();
+        pkg.wave_id = WaveId::Wave3;
+        let (_report, events) = simulate_wave_transition("t", "d", "p", &contract, &pkg);
+        for event in &events {
+            assert_eq!(event.wave_id, "wave_3");
+        }
+    }
+
+    #[test]
+    fn validate_handoff_multiple_mandatory_criteria_all_checked() {
+        let mut contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        contract.entry_criteria.push(WaveCriterion {
+            criterion_id: "extra-entry".to_string(),
+            bead_id: "bd-extra".to_string(),
+            required_status: RequiredBeadStatus::Closed,
+            required_artifact: "artifacts/extra.json".to_string(),
+            mandatory: true,
+        });
+        let pkg = HandoffPackage::baseline();
+        let report = validate_handoff("t", "d", "p", &contract, &pkg);
+        // Missing attestation for "extra-entry"
+        assert!(!report.valid);
+        assert!(report.failures.iter().any(|f| {
+            matches!(
+                f.code,
+                HandoffValidationErrorCode::MissingCriterionAttestation
+            ) && f.message.contains("extra-entry")
+        }));
+    }
+
+    #[test]
+    fn validate_handoff_non_mandatory_criterion_not_checked() {
+        let mut contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        // Clear default criteria, add only non-mandatory ones
+        contract.entry_criteria.clear();
+        contract.exit_criteria.clear();
+        contract.entry_criteria.push(WaveCriterion {
+            criterion_id: "optional-only".to_string(),
+            bead_id: "bd-opt".to_string(),
+            required_status: RequiredBeadStatus::Closed,
+            required_artifact: "missing.json".to_string(),
+            mandatory: false,
+        });
+        let pkg = HandoffPackage::baseline();
+        let report = validate_handoff("t", "d", "p", &contract, &pkg);
+        // No criterion failures expected
+        let criterion_failures: Vec<_> = report
+            .failures
+            .iter()
+            .filter(|f| {
+                matches!(
+                    f.code,
+                    HandoffValidationErrorCode::MissingCriterionAttestation
+                        | HandoffValidationErrorCode::CriterionStatusMismatch
+                        | HandoffValidationErrorCode::CriterionArtifactMissing
+                        | HandoffValidationErrorCode::CriterionBeadMissing
+                )
+            })
+            .collect();
+        assert!(criterion_failures.is_empty());
+    }
+
+    #[test]
+    fn validate_handoff_attestation_bead_id_not_in_changed_beads_but_match_criterion() {
+        let mut contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        contract.entry_criteria.clear();
+        contract.exit_criteria.clear();
+        contract.entry_criteria.push(WaveCriterion {
+            criterion_id: "c-custom".to_string(),
+            bead_id: "bd-custom".to_string(),
+            required_status: RequiredBeadStatus::InProgress,
+            required_artifact: "art.json".to_string(),
+            mandatory: true,
+        });
+        let mut pkg = HandoffPackage::baseline();
+        pkg.criteria_attestations = vec![CriterionAttestation {
+            criterion_id: "c-custom".to_string(),
+            bead_id: "bd-custom".to_string(),
+            bead_status: RequiredBeadStatus::InProgress,
+            artifact_ref: "art.json".to_string(),
+        }];
+        // bd-custom is NOT in changed_beads or artifact_links
+        let report = validate_handoff("t", "d", "p", &contract, &pkg);
+        assert!(report.failures.iter().any(|f| {
+            matches!(f.code, HandoffValidationErrorCode::CriterionBeadMissing)
+                && f.message.contains("changed_beads")
+        }));
+    }
+
+    #[test]
+    fn validate_handoff_attestation_artifact_not_in_artifact_links_but_match_criterion() {
+        let mut contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        contract.entry_criteria.clear();
+        contract.exit_criteria.clear();
+        contract.entry_criteria.push(WaveCriterion {
+            criterion_id: "c-art".to_string(),
+            bead_id: "bd-art".to_string(),
+            required_status: RequiredBeadStatus::Open,
+            required_artifact: "special/art.json".to_string(),
+            mandatory: true,
+        });
+        let mut pkg = HandoffPackage::baseline();
+        pkg.changed_beads.push("bd-art".to_string());
+        pkg.criteria_attestations = vec![CriterionAttestation {
+            criterion_id: "c-art".to_string(),
+            bead_id: "bd-art".to_string(),
+            bead_status: RequiredBeadStatus::Open,
+            artifact_ref: "special/art.json".to_string(),
+        }];
+        // artifact not in artifact_links
+        let report = validate_handoff("t", "d", "p", &contract, &pkg);
+        assert!(report.failures.iter().any(|f| {
+            matches!(f.code, HandoffValidationErrorCode::CriterionArtifactMissing)
+                && f.message.contains("artifact_links")
+        }));
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Ordering / Eq / PartialOrd extended
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn wave_id_eq_same_variant() {
+        assert_eq!(WaveId::Wave0, WaveId::Wave0);
+        assert_eq!(WaveId::Wave1, WaveId::Wave1);
+        assert_eq!(WaveId::Wave2, WaveId::Wave2);
+        assert_eq!(WaveId::Wave3, WaveId::Wave3);
+    }
+
+    #[test]
+    fn wave_id_ne_different_variant() {
+        assert_ne!(WaveId::Wave0, WaveId::Wave1);
+        assert_ne!(WaveId::Wave1, WaveId::Wave2);
+        assert_ne!(WaveId::Wave2, WaveId::Wave3);
+        assert_ne!(WaveId::Wave0, WaveId::Wave3);
+    }
+
+    #[test]
+    fn required_bead_status_eq_same() {
+        assert_eq!(RequiredBeadStatus::Open, RequiredBeadStatus::Open);
+        assert_eq!(RequiredBeadStatus::InProgress, RequiredBeadStatus::InProgress);
+        assert_eq!(RequiredBeadStatus::Closed, RequiredBeadStatus::Closed);
+    }
+
+    #[test]
+    fn required_bead_status_ne_different() {
+        assert_ne!(RequiredBeadStatus::Open, RequiredBeadStatus::InProgress);
+        assert_ne!(RequiredBeadStatus::Open, RequiredBeadStatus::Closed);
+        assert_ne!(RequiredBeadStatus::InProgress, RequiredBeadStatus::Closed);
+    }
+
+    #[test]
+    fn required_bead_status_full_ordering() {
+        let mut v = vec![
+            RequiredBeadStatus::Closed,
+            RequiredBeadStatus::Open,
+            RequiredBeadStatus::InProgress,
+        ];
+        v.sort();
+        assert_eq!(
+            v,
+            vec![
+                RequiredBeadStatus::Open,
+                RequiredBeadStatus::InProgress,
+                RequiredBeadStatus::Closed,
+            ]
+        );
+    }
+
+    #[test]
+    fn wave_id_full_sort_order() {
+        let mut v = vec![WaveId::Wave3, WaveId::Wave0, WaveId::Wave2, WaveId::Wave1];
+        v.sort();
+        assert_eq!(
+            v,
+            vec![WaveId::Wave0, WaveId::Wave1, WaveId::Wave2, WaveId::Wave3]
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Constants — specific values
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn contract_version_contains_expected_prefix() {
+        assert!(WAVE_HANDOFF_CONTRACT_VERSION.starts_with("franken-engine."));
+    }
+
+    #[test]
+    fn packet_schema_version_contains_expected_prefix() {
+        assert!(WAVE_HANDOFF_PACKET_SCHEMA_VERSION.starts_with("frx."));
+    }
+
+    #[test]
+    fn failure_code_contains_expected_prefix() {
+        assert!(WAVE_HANDOFF_FAILURE_CODE.starts_with("FE-RGC-"));
+    }
+
+    #[test]
+    fn component_name_is_exact() {
+        assert_eq!(WAVE_HANDOFF_COMPONENT, "rgc_wave_handoff_contract");
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // simulate_wave_transition — additional coverage
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn simulate_transition_always_emits_exactly_3_events() {
+        let contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        let pkg = HandoffPackage::baseline();
+        let (_, events) = simulate_wave_transition("t", "d", "p", &contract, &pkg);
+        assert_eq!(events.len(), 3);
+    }
+
+    #[test]
+    fn simulate_transition_invalid_emits_exactly_3_events() {
+        let contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        let mut pkg = HandoffPackage::baseline();
+        pkg.packet_id.clear();
+        pkg.changed_beads.clear();
+        let (_, events) = simulate_wave_transition("t", "d", "p", &contract, &pkg);
+        assert_eq!(events.len(), 3);
+    }
+
+    #[test]
+    fn simulate_transition_valid_third_event_is_committed() {
+        let contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        let pkg = HandoffPackage::baseline();
+        let (report, events) = simulate_wave_transition("t", "d", "p", &contract, &pkg);
+        assert!(report.valid);
+        assert_eq!(events[2].event, "ownership_transition_committed");
+        assert_eq!(events[2].error_code, None);
+    }
+
+    #[test]
+    fn simulate_transition_invalid_third_event_is_rejected() {
+        let contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        let mut pkg = HandoffPackage::baseline();
+        pkg.packet_id.clear();
+        let (report, events) = simulate_wave_transition("t", "d", "p", &contract, &pkg);
+        assert!(!report.valid);
+        assert_eq!(events[2].event, "ownership_transition_rejected");
+        assert_eq!(
+            events[2].error_code,
+            Some(WAVE_HANDOFF_FAILURE_CODE.to_string())
+        );
+    }
+
+    #[test]
+    fn simulate_transition_packet_id_propagated_to_all_events() {
+        let contract = WaveTransitionContract::baseline(WaveId::Wave1);
+        let mut pkg = HandoffPackage::baseline();
+        pkg.packet_id = "pkt-unique-42".to_string();
+        let (_, events) = simulate_wave_transition("t", "d", "p", &contract, &pkg);
+        for event in &events {
+            assert_eq!(event.packet_id, "pkt-unique-42");
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Serde deserialization from raw JSON
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn wave_id_deserialize_from_raw_json_string() {
+        let w: WaveId = serde_json::from_str("\"wave2\"").unwrap();
+        assert_eq!(w, WaveId::Wave2);
+    }
+
+    #[test]
+    fn required_bead_status_deserialize_from_raw_json_string() {
+        let s: RequiredBeadStatus = serde_json::from_str("\"in_progress\"").unwrap();
+        assert_eq!(s, RequiredBeadStatus::InProgress);
+    }
+
+    #[test]
+    fn handoff_validation_error_code_deserialize_from_raw_json_string() {
+        let c: HandoffValidationErrorCode =
+            serde_json::from_str("\"weak_handoff_package\"").unwrap();
+        assert_eq!(c, HandoffValidationErrorCode::WeakHandoffPackage);
+    }
+
+    #[test]
+    fn wave_id_deserialize_invalid_variant_fails() {
+        let result = serde_json::from_str::<WaveId>("\"wave_99\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn required_bead_status_deserialize_invalid_variant_fails() {
+        let result = serde_json::from_str::<RequiredBeadStatus>("\"deleted\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn handoff_validation_error_code_deserialize_invalid_variant_fails() {
+        let result =
+            serde_json::from_str::<HandoffValidationErrorCode>("\"nonexistent_code\"");
+        assert!(result.is_err());
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // WaveId as_str <-> serde consistency
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn wave_id_as_str_values_are_unique() {
+        let strs: Vec<&str> = [WaveId::Wave0, WaveId::Wave1, WaveId::Wave2, WaveId::Wave3]
+            .iter()
+            .map(|w| w.as_str())
+            .collect();
+        let mut set = std::collections::BTreeSet::new();
+        for s in &strs {
+            assert!(set.insert(*s), "duplicate as_str value: {}", s);
+        }
+    }
+
+    #[test]
+    fn wave_id_as_str_contains_numeric_suffix() {
+        assert!(WaveId::Wave0.as_str().ends_with("0"));
+        assert!(WaveId::Wave1.as_str().ends_with("1"));
+        assert!(WaveId::Wave2.as_str().ends_with("2"));
+        assert!(WaveId::Wave3.as_str().ends_with("3"));
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Structural equality
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn wave_criterion_equality_depends_on_all_fields() {
+        let base = WaveCriterion {
+            criterion_id: "c1".to_string(),
+            bead_id: "bd-1".to_string(),
+            required_status: RequiredBeadStatus::Open,
+            required_artifact: "art.json".to_string(),
+            mandatory: true,
+        };
+        // Same should equal
+        assert_eq!(base, base.clone());
+        // Differ by criterion_id
+        let mut diff = base.clone();
+        diff.criterion_id = "c2".to_string();
+        assert_ne!(base, diff);
+        // Differ by mandatory
+        let mut diff2 = base.clone();
+        diff2.mandatory = false;
+        assert_ne!(base, diff2);
+        // Differ by required_status
+        let mut diff3 = base.clone();
+        diff3.required_status = RequiredBeadStatus::Closed;
+        assert_ne!(base, diff3);
+    }
+
+    #[test]
+    fn criterion_attestation_equality_depends_on_all_fields() {
+        let base = CriterionAttestation {
+            criterion_id: "c1".to_string(),
+            bead_id: "bd-1".to_string(),
+            bead_status: RequiredBeadStatus::InProgress,
+            artifact_ref: "art.json".to_string(),
+        };
+        assert_eq!(base, base.clone());
+        let mut diff = base.clone();
+        diff.bead_status = RequiredBeadStatus::Closed;
+        assert_ne!(base, diff);
+    }
+
+    #[test]
+    fn handoff_package_equality_depends_on_score() {
+        let mut a = HandoffPackage::baseline();
+        let mut b = HandoffPackage::baseline();
+        assert_eq!(a, b);
+        a.completeness_score_milli = 100;
+        b.completeness_score_milli = 200;
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn handoff_validation_report_equality_depends_on_valid_flag() {
+        let mut a = HandoffValidationReport {
+            contract_version: "v".to_string(),
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "pass".to_string(),
+            error_code: "none".to_string(),
+            valid: true,
+            failures: Vec::new(),
+        };
+        let mut b = a.clone();
+        assert_eq!(a, b);
+        a.valid = false;
+        b.valid = true;
+        assert_ne!(a, b);
+    }
 }

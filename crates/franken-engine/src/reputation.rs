@@ -1953,4 +1953,1009 @@ mod tests {
             "all 6 variants produce distinct messages"
         );
     }
+
+    // -------------------------------------------------------------------------
+    // Category 1: Copy semantics — Copy types survive copy without move
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn trust_level_copy_survives() {
+        let a = TrustLevel::Established;
+        let b = a; // copy, not move
+        assert_eq!(a, b);
+        // a is still usable after the copy
+        assert_eq!(a, TrustLevel::Established);
+    }
+
+    #[test]
+    fn evidence_type_copy_survives() {
+        let a = EvidenceType::ThreatIntelligence;
+        let b = a;
+        assert_eq!(a, b);
+        assert_eq!(a, EvidenceType::ThreatIntelligence);
+    }
+
+    #[test]
+    fn evidence_source_copy_survives() {
+        let a = EvidenceSource::FleetImmuneSystem;
+        let b = a;
+        assert_eq!(a, b);
+        assert_eq!(a, EvidenceSource::FleetImmuneSystem);
+    }
+
+    #[test]
+    fn incident_severity_copy_survives() {
+        let a = IncidentSeverity::High;
+        let b = a;
+        assert_eq!(a, b);
+        assert_eq!(a, IncidentSeverity::High);
+    }
+
+    #[test]
+    fn resolution_status_copy_survives() {
+        let a = ResolutionStatus::Contained;
+        let b = a;
+        assert_eq!(a, b);
+        assert_eq!(a, ResolutionStatus::Contained);
+    }
+
+    // -------------------------------------------------------------------------
+    // Category 2: Debug distinctness — all enum variants produce distinct Debug
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn trust_level_debug_all_distinct() {
+        let debugs: BTreeSet<String> = TrustLevel::ALL
+            .iter()
+            .map(|v| format!("{v:?}"))
+            .collect();
+        assert_eq!(debugs.len(), 7, "all 7 TrustLevel variants have distinct Debug");
+    }
+
+    #[test]
+    fn evidence_type_debug_all_distinct() {
+        let variants = [
+            EvidenceType::BehavioralObservation,
+            EvidenceType::AdversarialCampaignResult,
+            EvidenceType::FleetEvidence,
+            EvidenceType::IncidentRecord,
+            EvidenceType::ThreatIntelligence,
+            EvidenceType::ProvenanceAttestation,
+            EvidenceType::OperatorAssessment,
+        ];
+        let debugs: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(debugs.len(), 7, "all 7 EvidenceType variants have distinct Debug");
+    }
+
+    #[test]
+    fn evidence_source_debug_all_distinct() {
+        let variants = [
+            EvidenceSource::BayesianSentinel,
+            EvidenceSource::AdversarialCampaign,
+            EvidenceSource::FleetImmuneSystem,
+            EvidenceSource::OperatorManual,
+            EvidenceSource::ExternalThreatFeed,
+            EvidenceSource::BuildProvenance,
+        ];
+        let debugs: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(debugs.len(), 6, "all 6 EvidenceSource variants have distinct Debug");
+    }
+
+    #[test]
+    fn incident_severity_debug_all_distinct() {
+        let variants = [
+            IncidentSeverity::Low,
+            IncidentSeverity::Medium,
+            IncidentSeverity::High,
+            IncidentSeverity::Critical,
+        ];
+        let debugs: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(debugs.len(), 4);
+    }
+
+    #[test]
+    fn resolution_status_debug_all_distinct() {
+        let variants = [
+            ResolutionStatus::Active,
+            ResolutionStatus::Contained,
+            ResolutionStatus::Resolved,
+            ResolutionStatus::FalsePositive,
+        ];
+        let debugs: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(debugs.len(), 4);
+    }
+
+    // -------------------------------------------------------------------------
+    // Category 3: Serde variant distinctness — distinct JSON per variant
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn trust_level_serde_all_distinct() {
+        let jsons: BTreeSet<String> = TrustLevel::ALL
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 7, "all 7 TrustLevel variants serialize to distinct JSON");
+    }
+
+    #[test]
+    fn evidence_type_serde_all_distinct() {
+        let variants = [
+            EvidenceType::BehavioralObservation,
+            EvidenceType::AdversarialCampaignResult,
+            EvidenceType::FleetEvidence,
+            EvidenceType::IncidentRecord,
+            EvidenceType::ThreatIntelligence,
+            EvidenceType::ProvenanceAttestation,
+            EvidenceType::OperatorAssessment,
+        ];
+        let jsons: BTreeSet<String> = variants.iter().map(|v| serde_json::to_string(v).unwrap()).collect();
+        assert_eq!(jsons.len(), 7);
+    }
+
+    #[test]
+    fn evidence_source_serde_all_distinct() {
+        let variants = [
+            EvidenceSource::BayesianSentinel,
+            EvidenceSource::AdversarialCampaign,
+            EvidenceSource::FleetImmuneSystem,
+            EvidenceSource::OperatorManual,
+            EvidenceSource::ExternalThreatFeed,
+            EvidenceSource::BuildProvenance,
+        ];
+        let jsons: BTreeSet<String> = variants.iter().map(|v| serde_json::to_string(v).unwrap()).collect();
+        assert_eq!(jsons.len(), 6);
+    }
+
+    #[test]
+    fn resolution_status_serde_all_distinct() {
+        let variants = [
+            ResolutionStatus::Active,
+            ResolutionStatus::Contained,
+            ResolutionStatus::Resolved,
+            ResolutionStatus::FalsePositive,
+        ];
+        let jsons: BTreeSet<String> = variants.iter().map(|v| serde_json::to_string(v).unwrap()).collect();
+        assert_eq!(jsons.len(), 4);
+    }
+
+    // -------------------------------------------------------------------------
+    // Category 4: Clone independence — mutating clone doesn't affect original
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn extension_node_clone_independence() {
+        let original = test_extension("ext-clone", "pub-1");
+        let mut clone = original.clone();
+        clone.version = "9.9.9".to_string();
+        assert_eq!(original.version, "1.0.0");
+        assert_eq!(clone.version, "9.9.9");
+    }
+
+    #[test]
+    fn publisher_node_clone_independence() {
+        let original = test_publisher("pub-clone");
+        let mut clone = original.clone();
+        clone.trust_score = 0;
+        assert_eq!(original.trust_score, 500_000);
+        assert_eq!(clone.trust_score, 0);
+    }
+
+    #[test]
+    fn evidence_node_clone_independence() {
+        let original = test_evidence("ev-clone");
+        let mut clone = original.clone();
+        clone.evidence_id = "ev-modified".to_string();
+        assert_eq!(original.evidence_id, "ev-clone");
+        assert_eq!(clone.evidence_id, "ev-modified");
+    }
+
+    #[test]
+    fn provenance_record_clone_independence() {
+        let original = ProvenanceRecord {
+            extension_id: "ext-1".into(),
+            publisher_verified: true,
+            build_attested: true,
+            attestation_source: Some("sigstore".into()),
+            dependency_depth: 1,
+            has_provenance_gap: false,
+            gap_descriptions: vec![],
+        };
+        let mut clone = original.clone();
+        clone.dependency_depth = 99;
+        assert_eq!(original.dependency_depth, 1);
+        assert_eq!(clone.dependency_depth, 99);
+    }
+
+    #[test]
+    fn trust_transition_clone_independence() {
+        let original = TrustTransition {
+            transition_id: "tt-orig".into(),
+            extension_id: "ext-1".into(),
+            old_level: TrustLevel::Unknown,
+            new_level: TrustLevel::Provisional,
+            triggering_evidence_ids: vec!["ev-1".into()],
+            policy_version: 1,
+            operator_override: false,
+            operator_justification: None,
+            timestamp_ns: 1_000,
+            epoch: SecurityEpoch::from_raw(1),
+        };
+        let mut clone = original.clone();
+        clone.policy_version = 42;
+        assert_eq!(original.policy_version, 1);
+        assert_eq!(clone.policy_version, 42);
+    }
+
+    // -------------------------------------------------------------------------
+    // Category 5: JSON field-name stability
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn extension_node_field_names() {
+        let ext = test_extension("ext-field", "pub-field");
+        let json = serde_json::to_string(&ext).unwrap();
+        assert!(json.contains("\"extension_id\""));
+        assert!(json.contains("\"package_name\""));
+        assert!(json.contains("\"version\""));
+        assert!(json.contains("\"publisher_id\""));
+        assert!(json.contains("\"manifest_hash\""));
+        assert!(json.contains("\"first_seen_ns\""));
+        assert!(json.contains("\"current_trust_level\""));
+        assert!(json.contains("\"dependencies\""));
+    }
+
+    #[test]
+    fn publisher_node_field_names() {
+        let pub_node = test_publisher("pub-fields");
+        let json = serde_json::to_string(&pub_node).unwrap();
+        assert!(json.contains("\"publisher_id\""));
+        assert!(json.contains("\"identity_attestation\""));
+        assert!(json.contains("\"published_count\""));
+        assert!(json.contains("\"trust_score\""));
+        assert!(json.contains("\"first_published_ns\""));
+    }
+
+    #[test]
+    fn evidence_node_field_names() {
+        let ev = test_evidence("ev-fields");
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.contains("\"evidence_id\""));
+        assert!(json.contains("\"evidence_type\""));
+        assert!(json.contains("\"source\""));
+        assert!(json.contains("\"timestamp_ns\""));
+        assert!(json.contains("\"content_hash\""));
+        assert!(json.contains("\"linked_decision_ids\""));
+        assert!(json.contains("\"epoch\""));
+    }
+
+    #[test]
+    fn provenance_record_field_names() {
+        let record = ProvenanceRecord {
+            extension_id: "ext-1".into(),
+            publisher_verified: true,
+            build_attested: false,
+            attestation_source: None,
+            dependency_depth: 0,
+            has_provenance_gap: false,
+            gap_descriptions: vec![],
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        assert!(json.contains("\"extension_id\""));
+        assert!(json.contains("\"publisher_verified\""));
+        assert!(json.contains("\"build_attested\""));
+        assert!(json.contains("\"attestation_source\""));
+        assert!(json.contains("\"dependency_depth\""));
+        assert!(json.contains("\"has_provenance_gap\""));
+        assert!(json.contains("\"gap_descriptions\""));
+    }
+
+    #[test]
+    fn trust_transition_field_names() {
+        let tt = TrustTransition {
+            transition_id: "tt-fn".into(),
+            extension_id: "ext-1".into(),
+            old_level: TrustLevel::Unknown,
+            new_level: TrustLevel::Provisional,
+            triggering_evidence_ids: vec![],
+            policy_version: 1,
+            operator_override: false,
+            operator_justification: None,
+            timestamp_ns: 0,
+            epoch: SecurityEpoch::from_raw(1),
+        };
+        let json = serde_json::to_string(&tt).unwrap();
+        assert!(json.contains("\"transition_id\""));
+        assert!(json.contains("\"extension_id\""));
+        assert!(json.contains("\"old_level\""));
+        assert!(json.contains("\"new_level\""));
+        assert!(json.contains("\"triggering_evidence_ids\""));
+        assert!(json.contains("\"policy_version\""));
+        assert!(json.contains("\"operator_override\""));
+        assert!(json.contains("\"operator_justification\""));
+        assert!(json.contains("\"timestamp_ns\""));
+        assert!(json.contains("\"epoch\""));
+    }
+
+    // -------------------------------------------------------------------------
+    // Category 6: Display format checks — exact string assertions
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn trust_level_display_all_variants() {
+        assert_eq!(TrustLevel::Unknown.to_string(), "unknown");
+        assert_eq!(TrustLevel::Provisional.to_string(), "provisional");
+        assert_eq!(TrustLevel::Established.to_string(), "established");
+        assert_eq!(TrustLevel::Trusted.to_string(), "trusted");
+        assert_eq!(TrustLevel::Suspicious.to_string(), "suspicious");
+        assert_eq!(TrustLevel::Compromised.to_string(), "compromised");
+        assert_eq!(TrustLevel::Revoked.to_string(), "revoked");
+    }
+
+    #[test]
+    fn error_display_extension_not_found_exact() {
+        let err = ReputationGraphError::ExtensionNotFound {
+            extension_id: "my-ext".into(),
+        };
+        assert_eq!(err.to_string(), "extension not found: my-ext");
+    }
+
+    #[test]
+    fn error_display_publisher_not_found_exact() {
+        let err = ReputationGraphError::PublisherNotFound {
+            publisher_id: "my-pub".into(),
+        };
+        assert_eq!(err.to_string(), "publisher not found: my-pub");
+    }
+
+    #[test]
+    fn error_display_duplicate_extension_exact() {
+        let err = ReputationGraphError::DuplicateExtension {
+            extension_id: "ext-dup2".into(),
+        };
+        assert_eq!(err.to_string(), "duplicate extension: ext-dup2");
+    }
+
+    #[test]
+    fn error_display_duplicate_evidence_exact() {
+        let err = ReputationGraphError::DuplicateEvidence {
+            evidence_id: "ev-dup2".into(),
+        };
+        assert_eq!(err.to_string(), "duplicate evidence: ev-dup2");
+    }
+
+    #[test]
+    fn error_display_auto_upgrade_denied_exact() {
+        let err = ReputationGraphError::AutoUpgradeDenied {
+            extension_id: "ext-x".into(),
+            current: TrustLevel::Suspicious,
+            attempted: TrustLevel::Trusted,
+        };
+        let s = err.to_string();
+        assert!(s.contains("ext-x"), "must contain extension id");
+        assert!(s.contains("suspicious"), "must contain current level");
+        assert!(s.contains("trusted"), "must contain attempted level");
+        assert!(s.contains("operator override"), "must mention operator override");
+    }
+
+    #[test]
+    fn error_display_circular_dependency_exact() {
+        let err = ReputationGraphError::CircularDependency {
+            extension_id: "ext-circ".into(),
+            dependency_chain: vec!["ext-a".into(), "ext-b".into(), "ext-circ".into()],
+        };
+        let s = err.to_string();
+        assert!(s.contains("ext-circ"));
+        assert!(s.contains("ext-a -> ext-b -> ext-circ"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Category 7: Hash consistency — same value hashes identically
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn trust_level_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let level = TrustLevel::Established;
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        level.hash(&mut h1);
+        level.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn evidence_type_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let et = EvidenceType::AdversarialCampaignResult;
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        et.hash(&mut h1);
+        et.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn evidence_source_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let es = EvidenceSource::BuildProvenance;
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        es.hash(&mut h1);
+        es.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn incident_severity_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let sev = IncidentSeverity::Critical;
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        sev.hash(&mut h1);
+        sev.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn resolution_status_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let rs = ResolutionStatus::Resolved;
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        rs.hash(&mut h1);
+        rs.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    // -------------------------------------------------------------------------
+    // Category 8: Boundary/edge cases
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn extension_node_empty_strings_and_zero_values() {
+        let ext = ExtensionNode {
+            extension_id: String::new(),
+            package_name: String::new(),
+            version: String::new(),
+            publisher_id: String::new(),
+            manifest_hash: [0u8; 32],
+            first_seen_ns: 0,
+            current_trust_level: TrustLevel::Unknown,
+            dependencies: BTreeSet::new(),
+        };
+        let json = serde_json::to_string(&ext).unwrap();
+        let back: ExtensionNode = serde_json::from_str(&json).unwrap();
+        assert_eq!(ext, back);
+    }
+
+    #[test]
+    fn publisher_node_zero_trust_score() {
+        let pub_node = PublisherNode {
+            publisher_id: "pub-zero".into(),
+            identity_attestation: [0u8; 32],
+            published_count: 0,
+            trust_score: 0,
+            first_published_ns: 0,
+        };
+        let json = serde_json::to_string(&pub_node).unwrap();
+        let back: PublisherNode = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.trust_score, 0);
+    }
+
+    #[test]
+    fn publisher_node_u64_max_timestamps() {
+        let pub_node = PublisherNode {
+            publisher_id: "pub-max".into(),
+            identity_attestation: [0xFFu8; 32],
+            published_count: u64::MAX,
+            trust_score: 1_000_000,
+            first_published_ns: u64::MAX,
+        };
+        let json = serde_json::to_string(&pub_node).unwrap();
+        let back: PublisherNode = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.published_count, u64::MAX);
+        assert_eq!(back.first_published_ns, u64::MAX);
+    }
+
+    #[test]
+    fn provenance_record_none_attestation_source() {
+        let record = ProvenanceRecord {
+            extension_id: "ext-none".into(),
+            publisher_verified: false,
+            build_attested: false,
+            attestation_source: None,
+            dependency_depth: 0,
+            has_provenance_gap: true,
+            gap_descriptions: vec!["no source".into()],
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let back: ProvenanceRecord = serde_json::from_str(&json).unwrap();
+        assert!(back.attestation_source.is_none());
+        assert!(back.has_provenance_gap);
+    }
+
+    #[test]
+    fn trust_lookup_result_no_last_transition() {
+        let result = TrustLookupResult {
+            extension_id: "ext-notrans".into(),
+            current_trust_level: TrustLevel::Unknown,
+            transition_count: 0,
+            last_transition: None,
+            evidence_count: 0,
+            dependency_risk_score: 0,
+            publisher_trust_score: None,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: TrustLookupResult = serde_json::from_str(&json).unwrap();
+        assert!(back.last_transition.is_none());
+        assert!(back.publisher_trust_score.is_none());
+    }
+
+    #[test]
+    fn incident_node_empty_affected_extensions() {
+        let incident = IncidentNode {
+            incident_id: "inc-empty".into(),
+            severity: IncidentSeverity::Low,
+            affected_extensions: BTreeSet::new(),
+            containment_actions: vec![],
+            resolution_status: ResolutionStatus::FalsePositive,
+            timestamp_ns: 0,
+        };
+        let json = serde_json::to_string(&incident).unwrap();
+        let back: IncidentNode = serde_json::from_str(&json).unwrap();
+        assert!(back.affected_extensions.is_empty());
+        assert!(back.containment_actions.is_empty());
+    }
+
+    #[test]
+    fn dependency_risk_score_revoked_dep_is_max() {
+        let mut graph = ReputationGraph::new();
+        let mut dep = test_extension("dep-rev", "pub-1");
+        dep.current_trust_level = TrustLevel::Revoked;
+        let ext = test_extension_with_deps("ext-1", "pub-1", &["dep-rev"]);
+        graph.register_extension(dep).unwrap();
+        graph.register_extension(ext).unwrap();
+        let result = graph.trust_lookup("ext-1").unwrap();
+        assert_eq!(result.dependency_risk_score, 1_000_000);
+    }
+
+    #[test]
+    fn dependency_risk_score_compromised_dep() {
+        let mut graph = ReputationGraph::new();
+        let mut dep = test_extension("dep-comp", "pub-1");
+        dep.current_trust_level = TrustLevel::Compromised;
+        let ext = test_extension_with_deps("ext-1", "pub-1", &["dep-comp"]);
+        graph.register_extension(dep).unwrap();
+        graph.register_extension(ext).unwrap();
+        let result = graph.trust_lookup("ext-1").unwrap();
+        assert_eq!(result.dependency_risk_score, 800_000);
+    }
+
+    #[test]
+    fn dependency_risk_unknown_dep_not_in_graph() {
+        let mut graph = ReputationGraph::new();
+        // ext-1 depends on dep-ghost which is not registered
+        let ext = test_extension_with_deps("ext-1", "pub-1", &["dep-ghost"]);
+        graph.register_extension(ext).unwrap();
+        let result = graph.trust_lookup("ext-1").unwrap();
+        // Unknown dependency = high risk (500_000)
+        assert_eq!(result.dependency_risk_score, 500_000);
+    }
+
+    #[test]
+    fn dependency_risk_trusted_dep_is_zero() {
+        let mut graph = ReputationGraph::new();
+        let mut dep = test_extension("dep-trusted", "pub-1");
+        dep.current_trust_level = TrustLevel::Trusted;
+        let ext = test_extension_with_deps("ext-1", "pub-1", &["dep-trusted"]);
+        graph.register_extension(dep).unwrap();
+        graph.register_extension(ext).unwrap();
+        let result = graph.trust_lookup("ext-1").unwrap();
+        assert_eq!(result.dependency_risk_score, 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // Category 9: Serde roundtrips — complex populated structs
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn incident_node_serde_roundtrip() {
+        let incident = IncidentNode {
+            incident_id: "inc-rt".into(),
+            severity: IncidentSeverity::High,
+            affected_extensions: ["ext-a".into(), "ext-b".into()].into_iter().collect(),
+            containment_actions: vec!["isolate".into(), "alert".into()],
+            resolution_status: ResolutionStatus::Contained,
+            timestamp_ns: 9_000_000_000,
+        };
+        let json = serde_json::to_string(&incident).unwrap();
+        let back: IncidentNode = serde_json::from_str(&json).unwrap();
+        assert_eq!(incident, back);
+    }
+
+    #[test]
+    fn evidence_node_serde_roundtrip_all_fields() {
+        let ev = EvidenceNode {
+            evidence_id: "ev-rt".into(),
+            evidence_type: EvidenceType::IncidentRecord,
+            source: EvidenceSource::ExternalThreatFeed,
+            timestamp_ns: 7_000_000_000,
+            content_hash: [0xABu8; 32],
+            linked_decision_ids: vec!["dec-a".into(), "dec-b".into()],
+            epoch: SecurityEpoch::from_raw(5),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: EvidenceNode = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn trust_transition_with_justification_serde_roundtrip() {
+        let tt = TrustTransition {
+            transition_id: "tt-op".into(),
+            extension_id: "ext-op".into(),
+            old_level: TrustLevel::Compromised,
+            new_level: TrustLevel::Provisional,
+            triggering_evidence_ids: vec!["ev-1".into(), "ev-2".into()],
+            policy_version: 99,
+            operator_override: true,
+            operator_justification: Some("Incident resolved per audit trail".into()),
+            timestamp_ns: 10_000_000_000,
+            epoch: SecurityEpoch::from_raw(10),
+        };
+        let json = serde_json::to_string(&tt).unwrap();
+        let back: TrustTransition = serde_json::from_str(&json).unwrap();
+        assert_eq!(tt, back);
+        assert!(back.operator_override);
+        assert_eq!(
+            back.operator_justification.as_deref(),
+            Some("Incident resolved per audit trail")
+        );
+    }
+
+    #[test]
+    fn revocation_impact_with_all_sets_serde_roundtrip() {
+        let impact = RevocationImpact {
+            directly_affected: ["ext-b".into(), "ext-c".into()].into_iter().collect(),
+            transitively_affected: ["ext-d".into(), "ext-e".into()].into_iter().collect(),
+            trust_degradations: vec![TrustTransition {
+                transition_id: "tt-deg".into(),
+                extension_id: "ext-b".into(),
+                old_level: TrustLevel::Established,
+                new_level: TrustLevel::Suspicious,
+                triggering_evidence_ids: vec!["revocation-propagation:inc-1".into()],
+                policy_version: 0,
+                operator_override: false,
+                operator_justification: None,
+                timestamp_ns: 6_000_000_000,
+                epoch: SecurityEpoch::from_raw(3),
+            }],
+        };
+        let json = serde_json::to_string(&impact).unwrap();
+        let back: RevocationImpact = serde_json::from_str(&json).unwrap();
+        assert_eq!(impact, back);
+        assert_eq!(back.directly_affected.len(), 2);
+        assert_eq!(back.transitively_affected.len(), 2);
+        assert_eq!(back.trust_degradations.len(), 1);
+    }
+
+    #[test]
+    fn operator_override_input_full_serde_roundtrip() {
+        let input = OperatorOverrideInput {
+            extension_id: "ext-full".into(),
+            new_level: TrustLevel::Established,
+            justification: "Full review completed, clean audit".into(),
+            evidence_ids: vec!["ev-a".into(), "ev-b".into(), "ev-c".into()],
+            policy_version: 42,
+            epoch: SecurityEpoch::from_raw(7),
+            timestamp_ns: 8_888_888_888,
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let back: OperatorOverrideInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.extension_id, "ext-full");
+        assert_eq!(back.new_level, TrustLevel::Established);
+        assert_eq!(back.evidence_ids.len(), 3);
+        assert_eq!(back.policy_version, 42);
+    }
+
+    // -------------------------------------------------------------------------
+    // Category 10: Debug nonempty — all types produce non-empty Debug output
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn extension_node_debug_nonempty() {
+        let ext = test_extension("ext-dbg", "pub-dbg");
+        let s = format!("{ext:?}");
+        assert!(!s.is_empty());
+        assert!(s.contains("ext-dbg"));
+    }
+
+    #[test]
+    fn publisher_node_debug_nonempty() {
+        let pub_node = test_publisher("pub-dbg");
+        let s = format!("{pub_node:?}");
+        assert!(!s.is_empty());
+        assert!(s.contains("pub-dbg"));
+    }
+
+    #[test]
+    fn evidence_node_debug_nonempty() {
+        let ev = test_evidence("ev-dbg");
+        let s = format!("{ev:?}");
+        assert!(!s.is_empty());
+        assert!(s.contains("ev-dbg"));
+    }
+
+    #[test]
+    fn incident_node_debug_nonempty() {
+        let incident = IncidentNode {
+            incident_id: "inc-dbg".into(),
+            severity: IncidentSeverity::Medium,
+            affected_extensions: BTreeSet::new(),
+            containment_actions: vec![],
+            resolution_status: ResolutionStatus::Active,
+            timestamp_ns: 0,
+        };
+        let s = format!("{incident:?}");
+        assert!(!s.is_empty());
+        assert!(s.contains("inc-dbg"));
+    }
+
+    #[test]
+    fn trust_transition_debug_nonempty() {
+        let tt = TrustTransition {
+            transition_id: "tt-dbg".into(),
+            extension_id: "ext-dbg".into(),
+            old_level: TrustLevel::Unknown,
+            new_level: TrustLevel::Trusted,
+            triggering_evidence_ids: vec![],
+            policy_version: 0,
+            operator_override: false,
+            operator_justification: None,
+            timestamp_ns: 0,
+            epoch: SecurityEpoch::from_raw(1),
+        };
+        let s = format!("{tt:?}");
+        assert!(!s.is_empty());
+        assert!(s.contains("tt-dbg"));
+    }
+
+    #[test]
+    fn reputation_graph_error_debug_nonempty() {
+        let err = ReputationGraphError::ExtensionNotFound {
+            extension_id: "ext-err-dbg".into(),
+        };
+        let s = format!("{err:?}");
+        assert!(!s.is_empty());
+        assert!(s.contains("ext-err-dbg"));
+    }
+
+    #[test]
+    fn reputation_graph_debug_nonempty() {
+        let graph = ReputationGraph::new();
+        let s = format!("{graph:?}");
+        assert!(!s.is_empty());
+    }
+
+    #[test]
+    fn operator_override_input_debug_nonempty() {
+        let input = OperatorOverrideInput {
+            extension_id: "ext-ood".into(),
+            new_level: TrustLevel::Provisional,
+            justification: "test".into(),
+            evidence_ids: vec![],
+            policy_version: 1,
+            epoch: SecurityEpoch::from_raw(1),
+            timestamp_ns: 0,
+        };
+        let s = format!("{input:?}");
+        assert!(!s.is_empty());
+        assert!(s.contains("ext-ood"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Bonus: Additional behavioral / integration tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn transition_trust_missing_extension_returns_error() {
+        let mut graph = ReputationGraph::new();
+        let result = graph.transition_trust(
+            "nonexistent",
+            TrustLevel::Revoked,
+            vec![],
+            1,
+            SecurityEpoch::from_raw(1),
+            0,
+        );
+        assert!(matches!(
+            result,
+            Err(ReputationGraphError::ExtensionNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn operator_override_missing_extension_returns_error() {
+        let mut graph = ReputationGraph::new();
+        let result = graph.operator_trust_override(OperatorOverrideInput {
+            extension_id: "no-such-ext".into(),
+            new_level: TrustLevel::Trusted,
+            justification: "test".into(),
+            evidence_ids: vec![],
+            policy_version: 1,
+            epoch: SecurityEpoch::from_raw(1),
+            timestamp_ns: 0,
+        });
+        assert!(matches!(
+            result,
+            Err(ReputationGraphError::ExtensionNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn trust_lookup_with_last_transition_populated() {
+        let mut graph = ReputationGraph::new();
+        graph
+            .register_extension(test_extension("ext-lt", "pub-1"))
+            .unwrap();
+        graph
+            .transition_trust(
+                "ext-lt",
+                TrustLevel::Provisional,
+                vec!["ev-x".into()],
+                1,
+                SecurityEpoch::from_raw(1),
+                1_000,
+            )
+            .unwrap();
+        let result = graph.trust_lookup("ext-lt").unwrap();
+        assert_eq!(result.transition_count, 1);
+        assert!(result.last_transition.is_some());
+        let last = result.last_transition.unwrap();
+        assert_eq!(last.new_level, TrustLevel::Provisional);
+    }
+
+    #[test]
+    fn get_evidence_for_extension_returns_correct_nodes() {
+        let mut graph = ReputationGraph::new();
+        graph
+            .register_extension(test_extension("ext-ev", "pub-1"))
+            .unwrap();
+        graph.add_evidence("ext-ev", test_evidence("ev-a")).unwrap();
+        graph.add_evidence("ext-ev", test_evidence("ev-b")).unwrap();
+        let evs = graph.get_evidence_for_extension("ext-ev");
+        assert_eq!(evs.len(), 2);
+    }
+
+    #[test]
+    fn get_evidence_for_missing_extension_returns_empty() {
+        let graph = ReputationGraph::new();
+        let evs = graph.get_evidence_for_extension("nonexistent");
+        assert!(evs.is_empty());
+    }
+
+    #[test]
+    fn incident_count_for_extension_correct() {
+        let mut graph = ReputationGraph::new();
+        graph
+            .register_extension(test_extension("ext-inc", "pub-1"))
+            .unwrap();
+        let incident = IncidentNode {
+            incident_id: "inc-count".into(),
+            severity: IncidentSeverity::High,
+            affected_extensions: ["ext-inc".into()].into_iter().collect(),
+            containment_actions: vec![],
+            resolution_status: ResolutionStatus::Active,
+            timestamp_ns: 0,
+        };
+        graph.add_incident(incident);
+        assert_eq!(graph.incident_count_for_extension("ext-inc"), 1);
+        assert_eq!(graph.incident_count_for_extension("other-ext"), 0);
+    }
+
+    #[test]
+    fn default_graph_equals_new_graph() {
+        let default_graph = ReputationGraph::default();
+        assert_eq!(default_graph.extension_count(), 0);
+        assert_eq!(default_graph.edge_count(), 0);
+        assert_eq!(default_graph.total_transitions(), 0);
+    }
+
+    #[test]
+    fn trust_transition_id_format() {
+        let mut graph = ReputationGraph::new();
+        graph
+            .register_extension(test_extension("ext-id", "pub-1"))
+            .unwrap();
+        let tt = graph
+            .transition_trust(
+                "ext-id",
+                TrustLevel::Provisional,
+                vec![],
+                1,
+                SecurityEpoch::from_raw(1),
+                0,
+            )
+            .unwrap();
+        assert!(
+            tt.transition_id.starts_with("tt-"),
+            "transition ID must start with tt-"
+        );
+        assert_eq!(tt.transition_id, "tt-00000001");
+    }
+
+    #[test]
+    fn multiple_operators_sequential_transitions() {
+        let mut graph = ReputationGraph::new();
+        graph
+            .register_extension(test_extension("ext-seq", "pub-1"))
+            .unwrap();
+        // unknown -> provisional -> established -> trusted
+        let levels = [
+            TrustLevel::Provisional,
+            TrustLevel::Established,
+            TrustLevel::Trusted,
+        ];
+        for (i, level) in levels.iter().enumerate() {
+            graph
+                .transition_trust(
+                    "ext-seq",
+                    *level,
+                    vec![],
+                    1,
+                    SecurityEpoch::from_raw(1),
+                    i as u64 * 1_000,
+                )
+                .unwrap();
+        }
+        assert_eq!(graph.total_transitions(), 3);
+        assert_eq!(
+            graph.get_extension("ext-seq").unwrap().current_trust_level,
+            TrustLevel::Trusted
+        );
+    }
+
+    #[test]
+    fn revocation_propagation_no_dependents_produces_empty_impact() {
+        let mut graph = ReputationGraph::new();
+        graph
+            .register_extension(test_extension("ext-isolated", "pub-1"))
+            .unwrap();
+        let impact = graph
+            .propagate_revocation(
+                "ext-isolated",
+                "inc-noop",
+                SecurityEpoch::from_raw(1),
+                0,
+            )
+            .unwrap();
+        assert!(impact.directly_affected.is_empty());
+        assert!(impact.transitively_affected.is_empty());
+        assert!(impact.trust_degradations.is_empty());
+    }
+
+    #[test]
+    fn incident_node_serde_field_names() {
+        let incident = IncidentNode {
+            incident_id: "inc-fn".into(),
+            severity: IncidentSeverity::Low,
+            affected_extensions: BTreeSet::new(),
+            containment_actions: vec![],
+            resolution_status: ResolutionStatus::Resolved,
+            timestamp_ns: 0,
+        };
+        let json = serde_json::to_string(&incident).unwrap();
+        assert!(json.contains("\"incident_id\""));
+        assert!(json.contains("\"severity\""));
+        assert!(json.contains("\"affected_extensions\""));
+        assert!(json.contains("\"containment_actions\""));
+        assert!(json.contains("\"resolution_status\""));
+        assert!(json.contains("\"timestamp_ns\""));
+    }
 }

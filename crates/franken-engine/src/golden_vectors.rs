@@ -1031,4 +1031,363 @@ mod tests {
         assert_eq!(back.vectors.len(), 1);
         assert!(back.vectors[0].expect_error);
     }
+
+    // ── Enrichment: hex utilities boundary/edge ─────────────────────
+
+    #[test]
+    fn to_hex_empty_input() {
+        assert_eq!(to_hex(&[]), "");
+    }
+
+    #[test]
+    fn to_hex_single_byte() {
+        assert_eq!(to_hex(&[0xff]), "ff");
+        assert_eq!(to_hex(&[0x00]), "00");
+        assert_eq!(to_hex(&[0x0a]), "0a");
+    }
+
+    #[test]
+    fn from_hex_empty_string() {
+        let result = from_hex("").unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn from_hex_odd_length_rejected() {
+        let result = from_hex("abc");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("odd hex length"));
+    }
+
+    #[test]
+    fn from_hex_invalid_chars_rejected() {
+        let result = from_hex("zz");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("bad hex char"));
+    }
+
+    #[test]
+    fn to_hex_from_hex_roundtrip() {
+        let bytes = vec![0xde, 0xad, 0xbe, 0xef, 0x00, 0xff];
+        let hex = to_hex(&bytes);
+        let recovered = from_hex(&hex).unwrap();
+        assert_eq!(bytes, recovered);
+    }
+
+    #[test]
+    fn from_hex_accepts_uppercase() {
+        let result = from_hex("DEADBEEF").unwrap();
+        assert_eq!(result, vec![0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn from_hex_accepts_mixed_case() {
+        let result = from_hex("DeAdBeEf").unwrap();
+        assert_eq!(result, vec![0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn to_hex_always_lowercase() {
+        let hex = to_hex(&[0xAB, 0xCD, 0xEF]);
+        assert_eq!(hex, "abcdef");
+    }
+
+    #[test]
+    fn to_hex_256_bytes_produces_512_chars() {
+        let bytes = vec![0x42; 256];
+        let hex = to_hex(&bytes);
+        assert_eq!(hex.len(), 512);
+    }
+
+    // ── Enrichment: GoldenVector JSON field-name stability ──────────
+
+    #[test]
+    fn golden_vector_json_field_names_stable() {
+        let v = GoldenVector {
+            test_name: "t".into(),
+            description: "d".into(),
+            category: "c".into(),
+            schema_version: "v1".into(),
+            input: BTreeMap::new(),
+            expected: BTreeMap::new(),
+            expect_error: false,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains("\"test_name\""));
+        assert!(json.contains("\"description\""));
+        assert!(json.contains("\"category\""));
+        assert!(json.contains("\"schema_version\""));
+        assert!(json.contains("\"input\""));
+        assert!(json.contains("\"expected\""));
+        assert!(json.contains("\"expect_error\""));
+    }
+
+    #[test]
+    fn golden_vector_set_json_field_names_stable() {
+        let set = GoldenVectorSet {
+            vector_format_version: "1.0".into(),
+            category: "test".into(),
+            vectors: vec![],
+        };
+        let json = serde_json::to_string(&set).unwrap();
+        assert!(json.contains("\"vector_format_version\""));
+        assert!(json.contains("\"category\""));
+        assert!(json.contains("\"vectors\""));
+    }
+
+    // ── Enrichment: Clone independence ───────────────────────────────
+
+    #[test]
+    fn golden_vector_clone_independence() {
+        let v = GoldenVector {
+            test_name: "t".into(),
+            description: "d".into(),
+            category: "c".into(),
+            schema_version: "v1".into(),
+            input: BTreeMap::new(),
+            expected: BTreeMap::new(),
+            expect_error: false,
+        };
+        let mut cloned = v.clone();
+        cloned.test_name = "modified".into();
+        cloned.expect_error = true;
+        assert_eq!(v.test_name, "t");
+        assert!(!v.expect_error);
+    }
+
+    #[test]
+    fn golden_vector_set_clone_independence() {
+        let set = GoldenVectorSet {
+            vector_format_version: "1.0".into(),
+            category: "test".into(),
+            vectors: vec![],
+        };
+        let mut cloned = set.clone();
+        cloned.vectors.push(GoldenVector {
+            test_name: "new".into(),
+            description: "d".into(),
+            category: "c".into(),
+            schema_version: "v1".into(),
+            input: BTreeMap::new(),
+            expected: BTreeMap::new(),
+            expect_error: false,
+        });
+        assert!(set.vectors.is_empty());
+    }
+
+    // ── Enrichment: Debug nonempty ──────────────────────────────────
+
+    #[test]
+    fn golden_vector_debug_nonempty() {
+        let v = GoldenVector {
+            test_name: "t".into(),
+            description: "d".into(),
+            category: "c".into(),
+            schema_version: "v1".into(),
+            input: BTreeMap::new(),
+            expected: BTreeMap::new(),
+            expect_error: false,
+        };
+        let dbg = format!("{v:?}");
+        assert!(dbg.contains("GoldenVector"));
+    }
+
+    #[test]
+    fn golden_vector_set_debug_nonempty() {
+        let set = GoldenVectorSet {
+            vector_format_version: "1.0".into(),
+            category: "test".into(),
+            vectors: vec![],
+        };
+        let dbg = format!("{set:?}");
+        assert!(dbg.contains("GoldenVectorSet"));
+    }
+
+    // ── Enrichment: golden vector with all input/expected types ─────
+
+    #[test]
+    fn golden_vector_with_complex_input_expected() {
+        let mut input = BTreeMap::new();
+        input.insert("num".to_string(), serde_json::json!(42));
+        input.insert("arr".to_string(), serde_json::json!([1, 2, 3]));
+        input.insert("null_val".to_string(), serde_json::Value::Null);
+        let mut expected = BTreeMap::new();
+        expected.insert("hex".to_string(), serde_json::json!("deadbeef"));
+        expected.insert("ok".to_string(), serde_json::json!(true));
+        let v = GoldenVector {
+            test_name: "complex".into(),
+            description: "complex input".into(),
+            category: "deterministic_serde".into(),
+            schema_version: "v2".into(),
+            input,
+            expected,
+            expect_error: false,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: GoldenVector = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn golden_vector_set_empty_vectors_roundtrip() {
+        let set = GoldenVectorSet {
+            vector_format_version: "1.0".into(),
+            category: "empty".into(),
+            vectors: vec![],
+        };
+        let json = serde_json::to_string(&set).unwrap();
+        let back: GoldenVectorSet = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.vectors.len(), 0);
+    }
+
+    #[test]
+    fn golden_vector_negative_vector() {
+        let v = GoldenVector {
+            test_name: "negative".into(),
+            description: "expected to produce error".into(),
+            category: "non_canonical_rejection".into(),
+            schema_version: "v1".into(),
+            input: BTreeMap::new(),
+            expected: BTreeMap::new(),
+            expect_error: true,
+        };
+        assert!(v.expect_error);
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains("true"));
+    }
+
+    // ── Enrichment: additional pinned vectors ───────────────────────
+
+    #[test]
+    fn pinned_encode_bytes_empty() {
+        let encoded = encode_value(&CanonicalValue::Bytes(vec![]));
+        assert_eq!(
+            to_hex(&encoded),
+            "0400000000",
+            "PINNED: Bytes([]) encoding changed"
+        );
+    }
+
+    #[test]
+    fn pinned_encode_i64_zero() {
+        let encoded = encode_value(&CanonicalValue::I64(0));
+        assert_eq!(
+            to_hex(&encoded),
+            "020000000000000000",
+            "PINNED: I64(0) encoding changed"
+        );
+    }
+
+    #[test]
+    fn pinned_encode_i64_min() {
+        let encoded = encode_value(&CanonicalValue::I64(i64::MIN));
+        assert_eq!(
+            to_hex(&encoded),
+            "028000000000000000",
+            "PINNED: I64(MIN) encoding changed"
+        );
+    }
+
+    #[test]
+    fn pinned_encode_empty_array() {
+        let encoded = encode_value(&CanonicalValue::Array(vec![]));
+        assert_eq!(
+            to_hex(&encoded),
+            "0600000000",
+            "PINNED: Array([]) encoding changed"
+        );
+    }
+
+    #[test]
+    fn pinned_encode_empty_map() {
+        let encoded = encode_value(&CanonicalValue::Map(BTreeMap::new()));
+        assert_eq!(
+            to_hex(&encoded),
+            "0700000000",
+            "PINNED: Map(empty) encoding changed"
+        );
+    }
+
+    // ── Enrichment: additional signature/crypto vectors ─────────────
+
+    #[test]
+    fn golden_signature_length_is_64() {
+        assert_eq!(SIGNATURE_LEN, 64);
+    }
+
+    #[test]
+    fn golden_content_hash_different_inputs_different_hashes() {
+        let h1 = ContentHash::compute(b"input-one");
+        let h2 = ContentHash::compute(b"input-two");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn golden_content_hash_empty_input() {
+        let h = ContentHash::compute(b"");
+        assert_eq!(h.as_bytes().len(), 32);
+    }
+
+    // ── Enrichment: revocation target types coverage ────────────────
+
+    #[test]
+    fn golden_revocation_chain_all_target_types() {
+        let head_sk = golden_head_signing_key();
+        let rev_sk = golden_revocation_signing_key();
+
+        for (i, target_type) in [
+            RevocationTargetType::Key,
+            RevocationTargetType::Token,
+            RevocationTargetType::Attestation,
+            RevocationTargetType::Extension,
+            RevocationTargetType::Checkpoint,
+        ]
+        .iter()
+        .enumerate()
+        {
+            let mut chain = RevocationChain::new("golden-zone");
+            let rev = make_golden_revocation(
+                *target_type,
+                RevocationReason::Compromised,
+                [(i + 50) as u8; 32],
+                &rev_sk,
+            );
+            chain
+                .append(rev, &head_sk, &format!("trace-type-{i}"))
+                .expect("append");
+            chain
+                .verify_chain(&format!("trace-verify-type-{i}"))
+                .expect("verify");
+        }
+    }
+
+    #[test]
+    fn golden_revocation_chain_all_reasons() {
+        let head_sk = golden_head_signing_key();
+        let rev_sk = golden_revocation_signing_key();
+
+        for (i, reason) in [
+            RevocationReason::Compromised,
+            RevocationReason::Expired,
+            RevocationReason::Superseded,
+            RevocationReason::PolicyViolation,
+        ]
+        .iter()
+        .enumerate()
+        {
+            let mut chain = RevocationChain::new("golden-zone");
+            let rev = make_golden_revocation(
+                RevocationTargetType::Key,
+                *reason,
+                [(i + 80) as u8; 32],
+                &rev_sk,
+            );
+            chain
+                .append(rev, &head_sk, &format!("trace-reason-{i}"))
+                .expect("append");
+            chain
+                .verify_chain(&format!("trace-verify-reason-{i}"))
+                .expect("verify");
+        }
+    }
 }

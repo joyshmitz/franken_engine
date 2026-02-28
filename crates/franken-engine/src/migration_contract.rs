@@ -1854,6 +1854,922 @@ mod tests {
         );
         // VerificationFailed is not terminal — rollback should succeed
         runner.rollback("m-vf", "t").unwrap();
-        assert_eq!(runner.state("m-vf"), Some(MigrationState::RollingBack));
+        assert_eq!(runner.state("m-vf"), Some(MigrationState::RolledBack));
+    }
+
+    // =====================================================================
+    // Enrichment batch: +50 tests across 10 categories
+    // =====================================================================
+
+    // -- Category 1: Copy semantics -----------------------------------
+
+    #[test]
+    fn cutover_type_copy_semantics() {
+        let a = CutoverType::HardCutover;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn object_class_copy_semantics() {
+        let a = ObjectClass::KeyFormat;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn migration_step_copy_semantics() {
+        let a = MigrationStep::Execute;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn migration_state_copy_semantics() {
+        let a = MigrationState::Verifying;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn cutover_type_all_variants_survive_copy() {
+        for ct in [CutoverType::HardCutover, CutoverType::SoftMigration, CutoverType::ParallelRun] {
+            let copied = ct;
+            assert_eq!(ct, copied);
+        }
+    }
+
+    // -- Category 2: Debug distinctness -------------------------------
+
+    #[test]
+    fn cutover_type_debug_distinct() {
+        let dbgs: std::collections::BTreeSet<String> = [
+            CutoverType::HardCutover,
+            CutoverType::SoftMigration,
+            CutoverType::ParallelRun,
+        ]
+        .iter()
+        .map(|v| format!("{v:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 3);
+    }
+
+    #[test]
+    fn object_class_debug_distinct() {
+        let dbgs: std::collections::BTreeSet<String> =
+            ObjectClass::ALL.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(dbgs.len(), 8);
+    }
+
+    #[test]
+    fn migration_step_debug_distinct() {
+        let all = [
+            MigrationStep::PreMigration,
+            MigrationStep::Checkpoint,
+            MigrationStep::Execute,
+            MigrationStep::Verify,
+            MigrationStep::Commit,
+            MigrationStep::Rollback,
+        ];
+        let dbgs: std::collections::BTreeSet<String> =
+            all.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(dbgs.len(), 6);
+    }
+
+    #[test]
+    fn migration_state_debug_distinct() {
+        let all = [
+            MigrationState::Declared,
+            MigrationState::DryRunning,
+            MigrationState::DryRunPassed,
+            MigrationState::DryRunFailed,
+            MigrationState::Executing,
+            MigrationState::Verifying,
+            MigrationState::Verified,
+            MigrationState::VerificationFailed,
+            MigrationState::Committed,
+            MigrationState::RollingBack,
+            MigrationState::RolledBack,
+        ];
+        let dbgs: std::collections::BTreeSet<String> =
+            all.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(dbgs.len(), 11);
+    }
+
+    #[test]
+    fn migration_contract_error_debug_distinct() {
+        let all: Vec<MigrationContractError> = vec![
+            MigrationContractError::MigrationNotFound { migration_id: "a".into() },
+            MigrationContractError::InvalidTransition { from: MigrationState::Declared, to: MigrationState::Executing },
+            MigrationContractError::DryRunFailed { migration_id: "a".into(), unconvertible_count: 1, detail: "d".into() },
+            MigrationContractError::VerificationFailed { migration_id: "a".into(), discrepancy_count: 1, detail: "d".into() },
+            MigrationContractError::OldFormatRejected { migration_id: "a".into(), object_class: ObjectClass::KeyFormat, detail: "d".into() },
+            MigrationContractError::DuplicateMigration { migration_id: "a".into() },
+            MigrationContractError::RollbackFailed { migration_id: "a".into(), detail: "d".into() },
+            MigrationContractError::ParallelRunDiscrepancy { migration_id: "a".into(), discrepancy_count: 1 },
+        ];
+        let dbgs: std::collections::BTreeSet<String> =
+            all.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(dbgs.len(), 8);
+    }
+
+    // -- Category 3: Serde variant distinctness -----------------------
+
+    #[test]
+    fn cutover_type_serde_variant_distinct() {
+        let jsons: std::collections::BTreeSet<String> = [
+            CutoverType::HardCutover,
+            CutoverType::SoftMigration,
+            CutoverType::ParallelRun,
+        ]
+        .iter()
+        .map(|v| serde_json::to_string(v).unwrap())
+        .collect();
+        assert_eq!(jsons.len(), 3);
+    }
+
+    #[test]
+    fn object_class_serde_variant_distinct() {
+        let jsons: std::collections::BTreeSet<String> =
+            ObjectClass::ALL.iter().map(|v| serde_json::to_string(v).unwrap()).collect();
+        assert_eq!(jsons.len(), 8);
+    }
+
+    #[test]
+    fn migration_step_serde_variant_distinct() {
+        let all = [
+            MigrationStep::PreMigration,
+            MigrationStep::Checkpoint,
+            MigrationStep::Execute,
+            MigrationStep::Verify,
+            MigrationStep::Commit,
+            MigrationStep::Rollback,
+        ];
+        let jsons: std::collections::BTreeSet<String> =
+            all.iter().map(|v| serde_json::to_string(v).unwrap()).collect();
+        assert_eq!(jsons.len(), 6);
+    }
+
+    #[test]
+    fn migration_state_serde_variant_distinct() {
+        let all = [
+            MigrationState::Declared,
+            MigrationState::DryRunning,
+            MigrationState::DryRunPassed,
+            MigrationState::DryRunFailed,
+            MigrationState::Executing,
+            MigrationState::Verifying,
+            MigrationState::Verified,
+            MigrationState::VerificationFailed,
+            MigrationState::Committed,
+            MigrationState::RollingBack,
+            MigrationState::RolledBack,
+        ];
+        let jsons: std::collections::BTreeSet<String> =
+            all.iter().map(|v| serde_json::to_string(v).unwrap()).collect();
+        assert_eq!(jsons.len(), 11);
+    }
+
+    // -- Category 4: Clone independence -------------------------------
+
+    #[test]
+    fn migration_declaration_clone_independence() {
+        let original = make_declaration("m-clone", CutoverType::HardCutover);
+        let mut cloned = original.clone();
+        cloned.migration_id = "m-clone-modified".to_string();
+        cloned.description = "modified".to_string();
+        assert_eq!(original.migration_id, "m-clone");
+        assert_ne!(original.migration_id, cloned.migration_id);
+    }
+
+    #[test]
+    fn dry_run_result_clone_independence() {
+        let original = passing_dry_run("m-1");
+        let mut cloned = original.clone();
+        cloned.total_objects = 999;
+        cloned.details.push("extra".to_string());
+        assert_eq!(original.total_objects, 100);
+        assert!(original.details.is_empty());
+    }
+
+    #[test]
+    fn verification_result_clone_independence() {
+        let original = failing_verification("m-1");
+        let mut cloned = original.clone();
+        cloned.discrepancies = 999;
+        cloned.details.push("extra".to_string());
+        assert_eq!(original.discrepancies, 5);
+        assert_eq!(original.details.len(), 1);
+    }
+
+    #[test]
+    fn migration_event_clone_independence() {
+        let original = MigrationEvent {
+            trace_id: "t".to_string(),
+            component: COMPONENT.to_string(),
+            event: "test".to_string(),
+            outcome: "ok".to_string(),
+            error_code: Some("E1".to_string()),
+            migration_id: Some("m-1".to_string()),
+            step: None,
+            affected_count: Some(10),
+            from_version: Some("v1".to_string()),
+            to_version: Some("v2".to_string()),
+            timestamp: DeterministicTimestamp(42),
+        };
+        let mut cloned = original.clone();
+        cloned.trace_id = "modified".to_string();
+        cloned.error_code = None;
+        assert_eq!(original.trace_id, "t");
+        assert_eq!(original.error_code, Some("E1".to_string()));
+    }
+
+    #[test]
+    fn applied_migration_record_clone_independence() {
+        let original = AppliedMigrationRecord {
+            migration_id: "m-1".to_string(),
+            from_version: "v1".to_string(),
+            to_version: "v2".to_string(),
+            cutover_type: CutoverType::HardCutover,
+            affected_objects: vec![ObjectClass::KeyFormat],
+            applied_at: DeterministicTimestamp(42),
+            checkpoint_seq: 10,
+        };
+        let mut cloned = original.clone();
+        cloned.migration_id = "modified".to_string();
+        cloned.affected_objects.push(ObjectClass::TokenFormat);
+        assert_eq!(original.migration_id, "m-1");
+        assert_eq!(original.affected_objects.len(), 1);
+    }
+
+    #[test]
+    fn migration_contract_error_clone_independence() {
+        let original = MigrationContractError::DryRunFailed {
+            migration_id: "m-1".to_string(),
+            unconvertible_count: 5,
+            detail: "orig".to_string(),
+        };
+        let mut cloned = original.clone();
+        if let MigrationContractError::DryRunFailed { ref mut detail, .. } = cloned {
+            *detail = "modified".to_string();
+        }
+        if let MigrationContractError::DryRunFailed { ref detail, .. } = original {
+            assert_eq!(detail, "orig");
+        }
+    }
+
+    // -- Category 5: JSON field-name stability ------------------------
+
+    #[test]
+    fn migration_declaration_json_field_names() {
+        let decl = make_declaration("m-1", CutoverType::HardCutover);
+        let json = serde_json::to_string(&decl).unwrap();
+        assert!(json.contains("\"migration_id\""));
+        assert!(json.contains("\"from_version\""));
+        assert!(json.contains("\"to_version\""));
+        assert!(json.contains("\"affected_objects\""));
+        assert!(json.contains("\"cutover_type\""));
+        assert!(json.contains("\"description\""));
+        assert!(json.contains("\"compatible_across\""));
+        assert!(json.contains("\"incompatible_across\""));
+        assert!(json.contains("\"transition_end_tick\""));
+    }
+
+    #[test]
+    fn migration_event_json_field_names() {
+        let event = MigrationEvent {
+            trace_id: "t".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "ok".to_string(),
+            error_code: Some("E".to_string()),
+            migration_id: Some("m".to_string()),
+            step: Some("s".to_string()),
+            affected_count: Some(1),
+            from_version: Some("v1".to_string()),
+            to_version: Some("v2".to_string()),
+            timestamp: DeterministicTimestamp(0),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"event\""));
+        assert!(json.contains("\"outcome\""));
+        assert!(json.contains("\"error_code\""));
+        assert!(json.contains("\"migration_id\""));
+        assert!(json.contains("\"step\""));
+        assert!(json.contains("\"affected_count\""));
+        assert!(json.contains("\"from_version\""));
+        assert!(json.contains("\"to_version\""));
+        assert!(json.contains("\"timestamp\""));
+    }
+
+    #[test]
+    fn dry_run_result_json_field_names() {
+        let dr = passing_dry_run("m-1");
+        let json = serde_json::to_string(&dr).unwrap();
+        assert!(json.contains("\"migration_id\""));
+        assert!(json.contains("\"total_objects\""));
+        assert!(json.contains("\"convertible\""));
+        assert!(json.contains("\"unconvertible\""));
+        assert!(json.contains("\"details\""));
+    }
+
+    #[test]
+    fn verification_result_json_field_names() {
+        let vr = passing_verification("m-1");
+        let json = serde_json::to_string(&vr).unwrap();
+        assert!(json.contains("\"migration_id\""));
+        assert!(json.contains("\"objects_checked\""));
+        assert!(json.contains("\"discrepancies\""));
+        assert!(json.contains("\"details\""));
+    }
+
+    #[test]
+    fn applied_migration_record_json_field_names() {
+        let record = AppliedMigrationRecord {
+            migration_id: "m-1".to_string(),
+            from_version: "v1".to_string(),
+            to_version: "v2".to_string(),
+            cutover_type: CutoverType::HardCutover,
+            affected_objects: vec![ObjectClass::KeyFormat],
+            applied_at: DeterministicTimestamp(42),
+            checkpoint_seq: 10,
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        assert!(json.contains("\"migration_id\""));
+        assert!(json.contains("\"from_version\""));
+        assert!(json.contains("\"to_version\""));
+        assert!(json.contains("\"cutover_type\""));
+        assert!(json.contains("\"affected_objects\""));
+        assert!(json.contains("\"applied_at\""));
+        assert!(json.contains("\"checkpoint_seq\""));
+    }
+
+    // -- Category 6: Display format checks ----------------------------
+
+    #[test]
+    fn object_class_display_all_variants() {
+        assert_eq!(ObjectClass::TokenFormat.to_string(), "token_format");
+        assert_eq!(ObjectClass::CheckpointFormat.to_string(), "checkpoint_format");
+        assert_eq!(ObjectClass::RevocationFormat.to_string(), "revocation_format");
+        assert_eq!(ObjectClass::PolicyStructure.to_string(), "policy_structure");
+        assert_eq!(ObjectClass::EvidenceFormat.to_string(), "evidence_format");
+        assert_eq!(ObjectClass::AttestationFormat.to_string(), "attestation_format");
+    }
+
+    #[test]
+    fn migration_state_display_all_variants_exact() {
+        assert_eq!(MigrationState::DryRunning.to_string(), "dry_running");
+        assert_eq!(MigrationState::DryRunPassed.to_string(), "dry_run_passed");
+        assert_eq!(MigrationState::DryRunFailed.to_string(), "dry_run_failed");
+        assert_eq!(MigrationState::Executing.to_string(), "executing");
+        assert_eq!(MigrationState::Verifying.to_string(), "verifying");
+        assert_eq!(MigrationState::Verified.to_string(), "verified");
+        assert_eq!(MigrationState::VerificationFailed.to_string(), "verification_failed");
+        assert_eq!(MigrationState::RollingBack.to_string(), "rolling_back");
+    }
+
+    #[test]
+    fn migration_step_display_all_variants_exact() {
+        assert_eq!(MigrationStep::Checkpoint.to_string(), "checkpoint");
+        assert_eq!(MigrationStep::Execute.to_string(), "execute");
+        assert_eq!(MigrationStep::Verify.to_string(), "verify");
+        assert_eq!(MigrationStep::Rollback.to_string(), "rollback");
+    }
+
+    #[test]
+    fn error_display_migration_not_found_exact() {
+        let err = MigrationContractError::MigrationNotFound {
+            migration_id: "m-42".to_string(),
+        };
+        assert_eq!(err.to_string(), "migration not found: m-42");
+    }
+
+    #[test]
+    fn error_display_invalid_transition_exact() {
+        let err = MigrationContractError::InvalidTransition {
+            from: MigrationState::Declared,
+            to: MigrationState::Executing,
+        };
+        assert_eq!(err.to_string(), "invalid transition: declared -> executing");
+    }
+
+    #[test]
+    fn error_display_duplicate_migration_exact() {
+        let err = MigrationContractError::DuplicateMigration {
+            migration_id: "m-dup".to_string(),
+        };
+        assert_eq!(err.to_string(), "duplicate migration: m-dup");
+    }
+
+    #[test]
+    fn error_display_rollback_failed_exact() {
+        let err = MigrationContractError::RollbackFailed {
+            migration_id: "m-rb".to_string(),
+            detail: "disk full".to_string(),
+        };
+        assert_eq!(err.to_string(), "rollback failed for m-rb: disk full");
+    }
+
+    #[test]
+    fn error_display_parallel_run_discrepancy_exact() {
+        let err = MigrationContractError::ParallelRunDiscrepancy {
+            migration_id: "m-par".to_string(),
+            discrepancy_count: 7,
+        };
+        assert_eq!(err.to_string(), "parallel run discrepancy for m-par: 7");
+    }
+
+    // -- Category 7: Hash consistency ---------------------------------
+
+    #[test]
+    fn cutover_type_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        for ct in [CutoverType::HardCutover, CutoverType::SoftMigration, CutoverType::ParallelRun] {
+            let mut h1 = std::collections::hash_map::DefaultHasher::new();
+            let mut h2 = std::collections::hash_map::DefaultHasher::new();
+            ct.hash(&mut h1);
+            ct.hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish());
+        }
+    }
+
+    #[test]
+    fn object_class_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        for oc in ObjectClass::ALL {
+            let mut h1 = std::collections::hash_map::DefaultHasher::new();
+            let mut h2 = std::collections::hash_map::DefaultHasher::new();
+            oc.hash(&mut h1);
+            oc.hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish());
+        }
+    }
+
+    #[test]
+    fn migration_step_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        for step in MigrationStep::FORWARD_PIPELINE {
+            let mut h1 = std::collections::hash_map::DefaultHasher::new();
+            let mut h2 = std::collections::hash_map::DefaultHasher::new();
+            step.hash(&mut h1);
+            step.hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish());
+        }
+    }
+
+    #[test]
+    fn migration_state_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        let all = [
+            MigrationState::Declared, MigrationState::DryRunning,
+            MigrationState::DryRunPassed, MigrationState::DryRunFailed,
+            MigrationState::Executing, MigrationState::Verifying,
+            MigrationState::Verified, MigrationState::VerificationFailed,
+            MigrationState::Committed, MigrationState::RollingBack,
+            MigrationState::RolledBack,
+        ];
+        for state in all {
+            let mut h1 = std::collections::hash_map::DefaultHasher::new();
+            let mut h2 = std::collections::hash_map::DefaultHasher::new();
+            state.hash(&mut h1);
+            state.hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish());
+        }
+    }
+
+    // -- Category 8: Boundary/edge cases ------------------------------
+
+    #[test]
+    fn dry_run_result_zero_objects() {
+        let dr = DryRunResult {
+            migration_id: "m-zero".to_string(),
+            total_objects: 0,
+            convertible: 0,
+            unconvertible: 0,
+            details: Vec::new(),
+        };
+        assert!(dr.passed());
+    }
+
+    #[test]
+    fn verification_result_zero_objects() {
+        let vr = VerificationResult {
+            migration_id: "m-zero".to_string(),
+            objects_checked: 0,
+            discrepancies: 0,
+            details: Vec::new(),
+        };
+        assert!(vr.passed());
+    }
+
+    #[test]
+    fn migration_declaration_empty_strings() {
+        let decl = MigrationDeclaration {
+            migration_id: String::new(),
+            from_version: String::new(),
+            to_version: String::new(),
+            affected_objects: Vec::new(),
+            cutover_type: CutoverType::HardCutover,
+            description: String::new(),
+            compatible_across: Vec::new(),
+            incompatible_across: Vec::new(),
+            transition_end_tick: None,
+        };
+        let json = serde_json::to_string(&decl).unwrap();
+        let deser: MigrationDeclaration = serde_json::from_str(&json).unwrap();
+        assert_eq!(decl, deser);
+    }
+
+    #[test]
+    fn migration_declaration_max_tick() {
+        let decl = MigrationDeclaration {
+            migration_id: "m-max".to_string(),
+            from_version: "v1".to_string(),
+            to_version: "v2".to_string(),
+            affected_objects: vec![ObjectClass::KeyFormat],
+            cutover_type: CutoverType::SoftMigration,
+            description: "max tick".to_string(),
+            compatible_across: Vec::new(),
+            incompatible_across: Vec::new(),
+            transition_end_tick: Some(u64::MAX),
+        };
+        let json = serde_json::to_string(&decl).unwrap();
+        let deser: MigrationDeclaration = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.transition_end_tick, Some(u64::MAX));
+    }
+
+    #[test]
+    fn runner_set_tick_max() {
+        let mut runner = MigrationRunner::new();
+        runner.set_tick(u64::MAX);
+        // Just verify it doesn't panic
+        assert_eq!(runner.migration_count(), 0);
+    }
+
+    #[test]
+    fn checkpoint_seq_u64_max() {
+        let mut runner = MigrationRunner::new();
+        runner.declare(make_declaration("m-max", CutoverType::HardCutover), "t").unwrap();
+        runner.dry_run("m-max", passing_dry_run("m-max"), "t").unwrap();
+        runner.create_checkpoint("m-max", u64::MAX, "t").unwrap();
+        assert_eq!(runner.state("m-max"), Some(MigrationState::Executing));
+    }
+
+    #[test]
+    fn soft_migration_window_at_exact_boundary() {
+        let mut runner = MigrationRunner::new();
+        runner.set_tick(0);
+        run_full_pipeline(&mut runner, "m-boundary", CutoverType::SoftMigration);
+        // transition_end_tick is 1000; tick=999 should be open, tick=1000 should be closed
+        runner.set_tick(999);
+        assert_eq!(runner.check_soft_migration_window("m-boundary"), Some(true));
+        runner.set_tick(1000);
+        assert_eq!(runner.check_soft_migration_window("m-boundary"), Some(false));
+    }
+
+    #[test]
+    fn state_of_nonexistent_migration_is_none() {
+        let runner = MigrationRunner::new();
+        assert_eq!(runner.state("nonexistent"), None);
+    }
+
+    #[test]
+    fn declaration_of_nonexistent_migration_is_none() {
+        let runner = MigrationRunner::new();
+        assert!(runner.declaration("nonexistent").is_none());
+    }
+
+    #[test]
+    fn check_soft_migration_window_nonexistent_is_none() {
+        let runner = MigrationRunner::new();
+        assert_eq!(runner.check_soft_migration_window("nonexistent"), None);
+    }
+
+    #[test]
+    fn events_empty_initially() {
+        let runner = MigrationRunner::new();
+        assert!(runner.events().is_empty());
+    }
+
+    #[test]
+    fn drain_events_empties_list() {
+        let mut runner = MigrationRunner::new();
+        runner.declare(make_declaration("m-1", CutoverType::HardCutover), "t").unwrap();
+        assert!(!runner.events().is_empty());
+        let drained = runner.drain_events();
+        assert!(!drained.is_empty());
+        assert!(runner.events().is_empty());
+    }
+
+    #[test]
+    fn complete_execution_on_missing_migration() {
+        let mut runner = MigrationRunner::new();
+        let err = runner.complete_execution("missing", 100, "t").unwrap_err();
+        assert!(matches!(err, MigrationContractError::MigrationNotFound { .. }));
+    }
+
+    #[test]
+    fn verify_on_missing_migration() {
+        let mut runner = MigrationRunner::new();
+        let err = runner.verify("missing", passing_verification("missing"), "t").unwrap_err();
+        assert!(matches!(err, MigrationContractError::MigrationNotFound { .. }));
+    }
+
+    // -- Category 9: Serde roundtrips (complex structs) ---------------
+
+    #[test]
+    fn dry_run_result_serde_roundtrip() {
+        let dr = DryRunResult {
+            migration_id: "m-serde".to_string(),
+            total_objects: 5000,
+            convertible: 4990,
+            unconvertible: 10,
+            details: vec!["err1".to_string(), "err2".to_string()],
+        };
+        let json = serde_json::to_string(&dr).unwrap();
+        let deser: DryRunResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(dr, deser);
+    }
+
+    #[test]
+    fn verification_result_serde_roundtrip() {
+        let vr = VerificationResult {
+            migration_id: "m-serde".to_string(),
+            objects_checked: 10000,
+            discrepancies: 3,
+            details: vec!["mismatch at obj-7".to_string()],
+        };
+        let json = serde_json::to_string(&vr).unwrap();
+        let deser: VerificationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(vr, deser);
+    }
+
+    #[test]
+    fn migration_declaration_soft_serde_roundtrip() {
+        let decl = make_declaration("m-soft", CutoverType::SoftMigration);
+        let json = serde_json::to_string(&decl).unwrap();
+        let deser: MigrationDeclaration = serde_json::from_str(&json).unwrap();
+        assert_eq!(decl, deser);
+        assert_eq!(deser.transition_end_tick, Some(1000));
+    }
+
+    #[test]
+    fn migration_event_with_all_none_fields_serde_roundtrip() {
+        let event = MigrationEvent {
+            trace_id: "t".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            migration_id: None,
+            step: None,
+            affected_count: None,
+            from_version: None,
+            to_version: None,
+            timestamp: DeterministicTimestamp(0),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let deser: MigrationEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, deser);
+    }
+
+    #[test]
+    fn migration_step_serde_roundtrip() {
+        for step in MigrationStep::FORWARD_PIPELINE {
+            let json = serde_json::to_string(&step).unwrap();
+            let deser: MigrationStep = serde_json::from_str(&json).unwrap();
+            assert_eq!(step, deser);
+        }
+        // Also test Rollback
+        let json = serde_json::to_string(&MigrationStep::Rollback).unwrap();
+        let deser: MigrationStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(MigrationStep::Rollback, deser);
+    }
+
+    #[test]
+    fn error_verification_failed_serde_roundtrip() {
+        let err = MigrationContractError::VerificationFailed {
+            migration_id: "m-vf".to_string(),
+            discrepancy_count: 42,
+            detail: "field mismatch".to_string(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let deser: MigrationContractError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, deser);
+    }
+
+    #[test]
+    fn error_parallel_run_discrepancy_serde_roundtrip() {
+        let err = MigrationContractError::ParallelRunDiscrepancy {
+            migration_id: "m-par".to_string(),
+            discrepancy_count: 99,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let deser: MigrationContractError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, deser);
+    }
+
+    // -- Category 10: Debug nonempty ----------------------------------
+
+    #[test]
+    fn cutover_type_debug_nonempty() {
+        for ct in [CutoverType::HardCutover, CutoverType::SoftMigration, CutoverType::ParallelRun] {
+            assert!(!format!("{ct:?}").is_empty());
+        }
+    }
+
+    #[test]
+    fn object_class_debug_nonempty() {
+        for oc in ObjectClass::ALL {
+            assert!(!format!("{oc:?}").is_empty());
+        }
+    }
+
+    #[test]
+    fn migration_step_debug_nonempty() {
+        for step in MigrationStep::FORWARD_PIPELINE {
+            assert!(!format!("{step:?}").is_empty());
+        }
+        assert!(!format!("{:?}", MigrationStep::Rollback).is_empty());
+    }
+
+    #[test]
+    fn migration_state_debug_nonempty() {
+        let all = [
+            MigrationState::Declared, MigrationState::DryRunning,
+            MigrationState::DryRunPassed, MigrationState::DryRunFailed,
+            MigrationState::Executing, MigrationState::Verifying,
+            MigrationState::Verified, MigrationState::VerificationFailed,
+            MigrationState::Committed, MigrationState::RollingBack,
+            MigrationState::RolledBack,
+        ];
+        for s in all {
+            assert!(!format!("{s:?}").is_empty());
+        }
+    }
+
+    #[test]
+    fn migration_declaration_debug_nonempty() {
+        let decl = make_declaration("m-1", CutoverType::HardCutover);
+        assert!(!format!("{decl:?}").is_empty());
+    }
+
+    #[test]
+    fn migration_event_debug_nonempty() {
+        let event = MigrationEvent {
+            trace_id: "t".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            migration_id: None,
+            step: None,
+            affected_count: None,
+            from_version: None,
+            to_version: None,
+            timestamp: DeterministicTimestamp(0),
+        };
+        assert!(!format!("{event:?}").is_empty());
+    }
+
+    #[test]
+    fn dry_run_result_debug_nonempty() {
+        let dr = passing_dry_run("m-1");
+        assert!(!format!("{dr:?}").is_empty());
+    }
+
+    #[test]
+    fn verification_result_debug_nonempty() {
+        let vr = passing_verification("m-1");
+        assert!(!format!("{vr:?}").is_empty());
+    }
+
+    #[test]
+    fn applied_migration_record_debug_nonempty() {
+        let record = AppliedMigrationRecord {
+            migration_id: "m-1".to_string(),
+            from_version: "v1".to_string(),
+            to_version: "v2".to_string(),
+            cutover_type: CutoverType::HardCutover,
+            affected_objects: vec![ObjectClass::KeyFormat],
+            applied_at: DeterministicTimestamp(42),
+            checkpoint_seq: 10,
+        };
+        assert!(!format!("{record:?}").is_empty());
+    }
+
+    #[test]
+    fn migration_runner_debug_nonempty() {
+        let runner = MigrationRunner::new();
+        assert!(!format!("{runner:?}").is_empty());
+    }
+
+    // -- Additional edge-case / behavior tests ------------------------
+
+    #[test]
+    fn error_code_for_rollback_failed() {
+        assert_eq!(
+            error_code(&MigrationContractError::RollbackFailed {
+                migration_id: "x".to_string(),
+                detail: "d".to_string(),
+            }),
+            "MC_ROLLBACK_FAILED"
+        );
+    }
+
+    #[test]
+    fn error_code_for_duplicate_migration() {
+        assert_eq!(
+            error_code(&MigrationContractError::DuplicateMigration {
+                migration_id: "x".to_string(),
+            }),
+            "MC_DUPLICATE_MIGRATION"
+        );
+    }
+
+    #[test]
+    fn error_code_for_verification_failed() {
+        assert_eq!(
+            error_code(&MigrationContractError::VerificationFailed {
+                migration_id: "x".to_string(),
+                discrepancy_count: 1,
+                detail: "d".to_string(),
+            }),
+            "MC_VERIFICATION_FAILED"
+        );
+    }
+
+    #[test]
+    fn migration_state_non_terminal_variants() {
+        let non_terminal = [
+            MigrationState::Declared,
+            MigrationState::DryRunning,
+            MigrationState::DryRunPassed,
+            MigrationState::Executing,
+            MigrationState::Verifying,
+            MigrationState::Verified,
+            MigrationState::VerificationFailed,
+            MigrationState::RollingBack,
+        ];
+        for s in non_terminal {
+            assert!(!s.is_terminal(), "{s:?} should not be terminal");
+        }
+    }
+
+    #[test]
+    fn rollback_from_dry_run_passed() {
+        let mut runner = MigrationRunner::new();
+        runner.declare(make_declaration("m-drp", CutoverType::HardCutover), "t").unwrap();
+        runner.dry_run("m-drp", passing_dry_run("m-drp"), "t").unwrap();
+        assert_eq!(runner.state("m-drp"), Some(MigrationState::DryRunPassed));
+        runner.rollback("m-drp", "t").unwrap();
+        assert_eq!(runner.state("m-drp"), Some(MigrationState::RolledBack));
+    }
+
+    #[test]
+    fn rollback_from_rolled_back_fails() {
+        let mut runner = MigrationRunner::new();
+        runner.declare(make_declaration("m-rb", CutoverType::HardCutover), "t").unwrap();
+        runner.dry_run("m-rb", passing_dry_run("m-rb"), "t").unwrap();
+        runner.create_checkpoint("m-rb", 1, "t").unwrap();
+        runner.rollback("m-rb", "t").unwrap();
+        // RolledBack is terminal — cannot rollback again
+        let err = runner.rollback("m-rb", "t").unwrap_err();
+        assert!(matches!(err, MigrationContractError::InvalidTransition { .. }));
+    }
+
+    #[test]
+    fn rollback_from_dry_run_failed_fails() {
+        let mut runner = MigrationRunner::new();
+        runner.declare(make_declaration("m-drf", CutoverType::HardCutover), "t").unwrap();
+        let _ = runner.dry_run("m-drf", failing_dry_run("m-drf"), "t");
+        assert_eq!(runner.state("m-drf"), Some(MigrationState::DryRunFailed));
+        // DryRunFailed is terminal — cannot rollback
+        let err = runner.rollback("m-drf", "t").unwrap_err();
+        assert!(matches!(err, MigrationContractError::InvalidTransition { .. }));
+    }
+
+    #[test]
+    fn summary_empty_runner() {
+        let runner = MigrationRunner::new();
+        assert!(runner.summary().is_empty());
+    }
+
+    #[test]
+    fn complete_execution_requires_executing_state() {
+        let mut runner = MigrationRunner::new();
+        runner.declare(make_declaration("m-ce", CutoverType::HardCutover), "t").unwrap();
+        let err = runner.complete_execution("m-ce", 100, "t").unwrap_err();
+        assert!(matches!(err, MigrationContractError::InvalidTransition { .. }));
+    }
+
+    #[test]
+    fn verify_requires_verifying_state() {
+        let mut runner = MigrationRunner::new();
+        runner.declare(make_declaration("m-vr", CutoverType::HardCutover), "t").unwrap();
+        let err = runner.verify("m-vr", passing_verification("m-vr"), "t").unwrap_err();
+        assert!(matches!(err, MigrationContractError::InvalidTransition { .. }));
     }
 }

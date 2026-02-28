@@ -1301,4 +1301,701 @@ mod tests {
         let result = run_scenario(ScenarioKind::DegradedMode, 6, &mut cx);
         assert_eq!(result.extensions_loaded, vec!["ext-d-1", "ext-d-2"]);
     }
+
+    // -----------------------------------------------------------------------
+    // Category 1: Copy semantics
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scenario_kind_startup_copy() {
+        let a = ScenarioKind::Startup;
+        let b = a;
+        assert_eq!(a, b);
+        // Both are independently usable after copy
+        assert_eq!(format!("{a}"), "startup");
+        assert_eq!(format!("{b}"), "startup");
+    }
+
+    #[test]
+    fn scenario_kind_normal_shutdown_copy() {
+        let a = ScenarioKind::NormalShutdown;
+        let b = a;
+        assert_eq!(a, b);
+        assert_eq!(format!("{b}"), "normal_shutdown");
+    }
+
+    #[test]
+    fn scenario_kind_forced_cancel_copy() {
+        let a = ScenarioKind::ForcedCancel;
+        let b = a;
+        assert_eq!(a, b);
+        assert_eq!(format!("{b}"), "forced_cancel");
+    }
+
+    #[test]
+    fn scenario_kind_revocation_copy() {
+        let a = ScenarioKind::Revocation;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn scenario_kind_degraded_mode_copy() {
+        let a = ScenarioKind::DegradedMode;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn scenario_kind_multi_extension_copy() {
+        let a = ScenarioKind::MultiExtension;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 2: Debug distinctness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scenario_kind_debug_all_distinct() {
+        let kinds = [
+            ScenarioKind::Startup,
+            ScenarioKind::NormalShutdown,
+            ScenarioKind::ForcedCancel,
+            ScenarioKind::Quarantine,
+            ScenarioKind::Revocation,
+            ScenarioKind::DegradedMode,
+            ScenarioKind::MultiExtension,
+        ];
+        let debugs: std::collections::BTreeSet<String> =
+            kinds.iter().map(|k| format!("{k:?}")).collect();
+        assert_eq!(debugs.len(), 7, "all Debug strings must be distinct");
+    }
+
+    #[test]
+    fn scenario_kind_debug_nonempty() {
+        let kinds = [
+            ScenarioKind::Startup,
+            ScenarioKind::NormalShutdown,
+            ScenarioKind::ForcedCancel,
+            ScenarioKind::Quarantine,
+            ScenarioKind::Revocation,
+            ScenarioKind::DegradedMode,
+            ScenarioKind::MultiExtension,
+        ];
+        for k in &kinds {
+            assert!(!format!("{k:?}").is_empty());
+        }
+    }
+
+    #[test]
+    fn scenario_assertion_debug_nonempty() {
+        let a = ScenarioAssertion {
+            description: "test".to_string(),
+            passed: true,
+            detail: String::new(),
+        };
+        assert!(!format!("{a:?}").is_empty());
+    }
+
+    #[test]
+    fn scenario_result_debug_nonempty() {
+        let r = ScenarioResult::new(ScenarioKind::Startup, 1);
+        assert!(!format!("{r:?}").is_empty());
+    }
+
+    #[test]
+    fn scenario_suite_result_debug_nonempty() {
+        let mut cx = mock_cx(100_000);
+        let suite = run_all_scenarios(42, &mut cx);
+        assert!(!format!("{suite:?}").is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 3: Serde variant distinctness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scenario_kind_serde_all_variants_distinct() {
+        let kinds = [
+            ScenarioKind::Startup,
+            ScenarioKind::NormalShutdown,
+            ScenarioKind::ForcedCancel,
+            ScenarioKind::Quarantine,
+            ScenarioKind::Revocation,
+            ScenarioKind::DegradedMode,
+            ScenarioKind::MultiExtension,
+        ];
+        let jsons: std::collections::BTreeSet<String> =
+            kinds
+                .iter()
+                .map(|k| serde_json::to_string(k).unwrap())
+                .collect();
+        assert_eq!(jsons.len(), 7, "all serde JSON strings must be distinct");
+    }
+
+    #[test]
+    fn scenario_kind_startup_serde_token() {
+        let json = serde_json::to_string(&ScenarioKind::Startup).unwrap();
+        assert!(json.contains("Startup"), "expected 'Startup' in {json}");
+    }
+
+    #[test]
+    fn scenario_kind_quarantine_serde_token() {
+        let json = serde_json::to_string(&ScenarioKind::Quarantine).unwrap();
+        assert!(json.contains("Quarantine"), "expected 'Quarantine' in {json}");
+    }
+
+    #[test]
+    fn scenario_kind_multi_extension_serde_token() {
+        let json = serde_json::to_string(&ScenarioKind::MultiExtension).unwrap();
+        assert!(json.contains("MultiExtension"), "expected 'MultiExtension' in {json}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 4: Clone independence
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scenario_assertion_clone_is_independent() {
+        let mut a = ScenarioAssertion {
+            description: "original".to_string(),
+            passed: true,
+            detail: String::new(),
+        };
+        let b = a.clone();
+        a.description = "modified".to_string();
+        // b should still have the original description
+        assert_eq!(b.description, "original");
+        assert_ne!(a.description, b.description);
+    }
+
+    #[test]
+    fn scenario_result_clone_is_independent() {
+        let mut result = ScenarioResult::new(ScenarioKind::Startup, 1);
+        result.assert_true("original assertion", true);
+        let mut cloned = result.clone();
+        cloned.assert_true("extra assertion in clone", true);
+        // original should not have the extra assertion
+        assert_eq!(result.assertions.len(), 1);
+        assert_eq!(cloned.assertions.len(), 2);
+    }
+
+    #[test]
+    fn scenario_suite_result_clone_is_independent() {
+        let mut cx = mock_cx(100_000);
+        let suite = run_all_scenarios(42, &mut cx);
+        let mut cloned = suite.clone();
+        cloned.scenarios.push(ScenarioResult::new(ScenarioKind::Startup, 99));
+        assert_eq!(suite.scenarios.len(), 7);
+        assert_eq!(cloned.scenarios.len(), 8);
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 5: JSON field-name stability
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scenario_result_json_field_names_stable() {
+        let r = ScenarioResult::new(ScenarioKind::Startup, 7);
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"kind\""));
+        assert!(json.contains("\"seed\""));
+        assert!(json.contains("\"passed\""));
+        assert!(json.contains("\"assertions\""));
+        assert!(json.contains("\"lifecycle_events\""));
+        assert!(json.contains("\"extensions_loaded\""));
+        assert!(json.contains("\"final_states\""));
+        assert!(json.contains("\"total_events_emitted\""));
+    }
+
+    #[test]
+    fn scenario_assertion_json_field_names_stable() {
+        let a = ScenarioAssertion {
+            description: "check".to_string(),
+            passed: true,
+            detail: String::new(),
+        };
+        let json = serde_json::to_string(&a).unwrap();
+        assert!(json.contains("\"description\""));
+        assert!(json.contains("\"passed\""));
+        assert!(json.contains("\"detail\""));
+    }
+
+    #[test]
+    fn scenario_suite_result_json_field_names_stable() {
+        let mut cx = mock_cx(20_000);
+        let suite = run_all_scenarios(1, &mut cx);
+        let json = serde_json::to_string(&suite).unwrap();
+        assert!(json.contains("\"seed\""));
+        assert!(json.contains("\"scenarios\""));
+        assert!(json.contains("\"verdict\""));
+        assert!(json.contains("\"total_assertions\""));
+        assert!(json.contains("\"passed_assertions\""));
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 6: Display format checks
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn display_startup_is_lowercase_snake() {
+        assert_eq!(ScenarioKind::Startup.to_string(), "startup");
+    }
+
+    #[test]
+    fn display_normal_shutdown_has_underscore() {
+        let s = ScenarioKind::NormalShutdown.to_string();
+        assert!(s.contains('_'), "expected underscore in '{s}'");
+        assert_eq!(s, "normal_shutdown");
+    }
+
+    #[test]
+    fn display_forced_cancel_has_underscore() {
+        let s = ScenarioKind::ForcedCancel.to_string();
+        assert!(s.contains('_'));
+        assert_eq!(s, "forced_cancel");
+    }
+
+    #[test]
+    fn display_degraded_mode_has_underscore() {
+        let s = ScenarioKind::DegradedMode.to_string();
+        assert!(s.contains('_'));
+        assert_eq!(s, "degraded_mode");
+    }
+
+    #[test]
+    fn display_multi_extension_has_underscore() {
+        let s = ScenarioKind::MultiExtension.to_string();
+        assert!(s.contains('_'));
+        assert_eq!(s, "multi_extension");
+    }
+
+    #[test]
+    fn display_none_contain_uppercase() {
+        let kinds = [
+            ScenarioKind::Startup,
+            ScenarioKind::NormalShutdown,
+            ScenarioKind::ForcedCancel,
+            ScenarioKind::Quarantine,
+            ScenarioKind::Revocation,
+            ScenarioKind::DegradedMode,
+            ScenarioKind::MultiExtension,
+        ];
+        for k in &kinds {
+            let s = k.to_string();
+            assert!(
+                s.chars().all(|c| !c.is_uppercase()),
+                "Display for {k:?} contains uppercase: '{s}'"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 7: Hash consistency
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scenario_kind_hash_consistent_across_calls() {
+        use std::hash::{Hash, Hasher};
+        let k = ScenarioKind::Quarantine;
+        let hash1 = {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            k.hash(&mut h);
+            h.finish()
+        };
+        let hash2 = {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            k.hash(&mut h);
+            h.finish()
+        };
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn scenario_kind_equal_values_equal_hashes() {
+        use std::hash::{Hash, Hasher};
+        let k1 = ScenarioKind::DegradedMode;
+        let k2 = ScenarioKind::DegradedMode;
+        let h1 = {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            k1.hash(&mut h);
+            h.finish()
+        };
+        let h2 = {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            k2.hash(&mut h);
+            h.finish()
+        };
+        assert_eq!(h1, h2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 8: Boundary / edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scenario_result_new_seed_zero() {
+        let r = ScenarioResult::new(ScenarioKind::Revocation, 0);
+        assert_eq!(r.seed, 0);
+        assert!(r.passed);
+        assert!(r.assertions.is_empty());
+    }
+
+    #[test]
+    fn scenario_result_new_seed_max() {
+        let r = ScenarioResult::new(ScenarioKind::MultiExtension, u64::MAX);
+        assert_eq!(r.seed, u64::MAX);
+        assert!(r.passed);
+    }
+
+    #[test]
+    fn scenario_result_assert_true_many_times_all_pass() {
+        let mut r = ScenarioResult::new(ScenarioKind::Startup, 1);
+        for i in 0..100 {
+            r.assert_true(&format!("check-{i}"), true);
+        }
+        assert!(r.passed);
+        assert_eq!(r.assertions.len(), 100);
+        assert!(r.assertions.iter().all(|a| a.passed));
+    }
+
+    #[test]
+    fn scenario_result_assert_eq_string_types() {
+        let mut r = ScenarioResult::new(ScenarioKind::Startup, 1);
+        r.assert_eq("string match", "hello".to_string(), "hello".to_string());
+        assert!(r.passed);
+        r.assert_eq("string mismatch", "foo".to_string(), "bar".to_string());
+        assert!(!r.passed);
+    }
+
+    #[test]
+    fn scenario_result_empty_extensions_loaded_initial() {
+        let r = ScenarioResult::new(ScenarioKind::ForcedCancel, 5);
+        assert!(r.extensions_loaded.is_empty());
+    }
+
+    #[test]
+    fn scenario_result_empty_final_states_initial() {
+        let r = ScenarioResult::new(ScenarioKind::DegradedMode, 5);
+        assert!(r.final_states.is_empty());
+    }
+
+    #[test]
+    fn scenario_result_empty_lifecycle_events_initial() {
+        let r = ScenarioResult::new(ScenarioKind::Quarantine, 5);
+        assert!(r.lifecycle_events.is_empty());
+    }
+
+    #[test]
+    fn run_scenario_startup_with_large_seed() {
+        let mut cx = mock_cx(5000);
+        let r = run_scenario(ScenarioKind::Startup, u64::MAX / 2, &mut cx);
+        assert!(r.passed);
+        assert_eq!(r.seed, u64::MAX / 2);
+    }
+
+    #[test]
+    fn run_all_scenarios_with_seed_one() {
+        let mut cx = mock_cx(100_000);
+        let suite = run_all_scenarios(1, &mut cx);
+        assert_eq!(suite.verdict, Verdict::Pass);
+        assert_eq!(suite.seed, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 9: Additional serde roundtrips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scenario_result_all_kinds_roundtrip() {
+        for kind in [
+            ScenarioKind::Startup,
+            ScenarioKind::NormalShutdown,
+            ScenarioKind::ForcedCancel,
+            ScenarioKind::Quarantine,
+            ScenarioKind::Revocation,
+            ScenarioKind::DegradedMode,
+            ScenarioKind::MultiExtension,
+        ] {
+            let r = ScenarioResult::new(kind, 42);
+            let json = serde_json::to_string(&r).unwrap();
+            let back: ScenarioResult = serde_json::from_str(&json).unwrap();
+            assert_eq!(r, back);
+            assert_eq!(back.kind, kind);
+        }
+    }
+
+    #[test]
+    fn scenario_assertion_failed_serde_roundtrip() {
+        let a = ScenarioAssertion {
+            description: "failure case".to_string(),
+            passed: false,
+            detail: "42 != 99".to_string(),
+        };
+        let json = serde_json::to_string(&a).unwrap();
+        let back: ScenarioAssertion = serde_json::from_str(&json).unwrap();
+        assert_eq!(a, back);
+        assert!(!back.passed);
+        assert_eq!(back.detail, "42 != 99");
+    }
+
+    #[test]
+    fn scenario_result_with_assertions_roundtrip() {
+        let mut r = ScenarioResult::new(ScenarioKind::Revocation, 55);
+        r.assert_true("pass", true);
+        r.assert_true("fail", false);
+        let json = serde_json::to_string(&r).unwrap();
+        let back: ScenarioResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+        assert!(!back.passed);
+        assert_eq!(back.assertions.len(), 2);
+    }
+
+    #[test]
+    fn suite_result_with_full_run_roundtrip() {
+        let mut cx = mock_cx(100_000);
+        let suite = run_all_scenarios(77, &mut cx);
+        let json = serde_json::to_string_pretty(&suite).unwrap();
+        let back: ScenarioSuiteResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(suite.seed, back.seed);
+        assert_eq!(suite.total_assertions, back.total_assertions);
+        assert_eq!(suite.passed_assertions, back.passed_assertions);
+        assert_eq!(suite.verdict, back.verdict);
+        assert_eq!(suite.scenarios.len(), back.scenarios.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // Category 10: Debug nonempty and structural
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scenario_kind_debug_contains_variant_name() {
+        assert!(format!("{:?}", ScenarioKind::Startup).contains("Startup"));
+        assert!(format!("{:?}", ScenarioKind::NormalShutdown).contains("NormalShutdown"));
+        assert!(format!("{:?}", ScenarioKind::ForcedCancel).contains("ForcedCancel"));
+        assert!(format!("{:?}", ScenarioKind::Quarantine).contains("Quarantine"));
+        assert!(format!("{:?}", ScenarioKind::Revocation).contains("Revocation"));
+        assert!(format!("{:?}", ScenarioKind::DegradedMode).contains("DegradedMode"));
+        assert!(format!("{:?}", ScenarioKind::MultiExtension).contains("MultiExtension"));
+    }
+
+    #[test]
+    fn scenario_result_debug_contains_kind() {
+        let r = ScenarioResult::new(ScenarioKind::Quarantine, 1);
+        let debug = format!("{r:?}");
+        assert!(debug.contains("Quarantine"));
+    }
+
+    #[test]
+    fn scenario_assertion_debug_contains_description() {
+        let a = ScenarioAssertion {
+            description: "unique_description_xyz".to_string(),
+            passed: true,
+            detail: String::new(),
+        };
+        let debug = format!("{a:?}");
+        assert!(debug.contains("unique_description_xyz"));
+    }
+
+    #[test]
+    fn scenario_suite_debug_contains_scenario_count() {
+        let mut cx = mock_cx(100_000);
+        let suite = run_all_scenarios(42, &mut cx);
+        let debug = format!("{suite:?}");
+        // Debug output should be non-trivial
+        assert!(debug.len() > 50);
+    }
+
+    // -----------------------------------------------------------------------
+    // Additional coverage: scenario invariants and edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn all_scenario_kinds_can_be_used_as_btreemap_keys() {
+        let mut map: std::collections::BTreeMap<ScenarioKind, &str> =
+            std::collections::BTreeMap::new();
+        map.insert(ScenarioKind::Startup, "startup");
+        map.insert(ScenarioKind::NormalShutdown, "normal_shutdown");
+        map.insert(ScenarioKind::ForcedCancel, "forced_cancel");
+        map.insert(ScenarioKind::Quarantine, "quarantine");
+        map.insert(ScenarioKind::Revocation, "revocation");
+        map.insert(ScenarioKind::DegradedMode, "degraded_mode");
+        map.insert(ScenarioKind::MultiExtension, "multi_extension");
+        assert_eq!(map.len(), 7);
+        assert_eq!(map[&ScenarioKind::Startup], "startup");
+        assert_eq!(map[&ScenarioKind::MultiExtension], "multi_extension");
+    }
+
+    #[test]
+    fn suite_seed_stored_correctly() {
+        for seed in [0_u64, 1, 42, 999, u64::MAX] {
+            let mut cx = mock_cx(100_000);
+            let suite = run_all_scenarios(seed, &mut cx);
+            assert_eq!(suite.seed, seed, "suite.seed should match input seed");
+        }
+    }
+
+    #[test]
+    fn each_scenario_result_seed_matches_suite_seed() {
+        let seed = 333_u64;
+        let mut cx = mock_cx(100_000);
+        let suite = run_all_scenarios(seed, &mut cx);
+        for s in &suite.scenarios {
+            assert_eq!(
+                s.seed, seed,
+                "scenario {:?} seed should match suite seed",
+                s.kind
+            );
+        }
+    }
+
+    #[test]
+    fn startup_scenario_has_non_empty_final_states() {
+        let mut cx = mock_cx(5000);
+        let result = run_scenario(ScenarioKind::Startup, 1, &mut cx);
+        // After finalize, final_states should record the extension
+        assert!(!result.final_states.is_empty());
+    }
+
+    #[test]
+    fn normal_shutdown_final_states_all_not_running() {
+        let mut cx = mock_cx(20000);
+        let result = run_scenario(ScenarioKind::NormalShutdown, 2, &mut cx);
+        for (ext_id, running) in &result.final_states {
+            assert!(
+                !running,
+                "extension '{ext_id}' should not be running after normal shutdown"
+            );
+        }
+    }
+
+    #[test]
+    fn forced_cancel_final_states_all_not_running() {
+        let mut cx = mock_cx(10000);
+        let result = run_scenario(ScenarioKind::ForcedCancel, 3, &mut cx);
+        for (ext_id, running) in &result.final_states {
+            assert!(
+                !running,
+                "extension '{ext_id}' should not be running after forced cancel"
+            );
+        }
+    }
+
+    #[test]
+    fn quarantine_final_states_all_not_running() {
+        let mut cx = mock_cx(10000);
+        let result = run_scenario(ScenarioKind::Quarantine, 4, &mut cx);
+        for (ext_id, running) in &result.final_states {
+            assert!(
+                !running,
+                "extension '{ext_id}' should not be running after quarantine"
+            );
+        }
+    }
+
+    #[test]
+    fn revocation_final_states_all_not_running() {
+        let mut cx = mock_cx(10000);
+        let result = run_scenario(ScenarioKind::Revocation, 5, &mut cx);
+        for (ext_id, running) in &result.final_states {
+            assert!(
+                !running,
+                "extension '{ext_id}' should not be running after revocation"
+            );
+        }
+    }
+
+    #[test]
+    fn scenario_result_total_events_matches_lifecycle_events_len() {
+        let mut cx = mock_cx(100_000);
+        let suite = run_all_scenarios(42, &mut cx);
+        for s in &suite.scenarios {
+            assert_eq!(
+                s.total_events_emitted,
+                s.lifecycle_events.len(),
+                "total_events_emitted should equal lifecycle_events.len() for {:?}",
+                s.kind
+            );
+        }
+    }
+
+    #[test]
+    fn startup_scenario_all_assertions_pass() {
+        let mut cx = mock_cx(5000);
+        let result = run_scenario(ScenarioKind::Startup, 1, &mut cx);
+        for a in &result.assertions {
+            assert!(
+                a.passed,
+                "startup assertion '{}' failed: {}",
+                a.description, a.detail
+            );
+        }
+    }
+
+    #[test]
+    fn normal_shutdown_scenario_all_assertions_pass() {
+        let mut cx = mock_cx(20000);
+        let result = run_scenario(ScenarioKind::NormalShutdown, 2, &mut cx);
+        for a in &result.assertions {
+            assert!(
+                a.passed,
+                "normal_shutdown assertion '{}' failed: {}",
+                a.description, a.detail
+            );
+        }
+    }
+
+    #[test]
+    fn forced_cancel_all_assertions_pass() {
+        let mut cx = mock_cx(10000);
+        let result = run_scenario(ScenarioKind::ForcedCancel, 3, &mut cx);
+        for a in &result.assertions {
+            assert!(
+                a.passed,
+                "forced_cancel assertion '{}' failed: {}",
+                a.description, a.detail
+            );
+        }
+    }
+
+    #[test]
+    fn quarantine_all_assertions_pass() {
+        let mut cx = mock_cx(10000);
+        let result = run_scenario(ScenarioKind::Quarantine, 4, &mut cx);
+        for a in &result.assertions {
+            assert!(
+                a.passed,
+                "quarantine assertion '{}' failed: {}",
+                a.description, a.detail
+            );
+        }
+    }
+
+    #[test]
+    fn revocation_all_assertions_pass() {
+        let mut cx = mock_cx(10000);
+        let result = run_scenario(ScenarioKind::Revocation, 5, &mut cx);
+        for a in &result.assertions {
+            assert!(
+                a.passed,
+                "revocation assertion '{}' failed: {}",
+                a.description, a.detail
+            );
+        }
+    }
+
+    #[test]
+    fn multi_extension_all_assertions_pass() {
+        let mut cx = mock_cx(50000);
+        let result = run_scenario(ScenarioKind::MultiExtension, 7, &mut cx);
+        for a in &result.assertions {
+            assert!(
+                a.passed,
+                "multi_extension assertion '{}' failed: {}",
+                a.description, a.detail
+            );
+        }
+    }
 }

@@ -1697,4 +1697,920 @@ mod tests {
         let back: MilestoneQualitySummary = serde_json::from_str(&json).unwrap();
         assert_eq!(summary, back);
     }
+
+    // ── Enrichment batch 2 ──────────────────────────────────────────
+
+    // Category 1: Copy semantics
+
+    #[test]
+    fn evidence_source_copy_semantics() {
+        let a = EvidenceSource::UnitDepthGate;
+        let b = a;
+        assert_eq!(a, b);
+        assert_eq!(a.as_str(), b.as_str());
+    }
+
+    #[test]
+    fn signature_status_copy_semantics() {
+        let a = SignatureStatus::Signed;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn evidence_source_copy_all_variants_survive() {
+        for variant in EvidenceSource::REQUIRED {
+            let copied = variant;
+            assert_eq!(variant, copied);
+        }
+    }
+
+    #[test]
+    fn signature_status_copy_all_variants_survive() {
+        for status in [
+            SignatureStatus::Signed,
+            SignatureStatus::Unsigned,
+            SignatureStatus::Invalid,
+        ] {
+            let copied = status;
+            assert_eq!(status, copied);
+        }
+    }
+
+    // Category 2: Debug distinctness
+
+    #[test]
+    fn evidence_source_debug_all_variants_distinct() {
+        let dbg: BTreeSet<String> = EvidenceSource::REQUIRED
+            .iter()
+            .map(|v| format!("{v:?}"))
+            .collect();
+        assert_eq!(dbg.len(), 5);
+    }
+
+    #[test]
+    fn signature_status_debug_all_variants_distinct() {
+        let dbg: BTreeSet<String> = [
+            SignatureStatus::Signed,
+            SignatureStatus::Unsigned,
+            SignatureStatus::Invalid,
+        ]
+        .iter()
+        .map(|v| format!("{v:?}"))
+        .collect();
+        assert_eq!(dbg.len(), 3);
+    }
+
+    // Category 3: Serde variant distinctness
+
+    #[test]
+    fn evidence_source_serde_variants_distinct() {
+        let json_set: BTreeSet<String> = EvidenceSource::REQUIRED
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(json_set.len(), 5);
+    }
+
+    #[test]
+    fn signature_status_serde_variants_distinct() {
+        let json_set: BTreeSet<String> = [
+            SignatureStatus::Signed,
+            SignatureStatus::Unsigned,
+            SignatureStatus::Invalid,
+        ]
+        .iter()
+        .map(|v| serde_json::to_string(v).unwrap())
+        .collect();
+        assert_eq!(json_set.len(), 3);
+    }
+
+    #[test]
+    fn evidence_source_serde_snake_case_convention() {
+        let json = serde_json::to_string(&EvidenceSource::UnitDepthGate).unwrap();
+        assert_eq!(json, "\"unit_depth_gate\"");
+
+        let json = serde_json::to_string(&EvidenceSource::EndToEndScenarioMatrix).unwrap();
+        assert_eq!(json, "\"end_to_end_scenario_matrix\"");
+
+        let json = serde_json::to_string(&EvidenceSource::ProofCarryingArtifactGate).unwrap();
+        assert_eq!(json, "\"proof_carrying_artifact_gate\"");
+    }
+
+    #[test]
+    fn signature_status_serde_snake_case_convention() {
+        let json = serde_json::to_string(&SignatureStatus::Signed).unwrap();
+        assert_eq!(json, "\"signed\"");
+
+        let json = serde_json::to_string(&SignatureStatus::Unsigned).unwrap();
+        assert_eq!(json, "\"unsigned\"");
+
+        let json = serde_json::to_string(&SignatureStatus::Invalid).unwrap();
+        assert_eq!(json, "\"invalid\"");
+    }
+
+    // Category 4: Clone independence
+
+    #[test]
+    fn evidence_artifact_link_clone_independence() {
+        let original = signed_artifact("test", 50_000);
+        let mut cloned = original.clone();
+        cloned.artifact_id = "mutated-id".to_string();
+        cloned.sha256 = "mutated-sha".to_string();
+        assert_eq!(original.artifact_id, "test-artifact");
+        assert_ne!(original.artifact_id, cloned.artifact_id);
+    }
+
+    #[test]
+    fn evidence_signal_clone_independence() {
+        let original = baseline_signal(EvidenceSource::UnitDepthGate, 980_000, 50_000);
+        let mut cloned = original.clone();
+        cloned.score_millionths = 100_000;
+        cloned.evidence_refs.push("extra-ref".to_string());
+        assert_eq!(original.score_millionths, 980_000);
+        assert_eq!(original.evidence_refs.len(), 1);
+    }
+
+    #[test]
+    fn integrator_policy_clone_independence() {
+        let original = IntegratorPolicy::default();
+        let mut cloned = original.clone();
+        cloned.max_signal_age_ns = 999;
+        cloned.min_schema_major = 99;
+        cloned
+            .minimum_cut_line_scores_millionths
+            .insert("C99".to_string(), 999_999);
+        assert_eq!(original.max_signal_age_ns, 3_600_000_000_000);
+        assert_eq!(original.min_schema_major, 1);
+        assert!(!original
+            .minimum_cut_line_scores_millionths
+            .contains_key("C99"));
+    }
+
+    #[test]
+    fn integration_finding_clone_independence() {
+        let original = IntegrationFinding {
+            source: Some(EvidenceSource::UnitDepthGate),
+            error_code: "ERR-001".to_string(),
+            message: "original".to_string(),
+        };
+        let mut cloned = original.clone();
+        cloned.message = "mutated".to_string();
+        cloned.source = None;
+        assert_eq!(original.message, "original");
+        assert_eq!(original.source, Some(EvidenceSource::UnitDepthGate));
+    }
+
+    #[test]
+    fn signed_evidence_link_clone_independence() {
+        let original = SignedEvidenceLink {
+            evidence_source: EvidenceSource::UnitDepthGate,
+            gate_category: "compiler_correctness".to_string(),
+            artifact_id: "art-001".to_string(),
+            artifact_sha256: "abc123".to_string(),
+            signer: "admin@test".to_string(),
+            signature_ref: "sig:001".to_string(),
+        };
+        let mut cloned = original.clone();
+        cloned.signer = "hacker@evil".to_string();
+        assert_eq!(original.signer, "admin@test");
+    }
+
+    #[test]
+    fn milestone_quality_summary_clone_independence() {
+        let original = MilestoneQualitySummary {
+            cut_line: CutLine::C3,
+            aggregate_score_millionths: 950_000,
+            unit_depth_score_millionths: 980_000,
+            e2e_stability_score_millionths: 970_000,
+            logging_integrity_score_millionths: 960_000,
+            flake_resilience_score_millionths: 940_000,
+            artifact_integrity_score_millionths: 930_000,
+            delta_from_previous_millionths: BTreeMap::new(),
+        };
+        let mut cloned = original.clone();
+        cloned.aggregate_score_millionths = 0;
+        cloned
+            .delta_from_previous_millionths
+            .insert("test".to_string(), 42);
+        assert_eq!(original.aggregate_score_millionths, 950_000);
+        assert!(original.delta_from_previous_millionths.is_empty());
+    }
+
+    // Category 5: JSON field-name stability
+
+    #[test]
+    fn evidence_artifact_link_json_field_names() {
+        let link = signed_artifact("test", 50_000);
+        let json = serde_json::to_string(&link).unwrap();
+        assert!(json.contains("\"artifact_id\""));
+        assert!(json.contains("\"path\""));
+        assert!(json.contains("\"sha256\""));
+        assert!(json.contains("\"signature_status\""));
+        assert!(json.contains("\"signer\""));
+        assert!(json.contains("\"signature_ref\""));
+        assert!(json.contains("\"generated_at_ns\""));
+        assert!(json.contains("\"schema_major\""));
+    }
+
+    #[test]
+    fn evidence_signal_json_field_names() {
+        let signal = baseline_signal(EvidenceSource::UnitDepthGate, 980_000, 50_000);
+        let json = serde_json::to_string(&signal).unwrap();
+        assert!(json.contains("\"source\""));
+        assert!(json.contains("\"passed\""));
+        assert!(json.contains("\"score_millionths\""));
+        assert!(json.contains("\"collected_at_ns\""));
+        assert!(json.contains("\"schema_major\""));
+        assert!(json.contains("\"evidence_refs\""));
+        assert!(json.contains("\"artifact_links\""));
+        assert!(json.contains("\"metadata\""));
+    }
+
+    #[test]
+    fn integrator_policy_json_field_names() {
+        let policy = IntegratorPolicy::default();
+        let json = serde_json::to_string(&policy).unwrap();
+        assert!(json.contains("\"max_signal_age_ns\""));
+        assert!(json.contains("\"min_schema_major\""));
+        assert!(json.contains("\"require_signed_artifacts\""));
+        assert!(json.contains("\"max_flake_burden_millionths\""));
+        assert!(json.contains("\"minimum_cut_line_scores_millionths\""));
+    }
+
+    #[test]
+    fn integration_finding_json_field_names() {
+        let f = finding(Some(EvidenceSource::UnitDepthGate), "test");
+        let json = serde_json::to_string(&f).unwrap();
+        assert!(json.contains("\"source\""));
+        assert!(json.contains("\"error_code\""));
+        assert!(json.contains("\"message\""));
+    }
+
+    #[test]
+    fn signed_evidence_link_json_field_names() {
+        let link = SignedEvidenceLink {
+            evidence_source: EvidenceSource::UnitDepthGate,
+            gate_category: "compiler_correctness".to_string(),
+            artifact_id: "art-001".to_string(),
+            artifact_sha256: "abc123".to_string(),
+            signer: "admin@test".to_string(),
+            signature_ref: "sig:001".to_string(),
+        };
+        let json = serde_json::to_string(&link).unwrap();
+        assert!(json.contains("\"evidence_source\""));
+        assert!(json.contains("\"gate_category\""));
+        assert!(json.contains("\"artifact_id\""));
+        assert!(json.contains("\"artifact_sha256\""));
+        assert!(json.contains("\"signer\""));
+        assert!(json.contains("\"signature_ref\""));
+    }
+
+    #[test]
+    fn milestone_quality_summary_json_field_names() {
+        let summary = MilestoneQualitySummary {
+            cut_line: CutLine::C0,
+            aggregate_score_millionths: 0,
+            unit_depth_score_millionths: 0,
+            e2e_stability_score_millionths: 0,
+            logging_integrity_score_millionths: 0,
+            flake_resilience_score_millionths: 0,
+            artifact_integrity_score_millionths: 0,
+            delta_from_previous_millionths: BTreeMap::new(),
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"cut_line\""));
+        assert!(json.contains("\"aggregate_score_millionths\""));
+        assert!(json.contains("\"unit_depth_score_millionths\""));
+        assert!(json.contains("\"e2e_stability_score_millionths\""));
+        assert!(json.contains("\"logging_integrity_score_millionths\""));
+        assert!(json.contains("\"flake_resilience_score_millionths\""));
+        assert!(json.contains("\"artifact_integrity_score_millionths\""));
+        assert!(json.contains("\"delta_from_previous_millionths\""));
+    }
+
+    #[test]
+    fn decision_json_field_names() {
+        let input = baseline_input(50_000);
+        let decision =
+            integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+        let json = serde_json::to_string(&decision).unwrap();
+        assert!(json.contains("\"schema_version\""));
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"cut_line\""));
+        assert!(json.contains("\"release_tag\""));
+        assert!(json.contains("\"evaluated_at_ns\""));
+        assert!(json.contains("\"outcome\""));
+        assert!(json.contains("\"queue_risk_millionths\""));
+        assert!(json.contains("\"blockers\""));
+        assert!(json.contains("\"signed_evidence_links\""));
+        assert!(json.contains("\"quality_summary\""));
+    }
+
+    #[test]
+    fn event_json_field_names() {
+        let input = baseline_input(50_000);
+        let decision =
+            integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+        let events = emit_integration_events(&decision);
+        let json = serde_json::to_string(&events[0]).unwrap();
+        assert!(json.contains("\"schema_version\""));
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"event\""));
+        assert!(json.contains("\"outcome\""));
+        assert!(json.contains("\"cut_line\""));
+        assert!(json.contains("\"release_tag\""));
+        assert!(json.contains("\"blocker_count\""));
+        assert!(json.contains("\"aggregate_score_millionths\""));
+        assert!(json.contains("\"queue_risk_millionths\""));
+    }
+
+    // Category 7: Hash consistency
+
+    #[test]
+    fn evidence_source_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        for variant in EvidenceSource::REQUIRED {
+            let mut h1 = std::collections::hash_map::DefaultHasher::new();
+            let mut h2 = std::collections::hash_map::DefaultHasher::new();
+            variant.hash(&mut h1);
+            variant.hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish());
+        }
+    }
+
+    #[test]
+    fn evidence_source_hash_distinct_variants() {
+        use std::hash::{Hash, Hasher};
+        let hashes: BTreeSet<u64> = EvidenceSource::REQUIRED
+            .iter()
+            .map(|v| {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                v.hash(&mut h);
+                h.finish()
+            })
+            .collect();
+        assert_eq!(hashes.len(), 5);
+    }
+
+    // Category 8: Boundary/edge cases
+
+    #[test]
+    fn evidence_artifact_link_with_max_u64_timestamps() {
+        let link = EvidenceArtifactLink {
+            artifact_id: "max-ts".to_string(),
+            path: "artifacts/max/manifest.json".to_string(),
+            sha256: "abcdef1234567890".to_string(),
+            signature_status: SignatureStatus::Signed,
+            signer: Some("admin@test".to_string()),
+            signature_ref: Some("sig:max".to_string()),
+            generated_at_ns: u64::MAX,
+            schema_major: u32::MAX,
+        };
+        let json = serde_json::to_string(&link).unwrap();
+        let back: EvidenceArtifactLink = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.generated_at_ns, u64::MAX);
+        assert_eq!(back.schema_major, u32::MAX);
+    }
+
+    #[test]
+    fn evidence_signal_with_zero_score() {
+        let now_ns = 50_000u64;
+        let signal = baseline_signal(EvidenceSource::UnitDepthGate, 0, now_ns);
+        let policy = IntegratorPolicy::default();
+        let findings = validate_signal(&signal, now_ns, &policy);
+        // Score 0 is in range [0, MILLION] so no score range violation
+        assert!(
+            !findings.iter().any(|f| f.message.contains("out of range")),
+            "score 0 should be in range"
+        );
+    }
+
+    #[test]
+    fn evidence_signal_with_max_score() {
+        let now_ns = 50_000u64;
+        let signal = baseline_signal(EvidenceSource::UnitDepthGate, 1_000_000, now_ns);
+        let policy = IntegratorPolicy::default();
+        let findings = validate_signal(&signal, now_ns, &policy);
+        assert!(
+            !findings.iter().any(|f| f.message.contains("out of range")),
+            "score 1_000_000 should be in range"
+        );
+    }
+
+    #[test]
+    fn evidence_artifact_link_with_none_signer_and_signature_ref() {
+        let link = EvidenceArtifactLink {
+            artifact_id: "unsigned-art".to_string(),
+            path: "artifacts/unsigned/manifest.json".to_string(),
+            sha256: "abcdef".to_string(),
+            signature_status: SignatureStatus::Unsigned,
+            signer: None,
+            signature_ref: None,
+            generated_at_ns: 100,
+            schema_major: 1,
+        };
+        let json = serde_json::to_string(&link).unwrap();
+        let back: EvidenceArtifactLink = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.signer, None);
+        assert_eq!(back.signature_ref, None);
+    }
+
+    #[test]
+    fn evidence_signal_with_empty_metadata() {
+        let signal = EvidenceSignal {
+            source: EvidenceSource::UnitDepthGate,
+            passed: true,
+            score_millionths: 980_000,
+            collected_at_ns: 49_900,
+            schema_major: 1,
+            evidence_refs: vec!["ref1".to_string()],
+            artifact_links: vec![signed_artifact("test", 50_000)],
+            metadata: BTreeMap::new(),
+        };
+        let json = serde_json::to_string(&signal).unwrap();
+        let back: EvidenceSignal = serde_json::from_str(&json).unwrap();
+        assert!(back.metadata.is_empty());
+    }
+
+    #[test]
+    fn integration_finding_with_none_source() {
+        let f = IntegrationFinding {
+            source: None,
+            error_code: "ERR".to_string(),
+            message: "global".to_string(),
+        };
+        let json = serde_json::to_string(&f).unwrap();
+        let back: IntegrationFinding = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.source, None);
+    }
+
+    #[test]
+    fn integrate_with_all_zero_scores() {
+        let now_ns = 50_000u64;
+        let mut input = baseline_input(now_ns);
+        for signal in &mut input.signals {
+            signal.score_millionths = 0;
+        }
+        let decision =
+            integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+        assert_eq!(decision.quality_summary.aggregate_score_millionths, 0);
+        assert_eq!(decision.queue_risk_millionths, 1_000_000);
+        assert!(!decision.allows_promotion());
+    }
+
+    #[test]
+    fn integrate_with_all_max_scores() {
+        let now_ns = 50_000u64;
+        let mut input = baseline_input(now_ns);
+        for signal in &mut input.signals {
+            signal.score_millionths = 1_000_000;
+        }
+        let decision =
+            integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+        assert_eq!(
+            decision.quality_summary.aggregate_score_millionths,
+            1_000_000
+        );
+        assert_eq!(decision.queue_risk_millionths, 0);
+    }
+
+    #[test]
+    fn integrate_now_ns_zero() {
+        // When now_ns is 0, all signals with collected_at > 0 are "in the future"
+        let mut input = baseline_input(0);
+        // Adjust signals to have collected_at_ns = 0
+        for signal in &mut input.signals {
+            signal.collected_at_ns = 0;
+            signal.artifact_links[0].generated_at_ns = 0;
+        }
+        let decision =
+            integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+        // Should not have future-timestamp blockers
+        assert!(
+            !decision
+                .blockers
+                .iter()
+                .any(|f| f.message.contains("in the future"))
+        );
+    }
+
+    #[test]
+    fn validate_signal_artifact_empty_path() {
+        let now_ns = 50_000u64;
+        let policy = IntegratorPolicy::default();
+        let mut signal = baseline_signal(EvidenceSource::UnitDepthGate, 980_000, now_ns);
+        signal.artifact_links[0].path = "   ".to_string();
+        let findings = validate_signal(&signal, now_ns, &policy);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.message.contains("missing path"))
+        );
+    }
+
+    #[test]
+    fn validate_signal_signer_whitespace_only() {
+        let now_ns = 50_000u64;
+        let policy = IntegratorPolicy::default();
+        let mut signal = baseline_signal(EvidenceSource::UnitDepthGate, 980_000, now_ns);
+        signal.artifact_links[0].signer = Some("   ".to_string());
+        let findings = validate_signal(&signal, now_ns, &policy);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.message.contains("missing signer"))
+        );
+    }
+
+    #[test]
+    fn validate_signal_signature_ref_whitespace_only() {
+        let now_ns = 50_000u64;
+        let policy = IntegratorPolicy::default();
+        let mut signal = baseline_signal(EvidenceSource::UnitDepthGate, 980_000, now_ns);
+        signal.artifact_links[0].signature_ref = Some("  ".to_string());
+        let findings = validate_signal(&signal, now_ns, &policy);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.message.contains("missing signature_ref"))
+        );
+    }
+
+    #[test]
+    fn validate_signal_artifact_schema_below_minimum() {
+        let now_ns = 50_000u64;
+        let policy = IntegratorPolicy {
+            min_schema_major: 3,
+            ..Default::default()
+        };
+        let mut signal = baseline_signal(EvidenceSource::UnitDepthGate, 980_000, now_ns);
+        signal.schema_major = 3; // signal is ok
+        signal.artifact_links[0].schema_major = 2; // artifact is below
+        let findings = validate_signal(&signal, now_ns, &policy);
+        assert!(findings
+            .iter()
+            .any(|f| f.message.contains("artifact") && f.message.contains("below minimum")));
+    }
+
+    // Category 9: Serde roundtrips — complex struct roundtrips
+
+    #[test]
+    fn evidence_artifact_link_serde_roundtrip() {
+        let link = signed_artifact("roundtrip-test", 50_000);
+        let json = serde_json::to_string(&link).unwrap();
+        let back: EvidenceArtifactLink = serde_json::from_str(&json).unwrap();
+        assert_eq!(link, back);
+    }
+
+    #[test]
+    fn evidence_signal_serde_roundtrip() {
+        let signal = baseline_signal(EvidenceSource::TestLoggingSchema, 970_000, 50_000);
+        let json = serde_json::to_string(&signal).unwrap();
+        let back: EvidenceSignal = serde_json::from_str(&json).unwrap();
+        assert_eq!(signal, back);
+    }
+
+    #[test]
+    fn integrator_policy_serde_roundtrip() {
+        let policy = IntegratorPolicy::default();
+        let json = serde_json::to_string(&policy).unwrap();
+        let back: IntegratorPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, back);
+    }
+
+    #[test]
+    fn signed_evidence_link_serde_roundtrip() {
+        let link = SignedEvidenceLink {
+            evidence_source: EvidenceSource::FlakeQuarantineWorkflow,
+            gate_category: "flake_burden".to_string(),
+            artifact_id: "flake-art-001".to_string(),
+            artifact_sha256: "sha256hex".to_string(),
+            signer: "ci-system@example.com".to_string(),
+            signature_ref: "sig:flake:001".to_string(),
+        };
+        let json = serde_json::to_string(&link).unwrap();
+        let back: SignedEvidenceLink = serde_json::from_str(&json).unwrap();
+        assert_eq!(link, back);
+    }
+
+    #[test]
+    fn test_evidence_integration_decision_serde_roundtrip() {
+        let input = baseline_input(50_000);
+        let decision =
+            integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+        let json = serde_json::to_string(&decision).unwrap();
+        let back: TestEvidenceIntegrationDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(decision, back);
+    }
+
+    #[test]
+    fn test_evidence_integrator_event_serde_roundtrip() {
+        let input = baseline_input(50_000);
+        let decision =
+            integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+        let events = emit_integration_events(&decision);
+        let json = serde_json::to_string(&events[0]).unwrap();
+        let back: TestEvidenceIntegratorEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(events[0], back);
+    }
+
+    #[test]
+    fn test_evidence_integrator_input_serde_roundtrip() {
+        let input = baseline_input(50_000);
+        let json = serde_json::to_string(&input).unwrap();
+        let back: TestEvidenceIntegratorInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+    }
+
+    #[test]
+    fn test_evidence_integrator_input_with_previous_serde_roundtrip() {
+        let mut input = baseline_input(50_000);
+        let mut deltas = BTreeMap::new();
+        deltas.insert("aggregate".to_string(), 50_000);
+        input.previous_summary = Some(MilestoneQualitySummary {
+            cut_line: CutLine::C2,
+            aggregate_score_millionths: 920_000,
+            unit_depth_score_millionths: 950_000,
+            e2e_stability_score_millionths: 940_000,
+            logging_integrity_score_millionths: 900_000,
+            flake_resilience_score_millionths: 880_000,
+            artifact_integrity_score_millionths: 870_000,
+            delta_from_previous_millionths: deltas,
+        });
+        let json = serde_json::to_string(&input).unwrap();
+        let back: TestEvidenceIntegratorInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+    }
+
+    // Category 10: Debug nonempty
+
+    #[test]
+    fn evidence_source_debug_nonempty() {
+        for variant in EvidenceSource::REQUIRED {
+            let dbg = format!("{variant:?}");
+            assert!(!dbg.is_empty(), "Debug output must be non-empty");
+        }
+    }
+
+    #[test]
+    fn signature_status_debug_nonempty() {
+        for status in [
+            SignatureStatus::Signed,
+            SignatureStatus::Unsigned,
+            SignatureStatus::Invalid,
+        ] {
+            let dbg = format!("{status:?}");
+            assert!(!dbg.is_empty());
+        }
+    }
+
+    #[test]
+    fn evidence_artifact_link_debug_nonempty() {
+        let link = signed_artifact("dbg", 50_000);
+        let dbg = format!("{link:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("EvidenceArtifactLink"));
+    }
+
+    #[test]
+    fn evidence_signal_debug_nonempty() {
+        let signal = baseline_signal(EvidenceSource::UnitDepthGate, 980_000, 50_000);
+        let dbg = format!("{signal:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("EvidenceSignal"));
+    }
+
+    #[test]
+    fn integrator_policy_debug_nonempty() {
+        let policy = IntegratorPolicy::default();
+        let dbg = format!("{policy:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("IntegratorPolicy"));
+    }
+
+    #[test]
+    fn integration_finding_debug_nonempty() {
+        let f = finding(Some(EvidenceSource::UnitDepthGate), "test");
+        let dbg = format!("{f:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("IntegrationFinding"));
+    }
+
+    #[test]
+    fn signed_evidence_link_debug_nonempty() {
+        let link = SignedEvidenceLink {
+            evidence_source: EvidenceSource::UnitDepthGate,
+            gate_category: "compiler_correctness".to_string(),
+            artifact_id: "art-001".to_string(),
+            artifact_sha256: "abc123".to_string(),
+            signer: "admin@test".to_string(),
+            signature_ref: "sig:001".to_string(),
+        };
+        let dbg = format!("{link:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("SignedEvidenceLink"));
+    }
+
+    #[test]
+    fn milestone_quality_summary_debug_nonempty() {
+        let summary = MilestoneQualitySummary {
+            cut_line: CutLine::C0,
+            aggregate_score_millionths: 0,
+            unit_depth_score_millionths: 0,
+            e2e_stability_score_millionths: 0,
+            logging_integrity_score_millionths: 0,
+            flake_resilience_score_millionths: 0,
+            artifact_integrity_score_millionths: 0,
+            delta_from_previous_millionths: BTreeMap::new(),
+        };
+        let dbg = format!("{summary:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("MilestoneQualitySummary"));
+    }
+
+    #[test]
+    fn decision_debug_nonempty() {
+        let input = baseline_input(50_000);
+        let decision =
+            integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+        let dbg = format!("{decision:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("TestEvidenceIntegrationDecision"));
+    }
+
+    #[test]
+    fn event_debug_nonempty() {
+        let input = baseline_input(50_000);
+        let decision =
+            integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+        let events = emit_integration_events(&decision);
+        let dbg = format!("{:?}", events[0]);
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("TestEvidenceIntegratorEvent"));
+    }
+
+    // Additional functional edge cases
+
+    #[test]
+    fn integrate_each_cut_line_threshold() {
+        let now_ns = 50_000u64;
+        let policy = IntegratorPolicy::default();
+        for cut in [
+            CutLine::C0,
+            CutLine::C1,
+            CutLine::C2,
+            CutLine::C3,
+            CutLine::C4,
+            CutLine::C5,
+        ] {
+            let mut input = baseline_input(now_ns);
+            input.cut_line = cut;
+            let decision = integrate_milestone_release_test_evidence(&input, &policy);
+            // All signals at 980_000 → aggregate = 980_000, above all thresholds
+            assert!(
+                decision.allows_promotion(),
+                "should allow promotion for {cut:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn integrate_c0_threshold_boundary_exactly_at() {
+        let now_ns = 50_000u64;
+        let policy = IntegratorPolicy::default();
+        let mut input = baseline_input(now_ns);
+        input.cut_line = CutLine::C0;
+        // C0 threshold is 900_000. Set all scores to 900_000 → aggregate = 900_000 exactly
+        for signal in &mut input.signals {
+            signal.score_millionths = 900_000;
+        }
+        let decision = integrate_milestone_release_test_evidence(&input, &policy);
+        // 900_000 is NOT below 900_000 so should allow
+        assert!(
+            decision.allows_promotion(),
+            "aggregate exactly at threshold should allow"
+        );
+    }
+
+    #[test]
+    fn integrate_c0_threshold_boundary_one_below() {
+        let now_ns = 50_000u64;
+        let policy = IntegratorPolicy::default();
+        let mut input = baseline_input(now_ns);
+        input.cut_line = CutLine::C0;
+        // C0 threshold is 900_000. Set all scores to 899_999 → aggregate = 899_999
+        for signal in &mut input.signals {
+            signal.score_millionths = 899_999;
+        }
+        let decision = integrate_milestone_release_test_evidence(&input, &policy);
+        assert!(
+            !decision.allows_promotion(),
+            "aggregate one below threshold should deny"
+        );
+    }
+
+    #[test]
+    fn signal_evidence_hash_changes_with_source() {
+        let now_ns = 80_000u64;
+        let signal_a = baseline_signal(EvidenceSource::UnitDepthGate, 980_000, now_ns);
+        let signal_b = baseline_signal(EvidenceSource::TestLoggingSchema, 980_000, now_ns);
+        assert_ne!(
+            signal_evidence_hash(&signal_a),
+            signal_evidence_hash(&signal_b)
+        );
+    }
+
+    #[test]
+    fn gate_inputs_count_matches_category_expansion() {
+        let input = baseline_input(50_000);
+        let decision =
+            integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+        let gate_inputs = to_cut_line_gate_inputs(&decision, &input.signals);
+        // UnitDepth=1, E2E=2, Logging=1, Flake=1, Proof=2 → total 7
+        assert_eq!(gate_inputs.len(), 7);
+    }
+
+    #[test]
+    fn flake_burden_below_max_does_not_produce_finding() {
+        let now_ns = 50_000u64;
+        let policy = IntegratorPolicy::default();
+        let mut signal = baseline_signal(EvidenceSource::FlakeQuarantineWorkflow, 980_000, now_ns);
+        signal.metadata.insert(
+            "flake_burden_millionths".to_string(),
+            policy.max_flake_burden_millionths.to_string(),
+        );
+        let findings = validate_signal(&signal, now_ns, &policy);
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.message.contains("flake burden")),
+            "flake burden at max should not produce finding"
+        );
+    }
+
+    #[test]
+    fn checklist_fail_status_when_signal_not_passed() {
+        let now_ns = 50_000u64;
+        let mut input = baseline_input(now_ns);
+        // Mark UnitDepthGate as not passed
+        input
+            .signals
+            .iter_mut()
+            .find(|s| s.source == EvidenceSource::UnitDepthGate)
+            .unwrap()
+            .passed = false;
+        let decision =
+            integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+        let mut checklist = ReleaseChecklist {
+            schema_version: "v1".to_string(),
+            release_tag: "v0.9.0-rc1".to_string(),
+            generated_at_utc: "2026-02-27T00:00:00Z".to_string(),
+            trace_id: "trace".to_string(),
+            decision_id: "decision".to_string(),
+            policy_id: "policy".to_string(),
+            items: Vec::new(),
+        };
+        apply_to_release_checklist(&mut checklist, &decision, &input.signals);
+        let item = checklist
+            .items
+            .iter()
+            .find(|i| i.item_id == "security.conformance_suite")
+            .unwrap();
+        assert_eq!(item.status, ChecklistItemStatus::Fail);
+    }
+
+    #[test]
+    fn integrate_deny_decision_has_error_code() {
+        let now_ns = 50_000u64;
+        let mut input = baseline_input(now_ns);
+        // Remove a required signal to force deny
+        input
+            .signals
+            .retain(|s| s.source != EvidenceSource::ProofCarryingArtifactGate);
+        let decision =
+            integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+        assert!(!decision.allows_promotion());
+        assert_eq!(
+            decision.error_code,
+            Some(TEST_EVIDENCE_INTEGRATOR_FAILURE_CODE.to_string())
+        );
+        assert_eq!(decision.outcome, "deny");
+    }
+
+    #[test]
+    fn integrate_allow_decision_has_no_error_code() {
+        let input = baseline_input(50_000);
+        let decision =
+            integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+        assert!(decision.allows_promotion());
+        assert_eq!(decision.error_code, None);
+        assert_eq!(decision.outcome, "allow");
+    }
 }

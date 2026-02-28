@@ -1349,4 +1349,708 @@ mod tests {
     fn category_display_direct_time() {
         assert_eq!(ForbiddenCallCategory::DirectTime.to_string(), "direct_time");
     }
+
+    // -----------------------------------------------------------------------
+    // New enrichment: Copy semantics
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn forbidden_call_category_copy_semantics() {
+        let original = ForbiddenCallCategory::Network;
+        let copied = original;
+        // Both should be usable independently after copy
+        assert_eq!(original, ForbiddenCallCategory::Network);
+        assert_eq!(copied, ForbiddenCallCategory::Network);
+    }
+
+    #[test]
+    fn category_copy_all_variants() {
+        // Copy types can be assigned without moving; both bindings remain valid.
+        fn use_copy(cat: ForbiddenCallCategory) -> String {
+            cat.to_string()
+        }
+        let variants = [
+            ForbiddenCallCategory::FileSystem,
+            ForbiddenCallCategory::Network,
+            ForbiddenCallCategory::Process,
+            ForbiddenCallCategory::GlobalMutableState,
+            ForbiddenCallCategory::Environment,
+            ForbiddenCallCategory::RawPointerExternalState,
+            ForbiddenCallCategory::DirectTime,
+        ];
+        for v in variants {
+            // Passing v to a function copies it, but v is still usable after.
+            let s = use_copy(v);
+            assert!(!s.is_empty());
+            // v is still valid (Copy semantics)
+            assert_eq!(v, v);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // New enrichment: Debug distinctness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn category_debug_all_variants_distinct() {
+        let variants = [
+            ForbiddenCallCategory::FileSystem,
+            ForbiddenCallCategory::Network,
+            ForbiddenCallCategory::Process,
+            ForbiddenCallCategory::GlobalMutableState,
+            ForbiddenCallCategory::Environment,
+            ForbiddenCallCategory::RawPointerExternalState,
+            ForbiddenCallCategory::DirectTime,
+        ];
+        let mut set = BTreeSet::new();
+        for v in &variants {
+            set.insert(format!("{v:?}"));
+        }
+        assert_eq!(set.len(), 7, "all 7 category Debug outputs must be distinct");
+    }
+
+    #[test]
+    fn category_debug_nonempty() {
+        for v in [
+            ForbiddenCallCategory::FileSystem,
+            ForbiddenCallCategory::Network,
+            ForbiddenCallCategory::Process,
+            ForbiddenCallCategory::GlobalMutableState,
+            ForbiddenCallCategory::Environment,
+            ForbiddenCallCategory::RawPointerExternalState,
+            ForbiddenCallCategory::DirectTime,
+        ] {
+            assert!(!format!("{v:?}").is_empty());
+        }
+    }
+
+    #[test]
+    fn forbidden_pattern_debug_nonempty() {
+        let p = ForbiddenPattern {
+            pattern_id: "p1".to_string(),
+            category: ForbiddenCallCategory::FileSystem,
+            pattern: "std::fs::".to_string(),
+            reason: "bad".to_string(),
+            suggested_alternative: "use cap".to_string(),
+        };
+        assert!(!format!("{p:?}").is_empty());
+    }
+
+    #[test]
+    fn exemption_debug_nonempty() {
+        let ex = Exemption {
+            exemption_id: "e1".to_string(),
+            module_path: "m".to_string(),
+            pattern_id: "p".to_string(),
+            reason: "ok".to_string(),
+            witness: "w".to_string(),
+            line: 0,
+        };
+        assert!(!format!("{ex:?}").is_empty());
+    }
+
+    #[test]
+    fn audit_finding_debug_nonempty() {
+        let f = AuditFinding {
+            module_path: "m".to_string(),
+            forbidden_api: "std::fs::read".to_string(),
+            pattern_id: "std_fs".to_string(),
+            category: ForbiddenCallCategory::FileSystem,
+            file_path: "f.rs".to_string(),
+            line: 1,
+            source_line: "src".to_string(),
+            suggested_alternative: "alt".to_string(),
+            exempted: false,
+        };
+        assert!(!format!("{f:?}").is_empty());
+    }
+
+    #[test]
+    fn audit_config_debug_nonempty() {
+        let config = AuditConfig::standard();
+        assert!(!format!("{config:?}").is_empty());
+    }
+
+    #[test]
+    fn audit_result_debug_nonempty() {
+        let r = AuditResult {
+            findings: vec![],
+            violation_count: 0,
+            exemption_count: 0,
+            modules_audited: vec![],
+            passed: true,
+        };
+        assert!(!format!("{r:?}").is_empty());
+    }
+
+    #[test]
+    fn exemption_registry_debug_nonempty() {
+        let reg = ExemptionRegistry::new();
+        assert!(!format!("{reg:?}").is_empty());
+    }
+
+    #[test]
+    fn source_auditor_debug_nonempty() {
+        let auditor = standard_auditor();
+        assert!(!format!("{auditor:?}").is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // New enrichment: Serde variant distinctness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn category_serde_all_variants_distinct_json() {
+        let variants = [
+            ForbiddenCallCategory::FileSystem,
+            ForbiddenCallCategory::Network,
+            ForbiddenCallCategory::Process,
+            ForbiddenCallCategory::GlobalMutableState,
+            ForbiddenCallCategory::Environment,
+            ForbiddenCallCategory::RawPointerExternalState,
+            ForbiddenCallCategory::DirectTime,
+        ];
+        let mut jsons = BTreeSet::new();
+        for v in &variants {
+            jsons.insert(serde_json::to_string(v).unwrap());
+        }
+        assert_eq!(jsons.len(), 7, "all category serde outputs must be distinct");
+    }
+
+    // -----------------------------------------------------------------------
+    // New enrichment: Clone independence
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn exemption_clone_independence() {
+        let original = Exemption {
+            exemption_id: "e1".to_string(),
+            module_path: "original_module".to_string(),
+            pattern_id: "p1".to_string(),
+            reason: "original reason".to_string(),
+            witness: "w1".to_string(),
+            line: 5,
+        };
+        let mut cloned = original.clone();
+        cloned.module_path = "mutated_module".to_string();
+        assert_eq!(original.module_path, "original_module");
+    }
+
+    #[test]
+    fn forbidden_pattern_clone_independence() {
+        let original = ForbiddenPattern {
+            pattern_id: "p1".to_string(),
+            category: ForbiddenCallCategory::Network,
+            pattern: "std::net::".to_string(),
+            reason: "original".to_string(),
+            suggested_alternative: "use cap".to_string(),
+        };
+        let mut cloned = original.clone();
+        cloned.reason = "mutated".to_string();
+        assert_eq!(original.reason, "original");
+    }
+
+    #[test]
+    fn audit_finding_clone_independence() {
+        let original = AuditFinding {
+            module_path: "m".to_string(),
+            forbidden_api: "api".to_string(),
+            pattern_id: "p".to_string(),
+            category: ForbiddenCallCategory::Process,
+            file_path: "f.rs".to_string(),
+            line: 1,
+            source_line: "src".to_string(),
+            suggested_alternative: "alt".to_string(),
+            exempted: false,
+        };
+        let mut cloned = original.clone();
+        cloned.exempted = true;
+        assert!(!original.exempted);
+    }
+
+    #[test]
+    fn audit_config_clone_independence() {
+        let original = AuditConfig::standard();
+        let mut cloned = original.clone();
+        cloned.audit_module("extra::module");
+        assert!(!original.audited_modules.contains("extra::module"));
+    }
+
+    #[test]
+    fn audit_result_clone_independence() {
+        let original = AuditResult {
+            findings: vec![],
+            violation_count: 0,
+            exemption_count: 0,
+            modules_audited: vec!["m".to_string()],
+            passed: true,
+        };
+        let mut cloned = original.clone();
+        cloned.passed = false;
+        assert!(original.passed);
+    }
+
+    #[test]
+    fn exemption_registry_clone_independence() {
+        let mut original = ExemptionRegistry::new();
+        original.add(Exemption {
+            exemption_id: "e1".to_string(),
+            module_path: "m".to_string(),
+            pattern_id: "p".to_string(),
+            reason: "ok".to_string(),
+            witness: "w".to_string(),
+            line: 0,
+        });
+        let mut cloned = original.clone();
+        cloned.add(Exemption {
+            exemption_id: "e2".to_string(),
+            module_path: "m2".to_string(),
+            pattern_id: "p2".to_string(),
+            reason: "ok".to_string(),
+            witness: "w".to_string(),
+            line: 0,
+        });
+        assert_eq!(original.len(), 1);
+        assert_eq!(cloned.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // New enrichment: JSON field-name stability
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn exemption_json_field_names() {
+        let ex = Exemption {
+            exemption_id: "eid".to_string(),
+            module_path: "mp".to_string(),
+            pattern_id: "pid".to_string(),
+            reason: "r".to_string(),
+            witness: "w".to_string(),
+            line: 7,
+        };
+        let json = serde_json::to_string(&ex).unwrap();
+        assert!(json.contains("\"exemption_id\""));
+        assert!(json.contains("\"module_path\""));
+        assert!(json.contains("\"pattern_id\""));
+        assert!(json.contains("\"reason\""));
+        assert!(json.contains("\"witness\""));
+        assert!(json.contains("\"line\""));
+    }
+
+    #[test]
+    fn audit_finding_json_field_names() {
+        let f = AuditFinding {
+            module_path: "m".to_string(),
+            forbidden_api: "api".to_string(),
+            pattern_id: "p".to_string(),
+            category: ForbiddenCallCategory::FileSystem,
+            file_path: "f.rs".to_string(),
+            line: 1,
+            source_line: "src".to_string(),
+            suggested_alternative: "alt".to_string(),
+            exempted: false,
+        };
+        let json = serde_json::to_string(&f).unwrap();
+        assert!(json.contains("\"module_path\""));
+        assert!(json.contains("\"forbidden_api\""));
+        assert!(json.contains("\"pattern_id\""));
+        assert!(json.contains("\"category\""));
+        assert!(json.contains("\"file_path\""));
+        assert!(json.contains("\"line\""));
+        assert!(json.contains("\"source_line\""));
+        assert!(json.contains("\"suggested_alternative\""));
+        assert!(json.contains("\"exempted\""));
+    }
+
+    #[test]
+    fn forbidden_pattern_json_field_names() {
+        let p = ForbiddenPattern {
+            pattern_id: "pid".to_string(),
+            category: ForbiddenCallCategory::Network,
+            pattern: "pat".to_string(),
+            reason: "r".to_string(),
+            suggested_alternative: "alt".to_string(),
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"pattern_id\""));
+        assert!(json.contains("\"category\""));
+        assert!(json.contains("\"pattern\""));
+        assert!(json.contains("\"reason\""));
+        assert!(json.contains("\"suggested_alternative\""));
+    }
+
+    #[test]
+    fn audit_result_json_field_names() {
+        let r = AuditResult {
+            findings: vec![],
+            violation_count: 3,
+            exemption_count: 1,
+            modules_audited: vec![],
+            passed: false,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"findings\""));
+        assert!(json.contains("\"violation_count\""));
+        assert!(json.contains("\"exemption_count\""));
+        assert!(json.contains("\"modules_audited\""));
+        assert!(json.contains("\"passed\""));
+    }
+
+    // -----------------------------------------------------------------------
+    // New enrichment: Display format checks
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn category_display_filesystem_exact() {
+        assert_eq!(ForbiddenCallCategory::FileSystem.to_string(), "filesystem");
+    }
+
+    #[test]
+    fn category_display_network_exact() {
+        assert_eq!(ForbiddenCallCategory::Network.to_string(), "network");
+    }
+
+    #[test]
+    fn category_display_process_exact() {
+        assert_eq!(ForbiddenCallCategory::Process.to_string(), "process");
+    }
+
+    #[test]
+    fn category_display_global_mutable_state_exact() {
+        assert_eq!(
+            ForbiddenCallCategory::GlobalMutableState.to_string(),
+            "global_mutable_state"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // New enrichment: Hash consistency
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn category_hash_consistent() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let v = ForbiddenCallCategory::Network;
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        v.hash(&mut h1);
+        v.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn category_hash_all_variants_consistent() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        for v in [
+            ForbiddenCallCategory::FileSystem,
+            ForbiddenCallCategory::Network,
+            ForbiddenCallCategory::Process,
+            ForbiddenCallCategory::GlobalMutableState,
+            ForbiddenCallCategory::Environment,
+            ForbiddenCallCategory::RawPointerExternalState,
+            ForbiddenCallCategory::DirectTime,
+        ] {
+            let mut h1 = DefaultHasher::new();
+            let mut h2 = DefaultHasher::new();
+            v.hash(&mut h1);
+            v.hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish(), "hash not consistent for {v:?}");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // New enrichment: Boundary / edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn exemption_line_zero_matches_any_line() {
+        let mut reg = ExemptionRegistry::new();
+        reg.add(Exemption {
+            exemption_id: "e1".to_string(),
+            module_path: "m".to_string(),
+            pattern_id: "p".to_string(),
+            reason: "ok".to_string(),
+            witness: "w".to_string(),
+            line: 0,
+        });
+        // line=0 means module-wide, so any line should match
+        assert!(reg.is_exempted("m", "p", 0));
+        assert!(reg.is_exempted("m", "p", 1));
+        assert!(reg.is_exempted("m", "p", usize::MAX));
+    }
+
+    #[test]
+    fn audit_source_whitespace_only_source() {
+        let auditor = standard_auditor();
+        let findings = auditor.audit_source("m", "f.rs", "   \n\t\n  ");
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn audit_source_very_long_module_path() {
+        let auditor = standard_auditor();
+        let long_path = "a::".repeat(100) + "b";
+        let source = "fn pure() {}";
+        let findings = auditor.audit_source(&long_path, "f.rs", source);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn audit_finding_exempted_true_serde_roundtrip() {
+        let f = AuditFinding {
+            module_path: "m".to_string(),
+            forbidden_api: "api".to_string(),
+            pattern_id: "p".to_string(),
+            category: ForbiddenCallCategory::DirectTime,
+            file_path: "f.rs".to_string(),
+            line: 99,
+            source_line: "src".to_string(),
+            suggested_alternative: "alt".to_string(),
+            exempted: true,
+        };
+        let json = serde_json::to_string(&f).unwrap();
+        let restored: AuditFinding = serde_json::from_str(&json).unwrap();
+        assert_eq!(f, restored);
+        assert!(restored.exempted);
+    }
+
+    #[test]
+    fn exemption_with_line_usize_max() {
+        let mut reg = ExemptionRegistry::new();
+        reg.add(Exemption {
+            exemption_id: "e1".to_string(),
+            module_path: "m".to_string(),
+            pattern_id: "p".to_string(),
+            reason: "ok".to_string(),
+            witness: "w".to_string(),
+            line: usize::MAX,
+        });
+        assert!(reg.is_exempted("m", "p", usize::MAX));
+        assert!(!reg.is_exempted("m", "p", 0));
+        assert!(!reg.is_exempted("m", "p", 1));
+    }
+
+    #[test]
+    fn exemption_registry_empty_string_fields() {
+        let mut reg = ExemptionRegistry::new();
+        reg.add(Exemption {
+            exemption_id: String::new(),
+            module_path: String::new(),
+            pattern_id: String::new(),
+            reason: String::new(),
+            witness: String::new(),
+            line: 0,
+        });
+        assert_eq!(reg.len(), 1);
+        assert!(reg.is_exempted("", "", 1));
+        assert!(!reg.is_exempted("x", "", 1));
+    }
+
+    // -----------------------------------------------------------------------
+    // New enrichment: Serde roundtrips — complex populated structs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn audit_config_with_custom_patterns_serde_roundtrip() {
+        let mut config = AuditConfig::standard();
+        config.add_pattern(ForbiddenPattern {
+            pattern_id: "custom_p".to_string(),
+            category: ForbiddenCallCategory::RawPointerExternalState,
+            pattern: "raw_ptr_call()".to_string(),
+            reason: "unsafe raw pointer".to_string(),
+            suggested_alternative: "use safe abstraction".to_string(),
+        });
+        config.audit_module("engine::raw");
+        config.audit_module("engine::io");
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: AuditConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, restored);
+        assert_eq!(restored.patterns.len(), 13);
+        assert!(restored.audited_modules.contains("engine::raw"));
+    }
+
+    #[test]
+    fn exemption_registry_multi_entry_serde_roundtrip() {
+        let mut reg = ExemptionRegistry::new();
+        for i in 0..5u64 {
+            reg.add(Exemption {
+                exemption_id: format!("e{i}"),
+                module_path: format!("m{i}"),
+                pattern_id: format!("p{i}"),
+                reason: format!("reason {i}"),
+                witness: format!("w{i}"),
+                line: i as usize,
+            });
+        }
+        let json = serde_json::to_string(&reg).unwrap();
+        let restored: ExemptionRegistry = serde_json::from_str(&json).unwrap();
+        assert_eq!(reg, restored);
+        assert_eq!(restored.len(), 5);
+    }
+
+    #[test]
+    fn audit_result_populated_serde_roundtrip() {
+        let findings: Vec<AuditFinding> = (0..3u64)
+            .map(|i| AuditFinding {
+                module_path: format!("m{i}"),
+                forbidden_api: format!("api{i}"),
+                pattern_id: format!("p{i}"),
+                category: ForbiddenCallCategory::Network,
+                file_path: format!("f{i}.rs"),
+                line: i as usize + 1,
+                source_line: format!("line{i}"),
+                suggested_alternative: format!("alt{i}"),
+                exempted: i.is_multiple_of(2),
+            })
+            .collect();
+        let result = AuditResult {
+            violation_count: findings.iter().filter(|f| !f.exempted).count(),
+            exemption_count: findings.iter().filter(|f| f.exempted).count(),
+            modules_audited: findings.iter().map(|f| f.module_path.clone()).collect(),
+            passed: false,
+            findings,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let restored: AuditResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // New enrichment: Additional behavioral edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn audit_source_finding_suggested_alternative_nonempty() {
+        let auditor = standard_auditor();
+        let source = "let _ = std::net::TcpStream::connect(\"x\");";
+        let findings = auditor.audit_source("m", "f.rs", source);
+        for f in &findings {
+            assert!(!f.suggested_alternative.is_empty());
+        }
+    }
+
+    #[test]
+    fn audit_all_same_module_different_files() {
+        let auditor = standard_auditor();
+        let mut sources = BTreeMap::new();
+        sources.insert(
+            ("shared::m".to_string(), "a.rs".to_string()),
+            "let _ = TcpStream::connect(\"x\");".to_string(),
+        );
+        sources.insert(
+            ("shared::m".to_string(), "b.rs".to_string()),
+            "let _ = Command::new(\"ls\");".to_string(),
+        );
+        let result = auditor.audit_all(&sources);
+        // Same module reported once in modules_audited
+        assert_eq!(result.modules_audited.len(), 1);
+        assert_eq!(result.modules_audited[0], "shared::m");
+        assert!(result.violation_count >= 2);
+    }
+
+    #[test]
+    fn category_ordering_all_variants() {
+        assert!(ForbiddenCallCategory::FileSystem < ForbiddenCallCategory::GlobalMutableState);
+        assert!(ForbiddenCallCategory::Environment < ForbiddenCallCategory::RawPointerExternalState);
+        assert!(ForbiddenCallCategory::RawPointerExternalState < ForbiddenCallCategory::DirectTime);
+    }
+
+    #[test]
+    fn add_pattern_increases_pattern_count() {
+        let mut config = AuditConfig::standard();
+        let before = config.patterns.len();
+        config.add_pattern(ForbiddenPattern {
+            pattern_id: "extra".to_string(),
+            category: ForbiddenCallCategory::RawPointerExternalState,
+            pattern: "unsafe_fn()".to_string(),
+            reason: "bad".to_string(),
+            suggested_alternative: "good".to_string(),
+        });
+        assert_eq!(config.patterns.len(), before + 1);
+    }
+
+    #[test]
+    fn audit_source_line_number_is_one_indexed() {
+        let auditor = standard_auditor();
+        // Pattern on the very first line
+        let source = "let _ = std::fs::read(\"x\");";
+        let findings = auditor.audit_source("m", "f.rs", source);
+        assert!(findings.iter().any(|f| f.line == 1));
+    }
+
+    #[test]
+    fn audit_source_skips_doc_comment_lines() {
+        let auditor = standard_auditor();
+        // Lines starting with // (after trim) are skipped
+        let source = "    // let _ = std::fs::read(\"x\");";
+        let findings = auditor.audit_source("m", "f.rs", source);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn exemption_for_wrong_pattern_id_does_not_match() {
+        let mut reg = ExemptionRegistry::new();
+        reg.add(Exemption {
+            exemption_id: "e1".to_string(),
+            module_path: "m".to_string(),
+            pattern_id: "std_fs".to_string(),
+            reason: "ok".to_string(),
+            witness: "w".to_string(),
+            line: 0,
+        });
+        assert!(!reg.is_exempted("m", "std_net", 1));
+        assert!(!reg.is_exempted("m", "fs_read", 1));
+        assert!(reg.is_exempted("m", "std_fs", 1));
+    }
+
+    #[test]
+    fn audit_finding_equality_and_inequality() {
+        let f1 = AuditFinding {
+            module_path: "m".to_string(),
+            forbidden_api: "api".to_string(),
+            pattern_id: "p".to_string(),
+            category: ForbiddenCallCategory::Network,
+            file_path: "f.rs".to_string(),
+            line: 1,
+            source_line: "src".to_string(),
+            suggested_alternative: "alt".to_string(),
+            exempted: false,
+        };
+        let f2 = f1.clone();
+        let mut f3 = f1.clone();
+        f3.line = 2;
+        assert_eq!(f1, f2);
+        assert_ne!(f1, f3);
+    }
+
+    #[test]
+    fn forbidden_pattern_equality() {
+        let p1 = ForbiddenPattern {
+            pattern_id: "p".to_string(),
+            category: ForbiddenCallCategory::DirectTime,
+            pattern: "SystemTime::now".to_string(),
+            reason: "bad".to_string(),
+            suggested_alternative: "good".to_string(),
+        };
+        let p2 = p1.clone();
+        assert_eq!(p1, p2);
+    }
+
+    #[test]
+    fn exemption_equality() {
+        let e1 = Exemption {
+            exemption_id: "e1".to_string(),
+            module_path: "m".to_string(),
+            pattern_id: "p".to_string(),
+            reason: "ok".to_string(),
+            witness: "w".to_string(),
+            line: 5,
+        };
+        let e2 = e1.clone();
+        assert_eq!(e1, e2);
+    }
 }

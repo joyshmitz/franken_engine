@@ -1510,4 +1510,598 @@ mod tests {
             "all ProfileKind variants have distinct as_str values"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2 — PearlTower 2026-02-27
+    // -----------------------------------------------------------------------
+
+    // -- Copy semantics --
+
+    #[test]
+    fn profile_kind_copy_semantics() {
+        let a = ProfileKind::CpuFlamegraph;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn comparison_direction_copy_semantics() {
+        let a = ComparisonDirection::Improvement;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn opportunity_status_copy_semantics() {
+        let a = OpportunityStatus::Approved;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    // -- Debug distinctness --
+
+    #[test]
+    fn profile_kind_debug_all_distinct() {
+        let set: std::collections::BTreeSet<String> = ProfileKind::ALL
+            .iter()
+            .map(|k| format!("{k:?}"))
+            .collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    #[test]
+    fn comparison_direction_debug_all_distinct() {
+        let set: std::collections::BTreeSet<String> = [
+            ComparisonDirection::Improvement,
+            ComparisonDirection::Regression,
+            ComparisonDirection::Neutral,
+        ]
+        .iter()
+        .map(|d| format!("{d:?}"))
+        .collect();
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn opportunity_status_debug_all_distinct() {
+        let set: std::collections::BTreeSet<String> = [
+            OpportunityStatus::Identified,
+            OpportunityStatus::Evaluating,
+            OpportunityStatus::Approved,
+            OpportunityStatus::Implemented,
+            OpportunityStatus::Rejected,
+        ]
+        .iter()
+        .map(|s| format!("{s:?}"))
+        .collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    // -- Serde variant distinctness --
+
+    #[test]
+    fn profile_kind_serde_all_distinct() {
+        let set: std::collections::BTreeSet<String> = ProfileKind::ALL
+            .iter()
+            .map(|k| serde_json::to_string(k).unwrap())
+            .collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    #[test]
+    fn comparison_direction_serde_all_distinct() {
+        let set: std::collections::BTreeSet<String> = [
+            ComparisonDirection::Improvement,
+            ComparisonDirection::Regression,
+            ComparisonDirection::Neutral,
+        ]
+        .iter()
+        .map(|d| serde_json::to_string(d).unwrap())
+        .collect();
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn opportunity_status_serde_all_distinct() {
+        let set: std::collections::BTreeSet<String> = [
+            OpportunityStatus::Identified,
+            OpportunityStatus::Evaluating,
+            OpportunityStatus::Approved,
+            OpportunityStatus::Implemented,
+            OpportunityStatus::Rejected,
+        ]
+        .iter()
+        .map(|s| serde_json::to_string(s).unwrap())
+        .collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    // -- Clone independence --
+
+    #[test]
+    fn benchmark_environment_clone_independence() {
+        let env = BenchmarkEnvironment::default_env("test");
+        let mut cloned = env.clone();
+        cloned.warmup_iterations = 999;
+        cloned.tags.push("new-tag".to_string());
+        assert_eq!(env.warmup_iterations, 10);
+        assert!(env.tags.is_empty());
+    }
+
+    #[test]
+    fn percentile_stats_clone_independence() {
+        let samples: Vec<_> = (0..10)
+            .map(|i| LatencySample {
+                latency_ns: 1000 + i * 100,
+                iteration: i as u32,
+                is_warmup: false,
+            })
+            .collect();
+        let stats = PercentileStats::from_samples(&samples).unwrap();
+        let mut cloned = stats.clone();
+        cloned.p50_ns = 999_999;
+        assert_ne!(stats.p50_ns, 999_999);
+    }
+
+    #[test]
+    fn memory_snapshot_clone_independence() {
+        let snap = MemorySnapshot {
+            heap_bytes: 1024,
+            stack_bytes: 512,
+            peak_heap_bytes: 2048,
+            live_allocations: 5,
+            total_allocations: 100,
+            total_deallocations: 95,
+        };
+        let mut cloned = snap.clone();
+        cloned.heap_bytes = 0;
+        assert_eq!(snap.heap_bytes, 1024);
+    }
+
+    #[test]
+    fn baseline_comparison_clone_independence() {
+        let threshold = SignificanceThreshold::default_threshold();
+        let mut bc = BaselineComparison::new("base", "cand");
+        bc.add_comparison(compare_metric("m1", 1000, 800, &threshold));
+        let mut cloned = bc.clone();
+        cloned.comparisons.clear();
+        assert_eq!(bc.comparisons.len(), 1);
+    }
+
+    #[test]
+    fn opportunity_matrix_clone_independence() {
+        let mut matrix = OpportunityMatrix::new("m1");
+        matrix.add(make_opportunity("a", 100_000, 1, 1));
+        let mut cloned = matrix.clone();
+        cloned.opportunities.clear();
+        assert_eq!(matrix.opportunities.len(), 1);
+    }
+
+    // -- JSON field-name stability --
+
+    #[test]
+    fn benchmark_environment_json_field_names() {
+        let env = BenchmarkEnvironment::default_env("test");
+        let val: serde_json::Value = serde_json::to_value(&env).unwrap();
+        let obj = val.as_object().unwrap();
+        for key in [
+            "env_id",
+            "warmup_iterations",
+            "measurement_iterations",
+            "max_iteration_us",
+            "pin_to_core",
+            "disable_gc",
+            "tags",
+        ] {
+            assert!(obj.contains_key(key), "missing field: {key}");
+        }
+        assert_eq!(obj.len(), 7);
+    }
+
+    #[test]
+    fn latency_sample_json_field_names() {
+        let sample = LatencySample {
+            latency_ns: 1000,
+            iteration: 0,
+            is_warmup: false,
+        };
+        let val: serde_json::Value = serde_json::to_value(&sample).unwrap();
+        let obj = val.as_object().unwrap();
+        for key in ["latency_ns", "iteration", "is_warmup"] {
+            assert!(obj.contains_key(key), "missing field: {key}");
+        }
+        assert_eq!(obj.len(), 3);
+    }
+
+    #[test]
+    fn throughput_measurement_json_field_names() {
+        let t = ThroughputMeasurement::new(100, 1_000_000);
+        let val: serde_json::Value = serde_json::to_value(&t).unwrap();
+        let obj = val.as_object().unwrap();
+        for key in [
+            "ops_per_sec_millionths",
+            "total_ops",
+            "duration_ns",
+            "bytes_processed",
+        ] {
+            assert!(obj.contains_key(key), "missing field: {key}");
+        }
+        assert_eq!(obj.len(), 4);
+    }
+
+    #[test]
+    fn memory_snapshot_json_field_names() {
+        let m = MemorySnapshot::empty();
+        let val: serde_json::Value = serde_json::to_value(&m).unwrap();
+        let obj = val.as_object().unwrap();
+        for key in [
+            "heap_bytes",
+            "stack_bytes",
+            "peak_heap_bytes",
+            "live_allocations",
+            "total_allocations",
+            "total_deallocations",
+        ] {
+            assert!(obj.contains_key(key), "missing field: {key}");
+        }
+        assert_eq!(obj.len(), 6);
+    }
+
+    #[test]
+    fn hotspot_json_field_names() {
+        let hs = Hotspot {
+            symbol: "f".to_string(),
+            percentage_millionths: 100_000,
+            samples: 10,
+            module_path: "m".to_string(),
+        };
+        let val: serde_json::Value = serde_json::to_value(&hs).unwrap();
+        let obj = val.as_object().unwrap();
+        for key in ["symbol", "percentage_millionths", "samples", "module_path"] {
+            assert!(obj.contains_key(key), "missing field: {key}");
+        }
+        assert_eq!(obj.len(), 4);
+    }
+
+    #[test]
+    fn metric_comparison_json_field_names() {
+        let threshold = SignificanceThreshold::default_threshold();
+        let cmp = compare_metric("test", 100, 200, &threshold);
+        let val: serde_json::Value = serde_json::to_value(&cmp).unwrap();
+        let obj = val.as_object().unwrap();
+        for key in [
+            "metric_name",
+            "baseline_value",
+            "candidate_value",
+            "change_millionths",
+            "direction",
+        ] {
+            assert!(obj.contains_key(key), "missing field: {key}");
+        }
+        assert_eq!(obj.len(), 5);
+    }
+
+    // -- Hash consistency --
+
+    #[test]
+    fn profile_kind_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        ProfileKind::CpuFlamegraph.hash(&mut h1);
+        ProfileKind::CpuFlamegraph.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn comparison_direction_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        ComparisonDirection::Neutral.hash(&mut h1);
+        ComparisonDirection::Neutral.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    // -- Boundary/edge cases --
+
+    #[test]
+    fn throughput_zero_ops() {
+        let t = ThroughputMeasurement::new(0, 1_000_000_000);
+        assert_eq!(t.ops_per_sec_millionths, 0);
+    }
+
+    #[test]
+    fn throughput_bytes_per_sec_none_when_unset() {
+        let t = ThroughputMeasurement::new(100, 1_000_000);
+        assert!(t.bytes_per_sec_millionths().is_none());
+    }
+
+    #[test]
+    fn throughput_bytes_per_sec_zero_duration() {
+        let t = ThroughputMeasurement::new(100, 0).with_bytes(1000);
+        assert_eq!(t.bytes_per_sec_millionths(), Some(0));
+    }
+
+    #[test]
+    fn memory_snapshot_max_values_serde_roundtrip() {
+        let snap = MemorySnapshot {
+            heap_bytes: u64::MAX,
+            stack_bytes: u64::MAX,
+            peak_heap_bytes: u64::MAX,
+            live_allocations: u64::MAX,
+            total_allocations: u64::MAX,
+            total_deallocations: u64::MAX,
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        let back: MemorySnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(snap, back);
+    }
+
+    #[test]
+    fn memory_snapshot_no_leak_when_allocs_equal_deallocs_but_live_nonzero() {
+        let snap = MemorySnapshot {
+            heap_bytes: 100,
+            stack_bytes: 0,
+            peak_heap_bytes: 100,
+            live_allocations: 5,
+            total_allocations: 50,
+            total_deallocations: 50,
+        };
+        // live_allocations > 0 but total_deallocs == total_allocs → no leak
+        assert!(!snap.potential_leak());
+    }
+
+    #[test]
+    fn pstats_cv_millionths_zero_mean() {
+        // All identical latencies → mean is nonzero, jitter is 0
+        let samples: Vec<_> = (0..10)
+            .map(|i| LatencySample {
+                latency_ns: 5000,
+                iteration: i as u32,
+                is_warmup: false,
+            })
+            .collect();
+        let stats = PercentileStats::from_samples(&samples).unwrap();
+        assert_eq!(stats.jitter_ns(), 0);
+        assert_eq!(stats.cv_millionths(), 0);
+    }
+
+    #[test]
+    fn pstats_filters_warmup_samples() {
+        let samples = vec![
+            LatencySample { latency_ns: 9999, iteration: 0, is_warmup: true },
+            LatencySample { latency_ns: 1000, iteration: 1, is_warmup: false },
+            LatencySample { latency_ns: 2000, iteration: 2, is_warmup: false },
+        ];
+        let stats = PercentileStats::from_samples(&samples).unwrap();
+        assert_eq!(stats.sample_count, 2);
+        assert_eq!(stats.min_ns, 1000);
+        assert_eq!(stats.max_ns, 2000);
+    }
+
+    #[test]
+    fn compare_metric_both_zero() {
+        let threshold = SignificanceThreshold::default_threshold();
+        let cmp = compare_metric("test", 0, 0, &threshold);
+        assert_eq!(cmp.change_millionths, 0);
+        assert_eq!(cmp.direction, ComparisonDirection::Neutral);
+    }
+
+    #[test]
+    fn compare_metric_negative_improvement() {
+        let threshold = SignificanceThreshold {
+            min_change_millionths: 10_000, // 1%
+            min_samples: 1,
+        };
+        let cmp = compare_metric("latency", 1000, 500, &threshold);
+        assert_eq!(cmp.direction, ComparisonDirection::Improvement);
+        assert!(cmp.change_millionths < 0);
+    }
+
+    #[test]
+    fn env_zero_max_iteration_us_invalid() {
+        let mut env = BenchmarkEnvironment::default_env("test");
+        env.max_iteration_us = 0;
+        let errors = env.validate();
+        assert!(errors.iter().any(|e| e.contains("max_iteration_us")));
+    }
+
+    #[test]
+    fn env_multiple_validation_errors() {
+        let env = BenchmarkEnvironment {
+            env_id: String::new(),
+            warmup_iterations: 0,
+            measurement_iterations: 0,
+            max_iteration_us: 0,
+            pin_to_core: false,
+            disable_gc: false,
+            tags: Vec::new(),
+        };
+        let errors = env.validate();
+        assert!(errors.len() >= 2, "should have at least 2 errors, got {}", errors.len());
+    }
+
+    #[test]
+    fn opportunity_score_zero_effort_risk() {
+        let opp = OptimizationOpportunity {
+            id: "opt-z".to_string(),
+            description: "Zero effort".to_string(),
+            component: "test".to_string(),
+            estimated_impact_millionths: 500_000,
+            effort: 0,
+            risk: 0,
+            evidence_profile_kinds: vec![],
+            status: OpportunityStatus::Identified,
+        };
+        // effort.max(1) * risk.max(1) = 1 * 1 = 1
+        assert_eq!(opp.score_millionths(), 500_000);
+    }
+
+    #[test]
+    fn baseline_comparison_equal_regressions_improvements_is_neutral() {
+        let threshold = SignificanceThreshold::default_threshold();
+        let mut bc = BaselineComparison::new("base", "cand");
+        bc.add_comparison(compare_metric("m1", 1000, 800, &threshold)); // improvement
+        bc.add_comparison(compare_metric("m2", 1000, 1300, &threshold)); // regression
+        assert_eq!(bc.overall_direction, ComparisonDirection::Neutral);
+    }
+
+    // -- Serde roundtrips (complex) --
+
+    #[test]
+    fn profile_artifact_serde_roundtrip() {
+        let p = ProfileArtifact::new(ProfileKind::AllocationFlamegraph, "bench-x")
+            .with_hotspot(Hotspot {
+                symbol: "alloc_hot".to_string(),
+                percentage_millionths: 600_000,
+                samples: 6000,
+                module_path: "alloc/mod.rs".to_string(),
+            });
+        let json = serde_json::to_string(&p).unwrap();
+        let back: ProfileArtifact = serde_json::from_str(&json).unwrap();
+        assert_eq!(p, back);
+    }
+
+    #[test]
+    fn benchmark_result_full_serde_roundtrip() {
+        let env = BenchmarkEnvironment::default_env("full-bench");
+        let samples: Vec<_> = (0..50)
+            .map(|i| LatencySample {
+                latency_ns: 1000 + i * 20,
+                iteration: i as u32,
+                is_warmup: false,
+            })
+            .collect();
+        let mut result = BenchmarkResult::new("full", env)
+            .with_latency(PercentileStats::from_samples(&samples).unwrap())
+            .with_throughput(ThroughputMeasurement::new(5000, 1_000_000_000).with_bytes(500_000))
+            .with_memory(MemorySnapshot {
+                heap_bytes: 4096,
+                stack_bytes: 1024,
+                peak_heap_bytes: 8192,
+                live_allocations: 2,
+                total_allocations: 200,
+                total_deallocations: 198,
+            });
+        result.metadata.insert("version".to_string(), "1.0".to_string());
+        result.add_profile(ProfileArtifact::new(ProfileKind::SyscallTrace, "full"));
+
+        let json = serde_json::to_string(&result).unwrap();
+        let back: BenchmarkResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    #[test]
+    fn baseline_comparison_serde_roundtrip() {
+        let threshold = SignificanceThreshold::default_threshold();
+        let mut bc = BaselineComparison::new("b1", "c1");
+        bc.add_comparison(compare_metric("lat_p50", 1000, 900, &threshold));
+        bc.add_comparison(compare_metric("lat_p99", 2000, 2500, &threshold));
+        let json = serde_json::to_string(&bc).unwrap();
+        let back: BaselineComparison = serde_json::from_str(&json).unwrap();
+        assert_eq!(bc, back);
+    }
+
+    #[test]
+    fn metric_comparison_serde_roundtrip() {
+        let threshold = SignificanceThreshold::default_threshold();
+        let cmp = compare_metric("heap_bytes", 1_000_000, 900_000, &threshold);
+        let json = serde_json::to_string(&cmp).unwrap();
+        let back: MetricComparison = serde_json::from_str(&json).unwrap();
+        assert_eq!(cmp, back);
+    }
+
+    // -- Debug nonempty --
+
+    #[test]
+    fn benchmark_environment_debug_nonempty() {
+        let env = BenchmarkEnvironment::default_env("test");
+        assert!(!format!("{env:?}").is_empty());
+    }
+
+    #[test]
+    fn throughput_measurement_debug_nonempty() {
+        let t = ThroughputMeasurement::new(100, 1_000);
+        assert!(!format!("{t:?}").is_empty());
+    }
+
+    #[test]
+    fn optimization_opportunity_debug_nonempty() {
+        let opp = make_opportunity("dbg", 100_000, 1, 1);
+        assert!(!format!("{opp:?}").is_empty());
+    }
+
+    // -- Derive ID stability across different types --
+
+    #[test]
+    fn env_derive_id_differs_for_different_ids() {
+        let e1 = BenchmarkEnvironment::default_env("env-a");
+        let e2 = BenchmarkEnvironment::default_env("env-b");
+        assert_ne!(e1.derive_id(), e2.derive_id());
+    }
+
+    #[test]
+    fn profile_artifact_derive_id_differs_for_different_kinds() {
+        let p1 = ProfileArtifact::new(ProfileKind::CpuFlamegraph, "bench");
+        let p2 = ProfileArtifact::new(ProfileKind::AllocationFlamegraph, "bench");
+        assert_ne!(p1.derive_id(), p2.derive_id());
+    }
+
+    #[test]
+    fn matrix_derive_id_changes_with_item_count() {
+        let m1 = OpportunityMatrix::new("m");
+        let mut m2 = OpportunityMatrix::new("m");
+        m2.add(make_opportunity("x", 100_000, 1, 1));
+        assert_ne!(m1.derive_id(), m2.derive_id());
+    }
+
+    // -- Registry compare with throughput inversion --
+
+    #[test]
+    fn registry_compare_throughput_inversion() {
+        let mut reg = BaselineRegistry::new();
+        let env = BenchmarkEnvironment::default_env("env-1");
+        let baseline = BenchmarkResult::new("bench-1", env.clone())
+            .with_throughput(ThroughputMeasurement::new(1000, 1_000_000_000));
+        reg.register(baseline);
+
+        // Candidate with higher throughput (improvement)
+        let candidate = BenchmarkResult::new("bench-1-v2", env)
+            .with_throughput(ThroughputMeasurement::new(2000, 1_000_000_000));
+        let comparison = reg.compare("bench-1", &candidate).unwrap();
+        // Higher throughput = improvement (direction inverted in compare())
+        assert!(comparison.improvement_count() > 0);
+    }
+
+    // -- Top N edge cases --
+
+    #[test]
+    fn matrix_top_n_larger_than_size() {
+        let mut matrix = OpportunityMatrix::new("m1");
+        matrix.add(make_opportunity("only", 100_000, 1, 1));
+        let top = matrix.top_n(10);
+        assert_eq!(top.len(), 1);
+    }
+
+    #[test]
+    fn matrix_top_n_zero() {
+        let mut matrix = OpportunityMatrix::new("m1");
+        matrix.add(make_opportunity("a", 100_000, 1, 1));
+        let top = matrix.top_n(0);
+        assert!(top.is_empty());
+    }
+
+    #[test]
+    fn matrix_empty_ranked() {
+        let matrix = OpportunityMatrix::new("empty");
+        assert!(matrix.ranked().is_empty());
+        assert_eq!(matrix.approved_impact_millionths(), 0);
+    }
+
+    #[test]
+    fn registry_default_is_empty() {
+        let reg = BaselineRegistry::default();
+        assert_eq!(reg.count(), 0);
+    }
 }

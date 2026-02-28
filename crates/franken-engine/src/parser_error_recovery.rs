@@ -937,6 +937,19 @@ mod tests {
         }
     }
 
+    fn simple_evidence() -> EvidenceFeatures {
+        EvidenceFeatures {
+            tokens_before_error: 5,
+            tokens_after_error: 20,
+            error_offset: 10,
+            at_statement_boundary: true,
+            single_token_fix: true,
+            single_token_delete: false,
+            candidate_count: 1,
+            features_hash: ContentHash::compute(b"simple-evidence"),
+        }
+    }
+
     fn ambiguous_error() -> SyntaxError {
         SyntaxError {
             offset: 25,
@@ -1622,5 +1635,560 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let back: RecoveryConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(config, back);
+    }
+
+    // ── Enrichment: Copy semantics ──────────────────────────────────
+
+    #[test]
+    fn recovery_mode_copy_from_array() {
+        let arr = [RecoveryMode::Strict, RecoveryMode::Diagnostic, RecoveryMode::Execution];
+        let copied = arr[1];
+        assert_eq!(copied, RecoveryMode::Diagnostic);
+        assert_eq!(arr[1], RecoveryMode::Diagnostic);
+    }
+
+    #[test]
+    fn error_state_copy_from_array() {
+        let arr = [ErrorState::Recoverable, ErrorState::Ambiguous, ErrorState::Unrecoverable];
+        let copied = arr[2];
+        assert_eq!(copied, ErrorState::Unrecoverable);
+        assert_eq!(arr[2], ErrorState::Unrecoverable);
+    }
+
+    #[test]
+    fn recovery_action_copy_from_array() {
+        let arr = [
+            RecoveryAction::RecoverContinue,
+            RecoveryAction::PartialRecover,
+            RecoveryAction::FailStrict,
+        ];
+        let copied = arr[0];
+        assert_eq!(copied, RecoveryAction::RecoverContinue);
+        assert_eq!(arr[0], RecoveryAction::RecoverContinue);
+    }
+
+    #[test]
+    fn recovery_outcome_copy_from_array() {
+        let arr = [
+            RecoveryOutcome::CleanParse,
+            RecoveryOutcome::Recovered,
+            RecoveryOutcome::PartiallyRecovered,
+            RecoveryOutcome::StrictFailed,
+            RecoveryOutcome::RecoveryFailed,
+            RecoveryOutcome::BudgetExhausted,
+        ];
+        let copied = arr[4];
+        assert_eq!(copied, RecoveryOutcome::RecoveryFailed);
+        assert_eq!(arr[4], RecoveryOutcome::RecoveryFailed);
+    }
+
+    // ── Enrichment: Debug distinctness ──────────────────────────────
+
+    #[test]
+    fn recovery_mode_debug_all_distinct() {
+        use std::collections::BTreeSet;
+        let dbgs: BTreeSet<String> = [
+            RecoveryMode::Strict,
+            RecoveryMode::Diagnostic,
+            RecoveryMode::Execution,
+        ]
+        .iter()
+        .map(|v| format!("{v:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 3);
+    }
+
+    #[test]
+    fn error_state_debug_all_distinct() {
+        use std::collections::BTreeSet;
+        let dbgs: BTreeSet<String> = [
+            ErrorState::Recoverable,
+            ErrorState::Ambiguous,
+            ErrorState::Unrecoverable,
+        ]
+        .iter()
+        .map(|v| format!("{v:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 3);
+    }
+
+    #[test]
+    fn recovery_outcome_debug_all_distinct() {
+        use std::collections::BTreeSet;
+        let dbgs: BTreeSet<String> = [
+            RecoveryOutcome::CleanParse,
+            RecoveryOutcome::Recovered,
+            RecoveryOutcome::PartiallyRecovered,
+            RecoveryOutcome::StrictFailed,
+            RecoveryOutcome::RecoveryFailed,
+            RecoveryOutcome::BudgetExhausted,
+        ]
+        .iter()
+        .map(|v| format!("{v:?}"))
+        .collect();
+        assert_eq!(dbgs.len(), 6);
+    }
+
+    // ── Enrichment: Serde variant distinctness ──────────────────────
+
+    #[test]
+    fn recovery_mode_serde_variants_distinct() {
+        use std::collections::BTreeSet;
+        let jsons: BTreeSet<String> = [
+            RecoveryMode::Strict,
+            RecoveryMode::Diagnostic,
+            RecoveryMode::Execution,
+        ]
+        .iter()
+        .map(|v| serde_json::to_string(v).unwrap())
+        .collect();
+        assert_eq!(jsons.len(), 3);
+    }
+
+    #[test]
+    fn error_state_serde_variants_distinct() {
+        use std::collections::BTreeSet;
+        let jsons: BTreeSet<String> = [
+            ErrorState::Recoverable,
+            ErrorState::Ambiguous,
+            ErrorState::Unrecoverable,
+        ]
+        .iter()
+        .map(|v| serde_json::to_string(v).unwrap())
+        .collect();
+        assert_eq!(jsons.len(), 3);
+    }
+
+    #[test]
+    fn recovery_outcome_serde_variants_distinct() {
+        use std::collections::BTreeSet;
+        let jsons: BTreeSet<String> = [
+            RecoveryOutcome::CleanParse,
+            RecoveryOutcome::Recovered,
+            RecoveryOutcome::PartiallyRecovered,
+            RecoveryOutcome::StrictFailed,
+            RecoveryOutcome::RecoveryFailed,
+            RecoveryOutcome::BudgetExhausted,
+        ]
+        .iter()
+        .map(|v| serde_json::to_string(v).unwrap())
+        .collect();
+        assert_eq!(jsons.len(), 6);
+    }
+
+    #[test]
+    fn repair_edit_serde_variants_distinct() {
+        use std::collections::BTreeSet;
+        let variants = vec![
+            RepairEdit::Insert { offset: 0, token_text: ";".into() },
+            RepairEdit::Delete { offset: 0, length: 1 },
+            RepairEdit::Replace { offset: 0, length: 1, replacement: ";".into() },
+            RepairEdit::Skip { offset: 0, count: 1 },
+        ];
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 4);
+    }
+
+    // ── Enrichment: Clone independence ──────────────────────────────
+
+    #[test]
+    fn state_probabilities_clone_independence() {
+        let mut original = StateProbabilities::default();
+        let cloned = original.clone();
+        original.recoverable = 0;
+        assert_eq!(cloned.recoverable, DEFAULT_PRIOR_RECOVERABLE_MILLIONTHS);
+    }
+
+    #[test]
+    fn loss_matrix_clone_independence() {
+        let mut original = LossMatrix::default();
+        let cloned = original.clone();
+        original.recover_recoverable = 999;
+        assert_eq!(cloned.recover_recoverable, 2);
+    }
+
+    #[test]
+    fn recovery_config_clone_independence() {
+        let mut original = RecoveryConfig::default();
+        let cloned = original.clone();
+        original.max_attempts = 999;
+        assert_eq!(cloned.max_attempts, DEFAULT_MAX_ATTEMPTS);
+    }
+
+    // ── Enrichment: JSON field-name stability ───────────────────────
+
+    #[test]
+    fn evidence_features_json_field_names() {
+        let ef = EvidenceFeatures {
+            tokens_before_error: 10,
+            tokens_after_error: 20,
+            error_offset: 100,
+            at_statement_boundary: true,
+            single_token_fix: false,
+            single_token_delete: false,
+            candidate_count: 2,
+            features_hash: ContentHash::compute(b"test"),
+        };
+        let val: serde_json::Value = serde_json::to_value(&ef).unwrap();
+        let obj = val.as_object().unwrap();
+        assert!(obj.contains_key("tokens_before_error"));
+        assert!(obj.contains_key("tokens_after_error"));
+        assert!(obj.contains_key("error_offset"));
+        assert!(obj.contains_key("at_statement_boundary"));
+        assert!(obj.contains_key("single_token_fix"));
+        assert!(obj.contains_key("single_token_delete"));
+        assert!(obj.contains_key("candidate_count"));
+        assert!(obj.contains_key("features_hash"));
+        assert_eq!(obj.len(), 8);
+    }
+
+    #[test]
+    fn state_probabilities_json_field_names() {
+        let sp = StateProbabilities::default();
+        let val: serde_json::Value = serde_json::to_value(&sp).unwrap();
+        let obj = val.as_object().unwrap();
+        assert!(obj.contains_key("recoverable"));
+        assert!(obj.contains_key("ambiguous"));
+        assert!(obj.contains_key("unrecoverable"));
+        assert_eq!(obj.len(), 3);
+    }
+
+    #[test]
+    fn loss_matrix_json_field_names() {
+        let lm = LossMatrix::default();
+        let val: serde_json::Value = serde_json::to_value(&lm).unwrap();
+        let obj = val.as_object().unwrap();
+        assert!(obj.contains_key("recover_recoverable"));
+        assert!(obj.contains_key("recover_ambiguous"));
+        assert!(obj.contains_key("recover_unrecoverable"));
+        assert!(obj.contains_key("partial_recoverable"));
+        assert!(obj.contains_key("partial_ambiguous"));
+        assert!(obj.contains_key("partial_unrecoverable"));
+        assert!(obj.contains_key("fail_recoverable"));
+        assert!(obj.contains_key("fail_ambiguous"));
+        assert!(obj.contains_key("fail_unrecoverable"));
+        assert_eq!(obj.len(), 9);
+    }
+
+    #[test]
+    fn expected_losses_json_field_names() {
+        let el = ExpectedLosses {
+            recover_continue: 10,
+            partial_recover: 20,
+            fail_strict: 30,
+        };
+        let val: serde_json::Value = serde_json::to_value(&el).unwrap();
+        let obj = val.as_object().unwrap();
+        assert!(obj.contains_key("recover_continue"));
+        assert!(obj.contains_key("partial_recover"));
+        assert!(obj.contains_key("fail_strict"));
+        assert_eq!(obj.len(), 3);
+    }
+
+    // ── Enrichment: Display format ──────────────────────────────────
+
+    #[test]
+    fn recovery_mode_display_all_distinct() {
+        use std::collections::BTreeSet;
+        let displays: BTreeSet<String> = [
+            RecoveryMode::Strict,
+            RecoveryMode::Diagnostic,
+            RecoveryMode::Execution,
+        ]
+        .iter()
+        .map(|v| v.to_string())
+        .collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    #[test]
+    fn recovery_outcome_display_all_distinct() {
+        use std::collections::BTreeSet;
+        let displays: BTreeSet<String> = [
+            RecoveryOutcome::CleanParse,
+            RecoveryOutcome::Recovered,
+            RecoveryOutcome::PartiallyRecovered,
+            RecoveryOutcome::StrictFailed,
+            RecoveryOutcome::RecoveryFailed,
+            RecoveryOutcome::BudgetExhausted,
+        ]
+        .iter()
+        .map(|v| v.to_string())
+        .collect();
+        assert_eq!(displays.len(), 6);
+    }
+
+    #[test]
+    fn repair_edit_display_all_variants() {
+        let edits = vec![
+            RepairEdit::Insert { offset: 10, token_text: ";".into() },
+            RepairEdit::Delete { offset: 20, length: 3 },
+            RepairEdit::Replace { offset: 30, length: 2, replacement: "{}".into() },
+            RepairEdit::Skip { offset: 40, count: 5 },
+        ];
+        use std::collections::BTreeSet;
+        let displays: BTreeSet<String> = edits.iter().map(|e| e.to_string()).collect();
+        assert_eq!(displays.len(), 4);
+        assert!(edits[0].to_string().contains("insert"));
+        assert!(edits[1].to_string().contains("delete"));
+        assert!(edits[2].to_string().contains("replace"));
+        assert!(edits[3].to_string().contains("skip"));
+    }
+
+    // ── Enrichment: Hash consistency ────────────────────────────────
+
+    #[test]
+    fn recovery_mode_hash_consistent() {
+        use std::hash::{Hash, Hasher};
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        RecoveryMode::Strict.hash(&mut h1);
+        RecoveryMode::Strict.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn error_state_hash_all_distinct() {
+        use std::hash::{Hash, Hasher};
+        use std::collections::BTreeSet;
+        let variants = [
+            ErrorState::Recoverable,
+            ErrorState::Ambiguous,
+            ErrorState::Unrecoverable,
+        ];
+        let hashes: BTreeSet<u64> = variants
+            .iter()
+            .map(|v| {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                v.hash(&mut h);
+                h.finish()
+            })
+            .collect();
+        assert_eq!(hashes.len(), 3);
+    }
+
+    // ── Enrichment: Boundary/edge cases ─────────────────────────────
+
+    #[test]
+    fn bayesian_update_all_zero_priors_returns_default() {
+        let prior = StateProbabilities {
+            recoverable: 0,
+            ambiguous: 0,
+            unrecoverable: 0,
+        };
+        let evidence = simple_evidence();
+        let posterior = bayesian_update(&prior, &evidence);
+        // When total is 0, falls back to default
+        assert!(posterior.is_valid());
+    }
+
+    #[test]
+    fn bayesian_update_strong_recoverable_evidence() {
+        let prior = StateProbabilities::default();
+        let evidence = EvidenceFeatures {
+            tokens_before_error: 50,
+            tokens_after_error: 100,
+            error_offset: 200,
+            at_statement_boundary: true,
+            single_token_fix: true,
+            single_token_delete: true,
+            candidate_count: 1,
+            features_hash: ContentHash::compute(b"strong"),
+        };
+        let posterior = bayesian_update(&prior, &evidence);
+        assert!(posterior.is_valid());
+        assert_eq!(posterior.most_likely(), ErrorState::Recoverable);
+        assert!(posterior.recoverable > prior.recoverable);
+    }
+
+    #[test]
+    fn bayesian_update_no_candidates_favors_unrecoverable() {
+        let prior = StateProbabilities {
+            recoverable: 333_334,
+            ambiguous: 333_333,
+            unrecoverable: 333_333,
+        };
+        let evidence = EvidenceFeatures {
+            tokens_before_error: 50,
+            tokens_after_error: 100,
+            error_offset: 200,
+            at_statement_boundary: false,
+            single_token_fix: false,
+            single_token_delete: false,
+            candidate_count: 0,
+            features_hash: ContentHash::compute(b"none"),
+        };
+        let posterior = bayesian_update(&prior, &evidence);
+        assert!(posterior.is_valid());
+        assert_eq!(posterior.most_likely(), ErrorState::Unrecoverable);
+    }
+
+    #[test]
+    fn bayesian_update_many_candidates_favors_ambiguous() {
+        let prior = StateProbabilities {
+            recoverable: 333_334,
+            ambiguous: 333_333,
+            unrecoverable: 333_333,
+        };
+        let evidence = EvidenceFeatures {
+            tokens_before_error: 50,
+            tokens_after_error: 100,
+            error_offset: 200,
+            at_statement_boundary: false,
+            single_token_fix: false,
+            single_token_delete: false,
+            candidate_count: 10,
+            features_hash: ContentHash::compute(b"many"),
+        };
+        let posterior = bayesian_update(&prior, &evidence);
+        assert!(posterior.is_valid());
+        assert_eq!(posterior.most_likely(), ErrorState::Ambiguous);
+    }
+
+    #[test]
+    fn select_action_unrecoverable_state_selects_fail() {
+        let posterior = StateProbabilities {
+            recoverable: 0,
+            ambiguous: 0,
+            unrecoverable: 1_000_000,
+        };
+        let action = select_action(&posterior, &LossMatrix::default());
+        assert_eq!(action, RecoveryAction::FailStrict);
+    }
+
+    #[test]
+    fn select_action_recoverable_state_selects_recover() {
+        let posterior = StateProbabilities {
+            recoverable: 1_000_000,
+            ambiguous: 0,
+            unrecoverable: 0,
+        };
+        let action = select_action(&posterior, &LossMatrix::default());
+        assert_eq!(action, RecoveryAction::RecoverContinue);
+    }
+
+    #[test]
+    fn expected_loss_all_zero_probabilities() {
+        let posterior = StateProbabilities {
+            recoverable: 0,
+            ambiguous: 0,
+            unrecoverable: 0,
+        };
+        let loss = expected_loss(RecoveryAction::RecoverContinue, &posterior, &LossMatrix::default());
+        assert_eq!(loss, 0);
+    }
+
+    #[test]
+    fn evidence_features_with_hash_deterministic() {
+        let ef1 = EvidenceFeatures {
+            tokens_before_error: 10,
+            tokens_after_error: 20,
+            error_offset: 100,
+            at_statement_boundary: true,
+            single_token_fix: false,
+            single_token_delete: false,
+            candidate_count: 2,
+            features_hash: ContentHash::compute(b"dummy"),
+        }
+        .with_hash();
+        let ef2 = EvidenceFeatures {
+            tokens_before_error: 10,
+            tokens_after_error: 20,
+            error_offset: 100,
+            at_statement_boundary: true,
+            single_token_fix: false,
+            single_token_delete: false,
+            candidate_count: 2,
+            features_hash: ContentHash::compute(b"other"),
+        }
+        .with_hash();
+        assert_eq!(ef1.features_hash, ef2.features_hash);
+    }
+
+    #[test]
+    fn state_probabilities_confidence_returns_max() {
+        let sp = StateProbabilities {
+            recoverable: 100_000,
+            ambiguous: 700_000,
+            unrecoverable: 200_000,
+        };
+        assert_eq!(sp.confidence(), 700_000);
+    }
+
+    // ── Enrichment: Serde roundtrips ────────────────────────────────
+
+    #[test]
+    fn loss_matrix_serde_roundtrip_enrichment() {
+        let lm = LossMatrix::default();
+        let json = serde_json::to_string(&lm).unwrap();
+        let back: LossMatrix = serde_json::from_str(&json).unwrap();
+        assert_eq!(lm, back);
+    }
+
+    #[test]
+    fn repair_edit_serde_roundtrip_all_variants() {
+        let variants = vec![
+            RepairEdit::Insert { offset: 10, token_text: "semicolon".into() },
+            RepairEdit::Delete { offset: 20, length: 5 },
+            RepairEdit::Replace { offset: 30, length: 3, replacement: "{}".into() },
+            RepairEdit::Skip { offset: 40, count: 7 },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: RepairEdit = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn expected_losses_serde_roundtrip() {
+        let el = ExpectedLosses {
+            recover_continue: 5,
+            partial_recover: 12,
+            fail_strict: 8,
+        };
+        let json = serde_json::to_string(&el).unwrap();
+        let back: ExpectedLosses = serde_json::from_str(&json).unwrap();
+        assert_eq!(el, back);
+    }
+
+    // ── Enrichment: Debug nonempty ──────────────────────────────────
+
+    #[test]
+    fn evidence_features_debug_nonempty() {
+        let ef = simple_evidence();
+        let dbg = format!("{ef:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("EvidenceFeatures"));
+    }
+
+    #[test]
+    fn decision_ledger_debug_nonempty() {
+        let dl = DecisionLedger {
+            schema_version: SCHEMA_VERSION.to_string(),
+            input_hash: ContentHash::compute(b"test"),
+            input_bytes: 100,
+            mode: RecoveryMode::Strict,
+            attempts: Vec::new(),
+            outcome: RecoveryOutcome::CleanParse,
+            total_edits: 0,
+            parity_checked: false,
+            parity_ok: None,
+            repair_diff_hash: None,
+        };
+        let dbg = format!("{dl:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("DecisionLedger"));
+    }
+
+    #[test]
+    fn loss_matrix_debug_nonempty() {
+        let lm = LossMatrix::default();
+        let dbg = format!("{lm:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("LossMatrix"));
     }
 }

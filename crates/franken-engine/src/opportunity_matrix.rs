@@ -1507,4 +1507,323 @@ mod tests {
             variants.iter().map(|e| format!("{e}")).collect();
         assert_eq!(set.len(), variants.len());
     }
+
+    // ── Enrichment: Clone/Debug/Serde/JSON/Display/Edge ──
+
+    #[test]
+    fn opportunity_status_serde_variant_distinct() {
+        let variants = [
+            OpportunityStatus::Selected,
+            OpportunityStatus::RejectedLowScore,
+            OpportunityStatus::RejectedSecurityClearance,
+            OpportunityStatus::RejectedMissingHotspot,
+        ];
+        let set: std::collections::BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(set.len(), 4);
+    }
+
+    #[test]
+    fn opportunity_status_debug_distinct() {
+        let variants = [
+            OpportunityStatus::Selected,
+            OpportunityStatus::RejectedLowScore,
+            OpportunityStatus::RejectedSecurityClearance,
+            OpportunityStatus::RejectedMissingHotspot,
+        ];
+        let set: std::collections::BTreeSet<String> = variants
+            .iter()
+            .map(|v| format!("{v:?}"))
+            .collect();
+        assert_eq!(set.len(), 4);
+    }
+
+    #[test]
+    fn opportunity_matrix_error_debug_distinct() {
+        let variants: Vec<OpportunityMatrixError> = vec![
+            OpportunityMatrixError::InvalidRequest { field: "f".into(), detail: "d".into() },
+            OpportunityMatrixError::DuplicateOpportunityId { opportunity_id: "x".into() },
+            OpportunityMatrixError::InvalidTimestamp { value: "v".into() },
+        ];
+        let set: std::collections::BTreeSet<String> = variants
+            .iter()
+            .map(|v| format!("{v:?}"))
+            .collect();
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn hotspot_profile_entry_clone_independence() {
+        let a = HotspotProfileEntry {
+            module: "vm".to_string(),
+            function: "dispatch".to_string(),
+            sample_count: 100,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn optimization_candidate_input_clone_independence() {
+        let a = candidate("opp-1", "mod1", "fn1");
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn opportunity_outcome_observation_clone_independence() {
+        let a = OpportunityOutcomeObservation {
+            opportunity_id: "opp-1".to_string(),
+            predicted_gain_millionths: 100_000,
+            actual_gain_millionths: 90_000,
+            completed_at_utc: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn opportunity_matrix_error_clone_independence() {
+        let a = OpportunityMatrixError::DuplicateOpportunityId {
+            opportunity_id: "x".to_string(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn hotspot_profile_entry_json_field_names() {
+        let e = HotspotProfileEntry {
+            module: "m".to_string(),
+            function: "f".to_string(),
+            sample_count: 1,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        assert!(json.contains("\"module\""));
+        assert!(json.contains("\"function\""));
+        assert!(json.contains("\"sample_count\""));
+    }
+
+    #[test]
+    fn optimization_candidate_input_json_field_names() {
+        let c = candidate("opp-1", "m", "f");
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains("\"opportunity_id\""));
+        assert!(json.contains("\"target_module\""));
+        assert!(json.contains("\"target_function\""));
+        assert!(json.contains("\"estimated_speedup_millionths\""));
+        assert!(json.contains("\"implementation_complexity\""));
+        assert!(json.contains("\"regression_risk_millionths\""));
+        assert!(json.contains("\"security_clearance_millionths\""));
+        assert!(json.contains("\"engineering_effort_hours_millionths\""));
+    }
+
+    #[test]
+    fn opportunity_matrix_decision_json_field_names() {
+        let d = run_opportunity_matrix_scoring(&base_request());
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains("\"schema_version\""));
+        assert!(json.contains("\"matrix_id\""));
+        assert!(json.contains("\"optimization_run_id\""));
+        assert!(json.contains("\"outcome\""));
+        assert!(json.contains("\"score_threshold_millionths\""));
+        assert!(json.contains("\"ranked_opportunities\""));
+        assert!(json.contains("\"events\""));
+    }
+
+    #[test]
+    fn scored_opportunity_json_field_names() {
+        let d = run_opportunity_matrix_scoring(&base_request());
+        let json = serde_json::to_string(&d.ranked_opportunities[0]).unwrap();
+        assert!(json.contains("\"opportunity_id\""));
+        assert!(json.contains("\"score_millionths\""));
+        assert!(json.contains("\"threshold_met\""));
+        assert!(json.contains("\"status\""));
+        assert!(json.contains("\"voi_millionths\""));
+    }
+
+    #[test]
+    fn error_display_invalid_request_exact() {
+        let e = OpportunityMatrixError::InvalidRequest {
+            field: "trace_id".to_string(),
+            detail: "must not be empty".to_string(),
+        };
+        assert_eq!(e.to_string(), "invalid request field `trace_id`: must not be empty");
+    }
+
+    #[test]
+    fn error_display_duplicate_opportunity_id_exact() {
+        let e = OpportunityMatrixError::DuplicateOpportunityId {
+            opportunity_id: "opp-1".to_string(),
+        };
+        assert_eq!(e.to_string(), "duplicate opportunity_id `opp-1`");
+    }
+
+    #[test]
+    fn error_display_invalid_timestamp_exact() {
+        let e = OpportunityMatrixError::InvalidTimestamp {
+            value: "not-a-date".to_string(),
+        };
+        assert_eq!(e.to_string(), "invalid RFC3339 UTC timestamp `not-a-date`");
+    }
+
+    #[test]
+    fn error_stable_code_invalid_request() {
+        let e = OpportunityMatrixError::InvalidRequest {
+            field: "f".into(),
+            detail: "d".into(),
+        };
+        assert_eq!(e.stable_code(), "FE-OPPM-1001");
+    }
+
+    #[test]
+    fn error_stable_code_duplicate() {
+        let e = OpportunityMatrixError::DuplicateOpportunityId {
+            opportunity_id: "x".into(),
+        };
+        assert_eq!(e.stable_code(), "FE-OPPM-1002");
+    }
+
+    #[test]
+    fn error_stable_code_invalid_timestamp() {
+        let e = OpportunityMatrixError::InvalidTimestamp { value: "v".into() };
+        assert_eq!(e.stable_code(), "FE-OPPM-1003");
+    }
+
+    #[test]
+    fn hotspot_profile_entry_key_format_enriched() {
+        let e = HotspotProfileEntry {
+            module: "vm".to_string(),
+            function: "dispatch".to_string(),
+            sample_count: 100,
+        };
+        assert_eq!(e.key(), "vm::dispatch");
+    }
+
+    #[test]
+    fn optimization_candidate_target_key_format() {
+        let c = candidate("opp-1", "engine", "eval");
+        assert_eq!(c.target_key(), "engine::eval");
+    }
+
+    #[test]
+    fn decision_has_selected_opportunities_false_when_empty() {
+        let mut req = base_request();
+        // Set security_clearance to 0 so all get rejected
+        for c in &mut req.candidates {
+            c.security_clearance_millionths = 0;
+        }
+        let d = run_opportunity_matrix_scoring(&req);
+        assert!(!d.has_selected_opportunities());
+    }
+
+    #[test]
+    fn decision_schema_version_matches_constant() {
+        let d = run_opportunity_matrix_scoring(&base_request());
+        assert_eq!(d.schema_version, OPPORTUNITY_MATRIX_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn decision_threshold_matches_constant() {
+        let d = run_opportunity_matrix_scoring(&base_request());
+        assert_eq!(d.score_threshold_millionths, OPPORTUNITY_SCORE_THRESHOLD_MILLIONTHS);
+    }
+
+    #[test]
+    fn hotspot_profile_entry_serde_roundtrip() {
+        let e = HotspotProfileEntry {
+            module: "vm".to_string(),
+            function: "dispatch".to_string(),
+            sample_count: 100,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: HotspotProfileEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    #[test]
+    fn opportunity_matrix_decision_serde_roundtrip() {
+        let d = run_opportunity_matrix_scoring(&base_request());
+        let json = serde_json::to_string(&d).unwrap();
+        let back: OpportunityMatrixDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(d, back);
+    }
+
+    #[test]
+    fn debug_nonempty_hotspot_profile_entry() {
+        let e = HotspotProfileEntry {
+            module: "m".to_string(),
+            function: "f".to_string(),
+            sample_count: 0,
+        };
+        assert!(!format!("{e:?}").is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_optimization_candidate_input() {
+        assert!(!format!("{:?}", candidate("o", "m", "f")).is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_opportunity_matrix_error() {
+        let e = OpportunityMatrixError::InvalidRequest {
+            field: "f".into(),
+            detail: "d".into(),
+        };
+        assert!(!format!("{e:?}").is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_scored_opportunity() {
+        let d = run_opportunity_matrix_scoring(&base_request());
+        assert!(!format!("{:?}", d.ranked_opportunities[0]).is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_opportunity_matrix_decision() {
+        let d = run_opportunity_matrix_scoring(&base_request());
+        assert!(!format!("{d:?}").is_empty());
+    }
+
+    #[test]
+    fn boundary_empty_trace_id_rejected() {
+        let mut req = base_request();
+        req.trace_id = "  ".to_string();
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+        assert!(d.error_code.is_some());
+    }
+
+    #[test]
+    fn boundary_empty_candidates_rejected() {
+        let mut req = base_request();
+        req.candidates.clear();
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+    }
+
+    #[test]
+    fn boundary_zero_sample_count_hotspot() {
+        let e = HotspotProfileEntry {
+            module: "m".to_string(),
+            function: "f".to_string(),
+            sample_count: 0,
+        };
+        assert_eq!(e.sample_count, 0);
+    }
+
+    #[test]
+    fn constants_stable() {
+        assert_eq!(OPPORTUNITY_MATRIX_COMPONENT, "opportunity_matrix");
+        assert_eq!(OPPORTUNITY_MATRIX_SCHEMA_VERSION, "franken-engine.opportunity-matrix.v1");
+        assert_eq!(OPPORTUNITY_SCORE_THRESHOLD_MILLIONTHS, 2_000_000);
+    }
+
+    #[test]
+    fn benchmark_pressure_from_empty_cases_returns_neutral() {
+        let pressure = benchmark_pressure_from_cases(&[], &[]);
+        assert_eq!(pressure, 1_000_000);
+    }
 }

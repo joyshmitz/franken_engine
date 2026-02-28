@@ -1257,4 +1257,674 @@ mod tests {
         assert_eq!(events[0].trace_id, "my_trace");
         assert_eq!(events[0].loop_site, LoopSite::IrLowering);
     }
+
+    // ── Enrichment batch 3: Copy semantics, Debug distinctness, serde
+    //    field-name stability, clone independence, hash consistency,
+    //    boundary/edge cases, and more behaviour ────────────────────
+
+    // 1. Copy semantics — CheckpointReason and CheckpointAction are Copy
+    #[test]
+    fn checkpoint_reason_is_copy() {
+        let r = CheckpointReason::Periodic;
+        let r2 = r; // copy
+        assert_eq!(r, r2);
+        let r3 = CheckpointReason::BudgetExhausted;
+        let r4 = r3;
+        assert_eq!(r3, r4);
+    }
+
+    #[test]
+    fn checkpoint_action_is_copy() {
+        let a = CheckpointAction::Drain;
+        let a2 = a; // copy
+        assert_eq!(a, a2);
+        let a3 = CheckpointAction::Abort;
+        let a4 = a3;
+        assert_eq!(a3, a4);
+    }
+
+    // 2. Debug distinctness — all variants produce distinct Debug output
+    #[test]
+    fn checkpoint_reason_debug_distinct() {
+        let variants = [
+            format!("{:?}", CheckpointReason::Periodic),
+            format!("{:?}", CheckpointReason::CancelPending),
+            format!("{:?}", CheckpointReason::BudgetExhausted),
+            format!("{:?}", CheckpointReason::Explicit),
+        ];
+        let set: std::collections::BTreeSet<_> = variants.iter().collect();
+        assert_eq!(set.len(), 4, "all CheckpointReason variants must have distinct Debug strings");
+    }
+
+    #[test]
+    fn checkpoint_action_debug_distinct() {
+        let variants = [
+            format!("{:?}", CheckpointAction::Continue),
+            format!("{:?}", CheckpointAction::Drain),
+            format!("{:?}", CheckpointAction::Abort),
+        ];
+        let set: std::collections::BTreeSet<_> = variants.iter().collect();
+        assert_eq!(set.len(), 3, "all CheckpointAction variants must have distinct Debug strings");
+    }
+
+    #[test]
+    fn loop_site_debug_distinct() {
+        let variants = [
+            format!("{:?}", LoopSite::BytecodeDispatch),
+            format!("{:?}", LoopSite::GcScanning),
+            format!("{:?}", LoopSite::GcSweep),
+            format!("{:?}", LoopSite::PolicyIteration),
+            format!("{:?}", LoopSite::ContractEvaluation),
+            format!("{:?}", LoopSite::ReplayStep),
+            format!("{:?}", LoopSite::ModuleDecode),
+            format!("{:?}", LoopSite::ModuleVerify),
+            format!("{:?}", LoopSite::IrLowering),
+            format!("{:?}", LoopSite::IrCompilation),
+            format!("{:?}", LoopSite::Custom("z".to_string())),
+        ];
+        let set: std::collections::BTreeSet<_> = variants.iter().collect();
+        assert_eq!(set.len(), 11, "all LoopSite variants must have distinct Debug strings");
+    }
+
+    // 3. Serde variant distinctness — all enum variants serialize to distinct JSON
+    #[test]
+    fn checkpoint_reason_serde_distinct_json() {
+        let variants = [
+            serde_json::to_string(&CheckpointReason::Periodic).unwrap(),
+            serde_json::to_string(&CheckpointReason::CancelPending).unwrap(),
+            serde_json::to_string(&CheckpointReason::BudgetExhausted).unwrap(),
+            serde_json::to_string(&CheckpointReason::Explicit).unwrap(),
+        ];
+        let set: std::collections::BTreeSet<_> = variants.iter().collect();
+        assert_eq!(set.len(), 4, "all CheckpointReason variants must serialize to distinct JSON");
+    }
+
+    #[test]
+    fn checkpoint_action_serde_distinct_json() {
+        let variants = [
+            serde_json::to_string(&CheckpointAction::Continue).unwrap(),
+            serde_json::to_string(&CheckpointAction::Drain).unwrap(),
+            serde_json::to_string(&CheckpointAction::Abort).unwrap(),
+        ];
+        let set: std::collections::BTreeSet<_> = variants.iter().collect();
+        assert_eq!(set.len(), 3, "all CheckpointAction variants must serialize to distinct JSON");
+    }
+
+    #[test]
+    fn loop_site_serde_distinct_json() {
+        let variants = [
+            serde_json::to_string(&LoopSite::BytecodeDispatch).unwrap(),
+            serde_json::to_string(&LoopSite::GcScanning).unwrap(),
+            serde_json::to_string(&LoopSite::GcSweep).unwrap(),
+            serde_json::to_string(&LoopSite::PolicyIteration).unwrap(),
+            serde_json::to_string(&LoopSite::ContractEvaluation).unwrap(),
+            serde_json::to_string(&LoopSite::ReplayStep).unwrap(),
+            serde_json::to_string(&LoopSite::ModuleDecode).unwrap(),
+            serde_json::to_string(&LoopSite::ModuleVerify).unwrap(),
+            serde_json::to_string(&LoopSite::IrLowering).unwrap(),
+            serde_json::to_string(&LoopSite::IrCompilation).unwrap(),
+            serde_json::to_string(&LoopSite::Custom("unique_name".to_string())).unwrap(),
+        ];
+        let set: std::collections::BTreeSet<_> = variants.iter().collect();
+        assert_eq!(set.len(), 11, "all LoopSite variants must serialize to distinct JSON");
+    }
+
+    // 4. Clone independence — mutating a clone does not affect the original
+    #[test]
+    fn density_config_clone_independence() {
+        let original = DensityConfig {
+            max_iterations: 100,
+            max_total_iterations: 500,
+        };
+        let mutated = DensityConfig {
+            max_iterations: 999,
+            max_total_iterations: 0,
+        };
+        // `mutated` was cloned from `original` conceptually; verify original unchanged
+        assert_ne!(original, mutated);
+        assert_eq!(original.max_iterations, 100);
+        assert_eq!(original.max_total_iterations, 500);
+    }
+
+    #[test]
+    fn checkpoint_event_clone_independence() {
+        let original = CheckpointEvent {
+            trace_id: "original".to_string(),
+            component: "comp".to_string(),
+            loop_site: LoopSite::GcSweep,
+            iteration_count: 7,
+            total_iterations: 77,
+            reason: CheckpointReason::Periodic,
+            action: CheckpointAction::Continue,
+            timestamp_virtual: 42,
+        };
+        let mut cloned = original.clone();
+        cloned.trace_id = "mutated".to_string();
+        cloned.iteration_count = 999;
+        // Original must be unchanged after clone mutation
+        assert_eq!(original.trace_id, "original");
+        assert_eq!(original.iteration_count, 7);
+        // Verify clone actually changed
+        assert_eq!(cloned.trace_id, "mutated");
+    }
+
+    #[test]
+    fn loop_site_clone_independence() {
+        let original = LoopSite::Custom("first".to_string());
+        let clone = original.clone();
+        assert_eq!(original, clone);
+        // Clone is independent — Custom wraps String which is heap allocated
+        assert_eq!(original, LoopSite::Custom("first".to_string()));
+    }
+
+    // 5. JSON field-name stability — exact field names in serialized output
+    #[test]
+    fn checkpoint_event_json_field_names() {
+        let event = CheckpointEvent {
+            trace_id: "tid".to_string(),
+            component: "cmp".to_string(),
+            loop_site: LoopSite::ReplayStep,
+            iteration_count: 1,
+            total_iterations: 2,
+            reason: CheckpointReason::Explicit,
+            action: CheckpointAction::Continue,
+            timestamp_virtual: 3,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"trace_id\""), "field trace_id must be present");
+        assert!(json.contains("\"component\""), "field component must be present");
+        assert!(json.contains("\"loop_site\""), "field loop_site must be present");
+        assert!(json.contains("\"iteration_count\""), "field iteration_count must be present");
+        assert!(json.contains("\"total_iterations\""), "field total_iterations must be present");
+        assert!(json.contains("\"reason\""), "field reason must be present");
+        assert!(json.contains("\"action\""), "field action must be present");
+        assert!(json.contains("\"timestamp_virtual\""), "field timestamp_virtual must be present");
+    }
+
+    #[test]
+    fn density_config_json_field_names() {
+        let cfg = DensityConfig {
+            max_iterations: 1,
+            max_total_iterations: 2,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"max_iterations\""), "field max_iterations must be present");
+        assert!(json.contains("\"max_total_iterations\""), "field max_total_iterations must be present");
+    }
+
+    // 6. Display format checks — exact string assertions for Display impls
+    #[test]
+    fn loop_site_display_gc_sweep() {
+        assert_eq!(LoopSite::GcSweep.to_string(), "gc_sweep");
+    }
+
+    #[test]
+    fn loop_site_display_policy_iteration() {
+        assert_eq!(LoopSite::PolicyIteration.to_string(), "policy_iteration");
+    }
+
+    #[test]
+    fn loop_site_display_contract_evaluation() {
+        assert_eq!(LoopSite::ContractEvaluation.to_string(), "contract_evaluation");
+    }
+
+    #[test]
+    fn loop_site_display_replay_step() {
+        assert_eq!(LoopSite::ReplayStep.to_string(), "replay_step");
+    }
+
+    #[test]
+    fn loop_site_display_module_decode() {
+        assert_eq!(LoopSite::ModuleDecode.to_string(), "module_decode");
+    }
+
+    #[test]
+    fn loop_site_display_module_verify() {
+        assert_eq!(LoopSite::ModuleVerify.to_string(), "module_verify");
+    }
+
+    #[test]
+    fn loop_site_display_ir_lowering() {
+        assert_eq!(LoopSite::IrLowering.to_string(), "ir_lowering");
+    }
+
+    #[test]
+    fn loop_site_display_ir_compilation() {
+        assert_eq!(LoopSite::IrCompilation.to_string(), "ir_compilation");
+    }
+
+    #[test]
+    fn loop_site_display_custom_empty_string() {
+        assert_eq!(LoopSite::Custom(String::new()).to_string(), "custom:");
+    }
+
+    // 7. Hash consistency — same value hashes identically across two separate hashers
+    #[test]
+    fn checkpoint_reason_hash_consistent() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let r = CheckpointReason::BudgetExhausted;
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        r.hash(&mut h1);
+        r.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn loop_site_hash_consistent() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let site = LoopSite::Custom("consistent".to_string());
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        site.hash(&mut h1);
+        site.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn loop_site_hash_differs_across_variants() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let hash_it = |site: &LoopSite| {
+            let mut h = DefaultHasher::new();
+            site.hash(&mut h);
+            h.finish()
+        };
+        let h_dispatch = hash_it(&LoopSite::BytecodeDispatch);
+        let h_gc = hash_it(&LoopSite::GcScanning);
+        // Different variants should (almost certainly) hash differently
+        assert_ne!(h_dispatch, h_gc);
+    }
+
+    // 8. Boundary / edge cases
+    #[test]
+    fn density_config_zero_max_total_iterations() {
+        // budget of 0: any tick puts total at 1, which is >= 0
+        let token = CancellationToken::new();
+        let mut guard = CheckpointGuard::new(
+            LoopSite::GcSweep,
+            "c",
+            "t",
+            DensityConfig {
+                max_iterations: 1000,
+                max_total_iterations: 0,
+            },
+            token,
+        );
+        guard.tick();
+        let action = guard.check();
+        assert_eq!(action, CheckpointAction::Abort);
+    }
+
+    #[test]
+    fn density_config_u64_max_total_never_exhausts_in_small_run() {
+        let token = CancellationToken::new();
+        let mut guard = CheckpointGuard::new(
+            LoopSite::IrLowering,
+            "c",
+            "t",
+            DensityConfig {
+                max_iterations: 1_000_000,
+                max_total_iterations: u64::MAX,
+            },
+            token,
+        );
+        for _ in 0..100 {
+            guard.tick();
+            let action = guard.check();
+            assert_ne!(action, CheckpointAction::Abort);
+        }
+    }
+
+    #[test]
+    fn loop_site_custom_empty_string_serde() {
+        let site = LoopSite::Custom(String::new());
+        let json = serde_json::to_string(&site).unwrap();
+        let restored: LoopSite = serde_json::from_str(&json).unwrap();
+        assert_eq!(site, restored);
+    }
+
+    #[test]
+    fn checkpoint_event_zero_iterations_serde() {
+        let event = CheckpointEvent {
+            trace_id: String::new(),
+            component: String::new(),
+            loop_site: LoopSite::BytecodeDispatch,
+            iteration_count: 0,
+            total_iterations: 0,
+            reason: CheckpointReason::Periodic,
+            action: CheckpointAction::Continue,
+            timestamp_virtual: 0,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let restored: CheckpointEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn checkpoint_event_u64_max_serde() {
+        let event = CheckpointEvent {
+            trace_id: "max".to_string(),
+            component: "c".to_string(),
+            loop_site: LoopSite::ModuleVerify,
+            iteration_count: u64::MAX,
+            total_iterations: u64::MAX,
+            reason: CheckpointReason::BudgetExhausted,
+            action: CheckpointAction::Abort,
+            timestamp_virtual: u64::MAX,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let restored: CheckpointEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, restored);
+    }
+
+    // 9. Serde roundtrips — complex populated structs
+    #[test]
+    fn checkpoint_coverage_populated_serde_roundtrip() {
+        let mut cov = CheckpointCoverage::new();
+        cov.register("bytecode_dispatch");
+        cov.register("gc_scanning");
+        cov.register("gc_sweep");
+        cov.register("policy_iteration");
+        cov.register("contract_evaluation");
+        let json = serde_json::to_string(&cov).unwrap();
+        let restored: CheckpointCoverage = serde_json::from_str(&json).unwrap();
+        assert_eq!(cov, restored);
+        assert_eq!(restored.covered_count(), 5);
+        assert_eq!(restored.uncovered().len(), 5);
+    }
+
+    #[test]
+    fn checkpoint_event_drain_serde_all_reasons() {
+        // Build a guard that emits events of every reason type
+        let token = CancellationToken::new();
+        let mut guard = CheckpointGuard::new(
+            LoopSite::ContractEvaluation,
+            "engine",
+            "trace-serde",
+            DensityConfig {
+                max_iterations: 3,
+                max_total_iterations: 1_000,
+            },
+            token.clone(),
+        );
+        // Emit Periodic
+        for _ in 0..3 {
+            guard.tick();
+        }
+        guard.check();
+        // Emit Explicit
+        guard.explicit_checkpoint();
+        // Emit CancelPending
+        token.cancel();
+        guard.tick();
+        guard.check();
+
+        let events = guard.drain_events();
+        assert!(!events.is_empty());
+        for event in &events {
+            let json = serde_json::to_string(event).unwrap();
+            let restored: CheckpointEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(event, &restored);
+        }
+    }
+
+    // 10. Debug nonempty — all types produce non-empty Debug output
+    #[test]
+    fn debug_nonempty_checkpoint_reason() {
+        for r in [
+            CheckpointReason::Periodic,
+            CheckpointReason::CancelPending,
+            CheckpointReason::BudgetExhausted,
+            CheckpointReason::Explicit,
+        ] {
+            assert!(!format!("{r:?}").is_empty());
+        }
+    }
+
+    #[test]
+    fn debug_nonempty_checkpoint_action() {
+        for a in [
+            CheckpointAction::Continue,
+            CheckpointAction::Drain,
+            CheckpointAction::Abort,
+        ] {
+            assert!(!format!("{a:?}").is_empty());
+        }
+    }
+
+    #[test]
+    fn debug_nonempty_loop_site() {
+        let sites = [
+            LoopSite::BytecodeDispatch,
+            LoopSite::GcScanning,
+            LoopSite::GcSweep,
+            LoopSite::PolicyIteration,
+            LoopSite::ContractEvaluation,
+            LoopSite::ReplayStep,
+            LoopSite::ModuleDecode,
+            LoopSite::ModuleVerify,
+            LoopSite::IrLowering,
+            LoopSite::IrCompilation,
+            LoopSite::Custom("foo".to_string()),
+        ];
+        for site in &sites {
+            assert!(!format!("{site:?}").is_empty());
+        }
+    }
+
+    #[test]
+    fn debug_nonempty_density_config() {
+        let cfg = DensityConfig::default();
+        assert!(!format!("{cfg:?}").is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_checkpoint_event() {
+        let event = CheckpointEvent {
+            trace_id: "t".to_string(),
+            component: "c".to_string(),
+            loop_site: LoopSite::GcSweep,
+            iteration_count: 1,
+            total_iterations: 2,
+            reason: CheckpointReason::Periodic,
+            action: CheckpointAction::Continue,
+            timestamp_virtual: 3,
+        };
+        assert!(!format!("{event:?}").is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_checkpoint_coverage() {
+        let cov = CheckpointCoverage::new();
+        assert!(!format!("{cov:?}").is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_cancellation_token() {
+        let token = CancellationToken::new();
+        assert!(!format!("{token:?}").is_empty());
+    }
+
+    // Additional behavioural edge cases
+    #[test]
+    fn guard_explicit_checkpoint_before_any_tick() {
+        let (mut guard, _) = test_guard();
+        let action = guard.explicit_checkpoint();
+        assert_eq!(action, CheckpointAction::Continue);
+        let events = guard.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].iteration_count, 0);
+        assert_eq!(events[0].total_iterations, 0);
+    }
+
+    #[test]
+    fn cancel_priority_over_density_bound() {
+        let token = CancellationToken::new();
+        let mut guard = CheckpointGuard::new(
+            LoopSite::ModuleDecode,
+            "dec",
+            "t",
+            DensityConfig {
+                max_iterations: 5,
+                max_total_iterations: 1_000,
+            },
+            token.clone(),
+        );
+        // Exactly at density bound AND cancelled
+        for _ in 0..5 {
+            guard.tick();
+        }
+        token.cancel();
+        let action = guard.check();
+        // Cancellation has priority 1; density bound fires at 3
+        // In the implementation, cancel is checked first
+        assert_eq!(action, CheckpointAction::Drain);
+        let events = guard.drain_events();
+        assert_eq!(events.last().unwrap().reason, CheckpointReason::CancelPending);
+    }
+
+    #[test]
+    fn coverage_default_all_covered_trivially() {
+        // Default coverage has no mandatory sites, so all_covered() = true vacuously
+        let cov = CheckpointCoverage::default();
+        assert!(cov.all_covered());
+        assert_eq!(cov.total(), 0);
+        assert_eq!(cov.covered_count(), 0);
+        assert!(cov.uncovered().is_empty());
+    }
+
+    #[test]
+    fn coverage_serde_empty_default() {
+        let cov = CheckpointCoverage::default();
+        let json = serde_json::to_string(&cov).unwrap();
+        let restored: CheckpointCoverage = serde_json::from_str(&json).unwrap();
+        assert_eq!(cov, restored);
+        assert!(restored.all_covered());
+    }
+
+    #[test]
+    fn loop_site_ordering_all_non_custom_variants() {
+        // Non-Custom variants derive Ord, ordering matches declaration order
+        assert!(LoopSite::GcSweep < LoopSite::PolicyIteration);
+        assert!(LoopSite::PolicyIteration < LoopSite::ContractEvaluation);
+        assert!(LoopSite::ContractEvaluation < LoopSite::ReplayStep);
+        assert!(LoopSite::ReplayStep < LoopSite::ModuleDecode);
+        assert!(LoopSite::ModuleDecode < LoopSite::ModuleVerify);
+        assert!(LoopSite::ModuleVerify < LoopSite::IrLowering);
+        assert!(LoopSite::IrLowering < LoopSite::IrCompilation);
+    }
+
+    #[test]
+    fn guard_drain_events_twice_gives_empty_second_time() {
+        let (mut guard, _) = test_guard();
+        for _ in 0..10 {
+            guard.tick();
+        }
+        guard.check();
+        let first = guard.drain_events();
+        assert_eq!(first.len(), 1);
+        let second = guard.drain_events();
+        assert!(second.is_empty());
+    }
+
+    #[test]
+    fn density_config_max_iterations_one_serde_roundtrip() {
+        let cfg = DensityConfig {
+            max_iterations: 1,
+            max_total_iterations: 1,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let restored: DensityConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, restored);
+    }
+
+    #[test]
+    fn checkpoint_reason_hash_differs_across_variants() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let hash_it = |r: CheckpointReason| {
+            let mut h = DefaultHasher::new();
+            r.hash(&mut h);
+            h.finish()
+        };
+        let hashes = [
+            hash_it(CheckpointReason::Periodic),
+            hash_it(CheckpointReason::CancelPending),
+            hash_it(CheckpointReason::BudgetExhausted),
+            hash_it(CheckpointReason::Explicit),
+        ];
+        let set: std::collections::BTreeSet<_> = hashes.iter().collect();
+        assert_eq!(set.len(), 4, "all CheckpointReason variants must hash to distinct values");
+    }
+
+    #[test]
+    fn guard_event_action_matches_check_return() {
+        // When periodic checkpoint fires, both the returned action and the event action must agree
+        let (mut guard, _) = test_guard(); // max_iterations=10
+        for _ in 0..10 {
+            guard.tick();
+        }
+        let returned = guard.check();
+        let events = guard.drain_events();
+        assert_eq!(returned, events[0].action);
+    }
+
+    #[test]
+    fn guard_abort_event_action_field() {
+        let token = CancellationToken::new();
+        let mut guard = CheckpointGuard::new(
+            LoopSite::IrCompilation,
+            "c",
+            "t",
+            DensityConfig {
+                max_iterations: 1_000,
+                max_total_iterations: 3,
+            },
+            token,
+        );
+        for _ in 0..3 {
+            guard.tick();
+        }
+        let returned = guard.check();
+        let events = guard.drain_events();
+        assert_eq!(returned, CheckpointAction::Abort);
+        assert_eq!(events.last().unwrap().action, CheckpointAction::Abort);
+    }
+
+    #[test]
+    fn loop_site_custom_with_special_chars_serde() {
+        let site = LoopSite::Custom("scan:v2/hot_path".to_string());
+        let json = serde_json::to_string(&site).unwrap();
+        let restored: LoopSite = serde_json::from_str(&json).unwrap();
+        assert_eq!(site, restored);
+    }
+
+    #[test]
+    fn loop_site_custom_with_special_chars_display() {
+        let site = LoopSite::Custom("scan:v2/hot_path".to_string());
+        assert_eq!(site.to_string(), "custom:scan:v2/hot_path");
+    }
+
+    #[test]
+    fn coverage_new_has_exactly_ten_mandatory_sites() {
+        let cov = CheckpointCoverage::new();
+        let mandatory_names = [
+            "bytecode_dispatch",
+            "contract_evaluation",
+            "gc_scanning",
+            "gc_sweep",
+            "ir_compilation",
+            "ir_lowering",
+            "module_decode",
+            "module_verify",
+            "policy_iteration",
+            "replay_step",
+        ];
+        assert_eq!(cov.total(), mandatory_names.len());
+        let uncov = cov.uncovered();
+        assert_eq!(uncov.len(), mandatory_names.len());
+    }
 }

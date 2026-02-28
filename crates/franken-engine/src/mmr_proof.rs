@@ -1373,4 +1373,554 @@ mod tests {
             assert_eq!(*e, back);
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Batch 4: Copy semantics, Debug distinctness, clone independence,
+    // JSON field-name stability, Display format checks, hash consistency,
+    // boundary/edge cases, additional serde roundtrips, Debug nonempty
+    // -----------------------------------------------------------------------
+
+    // -- Copy semantics (ProofType is Clone+PartialEq, no Copy; test clone acts like copy) --
+
+    #[test]
+    fn proof_type_inclusion_clone_is_independent() {
+        let a = ProofType::Inclusion;
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn proof_type_consistency_clone_is_independent() {
+        let a = ProofType::Consistency;
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn mmr_proof_clone_is_independent() {
+        let mmr = build_mmr(6);
+        let proof = mmr.inclusion_proof(2).unwrap();
+        let mut cloned = proof.clone();
+        cloned.epoch_id = 999;
+        // Mutating clone does not affect original
+        assert_ne!(proof.epoch_id, cloned.epoch_id);
+    }
+
+    #[test]
+    fn proof_error_clone_is_independent() {
+        let orig = ProofError::InvalidProof {
+            reason: "original".into(),
+        };
+        let cloned = orig.clone();
+        assert_eq!(orig, cloned);
+    }
+
+    // -- Debug distinctness --
+
+    #[test]
+    fn proof_type_debug_distinct() {
+        let inc = format!("{:?}", ProofType::Inclusion);
+        let con = format!("{:?}", ProofType::Consistency);
+        assert_ne!(inc, con);
+        assert!(inc.contains("Inclusion"));
+        assert!(con.contains("Consistency"));
+    }
+
+    #[test]
+    fn proof_error_debug_all_variants_distinct() {
+        let h1 = ContentHash::compute(b"dbg1");
+        let h2 = ContentHash::compute(b"dbg2");
+        let debugs: std::collections::BTreeSet<String> = [
+            format!(
+                "{:?}",
+                ProofError::IndexOutOfRange {
+                    index: 7,
+                    stream_length: 4
+                }
+            ),
+            format!(
+                "{:?}",
+                ProofError::RootMismatch {
+                    expected: h1,
+                    computed: h2
+                }
+            ),
+            format!(
+                "{:?}",
+                ProofError::InvalidProof {
+                    reason: "dbg".into()
+                }
+            ),
+            format!("{:?}", ProofError::EmptyStream),
+            format!(
+                "{:?}",
+                ProofError::ConsistencyFailure {
+                    old_length: 4,
+                    new_length: 9,
+                    reason: "dbg".into()
+                }
+            ),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(debugs.len(), 5);
+    }
+
+    #[test]
+    fn mmr_proof_debug_nonempty() {
+        let mmr = build_mmr(4);
+        let proof = mmr.inclusion_proof(0).unwrap();
+        let dbg = format!("{:?}", proof);
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("MmrProof"));
+    }
+
+    // -- Serde variant distinctness --
+
+    #[test]
+    fn proof_type_serde_variants_produce_distinct_json() {
+        let inc = serde_json::to_string(&ProofType::Inclusion).unwrap();
+        let con = serde_json::to_string(&ProofType::Consistency).unwrap();
+        assert_ne!(inc, con);
+    }
+
+    #[test]
+    fn proof_error_serde_variants_produce_distinct_json() {
+        let v1 = serde_json::to_string(&ProofError::EmptyStream).unwrap();
+        let v2 = serde_json::to_string(&ProofError::InvalidProof {
+            reason: "r".into(),
+        })
+        .unwrap();
+        let v3 = serde_json::to_string(&ProofError::IndexOutOfRange {
+            index: 0,
+            stream_length: 1,
+        })
+        .unwrap();
+        assert_ne!(v1, v2);
+        assert_ne!(v2, v3);
+        assert_ne!(v1, v3);
+    }
+
+    // -- JSON field-name stability --
+
+    #[test]
+    fn mmr_proof_json_field_proof_type_key() {
+        let mmr = build_mmr(2);
+        let proof = mmr.inclusion_proof(0).unwrap();
+        let json = serde_json::to_string(&proof).unwrap();
+        assert!(json.contains("\"proof_type\""));
+    }
+
+    #[test]
+    fn mmr_proof_json_field_epoch_id_key() {
+        let mmr = build_mmr(2);
+        let proof = mmr.inclusion_proof(0).unwrap();
+        let json = serde_json::to_string(&proof).unwrap();
+        assert!(json.contains("\"epoch_id\""));
+    }
+
+    #[test]
+    fn mmr_proof_json_field_stream_length_key() {
+        let mmr = build_mmr(3);
+        let proof = mmr.inclusion_proof(1).unwrap();
+        let json = serde_json::to_string(&proof).unwrap();
+        assert!(json.contains("\"stream_length\""));
+    }
+
+    #[test]
+    fn mmr_proof_json_field_proof_hashes_key() {
+        let mmr = build_mmr(3);
+        let proof = mmr.inclusion_proof(1).unwrap();
+        let json = serde_json::to_string(&proof).unwrap();
+        assert!(json.contains("\"proof_hashes\""));
+    }
+
+    #[test]
+    fn mmr_proof_json_field_root_hash_key() {
+        let mmr = build_mmr(3);
+        let proof = mmr.inclusion_proof(1).unwrap();
+        let json = serde_json::to_string(&proof).unwrap();
+        assert!(json.contains("\"root_hash\""));
+    }
+
+    #[test]
+    fn mmr_proof_json_field_marker_index_key() {
+        let mmr = build_mmr(3);
+        let proof = mmr.inclusion_proof(1).unwrap();
+        let json = serde_json::to_string(&proof).unwrap();
+        assert!(json.contains("\"marker_index\""));
+    }
+
+    // -- Display format checks --
+
+    #[test]
+    fn proof_error_index_out_of_range_display_contains_stream_length() {
+        let err = ProofError::IndexOutOfRange {
+            index: 99,
+            stream_length: 10,
+        };
+        let s = err.to_string();
+        assert!(s.contains("10"), "display '{s}' missing stream length");
+    }
+
+    #[test]
+    fn proof_error_root_mismatch_display_text() {
+        let err = ProofError::RootMismatch {
+            expected: ContentHash::compute(b"e"),
+            computed: ContentHash::compute(b"c"),
+        };
+        let s = err.to_string();
+        assert!(s.contains("mismatch"), "display '{s}' missing 'mismatch'");
+    }
+
+    #[test]
+    fn proof_error_invalid_proof_display_contains_reason() {
+        let err = ProofError::InvalidProof {
+            reason: "my-reason".into(),
+        };
+        let s = err.to_string();
+        assert!(s.contains("my-reason"), "display '{s}' missing reason");
+    }
+
+    #[test]
+    fn proof_error_consistency_failure_display_contains_reason() {
+        let err = ProofError::ConsistencyFailure {
+            old_length: 2,
+            new_length: 5,
+            reason: "specific-reason".into(),
+        };
+        let s = err.to_string();
+        assert!(
+            s.contains("specific-reason"),
+            "display '{s}' missing reason"
+        );
+    }
+
+    #[test]
+    fn proof_error_empty_stream_display_exact() {
+        assert_eq!(ProofError::EmptyStream.to_string(), "empty stream");
+    }
+
+    // -- Hash consistency --
+
+    #[test]
+    fn hash_pair_is_order_sensitive() {
+        let h1 = ContentHash::compute(b"left");
+        let h2 = ContentHash::compute(b"right");
+        let forward = hash_pair(&h1, &h2);
+        let backward = hash_pair(&h2, &h1);
+        assert_ne!(forward, backward);
+    }
+
+    #[test]
+    fn hash_pair_same_inputs_is_deterministic() {
+        let h = ContentHash::compute(b"same");
+        let r1 = hash_pair(&h, &h);
+        let r2 = hash_pair(&h, &h);
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn root_hash_differs_for_different_leaf_content() {
+        let mut mmr1 = MerkleMountainRange::new(1);
+        mmr1.append(ContentHash::compute(b"leaf-A"));
+        let mut mmr2 = MerkleMountainRange::new(1);
+        mmr2.append(ContentHash::compute(b"leaf-B"));
+        assert_ne!(mmr1.root_hash().unwrap(), mmr2.root_hash().unwrap());
+    }
+
+    #[test]
+    fn two_leaf_mmr_root_differs_from_leaves() {
+        let mmr = build_mmr(2);
+        let root = mmr.root_hash().unwrap();
+        assert_ne!(root, leaf_hash(0));
+        assert_ne!(root, leaf_hash(1));
+    }
+
+    // -- Boundary / edge cases --
+
+    #[test]
+    fn inclusion_proof_index_exactly_at_stream_length_fails() {
+        let mmr = build_mmr(3);
+        let err = mmr.inclusion_proof(3).unwrap_err();
+        assert!(matches!(
+            err,
+            ProofError::IndexOutOfRange {
+                index: 3,
+                stream_length: 3
+            }
+        ));
+    }
+
+    #[test]
+    fn consistency_proof_old_equals_new_length() {
+        let mmr = build_mmr(5);
+        let root = mmr.root_hash().unwrap();
+        let proof = mmr.consistency_proof(5).unwrap();
+        verify_consistency(&root, &proof).unwrap();
+    }
+
+    #[test]
+    fn consistency_proof_old_length_1() {
+        let old_root = build_mmr(1).root_hash().unwrap();
+        let mmr = build_mmr(16);
+        let proof = mmr.consistency_proof(1).unwrap();
+        verify_consistency(&old_root, &proof).unwrap();
+    }
+
+    #[test]
+    fn empty_mmr_root_hash_is_error() {
+        let mmr = MerkleMountainRange::new(42);
+        assert!(matches!(mmr.root_hash(), Err(ProofError::EmptyStream)));
+    }
+
+    #[test]
+    fn inclusion_proof_on_empty_mmr_fails() {
+        let mmr = MerkleMountainRange::new(1);
+        let err = mmr.inclusion_proof(0).unwrap_err();
+        assert!(matches!(
+            err,
+            ProofError::IndexOutOfRange {
+                index: 0,
+                stream_length: 0
+            }
+        ));
+    }
+
+    #[test]
+    fn mmr_size_zero_leaves() {
+        assert_eq!(mmr_size(0), 0);
+    }
+
+    #[test]
+    fn peak_positions_empty_mmr() {
+        assert_eq!(peak_positions(0), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn is_empty_after_zero_appends() {
+        let mmr = MerkleMountainRange::new(7);
+        assert!(mmr.is_empty());
+        assert_eq!(mmr.size(), 0);
+    }
+
+    #[test]
+    fn is_not_empty_after_one_append() {
+        let mut mmr = MerkleMountainRange::new(7);
+        mmr.append(ContentHash::compute(b"x"));
+        assert!(!mmr.is_empty());
+    }
+
+    #[test]
+    fn consistency_proof_large_range() {
+        let old_root = build_mmr(16).root_hash().unwrap();
+        let mmr = build_mmr(100);
+        let proof = mmr.consistency_proof(16).unwrap();
+        verify_consistency(&old_root, &proof).unwrap();
+    }
+
+    #[test]
+    fn leaf_to_pos_large_leaf_index() {
+        // leaf 128: 2*128 - popcount(128) = 256 - 1 = 255
+        assert_eq!(leaf_to_pos(128), 255);
+    }
+
+    #[test]
+    fn pos_height_large_positions() {
+        // Position 14 = pos of grandparent in 8-leaf tree, height=3
+        assert_eq!(pos_height(14), 3);
+        // Position 6 = grandparent of 4-leaf tree, height=2
+        assert_eq!(pos_height(6), 2);
+    }
+
+    // -- Additional serde roundtrips --
+
+    #[test]
+    fn mmr_proof_consistency_type_serde_roundtrip() {
+        let mmr = build_mmr(8);
+        let proof = mmr.consistency_proof(4).unwrap();
+        let json = serde_json::to_string(&proof).unwrap();
+        let restored: MmrProof = serde_json::from_str(&json).unwrap();
+        assert_eq!(proof, restored);
+    }
+
+    #[test]
+    fn mmr_proof_serde_preserves_epoch_id() {
+        let mut mmr = MerkleMountainRange::new(42);
+        mmr.append(leaf_hash(0));
+        let proof = mmr.inclusion_proof(0).unwrap();
+        assert_eq!(proof.epoch_id, 42);
+        let json = serde_json::to_string(&proof).unwrap();
+        let restored: MmrProof = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.epoch_id, 42);
+    }
+
+    #[test]
+    fn mmr_proof_serde_preserves_stream_length() {
+        let mmr = build_mmr(13);
+        let proof = mmr.inclusion_proof(7).unwrap();
+        assert_eq!(proof.stream_length, 13);
+        let json = serde_json::to_string(&proof).unwrap();
+        let restored: MmrProof = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.stream_length, 13);
+    }
+
+    #[test]
+    fn proof_type_inclusion_serde_roundtrip_is_inclusion() {
+        let pt = ProofType::Inclusion;
+        let json = serde_json::to_string(&pt).unwrap();
+        let restored: ProofType = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, ProofType::Inclusion);
+    }
+
+    #[test]
+    fn proof_type_consistency_serde_roundtrip_is_consistency() {
+        let pt = ProofType::Consistency;
+        let json = serde_json::to_string(&pt).unwrap();
+        let restored: ProofType = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, ProofType::Consistency);
+    }
+
+    // -- Debug nonempty --
+
+    #[test]
+    fn proof_error_debug_nonempty_empty_stream() {
+        let dbg = format!("{:?}", ProofError::EmptyStream);
+        assert!(!dbg.is_empty());
+    }
+
+    #[test]
+    fn proof_type_debug_nonempty_inclusion() {
+        let dbg = format!("{:?}", ProofType::Inclusion);
+        assert!(!dbg.is_empty());
+    }
+
+    #[test]
+    fn proof_type_debug_nonempty_consistency() {
+        let dbg = format!("{:?}", ProofType::Consistency);
+        assert!(!dbg.is_empty());
+    }
+
+    #[test]
+    fn proof_error_debug_nonempty_root_mismatch() {
+        let err = ProofError::RootMismatch {
+            expected: ContentHash::compute(b"a"),
+            computed: ContentHash::compute(b"b"),
+        };
+        let dbg = format!("{:?}", err);
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("RootMismatch"));
+    }
+
+    #[test]
+    fn proof_error_debug_nonempty_index_out_of_range() {
+        let err = ProofError::IndexOutOfRange {
+            index: 3,
+            stream_length: 2,
+        };
+        let dbg = format!("{:?}", err);
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("IndexOutOfRange"));
+    }
+
+    #[test]
+    fn proof_error_debug_nonempty_invalid_proof() {
+        let err = ProofError::InvalidProof {
+            reason: "bad proof".into(),
+        };
+        let dbg = format!("{:?}", err);
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("InvalidProof"));
+    }
+
+    #[test]
+    fn proof_error_debug_nonempty_consistency_failure() {
+        let err = ProofError::ConsistencyFailure {
+            old_length: 4,
+            new_length: 8,
+            reason: "fail".into(),
+        };
+        let dbg = format!("{:?}", err);
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("ConsistencyFailure"));
+    }
+
+    // -- Additional correctness/edge cases --
+
+    #[test]
+    fn inclusion_proof_for_last_leaf() {
+        for n in [1u64, 2, 4, 8, 16, 32] {
+            let mmr = build_mmr(n);
+            let proof = mmr.inclusion_proof(n - 1).unwrap();
+            verify_inclusion(&leaf_hash(n - 1), n - 1, &proof)
+                .unwrap_or_else(|e| panic!("n={n}: {e}"));
+        }
+    }
+
+    #[test]
+    fn inclusion_proof_for_first_leaf_large_mmr() {
+        let mmr = build_mmr(256);
+        let proof = mmr.inclusion_proof(0).unwrap();
+        verify_inclusion(&leaf_hash(0), 0, &proof).unwrap();
+    }
+
+    #[test]
+    fn verify_inclusion_rejects_out_of_range_index() {
+        let mmr = build_mmr(4);
+        let proof = mmr.inclusion_proof(0).unwrap();
+        let err = verify_inclusion(&leaf_hash(0), 10, &proof).unwrap_err();
+        assert!(matches!(err, ProofError::IndexOutOfRange { .. }));
+    }
+
+    #[test]
+    fn different_epoch_ids_produce_same_root() {
+        let mut mmr1 = MerkleMountainRange::new(1);
+        let mut mmr2 = MerkleMountainRange::new(99);
+        for i in 0..5u64 {
+            mmr1.append(leaf_hash(i));
+            mmr2.append(leaf_hash(i));
+        }
+        // epoch_id does not affect root hash (only in proof metadata)
+        assert_eq!(mmr1.root_hash().unwrap(), mmr2.root_hash().unwrap());
+    }
+
+    #[test]
+    fn different_epoch_ids_reflected_in_proof_epoch_id_field() {
+        let mut mmr_a = MerkleMountainRange::new(11);
+        let mut mmr_b = MerkleMountainRange::new(22);
+        mmr_a.append(leaf_hash(0));
+        mmr_b.append(leaf_hash(0));
+        let proof_a = mmr_a.inclusion_proof(0).unwrap();
+        let proof_b = mmr_b.inclusion_proof(0).unwrap();
+        assert_eq!(proof_a.epoch_id, 11);
+        assert_eq!(proof_b.epoch_id, 22);
+        assert_ne!(proof_a.epoch_id, proof_b.epoch_id);
+    }
+
+    #[test]
+    fn mmr_size_large_power_of_two() {
+        // mmr_size(1024) = 2*1024 - popcount(1024) = 2048 - 1 = 2047
+        assert_eq!(mmr_size(1024), 2047);
+    }
+
+    #[test]
+    fn bag_peaks_three_peaks_is_deterministic() {
+        let h1 = ContentHash::compute(b"p1");
+        let h2 = ContentHash::compute(b"p2");
+        let h3 = ContentHash::compute(b"p3");
+        let r1 = bag_peaks(&[h1.clone(), h2.clone(), h3.clone()]);
+        let r2 = bag_peaks(&[h1, h2, h3]);
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn consistency_proof_non_trivial_old_lengths() {
+        for old_n in [2u64, 3, 5, 6, 7] {
+            let old_root = build_mmr(old_n).root_hash().unwrap();
+            let new_mmr = build_mmr(old_n + 1);
+            let proof = new_mmr.consistency_proof(old_n).unwrap();
+            verify_consistency(&old_root, &proof)
+                .unwrap_or_else(|e| panic!("old_n={old_n}: {e}"));
+        }
+    }
 }

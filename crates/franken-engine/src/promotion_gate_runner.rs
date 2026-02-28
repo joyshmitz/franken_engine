@@ -1500,4 +1500,1181 @@ mod tests {
         let back: AdversarialTestResult = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(atr, back);
     }
+
+    // ===================================================================
+    // Enrichment batch 2: Copy semantics
+    // ===================================================================
+
+    #[test]
+    fn gate_kind_copy_semantics() {
+        let a = GateKind::Equivalence;
+        let b = a; // Copy
+        assert_eq!(a, b);
+        // a is still usable after copy
+        assert_eq!(a.as_str(), "equivalence");
+    }
+
+    #[test]
+    fn gate_kind_copy_all_variants() {
+        for gate in GateKind::all() {
+            let copied = *gate;
+            assert_eq!(*gate, copied);
+        }
+    }
+
+    // ===================================================================
+    // Enrichment batch 2: Debug distinctness
+    // ===================================================================
+
+    #[test]
+    fn gate_kind_debug_all_distinct() {
+        let mut debugs = BTreeSet::new();
+        for gate in GateKind::all() {
+            let d = format!("{gate:?}");
+            assert!(!d.is_empty());
+            debugs.insert(d);
+        }
+        assert_eq!(debugs.len(), 4, "all GateKind variants have distinct Debug");
+    }
+
+    #[test]
+    fn gate_evaluation_debug_not_empty() {
+        let eval = GateEvaluation {
+            gate: GateKind::Equivalence,
+            passed: true,
+            required: true,
+            evidence: vec!["e1".to_string()],
+            summary: "ok".to_string(),
+        };
+        let d = format!("{eval:?}");
+        assert!(d.contains("Equivalence"));
+        assert!(d.contains("true"));
+    }
+
+    #[test]
+    fn gate_strictness_debug_contains_gate() {
+        let s = GateStrictness::standard(GateKind::PerformanceThreshold);
+        let d = format!("{s:?}");
+        assert!(d.contains("PerformanceThreshold"));
+    }
+
+    #[test]
+    fn evidence_artifact_debug_contains_gate() {
+        let a = EvidenceArtifact {
+            artifact_id: "art-1".to_string(),
+            gate: GateKind::AdversarialSurvival,
+            content_hash: "abc".to_string(),
+            description: "desc".to_string(),
+        };
+        let d = format!("{a:?}");
+        assert!(d.contains("AdversarialSurvival"));
+        assert!(d.contains("art-1"));
+    }
+
+    #[test]
+    fn gate_runner_log_event_debug_contains_component() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 1);
+        let eval = GateEvaluation {
+            gate: GateKind::Equivalence,
+            passed: true,
+            required: true,
+            evidence: vec![],
+            summary: "ok".to_string(),
+        };
+        let event = log_gate_evaluation(&config, &eval);
+        let d = format!("{event:?}");
+        assert!(d.contains("promotion_gate_runner"));
+    }
+
+    // ===================================================================
+    // Enrichment batch 2: Serde variant distinctness
+    // ===================================================================
+
+    #[test]
+    fn gate_kind_serde_all_distinct_json() {
+        let mut jsons = BTreeSet::new();
+        for gate in GateKind::all() {
+            let j = serde_json::to_string(gate).expect("serialize");
+            jsons.insert(j);
+        }
+        assert_eq!(jsons.len(), 4, "all GateKind variants serialize to distinct JSON");
+    }
+
+    // ===================================================================
+    // Enrichment batch 2: Clone independence
+    // ===================================================================
+
+    #[test]
+    fn gate_strictness_clone_independence() {
+        let original = GateStrictness::standard(GateKind::Equivalence);
+        let mut _cloned = original.clone();
+        _cloned.max_divergences = 999;
+        _cloned.required = false;
+        assert_eq!(original.max_divergences, 0);
+        assert!(original.required);
+    }
+
+    #[test]
+    fn gate_evaluation_clone_independence() {
+        let original = GateEvaluation {
+            gate: GateKind::Equivalence,
+            passed: true,
+            required: true,
+            evidence: vec!["ev-1".to_string()],
+            summary: "ok".to_string(),
+        };
+        let mut cloned = original.clone();
+        cloned.passed = false;
+        cloned.evidence.push("extra".to_string());
+        cloned.summary = "changed".to_string();
+        assert!(original.passed);
+        assert_eq!(original.evidence.len(), 1);
+        assert_eq!(original.summary, "ok");
+    }
+
+    #[test]
+    fn gate_runner_config_clone_independence() {
+        let original = GateRunnerConfig::standard(test_slot_id(), "cand".to_string(), 42);
+        let mut cloned = original.clone();
+        cloned.seed = 999;
+        cloned.zone = "mutated".to_string();
+        cloned.candidate_digest = "different".to_string();
+        assert_eq!(original.seed, 42);
+        assert_eq!(original.zone, "default");
+        assert_eq!(original.candidate_digest, "cand");
+    }
+
+    #[test]
+    fn equivalence_test_case_clone_independence() {
+        let original = EquivalenceTestCase {
+            test_id: "tc-1".to_string(),
+            input: vec![1, 2],
+            delegate_output: vec![3, 4],
+            candidate_output: vec![3, 4],
+        };
+        let mut cloned = original.clone();
+        cloned.candidate_output = vec![99];
+        assert_eq!(original.candidate_output, vec![3, 4]);
+        assert!(original.is_equivalent());
+    }
+
+    #[test]
+    fn performance_measurement_clone_independence() {
+        let original = PerformanceMeasurement {
+            benchmark_id: "b-1".to_string(),
+            throughput_millionths: 1_000_000,
+            latency_ns: 50_000,
+            iterations: 100,
+            seed: 42,
+        };
+        let mut cloned = original.clone();
+        cloned.throughput_millionths = 0;
+        cloned.latency_ns = u64::MAX;
+        assert_eq!(original.throughput_millionths, 1_000_000);
+        assert_eq!(original.latency_ns, 50_000);
+    }
+
+    #[test]
+    fn adversarial_test_result_clone_independence() {
+        let original = AdversarialTestResult {
+            test_id: "a-1".to_string(),
+            passed: true,
+            attack_surface: "mem".to_string(),
+            evidence: "ok".to_string(),
+        };
+        let mut cloned = original.clone();
+        cloned.passed = false;
+        cloned.evidence = "changed".to_string();
+        assert!(original.passed);
+        assert_eq!(original.evidence, "ok");
+    }
+
+    #[test]
+    fn candidate_capability_request_clone_independence() {
+        let original = passing_capability_request();
+        let mut cloned = original.clone();
+        cloned.requested_capabilities.push(SlotCapability::InvokeHostcall);
+        assert_eq!(original.requested_capabilities.len(), 2);
+        assert!(original.within_envelope());
+    }
+
+    #[test]
+    fn evidence_bundle_clone_independence() {
+        let original = EvidenceBundle {
+            artifacts: vec![EvidenceArtifact {
+                artifact_id: "a-1".to_string(),
+                gate: GateKind::Equivalence,
+                content_hash: "h".to_string(),
+                description: "d".to_string(),
+            }],
+            total_test_cases: 10,
+            total_passed: 8,
+            total_failed: 2,
+        };
+        let mut cloned = original.clone();
+        cloned.total_passed = 0;
+        cloned.artifacts.clear();
+        assert_eq!(original.total_passed, 8);
+        assert_eq!(original.artifacts.len(), 1);
+    }
+
+    #[test]
+    fn gate_runner_output_clone_independence() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 42);
+        let input = all_passing_input();
+        let original = run_promotion_gates(&config, &input);
+        let mut cloned = original.clone();
+        cloned.verdict = GateVerdict::Denied;
+        cloned.risk_level = RiskLevel::Critical;
+        cloned.rollback_verified = false;
+        assert_eq!(original.verdict, GateVerdict::Approved);
+        assert_eq!(original.risk_level, RiskLevel::Low);
+        assert!(original.rollback_verified);
+    }
+
+    #[test]
+    fn gate_runner_log_event_clone_independence() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 42);
+        let eval = GateEvaluation {
+            gate: GateKind::Equivalence,
+            passed: true,
+            required: true,
+            evidence: vec![],
+            summary: "ok".to_string(),
+        };
+        let original = log_gate_evaluation(&config, &eval);
+        let mut cloned = original.clone();
+        cloned.outcome = "fail".to_string();
+        cloned.error_code = Some("FE-GATE-TEST".to_string());
+        assert_eq!(original.outcome, "pass");
+        assert!(original.error_code.is_none());
+    }
+
+    // ===================================================================
+    // Enrichment batch 2: JSON field-name stability
+    // ===================================================================
+
+    #[test]
+    fn gate_strictness_json_field_names() {
+        let s = GateStrictness::standard(GateKind::Equivalence);
+        let json = serde_json::to_string(&s).expect("serialize");
+        assert!(json.contains("\"gate\""));
+        assert!(json.contains("\"required\""));
+        assert!(json.contains("\"max_divergences\""));
+        assert!(json.contains("\"min_throughput_millionths\""));
+        assert!(json.contains("\"max_latency_ns\""));
+        assert!(json.contains("\"min_adversarial_pass_rate_millionths\""));
+    }
+
+    #[test]
+    fn gate_evaluation_json_field_names() {
+        let eval = GateEvaluation {
+            gate: GateKind::Equivalence,
+            passed: true,
+            required: true,
+            evidence: vec![],
+            summary: "s".to_string(),
+        };
+        let json = serde_json::to_string(&eval).expect("serialize");
+        assert!(json.contains("\"gate\""));
+        assert!(json.contains("\"passed\""));
+        assert!(json.contains("\"required\""));
+        assert!(json.contains("\"evidence\""));
+        assert!(json.contains("\"summary\""));
+    }
+
+    #[test]
+    fn equivalence_test_case_json_field_names() {
+        let tc = EquivalenceTestCase {
+            test_id: "t1".to_string(),
+            input: vec![1],
+            delegate_output: vec![2],
+            candidate_output: vec![3],
+        };
+        let json = serde_json::to_string(&tc).expect("serialize");
+        assert!(json.contains("\"test_id\""));
+        assert!(json.contains("\"input\""));
+        assert!(json.contains("\"delegate_output\""));
+        assert!(json.contains("\"candidate_output\""));
+    }
+
+    #[test]
+    fn performance_measurement_json_field_names() {
+        let pm = PerformanceMeasurement {
+            benchmark_id: "b".to_string(),
+            throughput_millionths: 0,
+            latency_ns: 0,
+            iterations: 0,
+            seed: 0,
+        };
+        let json = serde_json::to_string(&pm).expect("serialize");
+        assert!(json.contains("\"benchmark_id\""));
+        assert!(json.contains("\"throughput_millionths\""));
+        assert!(json.contains("\"latency_ns\""));
+        assert!(json.contains("\"iterations\""));
+        assert!(json.contains("\"seed\""));
+    }
+
+    #[test]
+    fn adversarial_test_result_json_field_names() {
+        let atr = AdversarialTestResult {
+            test_id: "a".to_string(),
+            passed: true,
+            attack_surface: "s".to_string(),
+            evidence: "e".to_string(),
+        };
+        let json = serde_json::to_string(&atr).expect("serialize");
+        assert!(json.contains("\"test_id\""));
+        assert!(json.contains("\"passed\""));
+        assert!(json.contains("\"attack_surface\""));
+        assert!(json.contains("\"evidence\""));
+    }
+
+    #[test]
+    fn evidence_artifact_json_field_names() {
+        let ea = EvidenceArtifact {
+            artifact_id: "a".to_string(),
+            gate: GateKind::Equivalence,
+            content_hash: "h".to_string(),
+            description: "d".to_string(),
+        };
+        let json = serde_json::to_string(&ea).expect("serialize");
+        assert!(json.contains("\"artifact_id\""));
+        assert!(json.contains("\"gate\""));
+        assert!(json.contains("\"content_hash\""));
+        assert!(json.contains("\"description\""));
+    }
+
+    #[test]
+    fn evidence_bundle_json_field_names() {
+        let eb = EvidenceBundle {
+            artifacts: vec![],
+            total_test_cases: 0,
+            total_passed: 0,
+            total_failed: 0,
+        };
+        let json = serde_json::to_string(&eb).expect("serialize");
+        assert!(json.contains("\"artifacts\""));
+        assert!(json.contains("\"total_test_cases\""));
+        assert!(json.contains("\"total_passed\""));
+        assert!(json.contains("\"total_failed\""));
+    }
+
+    #[test]
+    fn gate_runner_config_json_field_names() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 1);
+        let json = serde_json::to_string(&config).expect("serialize");
+        assert!(json.contains("\"slot_id\""));
+        assert!(json.contains("\"candidate_digest\""));
+        assert!(json.contains("\"seed\""));
+        assert!(json.contains("\"epoch\""));
+        assert!(json.contains("\"zone\""));
+        assert!(json.contains("\"gate_strictness\""));
+    }
+
+    #[test]
+    fn gate_runner_output_json_field_names() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 1);
+        let input = all_passing_input();
+        let output = run_promotion_gates(&config, &input);
+        let json = serde_json::to_string(&output).expect("serialize");
+        assert!(json.contains("\"run_id\""));
+        assert!(json.contains("\"slot_id\""));
+        assert!(json.contains("\"candidate_digest\""));
+        assert!(json.contains("\"evaluations\""));
+        assert!(json.contains("\"verdict\""));
+        assert!(json.contains("\"risk_level\""));
+        assert!(json.contains("\"rollback_verified\""));
+        assert!(json.contains("\"seed\""));
+        assert!(json.contains("\"evidence_bundle\""));
+    }
+
+    #[test]
+    fn gate_runner_log_event_json_field_names() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 1);
+        let eval = GateEvaluation {
+            gate: GateKind::Equivalence,
+            passed: true,
+            required: true,
+            evidence: vec![],
+            summary: "ok".to_string(),
+        };
+        let event = log_gate_evaluation(&config, &eval);
+        let json = serde_json::to_string(&event).expect("serialize");
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"event\""));
+        assert!(json.contains("\"outcome\""));
+        assert!(json.contains("\"error_code\""));
+        assert!(json.contains("\"gate\""));
+        assert!(json.contains("\"slot_id\""));
+    }
+
+    #[test]
+    fn gate_runner_input_json_field_names() {
+        let input = all_passing_input();
+        let json = serde_json::to_string(&input).expect("serialize");
+        assert!(json.contains("\"equivalence_cases\""));
+        assert!(json.contains("\"capability_request\""));
+        assert!(json.contains("\"performance_measurements\""));
+        assert!(json.contains("\"adversarial_results\""));
+    }
+
+    #[test]
+    fn candidate_capability_request_json_field_names() {
+        let req = passing_capability_request();
+        let json = serde_json::to_string(&req).expect("serialize");
+        assert!(json.contains("\"slot_id\""));
+        assert!(json.contains("\"requested_capabilities\""));
+        assert!(json.contains("\"authority_envelope\""));
+    }
+
+    // ===================================================================
+    // Enrichment batch 2: Display format checks
+    // ===================================================================
+
+    #[test]
+    fn gate_kind_display_equivalence() {
+        assert_eq!(GateKind::Equivalence.to_string(), "equivalence");
+    }
+
+    #[test]
+    fn gate_kind_display_capability_preservation() {
+        assert_eq!(
+            GateKind::CapabilityPreservation.to_string(),
+            "capability_preservation"
+        );
+    }
+
+    #[test]
+    fn gate_kind_display_performance_threshold() {
+        assert_eq!(
+            GateKind::PerformanceThreshold.to_string(),
+            "performance_threshold"
+        );
+    }
+
+    #[test]
+    fn gate_kind_display_adversarial_survival() {
+        assert_eq!(
+            GateKind::AdversarialSurvival.to_string(),
+            "adversarial_survival"
+        );
+    }
+
+    #[test]
+    fn gate_kind_display_matches_as_str() {
+        for gate in GateKind::all() {
+            assert_eq!(gate.to_string(), gate.as_str());
+        }
+    }
+
+    // ===================================================================
+    // Enrichment batch 2: Hash consistency
+    // ===================================================================
+
+    #[test]
+    fn gate_kind_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        for gate in GateKind::all() {
+            let mut h1 = std::collections::hash_map::DefaultHasher::new();
+            gate.hash(&mut h1);
+            let hash1 = h1.finish();
+
+            let mut h2 = std::collections::hash_map::DefaultHasher::new();
+            gate.hash(&mut h2);
+            let hash2 = h2.finish();
+
+            assert_eq!(hash1, hash2, "same GateKind must hash identically");
+        }
+    }
+
+    #[test]
+    fn gate_kind_hash_distinct_variants() {
+        use std::hash::{Hash, Hasher};
+        let mut hashes = BTreeSet::new();
+        for gate in GateKind::all() {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            gate.hash(&mut h);
+            hashes.insert(h.finish());
+        }
+        assert_eq!(hashes.len(), 4, "all GateKind variants have distinct hashes");
+    }
+
+    // ===================================================================
+    // Enrichment batch 2: Boundary/edge cases
+    // ===================================================================
+
+    #[test]
+    fn equivalence_all_fail() {
+        let cases = failing_equivalence_cases(100);
+        let strictness = GateStrictness::standard(GateKind::Equivalence);
+        let eval = evaluate_equivalence(&cases, &strictness);
+        assert!(!eval.passed);
+        assert!(eval.summary.contains("100"));
+    }
+
+    #[test]
+    fn equivalence_single_case_pass() {
+        let cases = passing_equivalence_cases(1);
+        let strictness = GateStrictness::standard(GateKind::Equivalence);
+        let eval = evaluate_equivalence(&cases, &strictness);
+        assert!(eval.passed);
+    }
+
+    #[test]
+    fn equivalence_single_case_fail() {
+        let cases = failing_equivalence_cases(1);
+        let strictness = GateStrictness::standard(GateKind::Equivalence);
+        let eval = evaluate_equivalence(&cases, &strictness);
+        assert!(!eval.passed);
+    }
+
+    #[test]
+    fn equivalence_large_threshold() {
+        let cases = failing_equivalence_cases(50);
+        let mut strictness = GateStrictness::standard(GateKind::Equivalence);
+        strictness.max_divergences = u64::MAX;
+        let eval = evaluate_equivalence(&cases, &strictness);
+        assert!(eval.passed, "u64::MAX threshold should pass anything");
+    }
+
+    #[test]
+    fn equivalence_empty_outputs_are_equivalent() {
+        let tc = EquivalenceTestCase {
+            test_id: "empty".to_string(),
+            input: vec![],
+            delegate_output: vec![],
+            candidate_output: vec![],
+        };
+        assert!(tc.is_equivalent());
+    }
+
+    #[test]
+    fn performance_u64_max_throughput_passes() {
+        let measurements = vec![PerformanceMeasurement {
+            benchmark_id: "max-bench".to_string(),
+            throughput_millionths: u64::MAX,
+            latency_ns: 0,
+            iterations: 1,
+            seed: 0,
+        }];
+        let strictness = GateStrictness::standard(GateKind::PerformanceThreshold);
+        let eval = evaluate_performance_threshold(&measurements, &strictness);
+        assert!(eval.passed);
+    }
+
+    #[test]
+    fn performance_zero_throughput_fails_standard() {
+        let measurements = vec![PerformanceMeasurement {
+            benchmark_id: "zero-bench".to_string(),
+            throughput_millionths: 0,
+            latency_ns: 1,
+            iterations: 1,
+            seed: 0,
+        }];
+        let strictness = GateStrictness::standard(GateKind::PerformanceThreshold);
+        let eval = evaluate_performance_threshold(&measurements, &strictness);
+        assert!(!eval.passed, "zero throughput should fail standard threshold");
+    }
+
+    #[test]
+    fn performance_exactly_at_threshold() {
+        let measurements = vec![PerformanceMeasurement {
+            benchmark_id: "exact-bench".to_string(),
+            throughput_millionths: 500_000,      // exactly at minimum
+            latency_ns: 100_000_000,             // exactly at maximum
+            iterations: 1,
+            seed: 0,
+        }];
+        let strictness = GateStrictness::standard(GateKind::PerformanceThreshold);
+        let eval = evaluate_performance_threshold(&measurements, &strictness);
+        assert!(eval.passed, "exactly at threshold should pass");
+    }
+
+    #[test]
+    fn performance_latency_one_over_threshold() {
+        let measurements = vec![PerformanceMeasurement {
+            benchmark_id: "over-bench".to_string(),
+            throughput_millionths: 1_000_000,
+            latency_ns: 100_000_001,  // 1ns over threshold
+            iterations: 1,
+            seed: 0,
+        }];
+        let strictness = GateStrictness::standard(GateKind::PerformanceThreshold);
+        let eval = evaluate_performance_threshold(&measurements, &strictness);
+        assert!(!eval.passed, "1ns over latency threshold should fail");
+    }
+
+    #[test]
+    fn performance_zero_max_latency_allows_any() {
+        let measurements = vec![PerformanceMeasurement {
+            benchmark_id: "any-latency".to_string(),
+            throughput_millionths: 1_000_000,
+            latency_ns: u64::MAX,
+            iterations: 1,
+            seed: 0,
+        }];
+        let mut strictness = GateStrictness::standard(GateKind::PerformanceThreshold);
+        strictness.max_latency_ns = 0; // 0 means no latency check
+        let eval = evaluate_performance_threshold(&measurements, &strictness);
+        assert!(eval.passed, "max_latency_ns=0 should skip latency check");
+    }
+
+    #[test]
+    fn adversarial_all_fail() {
+        let results: Vec<AdversarialTestResult> = (0..10)
+            .map(|i| AdversarialTestResult {
+                test_id: format!("fail-{i}"),
+                passed: false,
+                attack_surface: "all".to_string(),
+                evidence: "failed".to_string(),
+            })
+            .collect();
+        let strictness = GateStrictness::standard(GateKind::AdversarialSurvival);
+        let eval = evaluate_adversarial_survival(&results, &strictness);
+        assert!(!eval.passed);
+    }
+
+    #[test]
+    fn adversarial_single_pass() {
+        let results = vec![AdversarialTestResult {
+            test_id: "single".to_string(),
+            passed: true,
+            attack_surface: "xss".to_string(),
+            evidence: "safe".to_string(),
+        }];
+        let strictness = GateStrictness::standard(GateKind::AdversarialSurvival);
+        let eval = evaluate_adversarial_survival(&results, &strictness);
+        assert!(eval.passed, "100% pass rate exceeds 95% threshold");
+    }
+
+    #[test]
+    fn adversarial_exact_95_percent() {
+        // 19/20 = 950000/1000000 = exactly 95%
+        let mut results = passing_adversarial_results(19);
+        results.push(AdversarialTestResult {
+            test_id: "adv-fail".to_string(),
+            passed: false,
+            attack_surface: "test".to_string(),
+            evidence: "fail".to_string(),
+        });
+        let strictness = GateStrictness::standard(GateKind::AdversarialSurvival);
+        let eval = evaluate_adversarial_survival(&results, &strictness);
+        assert!(eval.passed, "exactly 95% should pass the 95% threshold");
+    }
+
+    #[test]
+    fn adversarial_just_below_95_percent() {
+        // 18/20 = 900000/1000000 = 90% < 95%
+        let mut results = passing_adversarial_results(18);
+        results.push(AdversarialTestResult {
+            test_id: "f1".to_string(),
+            passed: false,
+            attack_surface: "t".to_string(),
+            evidence: "e".to_string(),
+        });
+        results.push(AdversarialTestResult {
+            test_id: "f2".to_string(),
+            passed: false,
+            attack_surface: "t".to_string(),
+            evidence: "e".to_string(),
+        });
+        let strictness = GateStrictness::standard(GateKind::AdversarialSurvival);
+        let eval = evaluate_adversarial_survival(&results, &strictness);
+        assert!(!eval.passed, "90% should fail the 95% threshold");
+    }
+
+    #[test]
+    fn adversarial_zero_threshold_always_passes() {
+        let results = mixed_adversarial_results();
+        let mut strictness = GateStrictness::standard(GateKind::AdversarialSurvival);
+        strictness.min_adversarial_pass_rate_millionths = 0;
+        let eval = evaluate_adversarial_survival(&results, &strictness);
+        assert!(eval.passed);
+    }
+
+    #[test]
+    fn capability_empty_request_passes() {
+        let request = CandidateCapabilityRequest {
+            slot_id: test_slot_id(),
+            requested_capabilities: vec![],
+            authority_envelope: test_authority_envelope(),
+        };
+        assert!(request.within_envelope());
+        assert!(request.excess_capabilities().is_empty());
+        let strictness = GateStrictness::standard(GateKind::CapabilityPreservation);
+        let eval = evaluate_capability_preservation(&request, &strictness);
+        assert!(eval.passed);
+    }
+
+    #[test]
+    fn capability_all_slot_capabilities_excess() {
+        let request = CandidateCapabilityRequest {
+            slot_id: test_slot_id(),
+            requested_capabilities: vec![
+                SlotCapability::ReadSource,
+                SlotCapability::EmitIr,
+                SlotCapability::HeapAlloc,
+                SlotCapability::ScheduleAsync,
+                SlotCapability::InvokeHostcall,
+                SlotCapability::ModuleAccess,
+                SlotCapability::TriggerGc,
+                SlotCapability::EmitEvidence,
+            ],
+            authority_envelope: test_authority_envelope(),
+        };
+        // envelope permits ReadSource, EmitIr, HeapAlloc — 5 excess
+        let excess = request.excess_capabilities();
+        assert_eq!(excess.len(), 5);
+        assert!(!request.within_envelope());
+    }
+
+    #[test]
+    fn aggregate_verdict_duplicate_gates() {
+        // Two evaluations for the same gate — should still work
+        let mut evals: Vec<GateEvaluation> = GateKind::all()
+            .iter()
+            .map(|g| GateEvaluation {
+                gate: *g,
+                passed: true,
+                required: true,
+                evidence: vec![],
+                summary: "ok".to_string(),
+            })
+            .collect();
+        evals.push(GateEvaluation {
+            gate: GateKind::Equivalence,
+            passed: true,
+            required: true,
+            evidence: vec![],
+            summary: "duplicate".to_string(),
+        });
+        assert_eq!(aggregate_verdict(&evals), GateVerdict::Approved);
+    }
+
+    #[test]
+    fn risk_empty_evaluations_is_low() {
+        assert_eq!(assess_risk(&[]), RiskLevel::Low);
+    }
+
+    #[test]
+    fn risk_two_required_failures_is_high() {
+        let evals = vec![
+            GateEvaluation {
+                gate: GateKind::Equivalence,
+                passed: false,
+                required: true,
+                evidence: vec![],
+                summary: "fail".to_string(),
+            },
+            GateEvaluation {
+                gate: GateKind::CapabilityPreservation,
+                passed: false,
+                required: true,
+                evidence: vec![],
+                summary: "fail".to_string(),
+            },
+        ];
+        assert_eq!(assess_risk(&evals), RiskLevel::High);
+    }
+
+    #[test]
+    fn risk_three_required_failures_is_critical() {
+        let evals = vec![
+            GateEvaluation {
+                gate: GateKind::Equivalence,
+                passed: false,
+                required: true,
+                evidence: vec![],
+                summary: "fail".to_string(),
+            },
+            GateEvaluation {
+                gate: GateKind::CapabilityPreservation,
+                passed: false,
+                required: true,
+                evidence: vec![],
+                summary: "fail".to_string(),
+            },
+            GateEvaluation {
+                gate: GateKind::PerformanceThreshold,
+                passed: false,
+                required: true,
+                evidence: vec![],
+                summary: "fail".to_string(),
+            },
+        ];
+        assert_eq!(assess_risk(&evals), RiskLevel::Critical);
+    }
+
+    // ===================================================================
+    // Enrichment batch 2: Serde roundtrips (complex structs)
+    // ===================================================================
+
+    #[test]
+    fn gate_runner_input_serde_roundtrip() {
+        let input = all_passing_input();
+        let json = serde_json::to_string(&input).expect("serialize");
+        let back: GateRunnerInput = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(input, back);
+    }
+
+    #[test]
+    fn gate_runner_input_empty_collections_serde_roundtrip() {
+        let input = GateRunnerInput {
+            equivalence_cases: vec![],
+            capability_request: CandidateCapabilityRequest {
+                slot_id: test_slot_id(),
+                requested_capabilities: vec![],
+                authority_envelope: AuthorityEnvelope {
+                    required: vec![],
+                    permitted: vec![],
+                },
+            },
+            performance_measurements: vec![],
+            adversarial_results: vec![],
+        };
+        let json = serde_json::to_string(&input).expect("serialize");
+        let back: GateRunnerInput = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(input, back);
+    }
+
+    #[test]
+    fn evidence_bundle_serde_roundtrip() {
+        let bundle = EvidenceBundle {
+            artifacts: vec![
+                EvidenceArtifact {
+                    artifact_id: "a-1".to_string(),
+                    gate: GateKind::Equivalence,
+                    content_hash: "h1".to_string(),
+                    description: "d1".to_string(),
+                },
+                EvidenceArtifact {
+                    artifact_id: "a-2".to_string(),
+                    gate: GateKind::AdversarialSurvival,
+                    content_hash: "h2".to_string(),
+                    description: "d2".to_string(),
+                },
+            ],
+            total_test_cases: 100,
+            total_passed: 95,
+            total_failed: 5,
+        };
+        let json = serde_json::to_string(&bundle).expect("serialize");
+        let back: EvidenceBundle = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(bundle, back);
+    }
+
+    #[test]
+    fn candidate_capability_request_serde_roundtrip() {
+        let req = exceeding_capability_request();
+        let json = serde_json::to_string(&req).expect("serialize");
+        let back: CandidateCapabilityRequest = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn gate_runner_output_full_fail_serde_roundtrip() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "bad".to_string(), 99);
+        let input = GateRunnerInput {
+            equivalence_cases: failing_equivalence_cases(5),
+            capability_request: exceeding_capability_request(),
+            performance_measurements: failing_perf_measurements(),
+            adversarial_results: mixed_adversarial_results(),
+        };
+        let output = run_promotion_gates(&config, &input);
+        assert_eq!(output.verdict, GateVerdict::Denied);
+        let json = serde_json::to_string(&output).expect("serialize");
+        let back: GateRunnerOutput = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(output, back);
+    }
+
+    // ===================================================================
+    // Enrichment batch 2: Evidence and summary content checks
+    // ===================================================================
+
+    #[test]
+    fn equivalence_evidence_contains_total_cases() {
+        let cases = passing_equivalence_cases(7);
+        let strictness = GateStrictness::standard(GateKind::Equivalence);
+        let eval = evaluate_equivalence(&cases, &strictness);
+        assert!(eval.evidence.iter().any(|e| e.contains("total_cases=7")));
+    }
+
+    #[test]
+    fn equivalence_evidence_contains_divergent_test_ids() {
+        let cases = failing_equivalence_cases(3);
+        let strictness = GateStrictness::standard(GateKind::Equivalence);
+        let eval = evaluate_equivalence(&cases, &strictness);
+        assert!(eval.evidence.iter().any(|e| e.contains("divergent_tests=")));
+        assert!(eval.evidence.iter().any(|e| e.contains("eq-fail-0")));
+    }
+
+    #[test]
+    fn capability_evidence_contains_counts() {
+        let request = passing_capability_request();
+        let strictness = GateStrictness::standard(GateKind::CapabilityPreservation);
+        let eval = evaluate_capability_preservation(&request, &strictness);
+        assert!(eval.evidence.iter().any(|e| e.contains("requested=2")));
+        assert!(eval.evidence.iter().any(|e| e.contains("permitted=3")));
+    }
+
+    #[test]
+    fn capability_evidence_excess_when_failing() {
+        let request = exceeding_capability_request();
+        let strictness = GateStrictness::standard(GateKind::CapabilityPreservation);
+        let eval = evaluate_capability_preservation(&request, &strictness);
+        assert!(
+            eval.evidence
+                .iter()
+                .any(|e| e.contains("excess_capabilities="))
+        );
+    }
+
+    #[test]
+    fn performance_evidence_contains_benchmark_count() {
+        let measurements = passing_perf_measurements(3);
+        let strictness = GateStrictness::standard(GateKind::PerformanceThreshold);
+        let eval = evaluate_performance_threshold(&measurements, &strictness);
+        assert!(
+            eval.evidence
+                .iter()
+                .any(|e| e.contains("total_benchmarks=3"))
+        );
+    }
+
+    #[test]
+    fn adversarial_evidence_contains_pass_rate() {
+        let results = passing_adversarial_results(10);
+        let strictness = GateStrictness::standard(GateKind::AdversarialSurvival);
+        let eval = evaluate_adversarial_survival(&results, &strictness);
+        assert!(
+            eval.evidence
+                .iter()
+                .any(|e| e.contains("pass_rate_millionths=1000000"))
+        );
+    }
+
+    #[test]
+    fn adversarial_evidence_contains_failed_test_ids() {
+        let results = mixed_adversarial_results();
+        let strictness = GateStrictness::standard(GateKind::AdversarialSurvival);
+        let eval = evaluate_adversarial_survival(&results, &strictness);
+        assert!(eval.evidence.iter().any(|e| e.contains("failed_tests=")));
+        assert!(eval.evidence.iter().any(|e| e.contains("adv-1")));
+    }
+
+    // ===================================================================
+    // Enrichment batch 2: Log event coverage
+    // ===================================================================
+
+    #[test]
+    fn log_event_all_gates_produce_events() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 42);
+        for gate in GateKind::all() {
+            let eval = GateEvaluation {
+                gate: *gate,
+                passed: true,
+                required: true,
+                evidence: vec![],
+                summary: "ok".to_string(),
+            };
+            let event = log_gate_evaluation(&config, &eval);
+            assert!(event.event.contains(&gate.to_string()));
+            assert_eq!(event.gate, Some(*gate));
+        }
+    }
+
+    #[test]
+    fn log_event_error_code_format_per_gate() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 42);
+        let expected_codes = [
+            (GateKind::Equivalence, "FE-GATE-EQUIVALENCE"),
+            (GateKind::CapabilityPreservation, "FE-GATE-CAPABILITY_PRESERVATION"),
+            (GateKind::PerformanceThreshold, "FE-GATE-PERFORMANCE_THRESHOLD"),
+            (GateKind::AdversarialSurvival, "FE-GATE-ADVERSARIAL_SURVIVAL"),
+        ];
+        for (gate, expected_code) in &expected_codes {
+            let eval = GateEvaluation {
+                gate: *gate,
+                passed: false,
+                required: true,
+                evidence: vec![],
+                summary: "fail".to_string(),
+            };
+            let event = log_gate_evaluation(&config, &eval);
+            assert_eq!(event.error_code.as_deref(), Some(*expected_code));
+        }
+    }
+
+    #[test]
+    fn log_event_trace_id_contains_seed() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 0xDEAD);
+        let eval = GateEvaluation {
+            gate: GateKind::Equivalence,
+            passed: true,
+            required: true,
+            evidence: vec![],
+            summary: "ok".to_string(),
+        };
+        let event = log_gate_evaluation(&config, &eval);
+        assert!(event.trace_id.starts_with("gate-"));
+        assert!(event.decision_id.starts_with("decision-"));
+    }
+
+    // ===================================================================
+    // Enrichment batch 2: GateRunnerConfig
+    // ===================================================================
+
+    #[test]
+    fn config_strictness_for_missing_returns_none() {
+        let config = GateRunnerConfig {
+            slot_id: test_slot_id(),
+            candidate_digest: "c".to_string(),
+            seed: 0,
+            epoch: SecurityEpoch::from_raw(1),
+            zone: "z".to_string(),
+            gate_strictness: vec![], // no strictness entries
+        };
+        assert!(config.strictness_for(GateKind::Equivalence).is_none());
+    }
+
+    #[test]
+    fn config_standard_epoch_is_one() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 0);
+        assert_eq!(config.epoch.as_u64(), 1);
+    }
+
+    #[test]
+    fn config_standard_zone_is_default() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 0);
+        assert_eq!(config.zone, "default");
+    }
+
+    // ===================================================================
+    // Enrichment batch 2: Gate evaluation to_gate_result
+    // ===================================================================
+
+    #[test]
+    fn gate_evaluation_to_gate_result_fail() {
+        let eval = GateEvaluation {
+            gate: GateKind::AdversarialSurvival,
+            passed: false,
+            required: true,
+            evidence: vec!["ev-a".to_string(), "ev-b".to_string()],
+            summary: "bad stuff".to_string(),
+        };
+        let result = eval.to_gate_result();
+        assert_eq!(result.gate_name, "adversarial_survival");
+        assert!(!result.passed);
+        assert_eq!(result.evidence_refs.len(), 2);
+        assert_eq!(result.summary, "bad stuff");
+    }
+
+    #[test]
+    fn gate_evaluation_to_gate_result_preserves_evidence() {
+        let evidence = vec![
+            "ev-1".to_string(),
+            "ev-2".to_string(),
+            "ev-3".to_string(),
+        ];
+        let eval = GateEvaluation {
+            gate: GateKind::PerformanceThreshold,
+            passed: true,
+            required: false,
+            evidence: evidence.clone(),
+            summary: "ok".to_string(),
+        };
+        let result = eval.to_gate_result();
+        assert_eq!(result.evidence_refs, evidence);
+    }
+
+    // ===================================================================
+    // Enrichment batch 2: Full run edge cases
+    // ===================================================================
+
+    #[test]
+    fn full_run_seed_affects_run_id() {
+        let config1 = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 1);
+        let config2 = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 2);
+        let input = all_passing_input();
+        let out1 = run_promotion_gates(&config1, &input);
+        let out2 = run_promotion_gates(&config2, &input);
+        assert_ne!(out1.run_id, out2.run_id);
+    }
+
+    #[test]
+    fn full_run_seed_affects_content_hashes() {
+        let config1 = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 1);
+        let config2 = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 2);
+        let input = all_passing_input();
+        let out1 = run_promotion_gates(&config1, &input);
+        let out2 = run_promotion_gates(&config2, &input);
+        // At least some content hashes should differ
+        let hashes1: BTreeSet<_> = out1
+            .evidence_bundle
+            .artifacts
+            .iter()
+            .map(|a| a.content_hash.clone())
+            .collect();
+        let hashes2: BTreeSet<_> = out2
+            .evidence_bundle
+            .artifacts
+            .iter()
+            .map(|a| a.content_hash.clone())
+            .collect();
+        assert_ne!(hashes1, hashes2);
+    }
+
+    #[test]
+    fn full_run_all_fail_denied_critical() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "bad".to_string(), 99);
+        let input = GateRunnerInput {
+            equivalence_cases: failing_equivalence_cases(10),
+            capability_request: exceeding_capability_request(),
+            performance_measurements: failing_perf_measurements(),
+            adversarial_results: mixed_adversarial_results(),
+        };
+        let output = run_promotion_gates(&config, &input);
+        assert_eq!(output.verdict, GateVerdict::Denied);
+        assert_eq!(output.risk_level, RiskLevel::Critical);
+    }
+
+    #[test]
+    fn full_run_evidence_bundle_total_consistency() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 42);
+        let input = GateRunnerInput {
+            equivalence_cases: failing_equivalence_cases(3),
+            capability_request: passing_capability_request(),
+            performance_measurements: passing_perf_measurements(2),
+            adversarial_results: passing_adversarial_results(5),
+        };
+        let output = run_promotion_gates(&config, &input);
+        let bundle = &output.evidence_bundle;
+        // total_cases = 3 eq + 1 cap + 2 perf + 5 adv = 11
+        assert_eq!(bundle.total_test_cases, 11);
+        assert_eq!(bundle.total_passed + bundle.total_failed, bundle.total_test_cases);
+        // 3 eq failed, cap passed, perf passed, adv passed
+        assert_eq!(bundle.total_failed, 3);
+        assert_eq!(bundle.total_passed, 8);
+    }
+
+    #[test]
+    fn full_run_slot_id_propagated() {
+        let config = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 42);
+        let input = all_passing_input();
+        let output = run_promotion_gates(&config, &input);
+        assert_eq!(output.slot_id, test_slot_id());
+    }
+
+    #[test]
+    fn full_run_candidate_digest_propagated() {
+        let digest = "sha256:abcdef1234567890".to_string();
+        let config = GateRunnerConfig::standard(test_slot_id(), digest.clone(), 42);
+        let input = all_passing_input();
+        let output = run_promotion_gates(&config, &input);
+        assert_eq!(output.candidate_digest, digest);
+    }
 }

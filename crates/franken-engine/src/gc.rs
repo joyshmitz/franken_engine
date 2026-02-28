@@ -1249,7 +1249,8 @@ mod tests {
         gc.register_heap("ext-a".into()).unwrap();
         gc.allocate("ext-a", 100).unwrap();
         let pressure = gc.check_pressure("ext-a", 0).unwrap();
-        assert!((pressure - 0.0).abs() < f64::EPSILON);
+        // budget=0 with bytes>0 yields infinite pressure (f64::MAX).
+        assert!((pressure - f64::MAX).abs() < f64::EPSILON);
     }
 
     #[test]

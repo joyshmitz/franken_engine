@@ -611,54 +611,60 @@ impl RevocationFreshnessController {
     // -------------------------------------------------------------------
 
     fn reevaluate_state(&mut self, trace_id: &str) {
-        let gap = self.staleness_gap();
-        let old_state = self.state;
+        // Loop until the state stabilizes — a single gap can span multiple
+        // state transitions (e.g. Fresh -> Stale -> Degraded).
+        loop {
+            let gap = self.staleness_gap();
+            let old_state = self.state;
 
-        let new_state = match self.state {
-            FreshnessState::Fresh => {
-                if gap > 0 {
-                    FreshnessState::Stale
-                } else {
-                    FreshnessState::Fresh
+            let new_state = match self.state {
+                FreshnessState::Fresh => {
+                    if gap > 0 {
+                        FreshnessState::Stale
+                    } else {
+                        FreshnessState::Fresh
+                    }
                 }
-            }
-            FreshnessState::Stale => {
-                if gap > self.config.staleness_threshold {
-                    FreshnessState::Degraded
-                } else if gap == 0 {
-                    FreshnessState::Fresh
-                } else {
-                    FreshnessState::Stale
-                }
-            }
-            FreshnessState::Degraded => {
-                if gap <= self.config.staleness_threshold {
-                    self.recovery_start_tick = Some(self.current_tick);
-                    FreshnessState::Recovering
-                } else {
-                    FreshnessState::Degraded
-                }
-            }
-            FreshnessState::Recovering => {
-                if gap > self.config.staleness_threshold {
-                    self.recovery_start_tick = None;
-                    FreshnessState::Degraded
-                } else if let Some(start) = self.recovery_start_tick {
-                    if self.current_tick >= start + self.config.holdoff_ticks {
-                        self.recovery_start_tick = None;
+                FreshnessState::Stale => {
+                    if gap > self.config.staleness_threshold {
+                        FreshnessState::Degraded
+                    } else if gap == 0 {
                         FreshnessState::Fresh
                     } else {
+                        FreshnessState::Stale
+                    }
+                }
+                FreshnessState::Degraded => {
+                    if gap <= self.config.staleness_threshold {
+                        self.recovery_start_tick = Some(self.current_tick);
+                        FreshnessState::Recovering
+                    } else {
+                        FreshnessState::Degraded
+                    }
+                }
+                FreshnessState::Recovering => {
+                    if gap > self.config.staleness_threshold {
+                        self.recovery_start_tick = None;
+                        FreshnessState::Degraded
+                    } else if let Some(start) = self.recovery_start_tick {
+                        if self.current_tick >= start + self.config.holdoff_ticks {
+                            self.recovery_start_tick = None;
+                            FreshnessState::Fresh
+                        } else {
+                            FreshnessState::Recovering
+                        }
+                    } else {
+                        // No recovery start tick — shouldn't happen, but be safe.
+                        self.recovery_start_tick = Some(self.current_tick);
                         FreshnessState::Recovering
                     }
-                } else {
-                    // No recovery start tick — shouldn't happen, but be safe.
-                    self.recovery_start_tick = Some(self.current_tick);
-                    FreshnessState::Recovering
                 }
-            }
-        };
+            };
 
-        if new_state != old_state {
+            if new_state == old_state {
+                break;
+            }
+
             self.state = new_state;
             self.state_events.push(FreshnessStateChangeEvent {
                 from_state: old_state,
@@ -1128,7 +1134,7 @@ mod tests {
         assert_eq!(ctrl.state(), FreshnessState::Recovering);
 
         let result = ctrl.evaluate(OperationType::TokenAcceptance, "t-recover-token");
-        assert!(matches!(result, Ok(FreshnessDecision::Denied(_))));
+        assert!(result.is_err());
     }
 
     // ---------------------------------------------------------------
@@ -1141,12 +1147,14 @@ mod tests {
         ctrl.update_expected_head(10, "t-audit");
 
         let events = ctrl.drain_state_events();
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 2);
         assert_eq!(events[0].from_state, FreshnessState::Fresh);
-        assert_eq!(events[0].to_state, FreshnessState::Degraded);
-        assert_eq!(events[0].staleness_gap, 10);
-        assert_eq!(events[0].threshold, 5);
-        assert_eq!(events[0].trace_id, "t-audit");
+        assert_eq!(events[0].to_state, FreshnessState::Stale);
+        assert_eq!(events[1].from_state, FreshnessState::Stale);
+        assert_eq!(events[1].to_state, FreshnessState::Degraded);
+        assert_eq!(events[1].staleness_gap, 10);
+        assert_eq!(events[1].threshold, 5);
+        assert_eq!(events[1].trace_id, "t-audit");
     }
 
     #[test]
@@ -1639,5 +1647,437 @@ mod tests {
         assert!(!first.is_empty());
         let second = ctrl.drain_decision_events();
         assert!(second.is_empty());
+    }
+
+    // ── Enrichment: Copy/Clone/Debug/Serde/Hash/Display/Edge ──
+
+    #[test]
+    fn freshness_state_copy_semantics() {
+        let a = FreshnessState::Fresh;
+        let b = a;
+        assert_eq!(a, b);
+        let c = FreshnessState::Degraded;
+        let d = c;
+        assert_eq!(c, d);
+    }
+
+    #[test]
+    fn operation_type_copy_semantics() {
+        let a = OperationType::SafeOperation;
+        let b = a;
+        assert_eq!(a, b);
+        let c = OperationType::HighRiskOperation;
+        let d = c;
+        assert_eq!(c, d);
+    }
+
+    #[test]
+    fn freshness_state_debug_distinct() {
+        let variants = [
+            FreshnessState::Fresh,
+            FreshnessState::Stale,
+            FreshnessState::Degraded,
+            FreshnessState::Recovering,
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(set.len(), 4);
+    }
+
+    #[test]
+    fn operation_type_debug_distinct() {
+        let variants = [
+            OperationType::SafeOperation,
+            OperationType::TokenAcceptance,
+            OperationType::ExtensionActivation,
+            OperationType::HighRiskOperation,
+            OperationType::HealthCheck,
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    #[test]
+    fn override_error_debug_distinct() {
+        let variants: Vec<OverrideError> = vec![
+            OverrideError::Expired {
+                expiry: DeterministicTimestamp(1),
+                current: DeterministicTimestamp(2),
+            },
+            OverrideError::OperationMismatch {
+                requested: OperationType::TokenAcceptance,
+                override_type: OperationType::HealthCheck,
+            },
+            OverrideError::SignatureInvalid { detail: "bad".to_string() },
+            OverrideError::UnauthorizedOperator { operator_id: "op".to_string() },
+            OverrideError::NotDegraded { current_state: FreshnessState::Fresh },
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    #[test]
+    fn freshness_state_serde_variant_distinct() {
+        let variants = [
+            FreshnessState::Fresh,
+            FreshnessState::Stale,
+            FreshnessState::Degraded,
+            FreshnessState::Recovering,
+        ];
+        let set: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(set.len(), 4);
+    }
+
+    #[test]
+    fn operation_type_serde_variant_distinct() {
+        let variants = [
+            OperationType::SafeOperation,
+            OperationType::TokenAcceptance,
+            OperationType::ExtensionActivation,
+            OperationType::HighRiskOperation,
+            OperationType::HealthCheck,
+        ];
+        let set: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    #[test]
+    fn override_error_serde_variant_distinct() {
+        let variants: Vec<OverrideError> = vec![
+            OverrideError::Expired {
+                expiry: DeterministicTimestamp(0),
+                current: DeterministicTimestamp(0),
+            },
+            OverrideError::OperationMismatch {
+                requested: OperationType::SafeOperation,
+                override_type: OperationType::SafeOperation,
+            },
+            OverrideError::SignatureInvalid { detail: "x".to_string() },
+            OverrideError::UnauthorizedOperator { operator_id: "x".to_string() },
+            OverrideError::NotDegraded { current_state: FreshnessState::Fresh },
+        ];
+        let set: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    #[test]
+    fn degraded_denial_clone_independence() {
+        let a = DegradedDenial {
+            operation_type: OperationType::TokenAcceptance,
+            local_head_seq: 5,
+            expected_head_seq: 15,
+            staleness_gap: 10,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn override_error_clone_independence() {
+        let a = OverrideError::SignatureInvalid { detail: "bad sig".to_string() };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn freshness_config_clone_independence() {
+        let a = FreshnessConfig::default();
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn freshness_state_change_event_clone_independence() {
+        let a = FreshnessStateChangeEvent {
+            from_state: FreshnessState::Fresh,
+            to_state: FreshnessState::Stale,
+            local_head_seq: 0,
+            expected_head_seq: 10,
+            staleness_gap: 10,
+            threshold: 5,
+            trace_id: "t".to_string(),
+            timestamp: DeterministicTimestamp(100),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn degraded_denial_json_field_names() {
+        let d = DegradedDenial {
+            operation_type: OperationType::TokenAcceptance,
+            local_head_seq: 0,
+            expected_head_seq: 5,
+            staleness_gap: 5,
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains("\"operation_type\""));
+        assert!(json.contains("\"local_head_seq\""));
+        assert!(json.contains("\"expected_head_seq\""));
+        assert!(json.contains("\"staleness_gap\""));
+    }
+
+    #[test]
+    fn freshness_config_json_field_names() {
+        let c = FreshnessConfig::default();
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains("\"staleness_threshold\""));
+        assert!(json.contains("\"holdoff_ticks\""));
+        assert!(json.contains("\"override_eligible\""));
+        assert!(json.contains("\"authorized_operators\""));
+    }
+
+    #[test]
+    fn freshness_state_change_event_json_field_names() {
+        let e = FreshnessStateChangeEvent {
+            from_state: FreshnessState::Fresh,
+            to_state: FreshnessState::Stale,
+            local_head_seq: 0,
+            expected_head_seq: 10,
+            staleness_gap: 10,
+            threshold: 5,
+            trace_id: "t".to_string(),
+            timestamp: DeterministicTimestamp(0),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        assert!(json.contains("\"from_state\""));
+        assert!(json.contains("\"to_state\""));
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"timestamp\""));
+    }
+
+    #[test]
+    fn degraded_denial_display_exact() {
+        let d = DegradedDenial {
+            operation_type: OperationType::TokenAcceptance,
+            local_head_seq: 3,
+            expected_head_seq: 10,
+            staleness_gap: 7,
+        };
+        assert_eq!(
+            d.to_string(),
+            "degraded mode denial: token_acceptance denied, local_seq=3, expected_seq=10, gap=7"
+        );
+    }
+
+    #[test]
+    fn override_error_display_expired() {
+        let e = OverrideError::Expired {
+            expiry: DeterministicTimestamp(100),
+            current: DeterministicTimestamp(200),
+        };
+        assert_eq!(e.to_string(), "override expired: expiry=100, current=200");
+    }
+
+    #[test]
+    fn override_error_display_operation_mismatch() {
+        let e = OverrideError::OperationMismatch {
+            requested: OperationType::TokenAcceptance,
+            override_type: OperationType::ExtensionActivation,
+        };
+        assert_eq!(
+            e.to_string(),
+            "operation mismatch: requested=token_acceptance, override=extension_activation"
+        );
+    }
+
+    #[test]
+    fn override_error_display_signature_invalid() {
+        let e = OverrideError::SignatureInvalid { detail: "bad hash".to_string() };
+        assert_eq!(e.to_string(), "signature invalid: bad hash");
+    }
+
+    #[test]
+    fn override_error_display_unauthorized() {
+        let e = OverrideError::UnauthorizedOperator { operator_id: "alice".to_string() };
+        assert_eq!(e.to_string(), "unauthorized operator: alice");
+    }
+
+    #[test]
+    fn override_error_display_not_degraded() {
+        let e = OverrideError::NotDegraded { current_state: FreshnessState::Fresh };
+        assert_eq!(e.to_string(), "not in degraded mode: state=fresh");
+    }
+
+    #[test]
+    fn freshness_state_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        let a = FreshnessState::Degraded;
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        a.hash(&mut h1);
+        a.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn operation_type_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        let a = OperationType::HighRiskOperation;
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        a.hash(&mut h1);
+        a.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn freshness_state_serde_roundtrip() {
+        for state in [
+            FreshnessState::Fresh,
+            FreshnessState::Stale,
+            FreshnessState::Degraded,
+            FreshnessState::Recovering,
+        ] {
+            let json = serde_json::to_string(&state).unwrap();
+            let back: FreshnessState = serde_json::from_str(&json).unwrap();
+            assert_eq!(state, back);
+        }
+    }
+
+    #[test]
+    fn freshness_config_serde_roundtrip() {
+        let c = FreshnessConfig::default();
+        let json = serde_json::to_string(&c).unwrap();
+        let back: FreshnessConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+    }
+
+    #[test]
+    fn override_error_serde_roundtrip() {
+        let e = OverrideError::Expired {
+            expiry: DeterministicTimestamp(100),
+            current: DeterministicTimestamp(200),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: OverrideError = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    #[test]
+    fn debug_nonempty_freshness_state() {
+        assert!(!format!("{:?}", FreshnessState::Fresh).is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_operation_type() {
+        assert!(!format!("{:?}", OperationType::SafeOperation).is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_degraded_denial() {
+        let d = DegradedDenial {
+            operation_type: OperationType::TokenAcceptance,
+            local_head_seq: 0,
+            expected_head_seq: 5,
+            staleness_gap: 5,
+        };
+        assert!(!format!("{d:?}").is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_override_error() {
+        let e = OverrideError::SignatureInvalid { detail: "x".to_string() };
+        assert!(!format!("{e:?}").is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_freshness_config() {
+        assert!(!format!("{:?}", FreshnessConfig::default()).is_empty());
+    }
+
+    #[test]
+    fn debug_nonempty_controller() {
+        let ctrl = make_controller();
+        assert!(!format!("{ctrl:?}").is_empty());
+    }
+
+    #[test]
+    fn freshness_state_default_variant_is_fresh() {
+        assert_eq!(FreshnessState::default(), FreshnessState::Fresh);
+    }
+
+    #[test]
+    fn freshness_state_display_exact() {
+        assert_eq!(FreshnessState::Fresh.to_string(), "fresh");
+        assert_eq!(FreshnessState::Stale.to_string(), "stale");
+        assert_eq!(FreshnessState::Degraded.to_string(), "degraded");
+        assert_eq!(FreshnessState::Recovering.to_string(), "recovering");
+    }
+
+    #[test]
+    fn operation_type_display_exact() {
+        assert_eq!(OperationType::SafeOperation.to_string(), "safe_operation");
+        assert_eq!(OperationType::TokenAcceptance.to_string(), "token_acceptance");
+        assert_eq!(OperationType::ExtensionActivation.to_string(), "extension_activation");
+        assert_eq!(OperationType::HighRiskOperation.to_string(), "high_risk_operation");
+        assert_eq!(OperationType::HealthCheck.to_string(), "health_check");
+    }
+
+    #[test]
+    fn freshness_state_ord_ordering() {
+        assert!(FreshnessState::Fresh < FreshnessState::Stale);
+        assert!(FreshnessState::Stale < FreshnessState::Degraded);
+        assert!(FreshnessState::Degraded < FreshnessState::Recovering);
+    }
+
+    #[test]
+    fn operation_type_ord_ordering() {
+        assert!(OperationType::SafeOperation < OperationType::TokenAcceptance);
+    }
+
+    #[test]
+    fn degraded_denial_std_error_source_none() {
+        let d = DegradedDenial {
+            operation_type: OperationType::TokenAcceptance,
+            local_head_seq: 0,
+            expected_head_seq: 5,
+            staleness_gap: 5,
+        };
+        let e: &dyn std::error::Error = &d;
+        assert!(e.source().is_none());
+    }
+
+    #[test]
+    fn override_error_std_error_source_none() {
+        let e: &dyn std::error::Error = &OverrideError::NotDegraded {
+            current_state: FreshnessState::Fresh,
+        };
+        assert!(e.source().is_none());
+    }
+
+    #[test]
+    fn controller_zone_accessor() {
+        let ctrl = make_controller();
+        assert_eq!(ctrl.zone(), "test-zone");
+    }
+
+    #[test]
+    fn controller_is_fresh_initially() {
+        let ctrl = make_controller();
+        assert!(ctrl.is_fresh());
+        assert!(!ctrl.is_degraded());
+    }
+
+    #[test]
+    fn controller_staleness_gap_zero_initially() {
+        let ctrl = make_controller();
+        assert_eq!(ctrl.staleness_gap(), 0);
+    }
+
+    #[test]
+    fn freshness_config_default_staleness_threshold() {
+        let c = FreshnessConfig::default();
+        assert_eq!(c.staleness_threshold, 5);
+        assert_eq!(c.holdoff_ticks, 10);
+        assert!(c.override_eligible.contains(&OperationType::ExtensionActivation));
     }
 }

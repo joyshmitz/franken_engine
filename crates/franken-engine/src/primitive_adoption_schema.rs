@@ -881,4 +881,518 @@ mod tests {
         // zero retries is allowed (means no retries, not invalid)
         assert!(r.validate_for_activation().is_ok());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2 — PearlTower 2026-02-27
+    // -----------------------------------------------------------------------
+
+    // -- Copy semantics --
+
+    #[test]
+    fn primitive_tier_copy_semantics() {
+        let a = PrimitiveTier::S;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn reuse_decision_copy_semantics() {
+        let a = ReuseDecision::BuildNew;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    // -- Debug distinctness --
+
+    #[test]
+    fn primitive_tier_debug_all_distinct() {
+        let set: std::collections::BTreeSet<String> = [
+            PrimitiveTier::S,
+            PrimitiveTier::A,
+            PrimitiveTier::B,
+            PrimitiveTier::C,
+        ]
+        .iter()
+        .map(|t| format!("{t:?}"))
+        .collect();
+        assert_eq!(set.len(), 4);
+    }
+
+    #[test]
+    fn reuse_decision_debug_all_distinct() {
+        let set: std::collections::BTreeSet<String> = [
+            ReuseDecision::AdoptExistingCrate,
+            ReuseDecision::BuildNew,
+            ReuseDecision::NotApplicable,
+        ]
+        .iter()
+        .map(|d| format!("{d:?}"))
+        .collect();
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn validation_error_debug_all_distinct() {
+        let set: std::collections::BTreeSet<String> = [
+            PrimitiveAdoptionValidationError::MissingVerificationMetadata,
+            PrimitiveAdoptionValidationError::MissingFallbackMetadata,
+            PrimitiveAdoptionValidationError::MissingReuseScanOutcome,
+            PrimitiveAdoptionValidationError::InvalidScoreRange {
+                field: "x".to_string(),
+            },
+            PrimitiveAdoptionValidationError::InvalidMetadataField {
+                field: "y".to_string(),
+            },
+        ]
+        .iter()
+        .map(|e| format!("{e:?}"))
+        .collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    // -- Serde variant distinctness --
+
+    #[test]
+    fn primitive_tier_serde_all_distinct() {
+        let set: std::collections::BTreeSet<String> = [
+            PrimitiveTier::S,
+            PrimitiveTier::A,
+            PrimitiveTier::B,
+            PrimitiveTier::C,
+        ]
+        .iter()
+        .map(|t| serde_json::to_string(t).unwrap())
+        .collect();
+        assert_eq!(set.len(), 4);
+    }
+
+    #[test]
+    fn reuse_decision_serde_all_distinct() {
+        let set: std::collections::BTreeSet<String> = [
+            ReuseDecision::AdoptExistingCrate,
+            ReuseDecision::BuildNew,
+            ReuseDecision::NotApplicable,
+        ]
+        .iter()
+        .map(|d| serde_json::to_string(d).unwrap())
+        .collect();
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn validation_error_serde_all_distinct() {
+        let set: std::collections::BTreeSet<String> = [
+            PrimitiveAdoptionValidationError::MissingVerificationMetadata,
+            PrimitiveAdoptionValidationError::MissingFallbackMetadata,
+            PrimitiveAdoptionValidationError::MissingReuseScanOutcome,
+            PrimitiveAdoptionValidationError::InvalidScoreRange {
+                field: "a".to_string(),
+            },
+            PrimitiveAdoptionValidationError::InvalidMetadataField {
+                field: "b".to_string(),
+            },
+        ]
+        .iter()
+        .map(|e| serde_json::to_string(e).unwrap())
+        .collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    // -- Clone independence --
+
+    #[test]
+    fn verification_checklist_clone_independence() {
+        let v = valid_verification();
+        let mut cloned = v.clone();
+        cloned.checklist_version = "mutated".to_string();
+        assert_eq!(v.checklist_version, "v1.0");
+    }
+
+    #[test]
+    fn fallback_budget_clone_independence() {
+        let fb = valid_fallback();
+        let mut cloned = fb.clone();
+        cloned.max_retry_count = 999;
+        assert_eq!(fb.max_retry_count, 3);
+    }
+
+    #[test]
+    fn reuse_scan_clone_independence() {
+        let rs = valid_reuse_scan();
+        let mut cloned = rs.clone();
+        cloned.candidate_crates.push("new-crate".to_string());
+        assert!(rs.candidate_crates.is_empty());
+    }
+
+    #[test]
+    fn adoption_record_clone_independence() {
+        let r = valid_record_tier_s();
+        let mut cloned = r.clone();
+        cloned.primitive_id = "mutated".to_string();
+        assert_eq!(r.primitive_id, "prim-001");
+    }
+
+    // -- JSON field-name stability --
+
+    #[test]
+    fn verification_checklist_json_field_names() {
+        let v = valid_verification();
+        let val: serde_json::Value = serde_json::to_value(&v).unwrap();
+        let obj = val.as_object().unwrap();
+        for key in [
+            "checklist_version",
+            "primary_paper_verified",
+            "independent_replication_completed",
+            "verification_notes",
+        ] {
+            assert!(obj.contains_key(key), "missing field: {key}");
+        }
+        assert_eq!(obj.len(), 4);
+    }
+
+    #[test]
+    fn ev_relevance_risk_score_json_field_names() {
+        let s = valid_score();
+        let val: serde_json::Value = serde_json::to_value(&s).unwrap();
+        let obj = val.as_object().unwrap();
+        for key in ["ev_millionths", "relevance_millionths", "risk_millionths"] {
+            assert!(obj.contains_key(key), "missing field: {key}");
+        }
+        assert_eq!(obj.len(), 3);
+    }
+
+    #[test]
+    fn fallback_budget_json_field_names() {
+        let fb = valid_fallback();
+        let val: serde_json::Value = serde_json::to_value(&fb).unwrap();
+        let obj = val.as_object().unwrap();
+        for key in [
+            "trigger",
+            "deterministic_mode",
+            "max_retry_count",
+            "time_budget_ms",
+            "memory_budget_mb",
+        ] {
+            assert!(obj.contains_key(key), "missing field: {key}");
+        }
+        assert_eq!(obj.len(), 5);
+    }
+
+    #[test]
+    fn reuse_scan_json_field_names() {
+        let rs = valid_reuse_scan();
+        let val: serde_json::Value = serde_json::to_value(&rs).unwrap();
+        let obj = val.as_object().unwrap();
+        for key in [
+            "catalog_version",
+            "decision",
+            "candidate_crates",
+            "rationale",
+        ] {
+            assert!(obj.contains_key(key), "missing field: {key}");
+        }
+        assert_eq!(obj.len(), 4);
+    }
+
+    #[test]
+    fn adoption_record_json_field_names() {
+        let r = valid_record_tier_s();
+        let val: serde_json::Value = serde_json::to_value(&r).unwrap();
+        let obj = val.as_object().unwrap();
+        for key in [
+            "primitive_id",
+            "tier",
+            "verification",
+            "score",
+            "fallback",
+            "reuse_scan",
+            "adopt_vs_build_rationale",
+        ] {
+            assert!(obj.contains_key(key), "missing field: {key}");
+        }
+        assert_eq!(obj.len(), 7);
+    }
+
+    // -- Boundary/edge cases --
+
+    #[test]
+    fn score_max_u32_relevance_invalid() {
+        let mut r = valid_record_tier_c();
+        r.score.relevance_millionths = u32::MAX;
+        let err = r.validate_for_activation().unwrap_err();
+        assert!(matches!(
+            err,
+            PrimitiveAdoptionValidationError::InvalidScoreRange { .. }
+        ));
+    }
+
+    #[test]
+    fn score_max_u32_risk_invalid() {
+        let mut r = valid_record_tier_c();
+        r.score.risk_millionths = u32::MAX;
+        let err = r.validate_for_activation().unwrap_err();
+        assert!(matches!(
+            err,
+            PrimitiveAdoptionValidationError::InvalidScoreRange { .. }
+        ));
+    }
+
+    #[test]
+    fn fallback_max_values_serde_roundtrip() {
+        let fb = FallbackBudget {
+            trigger: "t".to_string(),
+            deterministic_mode: "m".to_string(),
+            max_retry_count: u32::MAX,
+            time_budget_ms: u64::MAX,
+            memory_budget_mb: u32::MAX,
+        };
+        let json = serde_json::to_string(&fb).unwrap();
+        let back: FallbackBudget = serde_json::from_str(&json).unwrap();
+        assert_eq!(fb, back);
+    }
+
+    #[test]
+    fn score_i64_min_ev_millionths_serde_roundtrip() {
+        let s = EvRelevanceRiskScore {
+            ev_millionths: i64::MIN,
+            relevance_millionths: 0,
+            risk_millionths: 0,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: EvRelevanceRiskScore = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn record_with_none_optional_fields_serde_roundtrip() {
+        let r = PrimitiveAdoptionRecord {
+            primitive_id: "bare-prim".to_string(),
+            tier: PrimitiveTier::C,
+            verification: None,
+            score: valid_score(),
+            fallback: None,
+            reuse_scan: None,
+            adopt_vs_build_rationale: "minimal".to_string(),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: PrimitiveAdoptionRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn reuse_scan_many_candidates() {
+        let rs = ReuseScan {
+            catalog_version: "2026-Q1".to_string(),
+            decision: ReuseDecision::AdoptExistingCrate,
+            candidate_crates: (0..50).map(|i| format!("crate-{i}")).collect(),
+            rationale: "many options".to_string(),
+        };
+        let json = serde_json::to_string(&rs).unwrap();
+        let back: ReuseScan = serde_json::from_str(&json).unwrap();
+        assert_eq!(rs.candidate_crates.len(), back.candidate_crates.len());
+    }
+
+    // -- Serde roundtrips --
+
+    #[test]
+    fn validation_error_all_variants_serde_roundtrip() {
+        let errors = [
+            PrimitiveAdoptionValidationError::MissingVerificationMetadata,
+            PrimitiveAdoptionValidationError::MissingFallbackMetadata,
+            PrimitiveAdoptionValidationError::MissingReuseScanOutcome,
+            PrimitiveAdoptionValidationError::InvalidScoreRange {
+                field: "relevance".to_string(),
+            },
+            PrimitiveAdoptionValidationError::InvalidMetadataField {
+                field: "id".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: PrimitiveAdoptionValidationError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    // -- Debug nonempty --
+
+    #[test]
+    fn primitive_tier_debug_nonempty() {
+        assert!(!format!("{:?}", PrimitiveTier::S).is_empty());
+    }
+
+    #[test]
+    fn fallback_budget_debug_nonempty() {
+        let fb = valid_fallback();
+        assert!(!format!("{fb:?}").is_empty());
+    }
+
+    #[test]
+    fn adoption_record_debug_nonempty() {
+        let r = valid_record_tier_s();
+        assert!(!format!("{r:?}").is_empty());
+    }
+
+    // -- Tagged serde format --
+
+    #[test]
+    fn validation_error_tagged_serde_missing_fallback() {
+        let err = PrimitiveAdoptionValidationError::MissingFallbackMetadata;
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"kind\""));
+        assert!(json.contains("missing_fallback_metadata"));
+    }
+
+    #[test]
+    fn validation_error_tagged_serde_invalid_score_range() {
+        let err = PrimitiveAdoptionValidationError::InvalidScoreRange {
+            field: "risk_millionths".to_string(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"kind\""));
+        assert!(json.contains("invalid_score_range"));
+        assert!(json.contains("risk_millionths"));
+    }
+
+    #[test]
+    fn validation_error_tagged_serde_invalid_metadata_field() {
+        let err = PrimitiveAdoptionValidationError::InvalidMetadataField {
+            field: "candidate_crates".to_string(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"kind\""));
+        assert!(json.contains("invalid_metadata_field"));
+        assert!(json.contains("candidate_crates"));
+    }
+
+    // -- Error code stability --
+
+    #[test]
+    fn error_code_missing_verification_is_verify_0001() {
+        assert_eq!(
+            PrimitiveAdoptionValidationError::MissingVerificationMetadata.error_code(),
+            "FE-FRX-16-VERIFY-0001"
+        );
+    }
+
+    #[test]
+    fn error_code_missing_fallback_is_fallback_0001() {
+        assert_eq!(
+            PrimitiveAdoptionValidationError::MissingFallbackMetadata.error_code(),
+            "FE-FRX-16-FALLBACK-0001"
+        );
+    }
+
+    #[test]
+    fn error_code_missing_reuse_is_reuse_0001() {
+        assert_eq!(
+            PrimitiveAdoptionValidationError::MissingReuseScanOutcome.error_code(),
+            "FE-FRX-16-REUSE-0001"
+        );
+    }
+
+    #[test]
+    fn error_code_invalid_score_is_score_0001() {
+        assert_eq!(
+            PrimitiveAdoptionValidationError::InvalidScoreRange {
+                field: "x".to_string()
+            }
+            .error_code(),
+            "FE-FRX-16-SCORE-0001"
+        );
+    }
+
+    #[test]
+    fn error_code_invalid_metadata_is_metadata_0001() {
+        assert_eq!(
+            PrimitiveAdoptionValidationError::InvalidMetadataField {
+                field: "x".to_string()
+            }
+            .error_code(),
+            "FE-FRX-16-METADATA-0001"
+        );
+    }
+
+    // -- Additional enrichment batch 2b --
+
+    #[test]
+    fn tier_b_with_reuse_scan_still_valid() {
+        let mut r = valid_record_tier_c();
+        r.tier = PrimitiveTier::B;
+        r.reuse_scan = Some(valid_reuse_scan());
+        assert!(r.validate_for_activation().is_ok());
+    }
+
+    #[test]
+    fn verification_checklist_independent_replication_false_still_valid() {
+        let mut r = valid_record_tier_c();
+        let mut v = valid_verification();
+        v.independent_replication_completed = false;
+        r.verification = Some(v);
+        assert!(r.validate_for_activation().is_ok());
+    }
+
+    #[test]
+    fn reuse_scan_not_applicable_empty_candidates_ok() {
+        let mut r = valid_record_tier_s();
+        let mut rs = valid_reuse_scan();
+        rs.decision = ReuseDecision::NotApplicable;
+        rs.candidate_crates = vec![];
+        r.reuse_scan = Some(rs);
+        assert!(r.validate_for_activation().is_ok());
+    }
+
+    #[test]
+    fn validation_error_clone_eq() {
+        let err = PrimitiveAdoptionValidationError::InvalidScoreRange {
+            field: "risk".to_string(),
+        };
+        let cloned = err.clone();
+        assert_eq!(err, cloned);
+    }
+
+    #[test]
+    fn ev_relevance_risk_score_clone_eq() {
+        let s = valid_score();
+        let cloned = s.clone();
+        assert_eq!(s, cloned);
+    }
+
+    #[test]
+    fn verification_checklist_debug_nonempty() {
+        let v = valid_verification();
+        assert!(!format!("{v:?}").is_empty());
+    }
+
+    #[test]
+    fn reuse_scan_debug_nonempty() {
+        let rs = valid_reuse_scan();
+        assert!(!format!("{rs:?}").is_empty());
+    }
+
+    #[test]
+    fn ev_relevance_risk_score_debug_nonempty() {
+        let s = valid_score();
+        assert!(!format!("{s:?}").is_empty());
+    }
+
+    #[test]
+    fn record_tier_c_no_reuse_scan_json_has_null() {
+        let r = valid_record_tier_c();
+        let val: serde_json::Value = serde_json::to_value(&r).unwrap();
+        assert!(val["reuse_scan"].is_null());
+    }
+
+    #[test]
+    fn validation_rationale_second_check_after_id() {
+        let mut r = valid_record_tier_c();
+        r.adopt_vs_build_rationale = "  ".to_string();
+        let err = r.validate_for_activation().unwrap_err();
+        assert_eq!(
+            err,
+            PrimitiveAdoptionValidationError::InvalidMetadataField {
+                field: "adopt_vs_build_rationale".to_string()
+            }
+        );
+    }
 }

@@ -1755,4 +1755,595 @@ mod tests {
         assert_eq!(fp.policy_version, 10);
         assert_eq!(fp.trust_revision, 20);
     }
+
+    // -----------------------------------------------------------------------
+    // Copy semantics — CacheErrorCode is Copy
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cache_error_code_is_copy() {
+        let original = CacheErrorCode::ModuleRevoked;
+        let copied = original;
+        assert_eq!(original, copied);
+    }
+
+    #[test]
+    fn cache_error_code_copy_all_variants() {
+        let a = CacheErrorCode::VersionRegression;
+        let b = a;
+        assert_eq!(a.stable_code(), b.stable_code());
+
+        let c = CacheErrorCode::EmptyModuleId;
+        let d = c;
+        assert_eq!(c.stable_code(), d.stable_code());
+    }
+
+    // -----------------------------------------------------------------------
+    // Debug distinctness — all enum variants produce distinct Debug output
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cache_error_code_debug_is_distinct() {
+        let variants = [
+            CacheErrorCode::ModuleRevoked,
+            CacheErrorCode::VersionRegression,
+            CacheErrorCode::EmptyModuleId,
+        ];
+        let debugs: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(debugs.len(), 3, "all CacheErrorCode variants have distinct Debug output");
+    }
+
+    // -----------------------------------------------------------------------
+    // Serde variant distinctness — all enum variants serialize to distinct JSON
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cache_error_code_serde_variants_distinct() {
+        let variants = [
+            CacheErrorCode::ModuleRevoked,
+            CacheErrorCode::VersionRegression,
+            CacheErrorCode::EmptyModuleId,
+        ];
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(jsons.len(), 3, "all CacheErrorCode variants serialize to distinct JSON");
+    }
+
+    // -----------------------------------------------------------------------
+    // Clone independence — mutating a clone doesn't affect the original
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn module_version_fingerprint_clone_independence() {
+        let original = ModuleVersionFingerprint::new(source_hash("orig"), 3, 7);
+        let mut cloned = original.clone();
+        cloned.policy_version = 99;
+        assert_eq!(original.policy_version, 3);
+        assert_ne!(original.policy_version, cloned.policy_version);
+    }
+
+    #[test]
+    fn cache_context_clone_independence() {
+        let original = CacheContext::new("trace-orig", "dec-orig", "pol-orig");
+        let mut cloned = original.clone();
+        cloned.trace_id = "trace-mutated".to_string();
+        assert_eq!(original.trace_id, "trace-orig");
+        assert_eq!(cloned.trace_id, "trace-mutated");
+    }
+
+    #[test]
+    fn module_cache_key_clone_independence() {
+        let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        let original = ModuleCacheKey::new("mod:clone-orig", v);
+        let mut cloned = original.clone();
+        cloned.module_id = "mod:clone-mutated".to_string();
+        assert_eq!(original.module_id, "mod:clone-orig");
+        assert_eq!(cloned.module_id, "mod:clone-mutated");
+    }
+
+    #[test]
+    fn cache_insert_request_clone_independence() {
+        let req = CacheInsertRequest::new(
+            "mod:clone-req",
+            ModuleVersionFingerprint::new(source_hash("r"), 1, 1),
+            ContentHash::compute(b"art"),
+            "/clone.js",
+        );
+        let mut cloned = req.clone();
+        cloned.module_id = "mod:mutated".to_string();
+        assert_eq!(req.module_id, "mod:clone-req");
+        assert_eq!(cloned.module_id, "mod:mutated");
+    }
+
+    // -----------------------------------------------------------------------
+    // JSON field-name stability — assert exact field names in serialized output
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn module_version_fingerprint_json_field_names() {
+        let fp = ModuleVersionFingerprint::new(source_hash("fields"), 1, 1);
+        let json = serde_json::to_string(&fp).unwrap();
+        assert!(json.contains("\"source_hash\""), "got: {json}");
+        assert!(json.contains("\"policy_version\""), "got: {json}");
+        assert!(json.contains("\"trust_revision\""), "got: {json}");
+    }
+
+    #[test]
+    fn module_cache_key_json_field_names() {
+        let key = ModuleCacheKey::new(
+            "mod:fields",
+            ModuleVersionFingerprint::new(source_hash("f"), 1, 1),
+        );
+        let json = serde_json::to_string(&key).unwrap();
+        assert!(json.contains("\"module_id\""), "got: {json}");
+        assert!(json.contains("\"version\""), "got: {json}");
+    }
+
+    #[test]
+    fn module_cache_entry_json_field_names() {
+        let key = ModuleCacheKey::new(
+            "mod:entry-fields",
+            ModuleVersionFingerprint::new(source_hash("ef"), 1, 1),
+        );
+        let entry = ModuleCacheEntry {
+            key,
+            artifact_hash: ContentHash::compute(b"art-f"),
+            resolved_specifier: "/entry-f.js".to_string(),
+            inserted_seq: 5,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"key\""), "got: {json}");
+        assert!(json.contains("\"artifact_hash\""), "got: {json}");
+        assert!(json.contains("\"resolved_specifier\""), "got: {json}");
+        assert!(json.contains("\"inserted_seq\""), "got: {json}");
+    }
+
+    #[test]
+    fn cache_context_json_field_names() {
+        let ctx = CacheContext::new("t", "d", "p");
+        let json = serde_json::to_string(&ctx).unwrap();
+        assert!(json.contains("\"trace_id\""), "got: {json}");
+        assert!(json.contains("\"decision_id\""), "got: {json}");
+        assert!(json.contains("\"policy_id\""), "got: {json}");
+    }
+
+    #[test]
+    fn cache_error_json_field_names() {
+        let mut cache = ModuleCache::new();
+        let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        let err = cache
+            .insert(
+                CacheInsertRequest::new("", v, ContentHash::compute(b"a"), "/e.js"),
+                &context(),
+            )
+            .unwrap_err();
+        let json = serde_json::to_string(&*err).unwrap();
+        assert!(json.contains("\"code\""), "got: {json}");
+        assert!(json.contains("\"message\""), "got: {json}");
+        assert!(json.contains("\"event\""), "got: {json}");
+    }
+
+    #[test]
+    fn cache_snapshot_json_field_names() {
+        let snap = ModuleCache::new().snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        assert!(json.contains("\"entries\""), "got: {json}");
+        assert!(json.contains("\"latest_versions\""), "got: {json}");
+        assert!(json.contains("\"revoked_modules\""), "got: {json}");
+        assert!(json.contains("\"state_hash\""), "got: {json}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Display format checks — exact string assertions for Display impls
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cache_error_display_format_exact_separator() {
+        let mut cache = ModuleCache::new();
+        let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        let err = cache
+            .insert(
+                CacheInsertRequest::new("", v, ContentHash::compute(b"a"), "/e.js"),
+                &context(),
+            )
+            .unwrap_err();
+        let display = format!("{err}");
+        // Format is "<stable_code>: <message>"
+        assert!(display.contains(": "), "display must contain ': ' separator; got: {display}");
+        assert!(display.starts_with("FE-MODCACHE-"), "display must start with FE-MODCACHE-; got: {display}");
+    }
+
+    #[test]
+    fn cache_error_display_module_revoked_code_prefix() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        cache.invalidate_trust_revocation("mod:disp", 1, &ctx);
+        let err = cache
+            .insert(
+                CacheInsertRequest::new(
+                    "mod:disp",
+                    ModuleVersionFingerprint::new(source_hash("s"), 1, 1),
+                    ContentHash::compute(b"a"),
+                    "/d.js",
+                ),
+                &ctx,
+            )
+            .unwrap_err();
+        let display = format!("{err}");
+        assert_eq!(
+            display.split(": ").next().unwrap(),
+            "FE-MODCACHE-0001",
+            "exact code prefix; got: {display}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Hash consistency — canonical encoding of equal values is identical
+    // (types don't derive Hash; use canonical_value determinism as proxy)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cache_error_code_equality_consistent_with_serde() {
+        let a = CacheErrorCode::VersionRegression;
+        let b = CacheErrorCode::VersionRegression;
+        // Two equal values must serialize identically (our hash-consistency proxy)
+        let ja = serde_json::to_string(&a).unwrap();
+        let jb = serde_json::to_string(&b).unwrap();
+        assert_eq!(ja, jb);
+    }
+
+    #[test]
+    fn module_version_fingerprint_equal_values_canonical_identical() {
+        let fp1 = ModuleVersionFingerprint::new(source_hash("hash-test"), 7, 13);
+        let fp2 = ModuleVersionFingerprint::new(source_hash("hash-test"), 7, 13);
+        // Canonical encoding acts as deterministic hash
+        assert_eq!(
+            encode_value(&fp1.canonical_value()),
+            encode_value(&fp2.canonical_value())
+        );
+    }
+
+    #[test]
+    fn module_cache_key_equal_values_canonical_identical() {
+        let v1 = ModuleVersionFingerprint::new(source_hash("hk"), 1, 1);
+        let v2 = ModuleVersionFingerprint::new(source_hash("hk"), 1, 1);
+        let k1 = ModuleCacheKey::new("mod:hash-key", v1);
+        let k2 = ModuleCacheKey::new("mod:hash-key", v2);
+        assert_eq!(
+            encode_value(&k1.canonical_value()),
+            encode_value(&k2.canonical_value())
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Boundary/edge cases — zero values, u64::MAX, empty strings
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn module_version_fingerprint_zero_values() {
+        let fp = ModuleVersionFingerprint::new(source_hash("zero"), 0, 0);
+        assert_eq!(fp.policy_version, 0);
+        assert_eq!(fp.trust_revision, 0);
+        let json = serde_json::to_string(&fp).unwrap();
+        let decoded: ModuleVersionFingerprint = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, fp);
+    }
+
+    #[test]
+    fn module_version_fingerprint_u64_max_values() {
+        let fp = ModuleVersionFingerprint::new(source_hash("max"), u64::MAX, u64::MAX);
+        assert_eq!(fp.policy_version, u64::MAX);
+        assert_eq!(fp.trust_revision, u64::MAX);
+        let json = serde_json::to_string(&fp).unwrap();
+        let decoded: ModuleVersionFingerprint = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, fp);
+    }
+
+    #[test]
+    fn cache_event_empty_detail_allowed() {
+        let mut cache = ModuleCache::new();
+        // Trigger an event to check the event detail field type
+        cache.invalidate_source_update("mod:edge", source_hash("e"), &context());
+        let event = cache.events().last().unwrap();
+        // detail is always a String, even if empty would be allowed
+        assert!(event.detail.contains("removed"));
+    }
+
+    #[test]
+    fn restore_trust_with_zero_revision_harmless() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:zero-tr", v.clone(), ContentHash::compute(b"a"), "/z.js"),
+                &ctx,
+            )
+            .unwrap();
+        cache.invalidate_trust_revocation("mod:zero-tr", 1, &ctx);
+        cache.restore_trust("mod:zero-tr", 0, &ctx);
+        let snap = cache.snapshot();
+        assert!(!snap.revoked_modules.contains("mod:zero-tr"));
+    }
+
+    #[test]
+    fn insert_after_restore_with_updated_revision() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v1 = ModuleVersionFingerprint::new(source_hash("s"), 1, 5);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:restore2", v1, ContentHash::compute(b"a1"), "/r2.js"),
+                &ctx,
+            )
+            .unwrap();
+        cache.invalidate_trust_revocation("mod:restore2", 10, &ctx);
+        cache.restore_trust("mod:restore2", 10, &ctx);
+        // After restore, latest trust_revision is max(5, 10) = 10; insert with 10 should succeed
+        let v2 = ModuleVersionFingerprint::new(source_hash("s2"), 1, 10);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:restore2", v2.clone(), ContentHash::compute(b"a2"), "/r2.js"),
+                &ctx,
+            )
+            .unwrap();
+        assert!(cache.get("mod:restore2", &v2).is_some());
+    }
+
+    #[test]
+    fn insert_with_u64_max_policy_version_succeeds() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v = ModuleVersionFingerprint::new(source_hash("max-pol"), u64::MAX, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:max-pol", v.clone(), ContentHash::compute(b"amax"), "/max.js"),
+                &ctx,
+            )
+            .unwrap();
+        assert!(cache.get("mod:max-pol", &v).is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // Serde roundtrips — complex populated structs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cache_snapshot_with_revoked_and_entries_roundtrip() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        // Insert two modules
+        let va = ModuleVersionFingerprint::new(source_hash("sa"), 1, 1);
+        let vb = ModuleVersionFingerprint::new(source_hash("sb"), 2, 3);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:sn-a", va, ContentHash::compute(b"art-a"), "/sn-a.js"),
+                &ctx,
+            )
+            .unwrap();
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:sn-b", vb, ContentHash::compute(b"art-b"), "/sn-b.js"),
+                &ctx,
+            )
+            .unwrap();
+        // Revoke one
+        cache.invalidate_trust_revocation("mod:sn-revoked", 1, &ctx);
+        let snap = cache.snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        let decoded: CacheSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.entries.len(), snap.entries.len());
+        assert_eq!(decoded.revoked_modules, snap.revoked_modules);
+        assert_eq!(decoded.state_hash, snap.state_hash);
+        assert_eq!(decoded.latest_versions, snap.latest_versions);
+    }
+
+    #[test]
+    fn cache_event_serde_all_fields() {
+        let mut cache = ModuleCache::new();
+        let ctx = CacheContext::new("trace-ev-all", "dec-ev-all", "pol-ev-all");
+        let v = ModuleVersionFingerprint::new(source_hash("ev-all"), 1, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:ev-all", v, ContentHash::compute(b"art-ev"), "/ev-all.js"),
+                &ctx,
+            )
+            .unwrap();
+        let event = cache.events().last().unwrap().clone();
+        let json = serde_json::to_string(&event).unwrap();
+        let decoded: CacheEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.trace_id, "trace-ev-all");
+        assert_eq!(decoded.decision_id, "dec-ev-all");
+        assert_eq!(decoded.policy_id, "pol-ev-all");
+        assert_eq!(decoded.component, "module_cache");
+    }
+
+    // -----------------------------------------------------------------------
+    // Debug nonempty — all types produce non-empty Debug output
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn module_version_fingerprint_debug_nonempty() {
+        let fp = ModuleVersionFingerprint::new(source_hash("dbg"), 1, 1);
+        assert!(!format!("{fp:?}").is_empty());
+    }
+
+    #[test]
+    fn module_cache_key_debug_nonempty() {
+        let v = ModuleVersionFingerprint::new(source_hash("dbg-k"), 1, 1);
+        let key = ModuleCacheKey::new("mod:dbg", v);
+        assert!(!format!("{key:?}").is_empty());
+    }
+
+    #[test]
+    fn module_cache_entry_debug_nonempty() {
+        let key = ModuleCacheKey::new(
+            "mod:dbg-e",
+            ModuleVersionFingerprint::new(source_hash("dbg-e"), 1, 1),
+        );
+        let entry = ModuleCacheEntry {
+            key,
+            artifact_hash: ContentHash::compute(b"dbg-art"),
+            resolved_specifier: "/dbg.js".to_string(),
+            inserted_seq: 0,
+        };
+        assert!(!format!("{entry:?}").is_empty());
+    }
+
+    #[test]
+    fn cache_insert_request_debug_nonempty() {
+        let req = CacheInsertRequest::new(
+            "mod:dbg-req",
+            ModuleVersionFingerprint::new(source_hash("dbg-r"), 1, 1),
+            ContentHash::compute(b"dbg-r"),
+            "/dbg-r.js",
+        );
+        assert!(!format!("{req:?}").is_empty());
+    }
+
+    #[test]
+    fn cache_context_debug_nonempty() {
+        let ctx = CacheContext::new("t", "d", "p");
+        assert!(!format!("{ctx:?}").is_empty());
+    }
+
+    #[test]
+    fn cache_event_debug_nonempty() {
+        let mut cache = ModuleCache::new();
+        cache.invalidate_trust_revocation("mod:dbg-ev", 1, &context());
+        let event = cache.events().last().unwrap();
+        assert!(!format!("{event:?}").is_empty());
+    }
+
+    #[test]
+    fn cache_error_code_debug_nonempty() {
+        assert!(!format!("{:?}", CacheErrorCode::ModuleRevoked).is_empty());
+        assert!(!format!("{:?}", CacheErrorCode::VersionRegression).is_empty());
+        assert!(!format!("{:?}", CacheErrorCode::EmptyModuleId).is_empty());
+    }
+
+    #[test]
+    fn cache_error_debug_nonempty() {
+        let mut cache = ModuleCache::new();
+        let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
+        let err = cache
+            .insert(
+                CacheInsertRequest::new("", v, ContentHash::compute(b"a"), "/e.js"),
+                &context(),
+            )
+            .unwrap_err();
+        assert!(!format!("{err:?}").is_empty());
+    }
+
+    #[test]
+    fn cache_snapshot_debug_nonempty() {
+        let snap = ModuleCache::new().snapshot();
+        assert!(!format!("{snap:?}").is_empty());
+    }
+
+    #[test]
+    fn module_cache_debug_nonempty() {
+        let cache = ModuleCache::new();
+        assert!(!format!("{cache:?}").is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Additional edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn multiple_insertions_same_module_event_count_grows() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let v1 = ModuleVersionFingerprint::new(source_hash("s1"), 1, 1);
+        let v2 = ModuleVersionFingerprint::new(source_hash("s1"), 2, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:evcount", v1, ContentHash::compute(b"a1"), "/ev.js"),
+                &ctx,
+            )
+            .unwrap();
+        let count_after_1 = cache.events().len();
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:evcount", v2, ContentHash::compute(b"a2"), "/ev.js"),
+                &ctx,
+            )
+            .unwrap();
+        let count_after_2 = cache.events().len();
+        assert!(count_after_2 > count_after_1);
+    }
+
+    #[test]
+    fn state_hash_two_empty_caches_are_equal() {
+        let a = ModuleCache::new();
+        let b = ModuleCache::new();
+        assert_eq!(a.state_hash(), b.state_hash());
+    }
+
+    #[test]
+    fn invalidate_policy_change_preserves_other_modules() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        let va = ModuleVersionFingerprint::new(source_hash("sa"), 1, 1);
+        let vb = ModuleVersionFingerprint::new(source_hash("sb"), 1, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:pol-a", va.clone(), ContentHash::compute(b"aa"), "/a.js"),
+                &ctx,
+            )
+            .unwrap();
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:pol-b", vb.clone(), ContentHash::compute(b"bb"), "/b.js"),
+                &ctx,
+            )
+            .unwrap();
+        cache.invalidate_policy_change("mod:pol-a", 5, &ctx);
+        // mod:pol-b should still be accessible at its version
+        assert!(cache.get("mod:pol-b", &vb).is_some());
+        // mod:pol-a with old version should be gone
+        assert!(cache.get("mod:pol-a", &va).is_none());
+    }
+
+    #[test]
+    fn cache_error_code_equality_reflexive() {
+        let code = CacheErrorCode::EmptyModuleId;
+        assert_eq!(code, code);
+    }
+
+    #[test]
+    fn module_cache_entry_inserted_seq_is_zero_on_first_insert() {
+        let mut cache = ModuleCache::new();
+        let v = ModuleVersionFingerprint::new(source_hash("seq0"), 1, 1);
+        cache
+            .insert(
+                CacheInsertRequest::new("mod:seq0", v.clone(), ContentHash::compute(b"a"), "/s0.js"),
+                &context(),
+            )
+            .unwrap();
+        let entry = cache.get("mod:seq0", &v).unwrap();
+        assert_eq!(entry.inserted_seq, 0);
+    }
+
+    #[test]
+    fn events_field_names_present_in_event_json() {
+        let mut cache = ModuleCache::new();
+        let ctx = context();
+        cache.invalidate_source_update("mod:field-check", source_hash("fc"), &ctx);
+        let event = cache.events().last().unwrap();
+        let json = serde_json::to_string(event).unwrap();
+        assert!(json.contains("\"seq\""), "got: {json}");
+        assert!(json.contains("\"trace_id\""), "got: {json}");
+        assert!(json.contains("\"decision_id\""), "got: {json}");
+        assert!(json.contains("\"policy_id\""), "got: {json}");
+        assert!(json.contains("\"component\""), "got: {json}");
+        assert!(json.contains("\"event\""), "got: {json}");
+        assert!(json.contains("\"outcome\""), "got: {json}");
+        assert!(json.contains("\"error_code\""), "got: {json}");
+        assert!(json.contains("\"module_id\""), "got: {json}");
+        assert!(json.contains("\"detail\""), "got: {json}");
+    }
 }

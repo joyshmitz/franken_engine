@@ -1272,6 +1272,8 @@ mod tests {
         assert_eq!(phase, RolloutPhase::Default);
 
         // Advancing past Default finalizes to Active.
+        let phase = ctrl.advance_rollout("comp-a", "trace-1").unwrap();
+        assert_eq!(phase, RolloutPhase::Default);
         assert_eq!(ctrl.state("comp-a"), Some(LifecycleState::Active));
         assert_eq!(ctrl.known_good("comp-a").unwrap().version, "2.0.0");
     }
@@ -1893,7 +1895,8 @@ mod tests {
         // 5. Complete full rollout.
         ctrl.advance_rollout("comp-a", "trace-3").unwrap(); // canary
         ctrl.advance_rollout("comp-a", "trace-3").unwrap(); // ramp
-        ctrl.advance_rollout("comp-a", "trace-3").unwrap(); // default -> active
+        ctrl.advance_rollout("comp-a", "trace-3").unwrap(); // default
+        ctrl.advance_rollout("comp-a", "trace-3").unwrap(); // finalize -> active
         assert_eq!(ctrl.state("comp-a"), Some(LifecycleState::Active));
         assert_eq!(ctrl.known_good("comp-a").unwrap().version, "3.0.0");
     }
@@ -2154,7 +2157,8 @@ mod tests {
             .unwrap();
         ctrl.advance_rollout("comp-a", "trace-1").unwrap(); // canary
         ctrl.advance_rollout("comp-a", "trace-1").unwrap(); // ramp
-        ctrl.advance_rollout("comp-a", "trace-1").unwrap(); // default -> active
+        ctrl.advance_rollout("comp-a", "trace-1").unwrap(); // default
+        ctrl.advance_rollout("comp-a", "trace-1").unwrap(); // finalize -> active
         assert_eq!(ctrl.state("comp-a"), Some(LifecycleState::Active));
         assert_eq!(ctrl.known_good("comp-a").unwrap().version, "3.0.0");
     }
@@ -2330,12 +2334,13 @@ mod tests {
         activate_component(&mut ctrl, "comp-a", "1.0.0");
         assert_eq!(ctrl.known_good("comp-a").unwrap().version, "1.0.0");
 
-        // Update to v2, complete rollout (shadow->canary->ramp->active).
+        // Update to v2, complete rollout (shadow->canary->ramp->default->active).
         ctrl.begin_update("comp-a", test_descriptor("comp-a", "2.0.0"), 2, "trace-1")
             .unwrap();
         ctrl.advance_rollout("comp-a", "trace-1").unwrap(); // canary
         ctrl.advance_rollout("comp-a", "trace-1").unwrap(); // ramp
-        ctrl.advance_rollout("comp-a", "trace-1").unwrap(); // default -> active
+        ctrl.advance_rollout("comp-a", "trace-1").unwrap(); // default
+        ctrl.advance_rollout("comp-a", "trace-1").unwrap(); // finalize -> active
         assert_eq!(ctrl.known_good("comp-a").unwrap().version, "2.0.0");
 
         // Update to v3, complete rollout.
@@ -2343,7 +2348,8 @@ mod tests {
             .unwrap();
         ctrl.advance_rollout("comp-a", "trace-1").unwrap(); // canary
         ctrl.advance_rollout("comp-a", "trace-1").unwrap(); // ramp
-        ctrl.advance_rollout("comp-a", "trace-1").unwrap(); // default -> active
+        ctrl.advance_rollout("comp-a", "trace-1").unwrap(); // default
+        ctrl.advance_rollout("comp-a", "trace-1").unwrap(); // finalize -> active
         assert_eq!(ctrl.known_good("comp-a").unwrap().version, "3.0.0");
     }
 

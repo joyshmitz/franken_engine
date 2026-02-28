@@ -1763,4 +1763,630 @@ mod tests {
             assert_eq!(*t, restored);
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2 — PearlTower 2026-02-27
+    // -----------------------------------------------------------------------
+
+    // -- Copy semantics --
+
+    #[test]
+    fn deterministic_timestamp_copy_semantics() {
+        let a = DeterministicTimestamp(42);
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    // -- Serde variant distinctness --
+
+    #[test]
+    fn policy_type_serde_all_distinct() {
+        let set: std::collections::BTreeSet<String> = [
+            PolicyType::RuntimeExecution,
+            PolicyType::CapabilityLattice,
+            PolicyType::ExtensionTrust,
+            PolicyType::EvidenceRetention,
+            PolicyType::RevocationGovernance,
+        ]
+        .iter()
+        .map(|p| serde_json::to_string(p).unwrap())
+        .collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    #[test]
+    fn checkpoint_error_serde_all_variants_distinct() {
+        let id1 = crate::engine_object_id::derive_id(
+            ObjectDomain::CheckpointArtifact,
+            "z",
+            &checkpoint_schema_id(),
+            b"err-a",
+        )
+        .unwrap();
+        let id2 = crate::engine_object_id::derive_id(
+            ObjectDomain::CheckpointArtifact,
+            "z",
+            &checkpoint_schema_id(),
+            b"err-b",
+        )
+        .unwrap();
+        let errors = [
+            serde_json::to_string(&CheckpointError::GenesisMustHaveNoPredecessor).unwrap(),
+            serde_json::to_string(&CheckpointError::MissingPredecessor).unwrap(),
+            serde_json::to_string(&CheckpointError::NonMonotonicSequence {
+                prev_seq: 1,
+                current_seq: 0,
+            })
+            .unwrap(),
+            serde_json::to_string(&CheckpointError::GenesisSequenceNotZero { actual: 5 }).unwrap(),
+            serde_json::to_string(&CheckpointError::ChainLinkageBroken {
+                expected: id1,
+                actual: id2,
+            })
+            .unwrap(),
+            serde_json::to_string(&CheckpointError::EmptyPolicyHeads).unwrap(),
+            serde_json::to_string(&CheckpointError::QuorumNotMet {
+                required: 3,
+                provided: 1,
+            })
+            .unwrap(),
+            serde_json::to_string(&CheckpointError::DuplicatePolicyType {
+                policy_type: PolicyType::RuntimeExecution,
+            })
+            .unwrap(),
+            serde_json::to_string(&CheckpointError::IdDerivationFailed {
+                detail: "x".into(),
+            })
+            .unwrap(),
+            serde_json::to_string(&CheckpointError::SignatureInvalid {
+                detail: "y".into(),
+            })
+            .unwrap(),
+            serde_json::to_string(&CheckpointError::EpochRegression {
+                prev_epoch: SecurityEpoch::from_raw(5),
+                current_epoch: SecurityEpoch::from_raw(3),
+            })
+            .unwrap(),
+        ];
+        let set: std::collections::BTreeSet<_> = errors.into_iter().collect();
+        assert_eq!(set.len(), 11);
+    }
+
+    #[test]
+    fn checkpoint_event_type_serde_all_distinct() {
+        let set: std::collections::BTreeSet<String> = [
+            serde_json::to_string(&CheckpointEventType::GenesisCreated).unwrap(),
+            serde_json::to_string(&CheckpointEventType::ChainCheckpointCreated { prev_seq: 0 })
+                .unwrap(),
+            serde_json::to_string(&CheckpointEventType::QuorumVerified {
+                valid: 1,
+                threshold: 1,
+            })
+            .unwrap(),
+            serde_json::to_string(&CheckpointEventType::ChainLinkageVerified).unwrap(),
+            serde_json::to_string(&CheckpointEventType::EpochTransition {
+                from: SecurityEpoch::from_raw(0),
+                to: SecurityEpoch::from_raw(1),
+            })
+            .unwrap(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    // -- Clone independence --
+
+    #[test]
+    fn policy_head_clone_independence() {
+        let h = make_policy_head(PolicyType::ExtensionTrust, 3);
+        let mut cloned = h.clone();
+        cloned.policy_version = 999;
+        assert_eq!(h.policy_version, 3);
+    }
+
+    #[test]
+    fn checkpoint_error_clone_independence() {
+        let err = CheckpointError::IdDerivationFailed {
+            detail: "original".to_string(),
+        };
+        let mut cloned = err.clone();
+        if let CheckpointError::IdDerivationFailed { ref mut detail } = cloned {
+            detail.push_str("-mutated");
+        }
+        if let CheckpointError::IdDerivationFailed { ref detail } = err {
+            assert_eq!(detail, "original");
+        }
+    }
+
+    #[test]
+    fn checkpoint_event_clone_independence() {
+        let event = CheckpointEvent {
+            event_type: CheckpointEventType::GenesisCreated,
+            checkpoint_seq: 0,
+            trace_id: "original".to_string(),
+        };
+        let mut cloned = event.clone();
+        cloned.trace_id.push_str("-mutated");
+        assert_eq!(event.trace_id, "original");
+    }
+
+    #[test]
+    fn policy_checkpoint_clone_independence() {
+        let sk = make_sk(1);
+        let cp = build_genesis(&[sk]);
+        let mut cloned = cp.clone();
+        cloned.checkpoint_seq = 999;
+        assert_eq!(cp.checkpoint_seq, 0);
+    }
+
+    // -- JSON field-name stability --
+
+    #[test]
+    fn policy_head_json_field_names() {
+        let head = make_policy_head(PolicyType::RuntimeExecution, 1);
+        let val: serde_json::Value = serde_json::to_value(&head).unwrap();
+        let obj = val.as_object().unwrap();
+        for key in ["policy_type", "policy_hash", "policy_version"] {
+            assert!(obj.contains_key(key), "missing field: {key}");
+        }
+        assert_eq!(obj.len(), 3);
+    }
+
+    #[test]
+    fn checkpoint_event_json_field_names() {
+        let event = CheckpointEvent {
+            event_type: CheckpointEventType::GenesisCreated,
+            checkpoint_seq: 0,
+            trace_id: "t".to_string(),
+        };
+        let val: serde_json::Value = serde_json::to_value(&event).unwrap();
+        let obj = val.as_object().unwrap();
+        for key in ["event_type", "checkpoint_seq", "trace_id"] {
+            assert!(obj.contains_key(key), "missing field: {key}");
+        }
+        assert_eq!(obj.len(), 3);
+    }
+
+    #[test]
+    fn policy_checkpoint_json_field_names() {
+        let sk = make_sk(1);
+        let cp = build_genesis(&[sk]);
+        let val: serde_json::Value = serde_json::to_value(&cp).unwrap();
+        let obj = val.as_object().unwrap();
+        for key in [
+            "checkpoint_id",
+            "prev_checkpoint",
+            "checkpoint_seq",
+            "epoch_id",
+            "policy_heads",
+            "quorum_signatures",
+            "created_at",
+        ] {
+            assert!(obj.contains_key(key), "missing field: {key}");
+        }
+        assert_eq!(obj.len(), 7);
+    }
+
+    // -- Hash consistency --
+
+    #[test]
+    fn policy_type_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        PolicyType::ExtensionTrust.hash(&mut h1);
+        PolicyType::ExtensionTrust.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn deterministic_timestamp_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        DeterministicTimestamp(100).hash(&mut h1);
+        DeterministicTimestamp(100).hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    // -- Display format checks --
+
+    #[test]
+    fn policy_type_display_all_lowercase_underscore() {
+        for pt in [
+            PolicyType::RuntimeExecution,
+            PolicyType::CapabilityLattice,
+            PolicyType::ExtensionTrust,
+            PolicyType::EvidenceRetention,
+            PolicyType::RevocationGovernance,
+        ] {
+            let s = pt.to_string();
+            assert!(
+                s.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                "PolicyType::Display should be lowercase+underscore, got: {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn checkpoint_error_display_genesis_must_have_no_predecessor() {
+        let err = CheckpointError::GenesisMustHaveNoPredecessor;
+        assert_eq!(err.to_string(), "genesis checkpoint must have no predecessor");
+    }
+
+    #[test]
+    fn checkpoint_error_display_missing_predecessor() {
+        let err = CheckpointError::MissingPredecessor;
+        assert_eq!(
+            err.to_string(),
+            "non-genesis checkpoint must have a predecessor"
+        );
+    }
+
+    #[test]
+    fn checkpoint_error_display_empty_policy_heads() {
+        let err = CheckpointError::EmptyPolicyHeads;
+        assert_eq!(err.to_string(), "policy heads must not be empty");
+    }
+
+    #[test]
+    fn checkpoint_error_display_quorum_not_met_format() {
+        let err = CheckpointError::QuorumNotMet {
+            required: 5,
+            provided: 2,
+        };
+        assert_eq!(err.to_string(), "quorum not met: 2/5");
+    }
+
+    #[test]
+    fn checkpoint_event_type_display_quorum_format() {
+        let evt = CheckpointEventType::QuorumVerified {
+            valid: 3,
+            threshold: 2,
+        };
+        assert_eq!(evt.to_string(), "quorum_verified(3/2)");
+    }
+
+    #[test]
+    fn deterministic_timestamp_display_max() {
+        let ts = DeterministicTimestamp(u64::MAX);
+        let s = ts.to_string();
+        assert!(s.starts_with("tick:"));
+        assert!(s.contains(&u64::MAX.to_string()));
+    }
+
+    // -- Boundary/edge cases --
+
+    #[test]
+    fn deterministic_timestamp_max_serde_roundtrip() {
+        let ts = DeterministicTimestamp(u64::MAX);
+        let json = serde_json::to_string(&ts).unwrap();
+        let back: DeterministicTimestamp = serde_json::from_str(&json).unwrap();
+        assert_eq!(ts, back);
+    }
+
+    #[test]
+    fn policy_head_version_zero() {
+        let h = make_policy_head(PolicyType::RuntimeExecution, 0);
+        let json = serde_json::to_string(&h).unwrap();
+        let back: PolicyHead = serde_json::from_str(&json).unwrap();
+        assert_eq!(h, back);
+    }
+
+    #[test]
+    fn policy_head_version_max() {
+        let h = PolicyHead {
+            policy_type: PolicyType::RuntimeExecution,
+            policy_hash: ContentHash::compute(b"max-ver"),
+            policy_version: u64::MAX,
+        };
+        let json = serde_json::to_string(&h).unwrap();
+        let back: PolicyHead = serde_json::from_str(&json).unwrap();
+        assert_eq!(h, back);
+    }
+
+    #[test]
+    fn genesis_at_max_epoch() {
+        let sk = make_sk(1);
+        let cp = CheckpointBuilder::genesis(
+            SecurityEpoch::from_raw(u64::MAX),
+            DeterministicTimestamp(100),
+            "test-zone",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
+        .build(&[sk])
+        .unwrap();
+        assert_eq!(cp.epoch_id, SecurityEpoch::from_raw(u64::MAX));
+    }
+
+    #[test]
+    fn genesis_at_timestamp_zero() {
+        let sk = make_sk(1);
+        let cp = CheckpointBuilder::genesis(
+            SecurityEpoch::GENESIS,
+            DeterministicTimestamp(0),
+            "test-zone",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
+        .build(&[sk])
+        .unwrap();
+        assert_eq!(cp.created_at, DeterministicTimestamp(0));
+    }
+
+    #[test]
+    fn chain_large_sequence_gap() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(&[sk.clone()]);
+        let cp = CheckpointBuilder::after(
+            &genesis,
+            1_000_000,
+            SecurityEpoch::GENESIS,
+            DeterministicTimestamp(200),
+            "test-zone",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 2))
+        .build(&[sk])
+        .unwrap();
+        assert_eq!(cp.checkpoint_seq, 1_000_000);
+    }
+
+    #[test]
+    fn checkpoint_event_max_seq() {
+        let event = CheckpointEvent {
+            event_type: CheckpointEventType::GenesisCreated,
+            checkpoint_seq: u64::MAX,
+            trace_id: "max-seq".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: CheckpointEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn checkpoint_event_empty_trace_id() {
+        let event = CheckpointEvent {
+            event_type: CheckpointEventType::ChainLinkageVerified,
+            checkpoint_seq: 1,
+            trace_id: String::new(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: CheckpointEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    // -- Debug nonempty --
+
+    #[test]
+    fn policy_type_debug_nonempty() {
+        assert!(!format!("{:?}", PolicyType::RuntimeExecution).is_empty());
+    }
+
+    #[test]
+    fn checkpoint_error_debug_nonempty() {
+        assert!(
+            !format!("{:?}", CheckpointError::EmptyPolicyHeads).is_empty()
+        );
+    }
+
+    #[test]
+    fn checkpoint_event_debug_nonempty() {
+        let event = CheckpointEvent {
+            event_type: CheckpointEventType::GenesisCreated,
+            checkpoint_seq: 0,
+            trace_id: "dbg".to_string(),
+        };
+        assert!(!format!("{event:?}").is_empty());
+    }
+
+    // -- Additional behavioral tests --
+
+    #[test]
+    fn unsigned_view_excludes_signatures() {
+        let sk = make_sk(1);
+        let cp = build_genesis(&[sk]);
+        let uv = cp.unsigned_view();
+        let uv_json = serde_json::to_string(&uv).unwrap();
+        // The unsigned view should contain "quorum_signatures" with sentinel, not real sigs
+        assert!(uv_json.contains("quorum_signatures"));
+    }
+
+    #[test]
+    fn preimage_bytes_length_nonzero() {
+        let sk = make_sk(1);
+        let cp = build_genesis(&[sk]);
+        let preimage = cp.preimage_bytes();
+        assert!(!preimage.is_empty());
+    }
+
+    #[test]
+    fn different_policy_versions_produce_different_ids() {
+        let sk = make_sk(1);
+        let cp1 = CheckpointBuilder::genesis(
+            SecurityEpoch::GENESIS,
+            DeterministicTimestamp(100),
+            "test-zone",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
+        .build(&[sk.clone()])
+        .unwrap();
+
+        let cp2 = CheckpointBuilder::genesis(
+            SecurityEpoch::GENESIS,
+            DeterministicTimestamp(100),
+            "test-zone",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 2))
+        .build(&[sk])
+        .unwrap();
+
+        assert_ne!(cp1.checkpoint_id, cp2.checkpoint_id);
+    }
+
+    #[test]
+    fn different_timestamps_produce_different_ids() {
+        let sk = make_sk(1);
+        let cp1 = CheckpointBuilder::genesis(
+            SecurityEpoch::GENESIS,
+            DeterministicTimestamp(100),
+            "test-zone",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
+        .build(&[sk.clone()])
+        .unwrap();
+
+        let cp2 = CheckpointBuilder::genesis(
+            SecurityEpoch::GENESIS,
+            DeterministicTimestamp(200),
+            "test-zone",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
+        .build(&[sk])
+        .unwrap();
+
+        assert_ne!(cp1.checkpoint_id, cp2.checkpoint_id);
+    }
+
+    #[test]
+    fn different_epochs_produce_different_ids() {
+        let sk = make_sk(1);
+        let cp1 = CheckpointBuilder::genesis(
+            SecurityEpoch::GENESIS,
+            DeterministicTimestamp(100),
+            "test-zone",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
+        .build(&[sk.clone()])
+        .unwrap();
+
+        let cp2 = CheckpointBuilder::genesis(
+            SecurityEpoch::from_raw(1),
+            DeterministicTimestamp(100),
+            "test-zone",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 1))
+        .build(&[sk])
+        .unwrap();
+
+        assert_ne!(cp1.checkpoint_id, cp2.checkpoint_id);
+    }
+
+    #[test]
+    fn genesis_prev_checkpoint_is_null_in_json() {
+        let sk = make_sk(1);
+        let cp = build_genesis(&[sk]);
+        let val: serde_json::Value = serde_json::to_value(&cp).unwrap();
+        assert!(val["prev_checkpoint"].is_null());
+    }
+
+    #[test]
+    fn chain_checkpoint_prev_is_not_null_in_json() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(&[sk.clone()]);
+        let cp1 = CheckpointBuilder::after(
+            &genesis,
+            1,
+            SecurityEpoch::GENESIS,
+            DeterministicTimestamp(200),
+            "test-zone",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 2))
+        .build(&[sk])
+        .unwrap();
+        let val: serde_json::Value = serde_json::to_value(&cp1).unwrap();
+        assert!(!val["prev_checkpoint"].is_null());
+    }
+
+    #[test]
+    fn five_signers_quorum_three() {
+        let sks: Vec<_> = (1..=5u8).map(make_sk).collect();
+        let vks: Vec<_> = sks.iter().map(|sk| sk.verification_key()).collect();
+        let cp = build_genesis(&sks);
+        assert_eq!(cp.quorum_signatures.len(), 5);
+        assert!(verify_checkpoint_quorum(&cp, 3, &vks).is_ok());
+    }
+
+    #[test]
+    fn checkpoint_error_display_id_derivation_failed_contains_detail() {
+        let err = CheckpointError::IdDerivationFailed {
+            detail: "zone-missing".to_string(),
+        };
+        let s = err.to_string();
+        assert!(s.contains("zone-missing"), "display should contain detail: {s}");
+    }
+
+    #[test]
+    fn checkpoint_error_display_signature_invalid_contains_detail() {
+        let err = CheckpointError::SignatureInvalid {
+            detail: "bad-key".to_string(),
+        };
+        let s = err.to_string();
+        assert!(s.contains("bad-key"), "display should contain detail: {s}");
+    }
+
+    #[test]
+    fn checkpoint_error_display_epoch_regression_format() {
+        let err = CheckpointError::EpochRegression {
+            prev_epoch: SecurityEpoch::from_raw(10),
+            current_epoch: SecurityEpoch::from_raw(5),
+        };
+        let s = err.to_string();
+        assert!(s.contains("10"), "should contain prev epoch: {s}");
+        assert!(s.contains("5"), "should contain current epoch: {s}");
+    }
+
+    #[test]
+    fn checkpoint_error_display_genesis_sequence_not_zero_format() {
+        let err = CheckpointError::GenesisSequenceNotZero { actual: 42 };
+        let s = err.to_string();
+        assert!(s.contains("42"), "should contain actual value: {s}");
+    }
+
+    #[test]
+    fn checkpoint_error_display_duplicate_policy_type_format() {
+        let err = CheckpointError::DuplicatePolicyType {
+            policy_type: PolicyType::EvidenceRetention,
+        };
+        let s = err.to_string();
+        assert!(
+            s.contains("evidence_retention"),
+            "should contain policy type: {s}"
+        );
+    }
+
+    #[test]
+    fn checkpoint_event_type_display_epoch_transition_format() {
+        let evt = CheckpointEventType::EpochTransition {
+            from: SecurityEpoch::from_raw(3),
+            to: SecurityEpoch::from_raw(7),
+        };
+        let s = evt.to_string();
+        assert!(s.contains("3"), "should contain from: {s}");
+        assert!(s.contains("7"), "should contain to: {s}");
+    }
+
+    #[test]
+    fn checkpoint_event_type_display_chain_created_format() {
+        let evt = CheckpointEventType::ChainCheckpointCreated { prev_seq: 99 };
+        let s = evt.to_string();
+        assert!(s.contains("99"), "should contain prev_seq: {s}");
+    }
+
+    #[test]
+    fn chain_checkpoint_with_epoch_advance() {
+        let sk = make_sk(1);
+        let genesis = build_genesis(&[sk.clone()]);
+        let cp1 = CheckpointBuilder::after(
+            &genesis,
+            1,
+            SecurityEpoch::from_raw(5),
+            DeterministicTimestamp(200),
+            "test-zone",
+        )
+        .add_policy_head(make_policy_head(PolicyType::RuntimeExecution, 2))
+        .build(&[sk])
+        .unwrap();
+        assert_eq!(cp1.epoch_id, SecurityEpoch::from_raw(5));
+        assert!(verify_chain_linkage(&genesis, &cp1).is_ok());
+    }
 }

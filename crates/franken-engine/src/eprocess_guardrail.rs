@@ -1597,4 +1597,915 @@ mod tests {
         let gr = test_guardrail();
         assert_eq!(gr.guardrail_id, "fnr-guard");
     }
+
+    // ===================================================================
+    // Enrichment batch 2: copy semantics, serde distinctness, clone
+    // independence, field-name stability, hash, boundary, debug
+    // ===================================================================
+
+    // -- Category 1: Copy semantics --
+
+    #[test]
+    fn guardrail_state_copy_semantics() {
+        let a = GuardrailState::Active;
+        let b = a; // copy
+        assert_eq!(a, b);
+        let c = GuardrailState::Triggered;
+        let d = c;
+        assert_eq!(c, d);
+        let e = GuardrailState::Suspended;
+        let f = e;
+        assert_eq!(e, f);
+    }
+
+    #[test]
+    fn guardrail_state_copy_into_function() {
+        fn consume(s: GuardrailState) -> String {
+            s.to_string()
+        }
+        let s = GuardrailState::Active;
+        let r1 = consume(s);
+        let r2 = consume(s); // still usable after copy
+        assert_eq!(r1, r2);
+    }
+
+    // -- Category 2: Debug distinctness --
+
+    #[test]
+    fn guardrail_state_debug_distinct() {
+        let variants = [
+            GuardrailState::Active,
+            GuardrailState::Triggered,
+            GuardrailState::Suspended,
+        ];
+        let dbg_set: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(dbg_set.len(), 3, "all GuardrailState variants have distinct Debug");
+    }
+
+    #[test]
+    fn guardrail_error_debug_distinct() {
+        let errors = [
+            GuardrailError::Suspended { guardrail_id: "x".into() },
+            GuardrailError::AlreadyTriggered { guardrail_id: "x".into() },
+            GuardrailError::InvalidObservation { guardrail_id: "x".into() },
+            GuardrailError::ResetUnauthorized { guardrail_id: "x".into() },
+            GuardrailError::NotTriggered { guardrail_id: "x".into() },
+            GuardrailError::EValueOverflow { guardrail_id: "x".into() },
+        ];
+        let dbg_set: BTreeSet<String> = errors.iter().map(|e| format!("{e:?}")).collect();
+        assert_eq!(dbg_set.len(), 6, "all GuardrailError variants have distinct Debug");
+    }
+
+    #[test]
+    fn guardrail_event_debug_distinct() {
+        let events = [
+            GuardrailEvent::EValueUpdated {
+                guardrail_id: "g".into(),
+                previous_e_value: 0,
+                new_e_value: 0,
+                observation: 0,
+                likelihood_ratio: 0,
+            },
+            GuardrailEvent::Triggered {
+                guardrail_id: "g".into(),
+                e_value: 0,
+                threshold: 0,
+                blocked_actions: vec![],
+            },
+            GuardrailEvent::Reset {
+                guardrail_id: "g".into(),
+                authorized_by: "a".into(),
+                rationale: "r".into(),
+                epoch: SecurityEpoch::GENESIS,
+            },
+            GuardrailEvent::SuspendedEvent {
+                guardrail_id: "g".into(),
+                reason: "r".into(),
+            },
+            GuardrailEvent::Resumed {
+                guardrail_id: "g".into(),
+            },
+        ];
+        let dbg_set: BTreeSet<String> = events.iter().map(|e| format!("{e:?}")).collect();
+        assert_eq!(dbg_set.len(), 5, "all GuardrailEvent variants have distinct Debug");
+    }
+
+    // -- Category 3: Serde variant distinctness --
+
+    #[test]
+    fn guardrail_state_serde_variant_distinct() {
+        let variants = [
+            GuardrailState::Active,
+            GuardrailState::Triggered,
+            GuardrailState::Suspended,
+        ];
+        let json_set: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(json_set.len(), 3, "all GuardrailState serde outputs distinct");
+    }
+
+    #[test]
+    fn guardrail_error_serde_variant_distinct() {
+        let errors = [
+            GuardrailError::Suspended { guardrail_id: "g".into() },
+            GuardrailError::AlreadyTriggered { guardrail_id: "g".into() },
+            GuardrailError::InvalidObservation { guardrail_id: "g".into() },
+            GuardrailError::ResetUnauthorized { guardrail_id: "g".into() },
+            GuardrailError::NotTriggered { guardrail_id: "g".into() },
+            GuardrailError::EValueOverflow { guardrail_id: "g".into() },
+        ];
+        let json_set: BTreeSet<String> = errors
+            .iter()
+            .map(|e| serde_json::to_string(e).unwrap())
+            .collect();
+        assert_eq!(json_set.len(), 6, "all GuardrailError serde outputs distinct");
+    }
+
+    #[test]
+    fn guardrail_event_serde_variant_distinct() {
+        let events = [
+            GuardrailEvent::EValueUpdated {
+                guardrail_id: "g".into(),
+                previous_e_value: 1,
+                new_e_value: 2,
+                observation: 3,
+                likelihood_ratio: 4,
+            },
+            GuardrailEvent::Triggered {
+                guardrail_id: "g".into(),
+                e_value: 5,
+                threshold: 6,
+                blocked_actions: vec![],
+            },
+            GuardrailEvent::Reset {
+                guardrail_id: "g".into(),
+                authorized_by: "a".into(),
+                rationale: "r".into(),
+                epoch: SecurityEpoch::GENESIS,
+            },
+            GuardrailEvent::SuspendedEvent {
+                guardrail_id: "g".into(),
+                reason: "r".into(),
+            },
+            GuardrailEvent::Resumed {
+                guardrail_id: "g".into(),
+            },
+        ];
+        let json_set: BTreeSet<String> = events
+            .iter()
+            .map(|e| serde_json::to_string(e).unwrap())
+            .collect();
+        assert_eq!(json_set.len(), 5, "all GuardrailEvent serde outputs distinct");
+    }
+
+    // -- Category 4: Clone independence --
+
+    #[test]
+    fn guardrail_error_clone_independence() {
+        let original = GuardrailError::Suspended {
+            guardrail_id: "abc".into(),
+        };
+        let cloned = original.clone();
+        // Clone matches original
+        assert_eq!(original, cloned);
+        // They are independently owned values
+        assert_eq!(
+            original,
+            GuardrailError::Suspended {
+                guardrail_id: "abc".into()
+            }
+        );
+        drop(cloned);
+        // original still valid after clone is dropped
+        assert_eq!(original.to_string(), "guardrail 'abc' is suspended");
+    }
+
+    #[test]
+    fn reset_receipt_clone_independence() {
+        let original = ResetReceipt {
+            authorized_by: "op1".into(),
+            rationale: "test".into(),
+            epoch: SecurityEpoch::from_raw(5),
+        };
+        let mut cloned = original.clone();
+        cloned.authorized_by = "op2".into();
+        assert_eq!(original.authorized_by, "op1");
+        assert_eq!(cloned.authorized_by, "op2");
+    }
+
+    #[test]
+    fn guardrail_event_clone_independence() {
+        let original = GuardrailEvent::Triggered {
+            guardrail_id: "g1".into(),
+            e_value: 100,
+            threshold: 50,
+            blocked_actions: vec!["a".into(), "b".into()],
+        };
+        let mut cloned = original.clone();
+        if let GuardrailEvent::Triggered {
+            ref mut blocked_actions,
+            ..
+        } = cloned
+        {
+            blocked_actions.push("c".into());
+        }
+        // Original unchanged
+        if let GuardrailEvent::Triggered {
+            blocked_actions, ..
+        } = &original
+        {
+            assert_eq!(blocked_actions.len(), 2);
+        } else {
+            panic!("wrong variant");
+        }
+    }
+
+    #[test]
+    fn threshold_lr_clone_independence() {
+        let original = ThresholdLikelihoodRatio {
+            threshold_millionths: 100,
+            high_ratio_millionths: 200,
+            low_ratio_millionths: 300,
+        };
+        let mut cloned = original.clone();
+        cloned.threshold_millionths = 999;
+        assert_eq!(original.threshold_millionths, 100);
+        assert_eq!(cloned.threshold_millionths, 999);
+    }
+
+    #[test]
+    fn universal_lr_clone_independence() {
+        let original = UniversalLikelihoodRatio {
+            null_mean_millionths: 500_000,
+        };
+        let mut cloned = original.clone();
+        cloned.null_mean_millionths = 1_000_000;
+        assert_eq!(original.null_mean_millionths, 500_000);
+    }
+
+    // -- Category 5: JSON field-name stability --
+
+    #[test]
+    fn reset_receipt_json_field_names() {
+        let receipt = ResetReceipt {
+            authorized_by: "op".into(),
+            rationale: "reason".into(),
+            epoch: SecurityEpoch::GENESIS,
+        };
+        let json = serde_json::to_value(&receipt).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("authorized_by"), "missing 'authorized_by'");
+        assert!(obj.contains_key("rationale"), "missing 'rationale'");
+        assert!(obj.contains_key("epoch"), "missing 'epoch'");
+        assert_eq!(obj.len(), 3, "unexpected extra fields");
+    }
+
+    #[test]
+    fn threshold_lr_json_field_names() {
+        let lr = ThresholdLikelihoodRatio {
+            threshold_millionths: 1,
+            high_ratio_millionths: 2,
+            low_ratio_millionths: 3,
+        };
+        let json = serde_json::to_value(&lr).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("threshold_millionths"));
+        assert!(obj.contains_key("high_ratio_millionths"));
+        assert!(obj.contains_key("low_ratio_millionths"));
+        assert_eq!(obj.len(), 3);
+    }
+
+    #[test]
+    fn universal_lr_json_field_names() {
+        let lr = UniversalLikelihoodRatio {
+            null_mean_millionths: 42,
+        };
+        let json = serde_json::to_value(&lr).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("null_mean_millionths"));
+        assert_eq!(obj.len(), 1);
+    }
+
+    #[test]
+    fn guardrail_event_e_value_updated_json_field_names() {
+        let event = GuardrailEvent::EValueUpdated {
+            guardrail_id: "g".into(),
+            previous_e_value: 1,
+            new_e_value: 2,
+            observation: 3,
+            likelihood_ratio: 4,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("EValueUpdated"));
+        let inner = obj["EValueUpdated"].as_object().unwrap();
+        assert!(inner.contains_key("guardrail_id"));
+        assert!(inner.contains_key("previous_e_value"));
+        assert!(inner.contains_key("new_e_value"));
+        assert!(inner.contains_key("observation"));
+        assert!(inner.contains_key("likelihood_ratio"));
+    }
+
+    #[test]
+    fn guardrail_event_triggered_json_field_names() {
+        let event = GuardrailEvent::Triggered {
+            guardrail_id: "g".into(),
+            e_value: 10,
+            threshold: 5,
+            blocked_actions: vec!["x".into()],
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("Triggered"));
+        let inner = obj["Triggered"].as_object().unwrap();
+        assert!(inner.contains_key("guardrail_id"));
+        assert!(inner.contains_key("e_value"));
+        assert!(inner.contains_key("threshold"));
+        assert!(inner.contains_key("blocked_actions"));
+    }
+
+    #[test]
+    fn guardrail_event_reset_json_field_names() {
+        let event = GuardrailEvent::Reset {
+            guardrail_id: "g".into(),
+            authorized_by: "a".into(),
+            rationale: "r".into(),
+            epoch: SecurityEpoch::GENESIS,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("Reset"));
+        let inner = obj["Reset"].as_object().unwrap();
+        assert!(inner.contains_key("guardrail_id"));
+        assert!(inner.contains_key("authorized_by"));
+        assert!(inner.contains_key("rationale"));
+        assert!(inner.contains_key("epoch"));
+    }
+
+    // -- Category 6: Display format checks --
+
+    #[test]
+    fn guardrail_error_display_suspended_exact() {
+        let e = GuardrailError::Suspended {
+            guardrail_id: "my-guard".into(),
+        };
+        assert_eq!(e.to_string(), "guardrail 'my-guard' is suspended");
+    }
+
+    #[test]
+    fn guardrail_error_display_invalid_observation_exact() {
+        let e = GuardrailError::InvalidObservation {
+            guardrail_id: "obs-g".into(),
+        };
+        assert_eq!(e.to_string(), "invalid observation for guardrail 'obs-g'");
+    }
+
+    #[test]
+    fn guardrail_error_display_reset_unauthorized_exact() {
+        let e = GuardrailError::ResetUnauthorized {
+            guardrail_id: "reset-g".into(),
+        };
+        assert_eq!(e.to_string(), "unauthorized reset for guardrail 'reset-g'");
+    }
+
+    #[test]
+    fn guardrail_error_display_not_triggered_exact() {
+        let e = GuardrailError::NotTriggered {
+            guardrail_id: "nt-g".into(),
+        };
+        assert_eq!(e.to_string(), "guardrail 'nt-g' is not triggered");
+    }
+
+    #[test]
+    fn guardrail_error_display_evalue_overflow_exact() {
+        let e = GuardrailError::EValueOverflow {
+            guardrail_id: "ov-g".into(),
+        };
+        assert_eq!(e.to_string(), "e-value overflow for guardrail 'ov-g'");
+    }
+
+    // -- Category 7: Hash consistency (SecurityEpoch derives Hash) --
+
+    #[test]
+    fn security_epoch_hash_consistency_in_reset_receipt() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let epoch = SecurityEpoch::from_raw(42);
+        let mut h1 = DefaultHasher::new();
+        epoch.hash(&mut h1);
+        let hash1 = h1.finish();
+
+        let mut h2 = DefaultHasher::new();
+        epoch.hash(&mut h2);
+        let hash2 = h2.finish();
+
+        assert_eq!(hash1, hash2, "same SecurityEpoch hashes identically");
+    }
+
+    #[test]
+    fn guardrail_state_hash_consistency() {
+        // GuardrailState doesn't derive Hash, but we verify Eq consistency
+        let a = GuardrailState::Active;
+        let b = GuardrailState::Active;
+        assert_eq!(a, b);
+        let c = GuardrailState::Triggered;
+        assert_ne!(a, c);
+    }
+
+    // -- Category 8: Boundary/edge cases --
+
+    #[test]
+    fn threshold_lr_with_i64_max_observation() {
+        let lr = ThresholdLikelihoodRatio {
+            threshold_millionths: 0,
+            high_ratio_millionths: 1_000_000,
+            low_ratio_millionths: 500_000,
+        };
+        // i64::MAX is above threshold 0, so high ratio
+        assert_eq!(lr.ratio(i64::MAX), Some(1_000_000));
+    }
+
+    #[test]
+    fn threshold_lr_with_i64_min_observation() {
+        let lr = ThresholdLikelihoodRatio {
+            threshold_millionths: 0,
+            high_ratio_millionths: 1_000_000,
+            low_ratio_millionths: 500_000,
+        };
+        // i64::MIN is below threshold 0, so low ratio
+        assert_eq!(lr.ratio(i64::MIN), Some(500_000));
+    }
+
+    #[test]
+    fn universal_lr_with_zero_observation() {
+        let lr = UniversalLikelihoodRatio {
+            null_mean_millionths: 1_000_000,
+        };
+        assert_eq!(lr.ratio(0), Some(0));
+    }
+
+    #[test]
+    fn universal_lr_with_very_large_observation() {
+        let lr = UniversalLikelihoodRatio {
+            null_mean_millionths: 1, // very small null mean
+        };
+        // observation = 1_000_000 (1.0), ratio = 1_000_000 * 1_000_000 / 1 = 1e12
+        let ratio = lr.ratio(1_000_000).unwrap();
+        assert_eq!(ratio, 1_000_000_000_000);
+    }
+
+    #[test]
+    fn universal_lr_with_negative_null_mean() {
+        let lr = UniversalLikelihoodRatio {
+            null_mean_millionths: -500_000,
+        };
+        // observation = 1_000_000, ratio = 1M * 1M / -500K = -2M
+        let ratio = lr.ratio(1_000_000).unwrap();
+        assert_eq!(ratio, -2_000_000);
+    }
+
+    #[test]
+    fn guardrail_error_with_empty_guardrail_id() {
+        let e = GuardrailError::Suspended {
+            guardrail_id: String::new(),
+        };
+        assert_eq!(e.to_string(), "guardrail '' is suspended");
+    }
+
+    #[test]
+    fn reset_receipt_with_empty_rationale() {
+        let receipt = ResetReceipt {
+            authorized_by: "op".into(),
+            rationale: String::new(),
+            epoch: SecurityEpoch::GENESIS,
+        };
+        let json = serde_json::to_string(&receipt).unwrap();
+        let restored: ResetReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.rationale, "");
+    }
+
+    #[test]
+    fn guardrail_with_zero_threshold_triggers_on_any_positive_ratio() {
+        let blocked = BTreeSet::new();
+        let mut gr = EProcessGuardrail::new(
+            "zero-thresh",
+            "m",
+            "test",
+            0, // threshold = 0 millionths
+            blocked,
+            SecurityEpoch::GENESIS,
+            Box::new(ThresholdLikelihoodRatio {
+                threshold_millionths: 0,
+                high_ratio_millionths: 2_000_000,
+                low_ratio_millionths: 500_000,
+            }),
+        );
+        // e = 1_000_000 * 2_000_000 / 1_000_000 = 2_000_000 >= 0, triggers
+        gr.update(100).unwrap();
+        assert_eq!(gr.state(), GuardrailState::Triggered);
+    }
+
+    #[test]
+    fn guardrail_with_empty_blocked_actions() {
+        let mut gr = EProcessGuardrail::new(
+            "no-blocks",
+            "m",
+            "test",
+            5_000_000,
+            BTreeSet::new(),
+            SecurityEpoch::GENESIS,
+            Box::new(ThresholdLikelihoodRatio {
+                threshold_millionths: 0,
+                high_ratio_millionths: 10_000_000,
+                low_ratio_millionths: 500_000,
+            }),
+        );
+        gr.update(1_000_000).unwrap(); // triggers
+        assert_eq!(gr.state(), GuardrailState::Triggered);
+        assert!(gr.blocked_actions().is_empty());
+        assert!(!gr.blocks("any_action"));
+    }
+
+    #[test]
+    fn guardrail_threshold_at_max_i64() {
+        let blocked = BTreeSet::new();
+        let mut gr = EProcessGuardrail::new(
+            "max-thresh",
+            "m",
+            "test",
+            i64::MAX,
+            blocked,
+            SecurityEpoch::GENESIS,
+            Box::new(ThresholdLikelihoodRatio {
+                threshold_millionths: 0,
+                high_ratio_millionths: 2_000_000,
+                low_ratio_millionths: 500_000,
+            }),
+        );
+        // e = 1M * 2M / 1M = 2M — well below i64::MAX
+        gr.update(1_000_000).unwrap();
+        assert_eq!(gr.state(), GuardrailState::Active);
+    }
+
+    // -- Category 9: Serde roundtrips (complex structs) --
+
+    #[test]
+    fn guardrail_event_e_value_updated_serde_roundtrip_complex() {
+        let event = GuardrailEvent::EValueUpdated {
+            guardrail_id: "complex-guardrail-with-long-id".into(),
+            previous_e_value: i64::MAX,
+            new_e_value: i64::MIN,
+            observation: 0,
+            likelihood_ratio: -1,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let restored: GuardrailEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn guardrail_event_triggered_serde_roundtrip_many_actions() {
+        let event = GuardrailEvent::Triggered {
+            guardrail_id: "g".into(),
+            e_value: 999_999_999,
+            threshold: 1,
+            blocked_actions: (0..20).map(|i| format!("action-{i}")).collect(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let restored: GuardrailEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn guardrail_error_serde_roundtrip_long_id() {
+        let long_id: String = "x".repeat(1000);
+        let err = GuardrailError::Suspended {
+            guardrail_id: long_id.clone(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let restored: GuardrailError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, restored);
+    }
+
+    #[test]
+    fn reset_receipt_serde_roundtrip_high_epoch() {
+        let receipt = ResetReceipt {
+            authorized_by: "system-auto-reset".into(),
+            rationale: "epoch boundary transition at u64::MAX".into(),
+            epoch: SecurityEpoch::from_raw(u64::MAX),
+        };
+        let json = serde_json::to_string(&receipt).unwrap();
+        let restored: ResetReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(receipt, restored);
+    }
+
+    #[test]
+    fn threshold_lr_serde_roundtrip_negative_values() {
+        let lr = ThresholdLikelihoodRatio {
+            threshold_millionths: -1_000_000,
+            high_ratio_millionths: -500_000,
+            low_ratio_millionths: -250_000,
+        };
+        let json = serde_json::to_string(&lr).unwrap();
+        let restored: ThresholdLikelihoodRatio = serde_json::from_str(&json).unwrap();
+        assert_eq!(lr.threshold_millionths, restored.threshold_millionths);
+        assert_eq!(lr.high_ratio_millionths, restored.high_ratio_millionths);
+        assert_eq!(lr.low_ratio_millionths, restored.low_ratio_millionths);
+    }
+
+    // -- Category 10: Debug nonempty --
+
+    #[test]
+    fn guardrail_state_debug_nonempty() {
+        for state in &[
+            GuardrailState::Active,
+            GuardrailState::Triggered,
+            GuardrailState::Suspended,
+        ] {
+            assert!(!format!("{state:?}").is_empty());
+        }
+    }
+
+    #[test]
+    fn guardrail_error_debug_nonempty() {
+        let errors = [
+            GuardrailError::Suspended { guardrail_id: "g".into() },
+            GuardrailError::AlreadyTriggered { guardrail_id: "g".into() },
+            GuardrailError::InvalidObservation { guardrail_id: "g".into() },
+            GuardrailError::ResetUnauthorized { guardrail_id: "g".into() },
+            GuardrailError::NotTriggered { guardrail_id: "g".into() },
+            GuardrailError::EValueOverflow { guardrail_id: "g".into() },
+        ];
+        for e in &errors {
+            assert!(!format!("{e:?}").is_empty());
+        }
+    }
+
+    #[test]
+    fn reset_receipt_debug_nonempty() {
+        let receipt = ResetReceipt {
+            authorized_by: "op".into(),
+            rationale: "r".into(),
+            epoch: SecurityEpoch::GENESIS,
+        };
+        assert!(!format!("{receipt:?}").is_empty());
+    }
+
+    #[test]
+    fn guardrail_event_debug_nonempty() {
+        let events = [
+            GuardrailEvent::EValueUpdated {
+                guardrail_id: "g".into(),
+                previous_e_value: 0,
+                new_e_value: 0,
+                observation: 0,
+                likelihood_ratio: 0,
+            },
+            GuardrailEvent::Triggered {
+                guardrail_id: "g".into(),
+                e_value: 0,
+                threshold: 0,
+                blocked_actions: vec![],
+            },
+            GuardrailEvent::Reset {
+                guardrail_id: "g".into(),
+                authorized_by: "a".into(),
+                rationale: "r".into(),
+                epoch: SecurityEpoch::GENESIS,
+            },
+            GuardrailEvent::SuspendedEvent {
+                guardrail_id: "g".into(),
+                reason: "r".into(),
+            },
+            GuardrailEvent::Resumed {
+                guardrail_id: "g".into(),
+            },
+        ];
+        for e in &events {
+            assert!(!format!("{e:?}").is_empty());
+        }
+    }
+
+    #[test]
+    fn threshold_lr_debug_nonempty() {
+        let lr = ThresholdLikelihoodRatio {
+            threshold_millionths: 0,
+            high_ratio_millionths: 0,
+            low_ratio_millionths: 0,
+        };
+        assert!(!format!("{lr:?}").is_empty());
+    }
+
+    #[test]
+    fn universal_lr_debug_nonempty() {
+        let lr = UniversalLikelihoodRatio {
+            null_mean_millionths: 0,
+        };
+        assert!(!format!("{lr:?}").is_empty());
+    }
+
+    #[test]
+    fn eprocess_guardrail_debug_nonempty() {
+        let gr = test_guardrail();
+        assert!(!format!("{gr:?}").is_empty());
+    }
+
+    #[test]
+    fn guardrail_registry_debug_nonempty() {
+        let registry = GuardrailRegistry::new();
+        assert!(!format!("{registry:?}").is_empty());
+    }
+
+    // -- Additional enrichment: lifecycle depth --
+
+    #[test]
+    fn full_lifecycle_active_trigger_reset_retrigger() {
+        let mut blocked = BTreeSet::new();
+        blocked.insert("deploy".into());
+        let mut gr = EProcessGuardrail::new(
+            "lifecycle",
+            "m",
+            "test",
+            5_000_000,
+            blocked,
+            SecurityEpoch::GENESIS,
+            Box::new(ThresholdLikelihoodRatio {
+                threshold_millionths: 0,
+                high_ratio_millionths: 10_000_000,
+                low_ratio_millionths: 500_000,
+            }),
+        );
+
+        // Phase 1: trigger
+        assert_eq!(gr.state(), GuardrailState::Active);
+        gr.update(1_000_000).unwrap(); // e = 10.0 >= 5.0
+        assert_eq!(gr.state(), GuardrailState::Triggered);
+        assert!(gr.blocks("deploy"));
+
+        // Phase 2: reset
+        let receipt = ResetReceipt {
+            authorized_by: "admin".into(),
+            rationale: "fixed".into(),
+            epoch: SecurityEpoch::from_raw(1),
+        };
+        gr.reset(&receipt).unwrap();
+        assert_eq!(gr.state(), GuardrailState::Active);
+        assert!(!gr.blocks("deploy"));
+        assert_eq!(gr.e_value(), 1_000_000);
+
+        // Phase 3: re-trigger
+        gr.update(1_000_000).unwrap();
+        assert_eq!(gr.state(), GuardrailState::Triggered);
+        assert!(gr.blocks("deploy"));
+    }
+
+    #[test]
+    fn suspend_resume_suspend_cycle() {
+        let mut gr = test_guardrail();
+        gr.suspend("first");
+        assert_eq!(gr.state(), GuardrailState::Suspended);
+        gr.resume();
+        assert_eq!(gr.state(), GuardrailState::Active);
+        gr.suspend("second");
+        assert_eq!(gr.state(), GuardrailState::Suspended);
+        let events = gr.drain_events();
+        // Should have: SuspendedEvent, Resumed, SuspendedEvent
+        assert_eq!(events.len(), 3);
+    }
+
+    #[test]
+    fn registry_get_mut_and_modify() {
+        let mut registry = GuardrailRegistry::new();
+        let blocked = BTreeSet::new();
+        let gr = EProcessGuardrail::new(
+            "mutable",
+            "m",
+            "test",
+            100_000_000,
+            blocked,
+            SecurityEpoch::GENESIS,
+            Box::new(ThresholdLikelihoodRatio {
+                threshold_millionths: 0,
+                high_ratio_millionths: 2_000_000,
+                low_ratio_millionths: 500_000,
+            }),
+        );
+        registry.add(gr);
+
+        let gr_mut = registry.get_mut("mutable").unwrap();
+        gr_mut.suspend("via registry");
+        assert_eq!(
+            registry.get("mutable").unwrap().state(),
+            GuardrailState::Suspended
+        );
+    }
+
+    #[test]
+    fn registry_get_mut_nonexistent_returns_none() {
+        let mut registry = GuardrailRegistry::new();
+        assert!(registry.get_mut("nope").is_none());
+    }
+
+    #[test]
+    fn registry_multiple_streams_independent() {
+        let mut registry = GuardrailRegistry::new();
+
+        for (id, stream) in [("gr-a", "stream-a"), ("gr-b", "stream-b")] {
+            let blocked = BTreeSet::new();
+            let gr = EProcessGuardrail::new(
+                id,
+                stream,
+                "test",
+                100_000_000,
+                blocked,
+                SecurityEpoch::GENESIS,
+                Box::new(ThresholdLikelihoodRatio {
+                    threshold_millionths: 0,
+                    high_ratio_millionths: 2_000_000,
+                    low_ratio_millionths: 500_000,
+                }),
+            );
+            registry.add(gr);
+        }
+
+        registry.update_stream("stream-a", 1_000_000);
+        assert_eq!(registry.get("gr-a").unwrap().observation_count(), 1);
+        assert_eq!(registry.get("gr-b").unwrap().observation_count(), 0);
+    }
+
+    #[test]
+    fn registry_default_is_empty() {
+        let registry = GuardrailRegistry::default();
+        assert!(registry.is_empty());
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn evalue_stays_exactly_at_one_with_ratio_one() {
+        let blocked = BTreeSet::new();
+        let mut gr = EProcessGuardrail::new(
+            "ratio-one",
+            "m",
+            "test",
+            100_000_000,
+            blocked,
+            SecurityEpoch::GENESIS,
+            Box::new(ThresholdLikelihoodRatio {
+                threshold_millionths: 0,
+                high_ratio_millionths: 1_000_000, // ratio = 1.0
+                low_ratio_millionths: 1_000_000,  // ratio = 1.0
+            }),
+        );
+        for _ in 0..10 {
+            gr.update(0).unwrap();
+        }
+        assert_eq!(gr.e_value(), 1_000_000); // remains 1.0
+        assert_eq!(gr.observation_count(), 10);
+    }
+
+    #[test]
+    fn evalue_decreases_with_ratio_below_one() {
+        let blocked = BTreeSet::new();
+        let mut gr = EProcessGuardrail::new(
+            "decreasing",
+            "m",
+            "test",
+            100_000_000,
+            blocked,
+            SecurityEpoch::GENESIS,
+            Box::new(ThresholdLikelihoodRatio {
+                threshold_millionths: 1_000_000_000, // unreachable
+                high_ratio_millionths: 500_000,       // 0.5
+                low_ratio_millionths: 500_000,        // 0.5
+            }),
+        );
+        gr.update(0).unwrap(); // e = 1M * 500K / 1M = 500K
+        assert_eq!(gr.e_value(), 500_000);
+        gr.update(0).unwrap(); // e = 500K * 500K / 1M = 250K
+        assert_eq!(gr.e_value(), 250_000);
+    }
+
+    #[test]
+    fn threshold_lr_with_equal_ratios() {
+        let lr = ThresholdLikelihoodRatio {
+            threshold_millionths: 500_000,
+            high_ratio_millionths: 3_000_000,
+            low_ratio_millionths: 3_000_000,
+        };
+        // Both above and below threshold produce the same ratio
+        assert_eq!(lr.ratio(0), Some(3_000_000));
+        assert_eq!(lr.ratio(1_000_000), Some(3_000_000));
+    }
+
+    #[test]
+    fn universal_lr_exact_ratio_one() {
+        let lr = UniversalLikelihoodRatio {
+            null_mean_millionths: 1_000_000, // 1.0
+        };
+        // observation = null_mean => ratio = 1.0
+        assert_eq!(lr.ratio(1_000_000), Some(1_000_000));
+    }
 }

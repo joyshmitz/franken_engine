@@ -72,7 +72,7 @@ pub struct CalibrationCycleResult {
 // ---------------------------------------------------------------------------
 
 /// Direction of defense effectiveness change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum EffectivenessTrend {
     /// Defense is improving (fewer evasions over time).
     Improving,
@@ -1712,5 +1712,1047 @@ mod tests {
         let eff = engine.defense_effectiveness();
         // Weakest dimension should be the one with higher evasion rate
         assert!(eff.weakest_dimension.is_some());
+    }
+
+    // ===================================================================
+    // Enrichment batch 3 — PearlTower 2026-02-28
+    // ===================================================================
+
+    // -------------------------------------------------------------------
+    // 1. Copy semantics
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn effectiveness_trend_copy_semantics() {
+        let a = EffectivenessTrend::Improving;
+        let b = a;
+        assert_eq!(a, b);
+        let c = EffectivenessTrend::Degrading;
+        let d = c;
+        assert_eq!(c, d);
+    }
+
+    // -------------------------------------------------------------------
+    // 2. Debug distinctness
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn effectiveness_trend_debug_distinct() {
+        use std::collections::BTreeSet;
+        let variants = [
+            EffectivenessTrend::Improving,
+            EffectivenessTrend::Stable,
+            EffectivenessTrend::Degrading,
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn calibration_error_debug_distinct() {
+        use std::collections::BTreeSet;
+        let variants = [
+            CalibrationError::EmptyCampaignBatch,
+            CalibrationError::CampaignValidationFailed {
+                detail: "x".to_string(),
+            },
+            CalibrationError::CalibrationFailed {
+                detail: "y".to_string(),
+            },
+            CalibrationError::InvalidConfig {
+                detail: "z".to_string(),
+            },
+        ];
+        let set: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    // -------------------------------------------------------------------
+    // 3. Serde variant distinctness
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn effectiveness_trend_serde_variant_distinct() {
+        use std::collections::BTreeSet;
+        let variants = [
+            EffectivenessTrend::Improving,
+            EffectivenessTrend::Stable,
+            EffectivenessTrend::Degrading,
+        ];
+        let set: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn calibration_error_serde_variant_distinct() {
+        use std::collections::BTreeSet;
+        let variants = [
+            CalibrationError::EmptyCampaignBatch,
+            CalibrationError::CampaignValidationFailed {
+                detail: "same".to_string(),
+            },
+            CalibrationError::CalibrationFailed {
+                detail: "same".to_string(),
+            },
+            CalibrationError::InvalidConfig {
+                detail: "same".to_string(),
+            },
+        ];
+        let set: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(set.len(), variants.len());
+    }
+
+    // -------------------------------------------------------------------
+    // 4. Clone independence
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn calibration_cycle_result_clone_independence() {
+        let original = CalibrationCycleResult {
+            cycle_id: "gcal-0001".to_string(),
+            campaigns_ingested: 5,
+            severity_counts: {
+                let mut m = BTreeMap::new();
+                m.insert("Critical".to_string(), 2);
+                m
+            },
+            subsystem_counts: BTreeMap::new(),
+            threat_counts: BTreeMap::new(),
+            thresholds_adjusted: true,
+            detection_threshold_millionths: 500_000,
+            evidence_weights_millionths: BTreeMap::new(),
+            regression_fixtures_added: 1,
+            calibration_epoch: 3,
+            state_digest: "abcdef0123456789".to_string(),
+        };
+        let mut cloned = original.clone();
+        cloned.cycle_id = "gcal-9999".to_string();
+        cloned.campaigns_ingested = 99;
+        cloned.thresholds_adjusted = false;
+        assert_eq!(original.cycle_id, "gcal-0001");
+        assert_eq!(original.campaigns_ingested, 5);
+        assert!(original.thresholds_adjusted);
+    }
+
+    #[test]
+    fn calibration_alert_clone_independence() {
+        let original = CalibrationAlert {
+            alert_id: "a1".to_string(),
+            severity: "critical".to_string(),
+            subsystem: "Sentinel".to_string(),
+            threat_category: "evasion".to_string(),
+            description: "bad".to_string(),
+            recommended_action: "fix it".to_string(),
+            evasion_rate_millionths: 300_000,
+            cycle_id: "gcal-0001".to_string(),
+        };
+        let mut cloned = original.clone();
+        cloned.alert_id = "a2".to_string();
+        cloned.severity = "advisory".to_string();
+        assert_eq!(original.alert_id, "a1");
+        assert_eq!(original.severity, "critical");
+    }
+
+    #[test]
+    fn calibration_event_clone_independence() {
+        let original = CalibrationEvent {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: COMPONENT.to_string(),
+            event: "test_event".to_string(),
+            outcome: "ok".to_string(),
+            error_code: Some("FE-GCAL-0001".to_string()),
+        };
+        let mut cloned = original.clone();
+        cloned.event = "mutated_event".to_string();
+        cloned.error_code = None;
+        assert_eq!(original.event, "test_event");
+        assert_eq!(original.error_code, Some("FE-GCAL-0001".to_string()));
+    }
+
+    #[test]
+    fn calibration_context_clone_independence() {
+        let original = test_ctx();
+        let mut cloned = original.clone();
+        cloned.trace_id = "trace-mutated".to_string();
+        cloned.timestamp_ns = 999;
+        assert_eq!(original.trace_id, "trace-1");
+        assert_eq!(original.timestamp_ns, 1_000_000_000);
+    }
+
+    #[test]
+    fn defense_effectiveness_summary_clone_independence() {
+        let original = DefenseEffectivenessSummary {
+            total_campaigns: 10,
+            total_evasions: 2,
+            total_containment_escapes: 1,
+            overall_detection_rate_millionths: 800_000,
+            overall_trend: EffectivenessTrend::Improving,
+            per_dimension: BTreeMap::new(),
+            weakest_dimension: Some("PolicyEvasion".to_string()),
+        };
+        let mut cloned = original.clone();
+        cloned.total_campaigns = 99;
+        cloned.weakest_dimension = None;
+        assert_eq!(original.total_campaigns, 10);
+        assert_eq!(
+            original.weakest_dimension,
+            Some("PolicyEvasion".to_string())
+        );
+    }
+
+    #[test]
+    fn dimension_effectiveness_clone_independence() {
+        let original = DimensionEffectiveness {
+            dimension: "Exfiltration".to_string(),
+            detection_rate_millionths: 800_000,
+            evasion_rate_millionths: 200_000,
+            trend: EffectivenessTrend::Stable,
+            sample_count: 50,
+        };
+        let mut cloned = original.clone();
+        cloned.dimension = "mutated".to_string();
+        cloned.sample_count = 999;
+        assert_eq!(original.dimension, "Exfiltration");
+        assert_eq!(original.sample_count, 50);
+    }
+
+    #[test]
+    fn calibration_error_clone_independence() {
+        let original = CalibrationError::CampaignValidationFailed {
+            detail: "original detail".to_string(),
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        // Verify they are separate allocations
+        let s1 = format!("{original}");
+        let s2 = format!("{cloned}");
+        assert_eq!(s1, s2);
+    }
+
+    // -------------------------------------------------------------------
+    // 5. JSON field-name stability
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn calibration_cycle_result_json_field_names() {
+        let result = CalibrationCycleResult {
+            cycle_id: "c".to_string(),
+            campaigns_ingested: 0,
+            severity_counts: BTreeMap::new(),
+            subsystem_counts: BTreeMap::new(),
+            threat_counts: BTreeMap::new(),
+            thresholds_adjusted: false,
+            detection_threshold_millionths: 0,
+            evidence_weights_millionths: BTreeMap::new(),
+            regression_fixtures_added: 0,
+            calibration_epoch: 0,
+            state_digest: "d".to_string(),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"cycle_id\""));
+        assert!(json.contains("\"campaigns_ingested\""));
+        assert!(json.contains("\"severity_counts\""));
+        assert!(json.contains("\"subsystem_counts\""));
+        assert!(json.contains("\"threat_counts\""));
+        assert!(json.contains("\"thresholds_adjusted\""));
+        assert!(json.contains("\"detection_threshold_millionths\""));
+        assert!(json.contains("\"evidence_weights_millionths\""));
+        assert!(json.contains("\"regression_fixtures_added\""));
+        assert!(json.contains("\"calibration_epoch\""));
+        assert!(json.contains("\"state_digest\""));
+    }
+
+    #[test]
+    fn calibration_alert_json_field_names() {
+        let alert = CalibrationAlert {
+            alert_id: "a".to_string(),
+            severity: "s".to_string(),
+            subsystem: "ss".to_string(),
+            threat_category: "tc".to_string(),
+            description: "d".to_string(),
+            recommended_action: "ra".to_string(),
+            evasion_rate_millionths: 0,
+            cycle_id: "c".to_string(),
+        };
+        let json = serde_json::to_string(&alert).unwrap();
+        assert!(json.contains("\"alert_id\""));
+        assert!(json.contains("\"severity\""));
+        assert!(json.contains("\"subsystem\""));
+        assert!(json.contains("\"threat_category\""));
+        assert!(json.contains("\"description\""));
+        assert!(json.contains("\"recommended_action\""));
+        assert!(json.contains("\"evasion_rate_millionths\""));
+        assert!(json.contains("\"cycle_id\""));
+    }
+
+    #[test]
+    fn calibration_event_json_field_names() {
+        let event = CalibrationEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "o".to_string(),
+            error_code: Some("ec".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"event\""));
+        assert!(json.contains("\"outcome\""));
+        assert!(json.contains("\"error_code\""));
+    }
+
+    #[test]
+    fn calibration_context_json_field_names() {
+        let ctx = test_ctx();
+        let json = serde_json::to_string(&ctx).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"signing_key\""));
+        assert!(json.contains("\"timestamp_ns\""));
+    }
+
+    #[test]
+    fn defense_effectiveness_summary_json_field_names() {
+        let summary = DefenseEffectivenessSummary {
+            total_campaigns: 0,
+            total_evasions: 0,
+            total_containment_escapes: 0,
+            overall_detection_rate_millionths: 0,
+            overall_trend: EffectivenessTrend::Stable,
+            per_dimension: BTreeMap::new(),
+            weakest_dimension: None,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"total_campaigns\""));
+        assert!(json.contains("\"total_evasions\""));
+        assert!(json.contains("\"total_containment_escapes\""));
+        assert!(json.contains("\"overall_detection_rate_millionths\""));
+        assert!(json.contains("\"overall_trend\""));
+        assert!(json.contains("\"per_dimension\""));
+        assert!(json.contains("\"weakest_dimension\""));
+    }
+
+    #[test]
+    fn dimension_effectiveness_json_field_names() {
+        let de = DimensionEffectiveness {
+            dimension: "x".to_string(),
+            detection_rate_millionths: 0,
+            evasion_rate_millionths: 0,
+            trend: EffectivenessTrend::Stable,
+            sample_count: 0,
+        };
+        let json = serde_json::to_string(&de).unwrap();
+        assert!(json.contains("\"dimension\""));
+        assert!(json.contains("\"detection_rate_millionths\""));
+        assert!(json.contains("\"evasion_rate_millionths\""));
+        assert!(json.contains("\"trend\""));
+        assert!(json.contains("\"sample_count\""));
+    }
+
+    // -------------------------------------------------------------------
+    // 6. Display format checks
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn effectiveness_trend_display_exact_values() {
+        assert_eq!(format!("{}", EffectivenessTrend::Improving), "improving");
+        assert_eq!(format!("{}", EffectivenessTrend::Stable), "stable");
+        assert_eq!(format!("{}", EffectivenessTrend::Degrading), "degrading");
+    }
+
+    #[test]
+    fn calibration_error_display_empty_campaign_batch_exact() {
+        let e = CalibrationError::EmptyCampaignBatch;
+        assert_eq!(e.to_string(), "FE-GCAL-0001: empty campaign batch");
+    }
+
+    #[test]
+    fn calibration_error_display_validation_failed_exact() {
+        let e = CalibrationError::CampaignValidationFailed {
+            detail: "missing steps".to_string(),
+        };
+        assert_eq!(
+            e.to_string(),
+            "FE-GCAL-0002: campaign validation failed: missing steps"
+        );
+    }
+
+    #[test]
+    fn calibration_error_display_calibration_failed_exact() {
+        let e = CalibrationError::CalibrationFailed {
+            detail: "diverged".to_string(),
+        };
+        assert_eq!(
+            e.to_string(),
+            "FE-GCAL-0003: calibration failed: diverged"
+        );
+    }
+
+    #[test]
+    fn calibration_error_display_invalid_config_exact() {
+        let e = CalibrationError::InvalidConfig {
+            detail: "negative threshold".to_string(),
+        };
+        assert_eq!(
+            e.to_string(),
+            "FE-GCAL-0004: invalid config: negative threshold"
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // 7. Hash consistency
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn effectiveness_trend_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        for variant in [
+            EffectivenessTrend::Improving,
+            EffectivenessTrend::Stable,
+            EffectivenessTrend::Degrading,
+        ] {
+            let mut h1 = std::collections::hash_map::DefaultHasher::new();
+            let mut h2 = std::collections::hash_map::DefaultHasher::new();
+            variant.hash(&mut h1);
+            variant.hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish());
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // 8. Boundary/edge cases
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn calibration_cycle_result_max_epoch() {
+        let result = CalibrationCycleResult {
+            cycle_id: "gcal-max".to_string(),
+            campaigns_ingested: usize::MAX,
+            severity_counts: BTreeMap::new(),
+            subsystem_counts: BTreeMap::new(),
+            threat_counts: BTreeMap::new(),
+            thresholds_adjusted: true,
+            detection_threshold_millionths: u64::MAX,
+            evidence_weights_millionths: BTreeMap::new(),
+            regression_fixtures_added: usize::MAX,
+            calibration_epoch: u64::MAX,
+            state_digest: String::new(),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: CalibrationCycleResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.calibration_epoch, u64::MAX);
+        assert_eq!(back.detection_threshold_millionths, u64::MAX);
+    }
+
+    #[test]
+    fn calibration_alert_empty_strings() {
+        let alert = CalibrationAlert {
+            alert_id: String::new(),
+            severity: String::new(),
+            subsystem: String::new(),
+            threat_category: String::new(),
+            description: String::new(),
+            recommended_action: String::new(),
+            evasion_rate_millionths: 0,
+            cycle_id: String::new(),
+        };
+        let json = serde_json::to_string(&alert).unwrap();
+        let back: CalibrationAlert = serde_json::from_str(&json).unwrap();
+        assert_eq!(alert, back);
+    }
+
+    #[test]
+    fn calibration_event_error_code_some_roundtrip() {
+        let event = CalibrationEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: COMPONENT.to_string(),
+            event: "test".to_string(),
+            outcome: "error".to_string(),
+            error_code: Some("FE-GCAL-9999".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: CalibrationEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.error_code, Some("FE-GCAL-9999".to_string()));
+    }
+
+    #[test]
+    fn calibration_context_zero_timestamp() {
+        let ctx = CalibrationContext {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            signing_key: [0u8; 32],
+            timestamp_ns: 0,
+        };
+        let json = serde_json::to_string(&ctx).unwrap();
+        let back: CalibrationContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.timestamp_ns, 0);
+    }
+
+    #[test]
+    fn calibration_context_max_timestamp() {
+        let ctx = CalibrationContext {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            signing_key: [255u8; 32],
+            timestamp_ns: u64::MAX,
+        };
+        let json = serde_json::to_string(&ctx).unwrap();
+        let back: CalibrationContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.timestamp_ns, u64::MAX);
+        assert_eq!(back.signing_key, [255u8; 32]);
+    }
+
+    #[test]
+    fn defense_effectiveness_summary_no_dimension_and_none_weakest() {
+        let summary = DefenseEffectivenessSummary {
+            total_campaigns: 0,
+            total_evasions: 0,
+            total_containment_escapes: 0,
+            overall_detection_rate_millionths: 0,
+            overall_trend: EffectivenessTrend::Stable,
+            per_dimension: BTreeMap::new(),
+            weakest_dimension: None,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let back: DefenseEffectivenessSummary = serde_json::from_str(&json).unwrap();
+        assert!(back.weakest_dimension.is_none());
+        assert!(back.per_dimension.is_empty());
+    }
+
+    #[test]
+    fn calibration_error_empty_detail_strings() {
+        let e1 = CalibrationError::CampaignValidationFailed {
+            detail: String::new(),
+        };
+        let s = e1.to_string();
+        assert!(s.contains("FE-GCAL-0002"));
+
+        let e2 = CalibrationError::CalibrationFailed {
+            detail: String::new(),
+        };
+        let s = e2.to_string();
+        assert!(s.contains("FE-GCAL-0003"));
+
+        let e3 = CalibrationError::InvalidConfig {
+            detail: String::new(),
+        };
+        let s = e3.to_string();
+        assert!(s.contains("FE-GCAL-0004"));
+    }
+
+    #[test]
+    fn dimension_effectiveness_zero_values() {
+        let de = DimensionEffectiveness {
+            dimension: String::new(),
+            detection_rate_millionths: 0,
+            evasion_rate_millionths: 0,
+            trend: EffectivenessTrend::Stable,
+            sample_count: 0,
+        };
+        let json = serde_json::to_string(&de).unwrap();
+        let back: DimensionEffectiveness = serde_json::from_str(&json).unwrap();
+        assert_eq!(de, back);
+    }
+
+    #[test]
+    fn dimension_effectiveness_max_millionths() {
+        let de = DimensionEffectiveness {
+            dimension: "max".to_string(),
+            detection_rate_millionths: u64::MAX,
+            evasion_rate_millionths: u64::MAX,
+            trend: EffectivenessTrend::Degrading,
+            sample_count: usize::MAX,
+        };
+        let json = serde_json::to_string(&de).unwrap();
+        let back: DimensionEffectiveness = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.detection_rate_millionths, u64::MAX);
+        assert_eq!(back.evasion_rate_millionths, u64::MAX);
+    }
+
+    // -------------------------------------------------------------------
+    // 9. Serde roundtrips (complex structs)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn defense_effectiveness_summary_with_per_dimension_roundtrip() {
+        let mut per_dim = BTreeMap::new();
+        per_dim.insert(
+            "Exfiltration".to_string(),
+            DimensionEffectiveness {
+                dimension: "Exfiltration".to_string(),
+                detection_rate_millionths: 900_000,
+                evasion_rate_millionths: 100_000,
+                trend: EffectivenessTrend::Improving,
+                sample_count: 20,
+            },
+        );
+        per_dim.insert(
+            "PolicyEvasion".to_string(),
+            DimensionEffectiveness {
+                dimension: "PolicyEvasion".to_string(),
+                detection_rate_millionths: 600_000,
+                evasion_rate_millionths: 400_000,
+                trend: EffectivenessTrend::Degrading,
+                sample_count: 15,
+            },
+        );
+        let summary = DefenseEffectivenessSummary {
+            total_campaigns: 35,
+            total_evasions: 10,
+            total_containment_escapes: 3,
+            overall_detection_rate_millionths: 714_285,
+            overall_trend: EffectivenessTrend::Stable,
+            per_dimension: per_dim,
+            weakest_dimension: Some("PolicyEvasion".to_string()),
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        let back: DefenseEffectivenessSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, back);
+        assert_eq!(back.per_dimension.len(), 2);
+    }
+
+    #[test]
+    fn calibration_cycle_result_with_populated_maps_roundtrip() {
+        let mut sev = BTreeMap::new();
+        sev.insert("Critical".to_string(), 5);
+        sev.insert("Advisory".to_string(), 10);
+        let mut sub = BTreeMap::new();
+        sub.insert("Sentinel".to_string(), 8);
+        sub.insert("Containment".to_string(), 7);
+        let mut thr = BTreeMap::new();
+        thr.insert("Exfiltration".to_string(), 4);
+        let mut ew = BTreeMap::new();
+        ew.insert("Exfiltration".to_string(), 500_000);
+        ew.insert("PolicyEvasion".to_string(), 300_000);
+        let result = CalibrationCycleResult {
+            cycle_id: "gcal-0042".to_string(),
+            campaigns_ingested: 15,
+            severity_counts: sev,
+            subsystem_counts: sub,
+            threat_counts: thr,
+            thresholds_adjusted: true,
+            detection_threshold_millionths: 450_000,
+            evidence_weights_millionths: ew,
+            regression_fixtures_added: 3,
+            calibration_epoch: 42,
+            state_digest: "deadbeef12345678".to_string(),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: CalibrationCycleResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+        assert_eq!(back.severity_counts.len(), 2);
+        assert_eq!(back.evidence_weights_millionths.len(), 2);
+    }
+
+    // -------------------------------------------------------------------
+    // 10. Debug nonempty
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn calibration_cycle_result_debug_nonempty() {
+        let result = CalibrationCycleResult {
+            cycle_id: "c".to_string(),
+            campaigns_ingested: 0,
+            severity_counts: BTreeMap::new(),
+            subsystem_counts: BTreeMap::new(),
+            threat_counts: BTreeMap::new(),
+            thresholds_adjusted: false,
+            detection_threshold_millionths: 0,
+            evidence_weights_millionths: BTreeMap::new(),
+            regression_fixtures_added: 0,
+            calibration_epoch: 0,
+            state_digest: "d".to_string(),
+        };
+        assert!(!format!("{result:?}").is_empty());
+    }
+
+    #[test]
+    fn calibration_alert_debug_nonempty() {
+        let alert = CalibrationAlert {
+            alert_id: "a".to_string(),
+            severity: "s".to_string(),
+            subsystem: "ss".to_string(),
+            threat_category: "tc".to_string(),
+            description: "d".to_string(),
+            recommended_action: "ra".to_string(),
+            evasion_rate_millionths: 0,
+            cycle_id: "c".to_string(),
+        };
+        assert!(!format!("{alert:?}").is_empty());
+    }
+
+    #[test]
+    fn calibration_event_debug_nonempty() {
+        let event = CalibrationEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "o".to_string(),
+            error_code: None,
+        };
+        assert!(!format!("{event:?}").is_empty());
+    }
+
+    #[test]
+    fn calibration_context_debug_nonempty() {
+        let ctx = test_ctx();
+        assert!(!format!("{ctx:?}").is_empty());
+    }
+
+    #[test]
+    fn defense_effectiveness_summary_debug_nonempty() {
+        let summary = DefenseEffectivenessSummary {
+            total_campaigns: 0,
+            total_evasions: 0,
+            total_containment_escapes: 0,
+            overall_detection_rate_millionths: 0,
+            overall_trend: EffectivenessTrend::Stable,
+            per_dimension: BTreeMap::new(),
+            weakest_dimension: None,
+        };
+        assert!(!format!("{summary:?}").is_empty());
+    }
+
+    #[test]
+    fn dimension_effectiveness_debug_nonempty() {
+        let de = DimensionEffectiveness {
+            dimension: "x".to_string(),
+            detection_rate_millionths: 0,
+            evasion_rate_millionths: 0,
+            trend: EffectivenessTrend::Stable,
+            sample_count: 0,
+        };
+        assert!(!format!("{de:?}").is_empty());
+    }
+
+    #[test]
+    fn guardplane_calibration_engine_debug_nonempty() {
+        let engine = GuardplaneCalibrationEngine::new();
+        assert!(!format!("{engine:?}").is_empty());
+    }
+
+    // -------------------------------------------------------------------
+    // Additional functional edge cases
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn fnv1a64_empty_input() {
+        let h = fnv1a64(b"");
+        assert_eq!(h, 0xcbf2_9ce4_8422_2325);
+    }
+
+    #[test]
+    fn fnv1a64_deterministic() {
+        let h1 = fnv1a64(b"hello guardplane");
+        let h2 = fnv1a64(b"hello guardplane");
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn fnv1a64_different_inputs_differ() {
+        let h1 = fnv1a64(b"alpha");
+        let h2 = fnv1a64(b"beta");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn severity_classification_advisory_boundary() {
+        // Score just below 200K => Advisory
+        let r = make_result(0, 10, false, 100_000, 1, false);
+        let s = ExploitObjectiveScore::from_result(&r).unwrap();
+        assert_eq!(classify_severity(&s), CampaignSeverity::Advisory);
+    }
+
+    #[test]
+    fn severity_classification_moderate_boundary() {
+        // Build a result with high evasion and damage to push composite >= 200K
+        let r = make_result(7, 10, false, 600_000, 15, false);
+        let s = ExploitObjectiveScore::from_result(&r).unwrap();
+        let sev = classify_severity(&s);
+        assert!(
+            sev == CampaignSeverity::Moderate
+                || sev == CampaignSeverity::Critical
+                || sev == CampaignSeverity::Blocking,
+            "expected Moderate/Critical/Blocking, got {sev:?} (composite={})",
+            s.composite_score_millionths,
+        );
+    }
+
+    #[test]
+    fn threat_category_hostcall_sequence_maps_to_credential_theft() {
+        let o = make_outcome(AttackDimension::HostcallSequence, 0, 5, false);
+        assert_eq!(
+            classify_threat_category(&o),
+            ThreatCategory::CredentialTheft
+        );
+    }
+
+    #[test]
+    fn threat_category_temporal_payload_maps_to_persistence() {
+        let o = make_outcome(AttackDimension::TemporalPayload, 0, 5, false);
+        assert_eq!(classify_threat_category(&o), ThreatCategory::Persistence);
+    }
+
+    #[test]
+    fn subsystem_evidence_accumulation_classification() {
+        // Not escaped, no undetected steps, but high evidence atoms
+        let campaign = make_campaign(AttackDimension::Exfiltration, 5);
+        let result = make_result(0, 5, false, 100_000, 15, false);
+        let score = ExploitObjectiveScore::from_result(&result).unwrap();
+        let outcome = CampaignOutcomeRecord {
+            campaign,
+            result,
+            score,
+            benign_control: false,
+            false_positive: false,
+            timestamp_ns: 1_000_000_000,
+        };
+        assert_eq!(
+            classify_defense_subsystem(&outcome),
+            DefenseSubsystem::EvidenceAccumulation
+        );
+    }
+
+    #[test]
+    fn subsystem_fleet_convergence_classification() {
+        // Not escaped, no undetected steps, low evidence atoms
+        let campaign = make_campaign(AttackDimension::Exfiltration, 5);
+        let result = make_result(0, 5, false, 100_000, 3, false);
+        let score = ExploitObjectiveScore::from_result(&result).unwrap();
+        let outcome = CampaignOutcomeRecord {
+            campaign,
+            result,
+            score,
+            benign_control: false,
+            false_positive: false,
+            timestamp_ns: 1_000_000_000,
+        };
+        assert_eq!(
+            classify_defense_subsystem(&outcome),
+            DefenseSubsystem::FleetConvergence
+        );
+    }
+
+    #[test]
+    fn overall_trend_empty_history_stable() {
+        let history: BTreeMap<String, Vec<u64>> = BTreeMap::new();
+        assert_eq!(compute_overall_trend(&history), EffectivenessTrend::Stable);
+    }
+
+    #[test]
+    fn overall_trend_all_improving() {
+        let mut history = BTreeMap::new();
+        // High then low = improving
+        history.insert(
+            "A".to_string(),
+            vec![
+                500_000, 500_000, 500_000, 500_000, 500_000, 100_000, 100_000, 100_000, 100_000,
+                100_000,
+            ],
+        );
+        history.insert(
+            "B".to_string(),
+            vec![
+                600_000, 600_000, 600_000, 600_000, 600_000, 50_000, 50_000, 50_000, 50_000,
+                50_000,
+            ],
+        );
+        assert_eq!(
+            compute_overall_trend(&history),
+            EffectivenessTrend::Improving
+        );
+    }
+
+    #[test]
+    fn overall_trend_all_degrading() {
+        let mut history = BTreeMap::new();
+        // Low then high = degrading
+        history.insert(
+            "A".to_string(),
+            vec![
+                100_000, 100_000, 100_000, 100_000, 100_000, 500_000, 500_000, 500_000, 500_000,
+                500_000,
+            ],
+        );
+        history.insert(
+            "B".to_string(),
+            vec![
+                50_000, 50_000, 50_000, 50_000, 50_000, 600_000, 600_000, 600_000, 600_000,
+                600_000,
+            ],
+        );
+        assert_eq!(
+            compute_overall_trend(&history),
+            EffectivenessTrend::Degrading
+        );
+    }
+
+    #[test]
+    fn overall_trend_mixed_yields_stable() {
+        let mut history = BTreeMap::new();
+        // One improving, one degrading => tie => stable
+        history.insert(
+            "A".to_string(),
+            vec![
+                500_000, 500_000, 500_000, 500_000, 500_000, 100_000, 100_000, 100_000, 100_000,
+                100_000,
+            ],
+        );
+        history.insert(
+            "B".to_string(),
+            vec![
+                100_000, 100_000, 100_000, 100_000, 100_000, 500_000, 500_000, 500_000, 500_000,
+                500_000,
+            ],
+        );
+        assert_eq!(compute_overall_trend(&history), EffectivenessTrend::Stable);
+    }
+
+    #[test]
+    fn drain_events_idempotent() {
+        let mut engine = GuardplaneCalibrationEngine::new();
+        let ctx = test_ctx();
+        let outcomes = vec![make_outcome(AttackDimension::Exfiltration, 0, 5, false)];
+        engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+
+        let first_drain = engine.drain_events();
+        assert!(!first_drain.is_empty());
+        let second_drain = engine.drain_events();
+        assert!(second_drain.is_empty());
+    }
+
+    #[test]
+    fn regression_fixtures_added_for_critical_campaigns() {
+        let mut engine = GuardplaneCalibrationEngine::new();
+        let ctx = test_ctx();
+        // Create a campaign with high score (Critical/Blocking)
+        let campaign = make_campaign(AttackDimension::Exfiltration, 10);
+        let result = make_result(10, 10, true, 900_000, 50, true);
+        let score = ExploitObjectiveScore::from_result(&result).unwrap();
+        let outcome = CampaignOutcomeRecord {
+            campaign,
+            result,
+            score,
+            benign_control: false,
+            false_positive: false,
+            timestamp_ns: 1_000_000_000,
+        };
+
+        let r = engine
+            .run_calibration_cycle(&[outcome], &ctx)
+            .unwrap();
+        assert!(r.regression_fixtures_added > 0);
+    }
+
+    #[test]
+    fn set_evasion_alert_threshold_takes_effect() {
+        let mut engine = GuardplaneCalibrationEngine::new();
+        engine.set_evasion_alert_threshold(1_000_001);
+        let ctx = test_ctx();
+        let outcomes = vec![make_outcome(AttackDimension::Exfiltration, 5, 10, false)];
+        engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+        // Even 100% per-subsystem evasion rate < 100.0001% threshold => no alert
+        let evasion_alerts: Vec<_> = engine
+            .alerts()
+            .iter()
+            .filter(|a| a.threat_category == "evasion")
+            .collect();
+        assert!(evasion_alerts.is_empty());
+    }
+
+    #[test]
+    fn set_containment_escape_alert_threshold_takes_effect() {
+        let mut engine = GuardplaneCalibrationEngine::new();
+        engine.set_containment_escape_alert_threshold(999_999);
+        let ctx = test_ctx();
+        let outcomes = vec![make_outcome(AttackDimension::Exfiltration, 5, 10, true)];
+        engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+        // 100% escape rate > 99.9999% => alert fires
+        let escape_alerts: Vec<_> = engine
+            .alerts()
+            .iter()
+            .filter(|a| a.threat_category == "containment_escape")
+            .collect();
+        assert!(!escape_alerts.is_empty());
+    }
+
+    #[test]
+    fn component_constant_value() {
+        assert_eq!(COMPONENT, "guardplane_calibration");
+    }
+
+    #[test]
+    fn calibration_state_accessible() {
+        let engine = GuardplaneCalibrationEngine::new();
+        let state = engine.calibration_state();
+        // Default state has some epoch
+        assert_eq!(state.calibration_epoch, 0);
+    }
+
+    #[test]
+    fn all_attack_dimensions_yield_threat_categories() {
+        for dim in [
+            AttackDimension::HostcallSequence,
+            AttackDimension::TemporalPayload,
+            AttackDimension::PrivilegeEscalation,
+            AttackDimension::PolicyEvasion,
+            AttackDimension::Exfiltration,
+        ] {
+            let o = make_outcome(dim, 0, 5, false);
+            let _tc = classify_threat_category(&o);
+        }
+    }
+
+    #[test]
+    fn state_digest_hex_format() {
+        let state = GuardplaneCalibrationState::default();
+        let digest = compute_state_digest(&state);
+        assert_eq!(digest.len(), 16);
+        assert!(
+            digest.chars().all(|c| c.is_ascii_hexdigit()),
+            "digest should be all hex chars"
+        );
+    }
+
+    #[test]
+    fn classify_outcomes_all_dimensions() {
+        let outcomes: Vec<CampaignOutcomeRecord> = [
+            AttackDimension::HostcallSequence,
+            AttackDimension::TemporalPayload,
+            AttackDimension::PrivilegeEscalation,
+            AttackDimension::PolicyEvasion,
+            AttackDimension::Exfiltration,
+        ]
+        .iter()
+        .map(|&dim| make_outcome(dim, 1, 5, false))
+        .collect();
+
+        let (sev, sub, thr) = classify_outcomes(&outcomes);
+        let total_sev: usize = sev.values().sum();
+        let total_sub: usize = sub.values().sum();
+        let total_thr: usize = thr.values().sum();
+        assert_eq!(total_sev, 5);
+        assert_eq!(total_sub, 5);
+        assert_eq!(total_thr, 5);
     }
 }

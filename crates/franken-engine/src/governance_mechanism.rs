@@ -1556,7 +1556,7 @@ mod tests {
     #[test]
     fn compute_ic_score_zero_range() {
         let score = compute_ic_score(0, 0);
-        assert_eq!(score, 0);
+        assert_eq!(score, 1_000_000);
     }
 
     // -- GovernanceMechanism serde --

@@ -1735,4 +1735,843 @@ mod tests {
         assert_eq!(policy.mandatory_actions.len(), 20);
         assert!(policy.include_metadata);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PearlTower 2026-02-28 — Copy semantics
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn high_impact_action_copy_semantics() {
+        let a = HighImpactAction::Sandbox;
+        let b = a; // Copy
+        let c = a; // still valid after copy
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+
+    #[test]
+    fn high_impact_action_copy_all_variants() {
+        for action in HighImpactAction::ALL {
+            let copied = action;
+            let again = action;
+            assert_eq!(copied, again);
+        }
+    }
+
+    #[test]
+    fn high_impact_action_copy_into_fn() {
+        fn consume(a: HighImpactAction) -> HighImpactAction { a }
+        let a = HighImpactAction::Terminate;
+        let b = consume(a);
+        // a is still valid because it's Copy:
+        assert_eq!(a, b);
+    }
+
+    // -----------------------------------------------------------------------
+    // Debug distinctness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn high_impact_action_debug_all_distinct() {
+        let mut seen = std::collections::BTreeSet::new();
+        for action in HighImpactAction::ALL {
+            let dbg = format!("{action:?}");
+            assert!(seen.insert(dbg.clone()), "duplicate Debug for {action:?}");
+        }
+        assert_eq!(seen.len(), 20);
+    }
+
+    #[test]
+    fn emission_error_debug_all_distinct() {
+        let variants = vec![
+            EmissionError::MissingField { field: "f".into() },
+            EmissionError::LedgerWriteFailure { reason: "r".into() },
+            EmissionError::ValidationFailure { reason: "v".into() },
+            EmissionError::BufferFull { capacity: 1 },
+            EmissionError::NotRequired { action: HighImpactAction::Sandbox },
+        ];
+        let mut debugs = std::collections::BTreeSet::new();
+        for v in &variants {
+            debugs.insert(format!("{v:?}"));
+        }
+        assert_eq!(debugs.len(), 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // Serde variant distinctness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn high_impact_action_serde_all_distinct_json() {
+        let mut seen = std::collections::BTreeSet::new();
+        for action in HighImpactAction::ALL {
+            let json = serde_json::to_string(&action).unwrap();
+            assert!(seen.insert(json.clone()), "duplicate JSON for {action:?}");
+        }
+        assert_eq!(seen.len(), 20);
+    }
+
+    #[test]
+    fn emission_error_serde_variants_distinct() {
+        let variants = vec![
+            EmissionError::MissingField { field: "x".into() },
+            EmissionError::LedgerWriteFailure { reason: "y".into() },
+            EmissionError::ValidationFailure { reason: "z".into() },
+            EmissionError::BufferFull { capacity: 42 },
+            EmissionError::NotRequired { action: HighImpactAction::Quarantine },
+        ];
+        let mut jsons = std::collections::BTreeSet::new();
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            jsons.insert(json);
+        }
+        assert_eq!(jsons.len(), 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // Clone independence
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn emission_context_clone_independence() {
+        let original = test_context(HighImpactAction::Sandbox);
+        let mut cloned = original.clone();
+        cloned.trace_id = "modified-trace".to_string();
+        cloned.target_id = "modified-target".to_string();
+        cloned.timestamp_ns = u64::MAX;
+        assert_eq!(original.trace_id, "trace-001");
+        assert_eq!(original.target_id, "ext-001");
+        assert_eq!(original.timestamp_ns, 1_000_000);
+    }
+
+    #[test]
+    fn emission_policy_clone_independence() {
+        let original = EmissionPolicy::default();
+        let mut cloned = original.clone();
+        cloned.mandatory_actions.clear();
+        cloned.max_witnesses = 0;
+        cloned.buffer_capacity = 0;
+        assert_eq!(original.mandatory_actions.len(), 20);
+        assert_eq!(original.max_witnesses, 256);
+        assert_eq!(original.buffer_capacity, 1024);
+    }
+
+    #[test]
+    fn emission_error_clone_independence() {
+        let original = EmissionError::MissingField { field: "trace_id".into() };
+        let mut cloned = original.clone();
+        if let EmissionError::MissingField { ref mut field } = cloned {
+            *field = "mutated".into();
+        }
+        assert_eq!(
+            original,
+            EmissionError::MissingField { field: "trace_id".into() }
+        );
+    }
+
+    #[test]
+    fn emission_receipt_clone_independence() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        let receipt = emit_standard(&mut emitter);
+        let mut cloned = receipt.clone();
+        cloned.trace_id = "cloned-trace".to_string();
+        cloned.entry_id = "cloned-entry".to_string();
+        assert_eq!(receipt.trace_id, "trace-001");
+        assert_ne!(receipt.entry_id, "cloned-entry");
+    }
+
+    #[test]
+    fn structured_log_clone_independence() {
+        let original = StructuredLogEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "c".into(),
+            event: "e".into(),
+            outcome: "success".into(),
+            error_code: Some("ec".into()),
+        };
+        let mut cloned = original.clone();
+        cloned.trace_id = "modified".into();
+        cloned.error_code = None;
+        assert_eq!(original.trace_id, "t");
+        assert_eq!(original.error_code, Some("ec".into()));
+    }
+
+    // -----------------------------------------------------------------------
+    // JSON field-name stability
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn emission_context_json_field_names() {
+        let ctx = test_context(HighImpactAction::Sandbox);
+        let json = serde_json::to_string(&ctx).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("trace_id"));
+        assert!(obj.contains_key("decision_id"));
+        assert!(obj.contains_key("policy_id"));
+        assert!(obj.contains_key("epoch"));
+        assert!(obj.contains_key("timestamp_ns"));
+        assert!(obj.contains_key("action"));
+        assert!(obj.contains_key("target_id"));
+        assert_eq!(obj.len(), 7, "EmissionContext should have exactly 7 fields");
+    }
+
+    #[test]
+    fn emission_policy_json_field_names() {
+        let policy = EmissionPolicy::default();
+        let json = serde_json::to_string(&policy).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("mandatory_actions"));
+        assert!(obj.contains_key("max_witnesses"));
+        assert!(obj.contains_key("max_candidates"));
+        assert!(obj.contains_key("include_metadata"));
+        assert!(obj.contains_key("buffer_capacity"));
+        assert_eq!(obj.len(), 5, "EmissionPolicy should have exactly 5 fields");
+    }
+
+    #[test]
+    fn emission_receipt_json_field_names() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        let receipt = emit_standard(&mut emitter);
+        let json = serde_json::to_string(&receipt).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("entry_id"));
+        assert!(obj.contains_key("artifact_hash"));
+        assert!(obj.contains_key("decision_type"));
+        assert!(obj.contains_key("action"));
+        assert!(obj.contains_key("trace_id"));
+        assert_eq!(obj.len(), 5, "EmissionReceipt should have exactly 5 fields");
+    }
+
+    #[test]
+    fn structured_log_event_json_field_names() {
+        let log = StructuredLogEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "c".into(),
+            event: "e".into(),
+            outcome: "o".into(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&log).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("trace_id"));
+        assert!(obj.contains_key("decision_id"));
+        assert!(obj.contains_key("policy_id"));
+        assert!(obj.contains_key("component"));
+        assert!(obj.contains_key("event"));
+        assert!(obj.contains_key("outcome"));
+        assert!(obj.contains_key("error_code"));
+        assert_eq!(obj.len(), 7, "StructuredLogEvent should have exactly 7 fields");
+    }
+
+    #[test]
+    fn emission_error_missing_field_json_field_names() {
+        let err = EmissionError::MissingField { field: "x".into() };
+        let json = serde_json::to_string(&err).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("MissingField"), "JSON should have MissingField key");
+    }
+
+    #[test]
+    fn emission_error_buffer_full_json_field_names() {
+        let err = EmissionError::BufferFull { capacity: 99 };
+        let json = serde_json::to_string(&err).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("BufferFull"), "JSON should have BufferFull key");
+    }
+
+    // -----------------------------------------------------------------------
+    // Display format checks
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn high_impact_action_display_all_lowercase_underscore() {
+        for action in HighImpactAction::ALL {
+            let display = action.to_string();
+            assert!(!display.is_empty(), "Display should not be empty for {action:?}");
+            for ch in display.chars() {
+                assert!(
+                    ch.is_ascii_lowercase() || ch == '_',
+                    "Display for {action:?} should be lowercase+underscore, got '{ch}'"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn emission_error_display_all_variants_nonempty() {
+        let variants = vec![
+            EmissionError::MissingField { field: "f".into() },
+            EmissionError::LedgerWriteFailure { reason: "r".into() },
+            EmissionError::ValidationFailure { reason: "v".into() },
+            EmissionError::BufferFull { capacity: 0 },
+            EmissionError::NotRequired { action: HighImpactAction::Sandbox },
+        ];
+        for v in &variants {
+            let display = v.to_string();
+            assert!(!display.is_empty(), "Display should not be empty for {v:?}");
+        }
+    }
+
+    #[test]
+    fn emission_error_display_missing_field_contains_field_name() {
+        let err = EmissionError::MissingField { field: "my_field".into() };
+        assert!(err.to_string().contains("my_field"));
+    }
+
+    #[test]
+    fn emission_error_display_ledger_write_failure_contains_reason() {
+        let err = EmissionError::LedgerWriteFailure { reason: "disk full".into() };
+        assert!(err.to_string().contains("disk full"));
+    }
+
+    #[test]
+    fn emission_error_display_validation_failure_contains_reason() {
+        let err = EmissionError::ValidationFailure { reason: "bad schema".into() };
+        assert!(err.to_string().contains("bad schema"));
+    }
+
+    #[test]
+    fn emission_error_display_buffer_full_contains_capacity() {
+        let err = EmissionError::BufferFull { capacity: 512 };
+        assert!(err.to_string().contains("512"));
+    }
+
+    #[test]
+    fn emission_error_display_not_required_contains_action_name() {
+        let err = EmissionError::NotRequired { action: HighImpactAction::Terminate };
+        assert!(err.to_string().contains("terminate"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Hash consistency (HighImpactAction)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn high_impact_action_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        for action in HighImpactAction::ALL {
+            let mut h1 = std::collections::hash_map::DefaultHasher::new();
+            let mut h2 = std::collections::hash_map::DefaultHasher::new();
+            action.hash(&mut h1);
+            action.hash(&mut h2);
+            assert_eq!(h1.finish(), h2.finish(), "Hash should be consistent for {action:?}");
+        }
+    }
+
+    #[test]
+    fn high_impact_action_hash_distinct_variants() {
+        use std::hash::{Hash, Hasher};
+        let mut hashes = std::collections::BTreeSet::new();
+        for action in HighImpactAction::ALL {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            action.hash(&mut hasher);
+            hashes.insert(hasher.finish());
+        }
+        // At minimum most should be distinct (hash collisions possible but very unlikely for 20)
+        assert!(hashes.len() >= 18, "expected at least 18 distinct hashes out of 20");
+    }
+
+    // -----------------------------------------------------------------------
+    // Boundary / edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn emission_context_max_timestamp_ns() {
+        let mut ctx = test_context(HighImpactAction::Sandbox);
+        ctx.timestamp_ns = u64::MAX;
+        let json = serde_json::to_string(&ctx).unwrap();
+        let restored: EmissionContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.timestamp_ns, u64::MAX);
+    }
+
+    #[test]
+    fn emission_context_zero_timestamp_ns() {
+        let mut ctx = test_context(HighImpactAction::Sandbox);
+        ctx.timestamp_ns = 0;
+        let json = serde_json::to_string(&ctx).unwrap();
+        let restored: EmissionContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.timestamp_ns, 0);
+    }
+
+    #[test]
+    fn emission_policy_empty_mandatory_actions() {
+        let policy = EmissionPolicy {
+            mandatory_actions: vec![],
+            ..Default::default()
+        };
+        for action in HighImpactAction::ALL {
+            assert!(!policy.requires_evidence(action));
+        }
+    }
+
+    #[test]
+    fn emission_policy_zero_buffer_capacity() {
+        let policy = EmissionPolicy {
+            buffer_capacity: 0,
+            ..Default::default()
+        };
+        let mut emitter = CanonicalEvidenceEmitter::new(policy);
+        let err = emitter
+            .emit(
+                &test_context(HighImpactAction::Sandbox),
+                test_candidates(),
+                test_constraints(),
+                test_chosen(),
+                test_witnesses(),
+                BTreeMap::new(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, EmissionError::BufferFull { capacity: 0 }));
+    }
+
+    #[test]
+    fn emission_policy_zero_max_witnesses() {
+        let policy = EmissionPolicy {
+            max_witnesses: 0,
+            ..Default::default()
+        };
+        let mut emitter = CanonicalEvidenceEmitter::new(policy);
+        emitter
+            .emit(
+                &test_context(HighImpactAction::Sandbox),
+                test_candidates(),
+                test_constraints(),
+                test_chosen(),
+                test_witnesses(),
+                BTreeMap::new(),
+            )
+            .unwrap();
+        assert!(emitter.ledger()[0].witnesses.is_empty());
+    }
+
+    #[test]
+    fn emission_policy_zero_max_candidates() {
+        let policy = EmissionPolicy {
+            max_candidates: 0,
+            ..Default::default()
+        };
+        let mut emitter = CanonicalEvidenceEmitter::new(policy);
+        emitter
+            .emit(
+                &test_context(HighImpactAction::Sandbox),
+                test_candidates(),
+                test_constraints(),
+                test_chosen(),
+                test_witnesses(),
+                BTreeMap::new(),
+            )
+            .unwrap();
+        assert!(emitter.ledger()[0].candidates.is_empty());
+    }
+
+    #[test]
+    fn buffer_full_capacity_one() {
+        let policy = EmissionPolicy {
+            buffer_capacity: 1,
+            ..Default::default()
+        };
+        let mut emitter = CanonicalEvidenceEmitter::new(policy);
+        emitter
+            .emit(
+                &test_context(HighImpactAction::Sandbox),
+                test_candidates(),
+                test_constraints(),
+                test_chosen(),
+                test_witnesses(),
+                BTreeMap::new(),
+            )
+            .unwrap();
+        let mut ctx2 = test_context(HighImpactAction::Terminate);
+        ctx2.decision_id = "dec-002".into();
+        let err = emitter
+            .emit(
+                &ctx2,
+                test_candidates(),
+                test_constraints(),
+                test_chosen(),
+                test_witnesses(),
+                BTreeMap::new(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, EmissionError::BufferFull { capacity: 1 }));
+    }
+
+    #[test]
+    fn emission_with_empty_metadata() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        emitter
+            .emit(
+                &test_context(HighImpactAction::Sandbox),
+                test_candidates(),
+                test_constraints(),
+                test_chosen(),
+                test_witnesses(),
+                BTreeMap::new(),
+            )
+            .unwrap();
+        // Metadata still has injected fields (action, target_id, component).
+        let entry = &emitter.ledger()[0];
+        assert!(entry.metadata.contains_key("action"));
+        assert!(entry.metadata.contains_key("target_id"));
+        assert!(entry.metadata.contains_key("component"));
+    }
+
+    #[test]
+    fn emission_with_no_metadata_flag_off() {
+        let policy = EmissionPolicy {
+            include_metadata: false,
+            ..Default::default()
+        };
+        let mut emitter = CanonicalEvidenceEmitter::new(policy);
+        emitter
+            .emit(
+                &test_context(HighImpactAction::Sandbox),
+                test_candidates(),
+                test_constraints(),
+                test_chosen(),
+                test_witnesses(),
+                BTreeMap::new(),
+            )
+            .unwrap();
+        let entry = &emitter.ledger()[0];
+        // When include_metadata is false, injected fields should NOT be present.
+        assert!(!entry.metadata.contains_key("action"));
+        assert!(!entry.metadata.contains_key("target_id"));
+        assert!(!entry.metadata.contains_key("component"));
+    }
+
+    #[test]
+    fn emission_context_with_long_strings() {
+        let long = "a".repeat(10_000);
+        let ctx = EmissionContext {
+            trace_id: long.clone(),
+            decision_id: long.clone(),
+            policy_id: long.clone(),
+            epoch: SecurityEpoch::GENESIS,
+            timestamp_ns: 42,
+            action: HighImpactAction::Sandbox,
+            target_id: long.clone(),
+        };
+        let json = serde_json::to_string(&ctx).unwrap();
+        let restored: EmissionContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(ctx, restored);
+    }
+
+    #[test]
+    fn emission_error_buffer_full_capacity_max() {
+        let err = EmissionError::BufferFull { capacity: usize::MAX };
+        let display = err.to_string();
+        assert!(display.contains(&usize::MAX.to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // Serde roundtrips (complex structs)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn emission_context_all_actions_serde_roundtrip() {
+        for action in HighImpactAction::ALL {
+            let ctx = test_context(action);
+            let json = serde_json::to_string(&ctx).unwrap();
+            let restored: EmissionContext = serde_json::from_str(&json).unwrap();
+            assert_eq!(ctx, restored, "roundtrip failed for action {action:?}");
+        }
+    }
+
+    #[test]
+    fn emission_policy_custom_serde_roundtrip() {
+        let policy = EmissionPolicy {
+            mandatory_actions: vec![HighImpactAction::Sandbox, HighImpactAction::Terminate],
+            max_witnesses: 1,
+            max_candidates: 2,
+            include_metadata: false,
+            buffer_capacity: 3,
+        };
+        let json = serde_json::to_string(&policy).unwrap();
+        let restored: EmissionPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, restored);
+    }
+
+    #[test]
+    fn emission_error_not_required_all_actions_roundtrip() {
+        for action in HighImpactAction::ALL {
+            let err = EmissionError::NotRequired { action };
+            let json = serde_json::to_string(&err).unwrap();
+            let restored: EmissionError = serde_json::from_str(&json).unwrap();
+            assert_eq!(err, restored);
+        }
+    }
+
+    #[test]
+    fn structured_log_event_with_error_code_roundtrip() {
+        let log = StructuredLogEvent {
+            trace_id: "trace-rt".into(),
+            decision_id: "dec-rt".into(),
+            policy_id: "pol-rt".into(),
+            component: "containment".into(),
+            event: "buffer_full".into(),
+            outcome: "failure".into(),
+            error_code: Some("BUFFER_OVERFLOW".into()),
+        };
+        let json = serde_json::to_string(&log).unwrap();
+        let restored: StructuredLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(log, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Additional emitter behavioral edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn clear_followed_by_new_emission_works() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        emit_standard(&mut emitter);
+        assert_eq!(emitter.ledger_len(), 1);
+        emitter.clear();
+        assert_eq!(emitter.ledger_len(), 0);
+        // Emit again after clear.
+        emit_standard(&mut emitter);
+        assert_eq!(emitter.ledger_len(), 1);
+    }
+
+    #[test]
+    fn clear_resets_failed_state() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        emitter.set_failed(true);
+        emitter.clear();
+        // After clear, failed should be reset.
+        let result = emitter.emit(
+            &test_context(HighImpactAction::Sandbox),
+            test_candidates(),
+            test_constraints(),
+            test_chosen(),
+            test_witnesses(),
+            BTreeMap::new(),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn multiple_actions_same_trace_id() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        let actions = [
+            HighImpactAction::Sandbox,
+            HighImpactAction::Suspend,
+            HighImpactAction::Terminate,
+        ];
+        for (i, action) in actions.iter().enumerate() {
+            let mut ctx = test_context(*action);
+            ctx.trace_id = "shared-trace".into();
+            ctx.decision_id = format!("dec-{i:03}");
+            emitter
+                .emit(
+                    &ctx,
+                    test_candidates(),
+                    test_constraints(),
+                    test_chosen(),
+                    test_witnesses(),
+                    BTreeMap::new(),
+                )
+                .unwrap();
+        }
+        let found = emitter.entries_by_trace("shared-trace");
+        assert_eq!(found.len(), 3);
+    }
+
+    #[test]
+    fn receipts_match_ledger_entries() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        for i in 0..5 {
+            let mut ctx = test_context(HighImpactAction::ALL[i]);
+            ctx.decision_id = format!("dec-{i:03}");
+            emitter
+                .emit(
+                    &ctx,
+                    test_candidates(),
+                    test_constraints(),
+                    test_chosen(),
+                    test_witnesses(),
+                    BTreeMap::new(),
+                )
+                .unwrap();
+        }
+        assert_eq!(emitter.receipts().len(), emitter.ledger_len());
+        for (receipt, entry) in emitter.receipts().iter().zip(emitter.ledger().iter()) {
+            assert_eq!(receipt.entry_id, entry.entry_id);
+            assert_eq!(receipt.trace_id, entry.trace_id);
+        }
+    }
+
+    #[test]
+    fn verify_integrity_all_entries() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        for i in 0..5 {
+            let mut ctx = test_context(HighImpactAction::ALL[i]);
+            ctx.decision_id = format!("dec-{i:03}");
+            emitter
+                .emit(
+                    &ctx,
+                    test_candidates(),
+                    test_constraints(),
+                    test_chosen(),
+                    test_witnesses(),
+                    BTreeMap::new(),
+                )
+                .unwrap();
+        }
+        for (entry, receipt) in emitter.ledger().iter().zip(emitter.receipts().iter()) {
+            let hash = emitter.verify_integrity(entry).unwrap();
+            assert_eq!(hash, receipt.artifact_hash);
+        }
+    }
+
+    #[test]
+    fn log_events_count_matches_successful_emissions() {
+        let mut emitter = CanonicalEvidenceEmitter::with_defaults();
+        for i in 0..4 {
+            let mut ctx = test_context(HighImpactAction::ALL[i]);
+            ctx.decision_id = format!("dec-{i:03}");
+            emitter
+                .emit(
+                    &ctx,
+                    test_candidates(),
+                    test_constraints(),
+                    test_chosen(),
+                    test_witnesses(),
+                    BTreeMap::new(),
+                )
+                .unwrap();
+        }
+        // Each successful emission produces one log event.
+        assert_eq!(emitter.log_events().len(), 4);
+        for log in emitter.log_events() {
+            assert_eq!(log.outcome, "success");
+            assert!(log.error_code.is_none());
+        }
+    }
+
+    #[test]
+    fn buffer_full_log_event_is_emitted() {
+        let policy = EmissionPolicy {
+            buffer_capacity: 1,
+            ..Default::default()
+        };
+        let mut emitter = CanonicalEvidenceEmitter::new(policy);
+        emitter
+            .emit(
+                &test_context(HighImpactAction::Sandbox),
+                test_candidates(),
+                test_constraints(),
+                test_chosen(),
+                test_witnesses(),
+                BTreeMap::new(),
+            )
+            .unwrap();
+        let mut ctx2 = test_context(HighImpactAction::Terminate);
+        ctx2.decision_id = "dec-002".into();
+        let _ = emitter.emit(
+            &ctx2,
+            test_candidates(),
+            test_constraints(),
+            test_chosen(),
+            test_witnesses(),
+            BTreeMap::new(),
+        );
+        // The buffer_full attempt should also produce a log event.
+        assert!(emitter.log_events().len() >= 2);
+        let last = emitter.log_events().last().unwrap();
+        assert_eq!(last.event, "buffer_full");
+    }
+
+    #[test]
+    fn decision_type_mapping_exhaustive() {
+        // Every variant in ALL should map to a known DecisionType.
+        let known_types = [
+            DecisionType::SecurityAction,
+            DecisionType::ExtensionLifecycle,
+            DecisionType::PolicyUpdate,
+            DecisionType::EpochTransition,
+            DecisionType::CapabilityDecision,
+            DecisionType::Revocation,
+            DecisionType::ContractEvaluation,
+            DecisionType::RemoteAuthorization,
+        ];
+        for action in HighImpactAction::ALL {
+            let dt = action.decision_type();
+            assert!(
+                known_types.contains(&dt),
+                "decision_type() for {action:?} returned unexpected type"
+            );
+        }
+    }
+
+    #[test]
+    fn component_mapping_exhaustive() {
+        let known_components = [
+            "containment",
+            "lifecycle",
+            "policy",
+            "epoch",
+            "capability",
+            "obligation",
+            "region",
+            "cancellation",
+            "contract",
+            "remote_auth",
+        ];
+        for action in HighImpactAction::ALL {
+            let comp = action.component();
+            assert!(
+                known_components.contains(&comp),
+                "component() for {action:?} returned unexpected '{comp}'"
+            );
+        }
+    }
+
+    #[test]
+    fn emission_error_not_required_display_includes_action() {
+        for action in HighImpactAction::ALL {
+            let err = EmissionError::NotRequired { action };
+            let display = err.to_string();
+            assert!(
+                display.contains(&action.to_string()),
+                "NotRequired display should contain action name for {action:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn emitter_with_defaults_starts_empty() {
+        let emitter = CanonicalEvidenceEmitter::with_defaults();
+        assert_eq!(emitter.ledger_len(), 0);
+        assert!(emitter.ledger().is_empty());
+        assert!(emitter.receipts().is_empty());
+        assert!(emitter.log_events().is_empty());
+    }
+
+    #[test]
+    fn emission_context_unicode_strings_roundtrip() {
+        let ctx = EmissionContext {
+            trace_id: "\u{1F600} trace".into(),
+            decision_id: "\u{00E9}tat".into(),
+            policy_id: "\u{4E16}\u{754C}".into(),
+            epoch: SecurityEpoch::GENESIS,
+            timestamp_ns: 42,
+            action: HighImpactAction::PolicyUpdate,
+            target_id: "\u{0410}\u{0411}\u{0412}".into(),
+        };
+        let json = serde_json::to_string(&ctx).unwrap();
+        let restored: EmissionContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(ctx, restored);
+    }
 }

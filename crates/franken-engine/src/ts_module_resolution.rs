@@ -1195,7 +1195,9 @@ mod tests {
     #[test]
     fn resolver_register_file_absolute() {
         let mut resolver = default_resolver();
-        resolver.register_file("/project/lib/utils.ts");
+        // Resolving ./lib/utils from referrer /project/src/main.ts yields
+        // /project/src/lib/utils, so register the file at that location.
+        resolver.register_file("/project/src/lib/utils.ts");
         let req = import_request("./lib/utils").with_referrer("/project/src/main.ts");
         let result = resolver.resolve(&req, &ctx());
         assert!(result.is_ok());
@@ -1214,10 +1216,12 @@ mod tests {
     #[test]
     fn resolve_relative_parent_dir() {
         let mut resolver = default_resolver();
-        resolver.register_file("/project/utils.ts");
+        // ../utils from referrer /project/src/deep/file.ts resolves to
+        // /project/src/utils (parent of /project/src/deep is /project/src).
+        resolver.register_file("/project/src/utils.ts");
         let req = import_request("../utils").with_referrer("/project/src/deep/file.ts");
         let outcome = resolver.resolve(&req, &ctx()).unwrap();
-        assert_eq!(outcome.resolved_path, "/project/utils.ts");
+        assert_eq!(outcome.resolved_path, "/project/src/utils.ts");
     }
 
     #[test]

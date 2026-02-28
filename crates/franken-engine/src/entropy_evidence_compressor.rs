@@ -1486,4 +1486,822 @@ mod tests {
             assert!(err.source().is_none());
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment round 2: Debug distinctness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn debug_distinct_entropy_error_variants() {
+        let variants: Vec<EntropyError> = vec![
+            EntropyError::AlphabetTooLarge {
+                size: 512,
+                max: 256,
+            },
+            EntropyError::EmptyInput,
+            EntropyError::UnknownSymbol { symbol: 77 },
+            EntropyError::DecodeError {
+                message: "truncated".into(),
+            },
+            EntropyError::InsufficientSamples { count: 3, min: 10 },
+            EntropyError::KraftViolation {
+                kraft_sum_millionths: 1_500_000,
+            },
+        ];
+        let debug_set: std::collections::BTreeSet<String> =
+            variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(debug_set.len(), variants.len());
+    }
+
+    #[test]
+    fn debug_distinct_entropy_estimator_states() {
+        let empty = EntropyEstimator::new();
+        let mut one_sym = EntropyEstimator::new();
+        one_sym.observe(0);
+        let mut two_sym = EntropyEstimator::new();
+        two_sym.observe(0);
+        two_sym.observe(1);
+        let set: std::collections::BTreeSet<String> = [&empty, &one_sym, &two_sym]
+            .iter()
+            .map(|e| format!("{e:?}"))
+            .collect();
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn debug_distinct_sufficient_statistics() {
+        let mut est_a = EntropyEstimator::new();
+        est_a.observe(0);
+        let ss_a =
+            SufficientStatistic::from_estimator(&est_a, 100, 200, ContentHash::compute(b"a"));
+        let ss_b =
+            SufficientStatistic::from_estimator(&est_a, 300, 400, ContentHash::compute(b"b"));
+        assert_ne!(format!("{ss_a:?}"), format!("{ss_b:?}"));
+    }
+
+    #[test]
+    fn debug_distinct_compressed_evidence() {
+        let ce_a = CompressedEvidence {
+            schema: ENTROPY_SCHEMA_VERSION.to_string(),
+            compressed_data: vec![1],
+            original_symbol_count: 1,
+            compressed_bytes: 1,
+            original_bits_estimate: 8,
+            compressed_bits: 8,
+            compression_ratio_millionths: MILLION,
+            content_hash: ContentHash::compute(b"da"),
+        };
+        let ce_b = CompressedEvidence {
+            schema: ENTROPY_SCHEMA_VERSION.to_string(),
+            compressed_data: vec![2],
+            original_symbol_count: 1,
+            compressed_bytes: 1,
+            original_bits_estimate: 8,
+            compressed_bits: 8,
+            compression_ratio_millionths: MILLION,
+            content_hash: ContentHash::compute(b"db"),
+        };
+        assert_ne!(format!("{ce_a:?}"), format!("{ce_b:?}"));
+    }
+
+    #[test]
+    fn debug_distinct_compression_certificate() {
+        let cert_a = CompressionCertificate {
+            schema: ENTROPY_SCHEMA_VERSION.to_string(),
+            entropy_millibits_per_symbol: 500_000,
+            shannon_lower_bound_bits: 50,
+            achieved_bits: 60,
+            overhead_bits_millionths: 10 * MILLION,
+            overhead_ratio_millionths: 1_200_000,
+            kraft_sum_millionths: MILLION,
+            kraft_satisfied: true,
+            redundancy_millibits: 500_000,
+            symbol_count: 100,
+            certificate_hash: ContentHash::compute(b"ca"),
+        };
+        let cert_b = CompressionCertificate {
+            schema: ENTROPY_SCHEMA_VERSION.to_string(),
+            entropy_millibits_per_symbol: 800_000,
+            shannon_lower_bound_bits: 80,
+            achieved_bits: 90,
+            overhead_bits_millionths: 10 * MILLION,
+            overhead_ratio_millionths: 1_125_000,
+            kraft_sum_millionths: MILLION,
+            kraft_satisfied: true,
+            redundancy_millibits: 200_000,
+            symbol_count: 200,
+            certificate_hash: ContentHash::compute(b"cb"),
+        };
+        assert_ne!(format!("{cert_a:?}"), format!("{cert_b:?}"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment round 2: Clone independence
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn clone_independence_entropy_estimator() {
+        let mut est = EntropyEstimator::new();
+        est.observe(0);
+        est.observe(1);
+        let mut cloned = est.clone();
+        cloned.observe(2);
+        assert_eq!(est.alphabet_size, 2);
+        assert_eq!(cloned.alphabet_size, 3);
+        assert_ne!(est, cloned);
+    }
+
+    #[test]
+    fn clone_independence_sufficient_statistic() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..10 {
+            est.observe(0);
+        }
+        let ss =
+            SufficientStatistic::from_estimator(&est, 100, 200, ContentHash::compute(b"ci"));
+        let mut cloned = ss.clone();
+        cloned.total_count = 999;
+        assert_ne!(ss, cloned);
+        assert!(ss.is_consistent());
+        assert!(!cloned.is_consistent());
+    }
+
+    #[test]
+    fn clone_independence_compressed_evidence() {
+        let mut ce = CompressedEvidence {
+            schema: ENTROPY_SCHEMA_VERSION.to_string(),
+            compressed_data: vec![1, 2, 3],
+            original_symbol_count: 3,
+            compressed_bytes: 3,
+            original_bits_estimate: 24,
+            compressed_bits: 24,
+            compression_ratio_millionths: MILLION,
+            content_hash: ContentHash::compute(b"ci_ce"),
+        };
+        let original = ce.clone();
+        ce.compressed_data.push(4);
+        assert_ne!(ce, original);
+        assert_eq!(original.compressed_data.len(), 3);
+    }
+
+    #[test]
+    fn clone_independence_arithmetic_coder() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..50 {
+            est.observe(0);
+            est.observe(1);
+        }
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        let mut cloned = coder.clone();
+        cloned.total_frequency = 999;
+        assert_ne!(coder, cloned);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment round 2: JSON field-name stability
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn json_field_stability_compressed_evidence() {
+        let ce = CompressedEvidence {
+            schema: "v1".to_string(),
+            compressed_data: vec![0xAB],
+            original_symbol_count: 10,
+            compressed_bytes: 1,
+            original_bits_estimate: 40,
+            compressed_bits: 8,
+            compression_ratio_millionths: 200_000,
+            content_hash: ContentHash::compute(b"fs"),
+        };
+        let json = serde_json::to_string(&ce).unwrap();
+        for field in &[
+            "schema",
+            "compressed_data",
+            "original_symbol_count",
+            "compressed_bytes",
+            "original_bits_estimate",
+            "compressed_bits",
+            "compression_ratio_millionths",
+            "content_hash",
+        ] {
+            assert!(
+                json.contains(&format!("\"{field}\"")),
+                "missing field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn json_field_stability_arithmetic_coder() {
+        let mut est = EntropyEstimator::new();
+        est.observe(0);
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        let json = serde_json::to_string(&coder).unwrap();
+        for field in &["frequency_table", "total_frequency", "alphabet_size"] {
+            assert!(
+                json.contains(&format!("\"{field}\"")),
+                "missing field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn json_field_stability_sufficient_statistic_all_fields() {
+        let mut est = EntropyEstimator::new();
+        est.observe(0);
+        est.observe(1);
+        let ss =
+            SufficientStatistic::from_estimator(&est, 500, 1000, ContentHash::compute(b"ss"));
+        let json = serde_json::to_string(&ss).unwrap();
+        for field in &[
+            "symbol_counts",
+            "total_count",
+            "cumulative_llr_millionths",
+            "sum_squared_millionths",
+            "mean_millionths",
+            "original_hash",
+            "is_fisher_sufficient",
+        ] {
+            assert!(
+                json.contains(&format!("\"{field}\"")),
+                "missing field {field}"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment round 2: serde variant distinctness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn serde_variant_distinctness_entropy_error() {
+        let variants = vec![
+            EntropyError::AlphabetTooLarge {
+                size: 300,
+                max: 256,
+            },
+            EntropyError::EmptyInput,
+            EntropyError::UnknownSymbol { symbol: 7 },
+            EntropyError::DecodeError {
+                message: "oops".into(),
+            },
+            EntropyError::InsufficientSamples { count: 2, min: 10 },
+            EntropyError::KraftViolation {
+                kraft_sum_millionths: 2_000_000,
+            },
+        ];
+        let jsons: std::collections::BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        assert_eq!(
+            jsons.len(),
+            variants.len(),
+            "each variant must produce distinct JSON"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment round 2: boundary/edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn entropy_estimator_observe_u32_max() {
+        let mut est = EntropyEstimator::new();
+        est.observe(u32::MAX);
+        assert_eq!(est.total_count, 1);
+        assert_eq!(est.alphabet_size, 1);
+        assert_eq!(est.probability_millionths(u32::MAX), MILLION);
+    }
+
+    #[test]
+    fn entropy_estimator_observe_zero_symbol() {
+        let mut est = EntropyEstimator::new();
+        est.observe(0);
+        assert_eq!(est.frequencies.get(&0), Some(&1));
+    }
+
+    #[test]
+    fn entropy_estimator_many_observations_same_symbol() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..10_000 {
+            est.observe(42);
+        }
+        assert_eq!(est.total_count, 10_000);
+        assert_eq!(est.alphabet_size, 1);
+        assert_eq!(est.entropy_millibits(), 0);
+    }
+
+    #[test]
+    fn entropy_probabilities_sum_close_to_million() {
+        let mut est = EntropyEstimator::new();
+        for i in 0..5u32 {
+            for _ in 0..((i + 1) * 10) {
+                est.observe(i);
+            }
+        }
+        let total_prob: i64 = (0..5u32).map(|i| est.probability_millionths(i)).sum();
+        assert!(total_prob <= MILLION);
+        assert!(
+            total_prob > 900_000,
+            "total prob should be close to 1M, got {total_prob}"
+        );
+    }
+
+    #[test]
+    fn entropy_redundancy_skewed_is_positive() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..990 {
+            est.observe(0);
+        }
+        for _ in 0..10 {
+            est.observe(1);
+        }
+        let r = est.redundancy_millibits();
+        assert!(
+            r > 0,
+            "skewed distribution should have positive redundancy"
+        );
+    }
+
+    #[test]
+    fn entropy_shannon_lower_bound_zero_for_single_symbol() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..100 {
+            est.observe(0);
+        }
+        assert_eq!(est.shannon_lower_bound_bits(), 0);
+    }
+
+    #[test]
+    fn log2_zero_returns_zero() {
+        assert_eq!(integer_log2_millionths(0), 0);
+    }
+
+    #[test]
+    fn log2_power_of_two_exact() {
+        for exp in 0..30 {
+            let n = 1u64 << exp;
+            let result = integer_log2_millionths(n);
+            let expected = exp as i64 * MILLION;
+            assert_eq!(
+                result, expected,
+                "log2(2^{exp}) should be exactly {expected}, got {result}"
+            );
+        }
+    }
+
+    #[test]
+    fn log2_non_power_of_two_between_adjacent_integers() {
+        let l3 = integer_log2_millionths(3);
+        assert!(l3 > MILLION, "log2(3) > 1.0");
+        assert!(l3 < 2 * MILLION, "log2(3) < 2.0");
+        assert!(
+            (l3 - 1_585_000).abs() < 50_000,
+            "log2(3) approx 1.585M, got {l3}"
+        );
+    }
+
+    #[test]
+    fn coder_encode_single_repeated_symbol() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..100 {
+            est.observe(5);
+        }
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        let compressed = coder.encode(&[5, 5, 5, 5, 5]).unwrap();
+        assert_eq!(compressed.original_symbol_count, 5);
+        assert!(!compressed.compressed_data.is_empty());
+    }
+
+    #[test]
+    fn coder_encode_long_sequence() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..200 {
+            est.observe(0);
+            est.observe(1);
+            est.observe(2);
+        }
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        let symbols: Vec<u32> = (0..1000).map(|i| (i % 3) as u32).collect();
+        let compressed = coder.encode(&symbols).unwrap();
+        assert_eq!(compressed.original_symbol_count, 1000);
+        assert!(compressed.compressed_data.len() < 1000);
+    }
+
+    #[test]
+    fn coder_kraft_sum_for_uniform_distribution() {
+        let mut est = EntropyEstimator::new();
+        for i in 0..4u32 {
+            for _ in 0..250 {
+                est.observe(i);
+            }
+        }
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        let kraft = coder.verify_kraft_inequality().unwrap();
+        assert!(
+            (kraft - MILLION).abs() < 100,
+            "kraft sum should be ~1M, got {kraft}"
+        );
+    }
+
+    #[test]
+    fn coder_expected_code_length_approaches_entropy() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..10_000 {
+            est.observe(0);
+            est.observe(1);
+        }
+        let h = est.entropy_millibits();
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        let ecl = coder.expected_code_length_millibits();
+        assert!(
+            (ecl - h).abs() < 200_000,
+            "ECL {ecl} should be close to H {h}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment round 2: SufficientStatistic additional coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sufficient_statistic_empty_estimator() {
+        let est = EntropyEstimator::new();
+        let ss =
+            SufficientStatistic::from_estimator(&est, 0, 0, ContentHash::compute(b"empty_ss"));
+        assert!(ss.is_consistent());
+        assert_eq!(ss.total_count, 0);
+        assert_eq!(ss.mean_millionths, 0);
+        assert!(ss.symbol_counts.is_empty());
+    }
+
+    #[test]
+    fn sufficient_statistic_preserves_symbol_counts() {
+        let mut est = EntropyEstimator::new();
+        est.observe(0);
+        est.observe(0);
+        est.observe(1);
+        est.observe(2);
+        est.observe(2);
+        est.observe(2);
+        let ss =
+            SufficientStatistic::from_estimator(&est, 0, 0, ContentHash::compute(b"counts"));
+        assert_eq!(ss.symbol_counts.get(&0), Some(&2));
+        assert_eq!(ss.symbol_counts.get(&1), Some(&1));
+        assert_eq!(ss.symbol_counts.get(&2), Some(&3));
+        assert_eq!(ss.total_count, 6);
+    }
+
+    #[test]
+    fn sufficient_statistic_fisher_information_increases_with_samples() {
+        let mut est_10 = EntropyEstimator::new();
+        for _ in 0..10 {
+            est_10.observe(0);
+        }
+        let ss_10 = SufficientStatistic::from_estimator(
+            &est_10,
+            100_000,
+            200_000,
+            ContentHash::compute(b"fi10"),
+        );
+
+        let mut est_100 = EntropyEstimator::new();
+        for _ in 0..100 {
+            est_100.observe(0);
+        }
+        let ss_100 = SufficientStatistic::from_estimator(
+            &est_100,
+            1_000_000,
+            2_000_000,
+            ContentHash::compute(b"fi100"),
+        );
+
+        let fi_10 = ss_10.fisher_information_millionths();
+        let fi_100 = ss_100.fisher_information_millionths();
+        assert!(fi_10 > 0);
+        assert!(fi_100 > 0);
+    }
+
+    #[test]
+    fn sufficient_statistic_negative_llr() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..10 {
+            est.observe(0);
+        }
+        let ss = SufficientStatistic::from_estimator(
+            &est,
+            -500_000,
+            1_000_000,
+            ContentHash::compute(b"neg"),
+        );
+        assert_eq!(ss.mean_millionths, -50_000);
+        assert!(ss.is_consistent());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment round 2: CompressionCertificate additional coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn certificate_is_within_factor_exact_boundary() {
+        let cert = CompressionCertificate {
+            schema: ENTROPY_SCHEMA_VERSION.to_string(),
+            entropy_millibits_per_symbol: MILLION,
+            shannon_lower_bound_bits: 100,
+            achieved_bits: 150,
+            overhead_bits_millionths: 50 * MILLION,
+            overhead_ratio_millionths: 1_500_000,
+            kraft_sum_millionths: MILLION,
+            kraft_satisfied: true,
+            redundancy_millibits: 0,
+            symbol_count: 100,
+            certificate_hash: ContentHash::compute(b"boundary"),
+        };
+        assert!(cert.is_within_factor(1_500_000));
+        assert!(cert.is_within_factor(1_500_001));
+        assert!(!cert.is_within_factor(1_499_999));
+    }
+
+    #[test]
+    fn certificate_build_kraft_not_satisfied() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..100 {
+            est.observe(0);
+            est.observe(1);
+        }
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        let symbols: Vec<u32> = (0..20).map(|i| i % 2).collect();
+        let compressed = coder.encode(&symbols).unwrap();
+        let cert = CompressionCertificate::build(&est, &compressed, 1_500_000);
+        assert!(!cert.kraft_satisfied);
+    }
+
+    #[test]
+    fn certificate_build_kraft_borderline_satisfied() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..100 {
+            est.observe(0);
+            est.observe(1);
+        }
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        let symbols: Vec<u32> = (0..20).map(|i| i % 2).collect();
+        let compressed = coder.encode(&symbols).unwrap();
+        let cert = CompressionCertificate::build(&est, &compressed, MILLION + 1000);
+        assert!(cert.kraft_satisfied);
+    }
+
+    #[test]
+    fn certificate_hash_deterministic() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..50 {
+            est.observe(0);
+            est.observe(1);
+        }
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        let symbols: Vec<u32> = (0..10).map(|i| i % 2).collect();
+        let compressed = coder.encode(&symbols).unwrap();
+        let kraft = coder.verify_kraft_inequality().unwrap();
+
+        let cert1 = CompressionCertificate::build(&est, &compressed, kraft);
+        let cert2 = CompressionCertificate::build(&est, &compressed, kraft);
+        assert_eq!(cert1.certificate_hash, cert2.certificate_hash);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment round 2: Display format checks
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn display_format_alphabet_too_large() {
+        let err = EntropyError::AlphabetTooLarge {
+            size: 300,
+            max: 256,
+        };
+        assert_eq!(format!("{err}"), "alphabet size 300 exceeds limit 256");
+    }
+
+    #[test]
+    fn display_format_empty_input() {
+        let err = EntropyError::EmptyInput;
+        assert_eq!(format!("{err}"), "empty input");
+    }
+
+    #[test]
+    fn display_format_unknown_symbol() {
+        let err = EntropyError::UnknownSymbol { symbol: 99 };
+        assert_eq!(format!("{err}"), "unknown symbol: 99");
+    }
+
+    #[test]
+    fn display_format_decode_error() {
+        let err = EntropyError::DecodeError {
+            message: "bad frame".to_string(),
+        };
+        assert_eq!(format!("{err}"), "decode error: bad frame");
+    }
+
+    #[test]
+    fn display_format_insufficient_samples() {
+        let err = EntropyError::InsufficientSamples { count: 3, min: 10 };
+        assert_eq!(format!("{err}"), "insufficient samples: 3 < 10");
+    }
+
+    #[test]
+    fn display_format_kraft_violation() {
+        let err = EntropyError::KraftViolation {
+            kraft_sum_millionths: 1_200_000,
+        };
+        assert_eq!(
+            format!("{err}"),
+            "Kraft inequality violated: sum = 1200000"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment round 2: serde roundtrips (multi-symbol)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn serde_roundtrip_arithmetic_coder_multi_symbol() {
+        let mut est = EntropyEstimator::new();
+        for i in 0..10u32 {
+            for _ in 0..((i + 1) * 5) {
+                est.observe(i);
+            }
+        }
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        let json = serde_json::to_string(&coder).unwrap();
+        let restored: ArithmeticCoder = serde_json::from_str(&json).unwrap();
+        assert_eq!(coder, restored);
+        assert_eq!(restored.alphabet_size, 10);
+    }
+
+    #[test]
+    fn serde_roundtrip_compressed_evidence_large() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..200 {
+            est.observe(0);
+            est.observe(1);
+            est.observe(2);
+        }
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        let symbols: Vec<u32> = (0..500).map(|i| (i % 3) as u32).collect();
+        let compressed = coder.encode(&symbols).unwrap();
+        let json = serde_json::to_string(&compressed).unwrap();
+        let restored: CompressedEvidence = serde_json::from_str(&json).unwrap();
+        assert_eq!(compressed, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment round 2: entropy ordering properties
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn entropy_increases_with_more_distinct_symbols() {
+        let mut est2 = EntropyEstimator::new();
+        for _ in 0..500 {
+            est2.observe(0);
+            est2.observe(1);
+        }
+        let h2 = est2.entropy_millibits();
+
+        let mut est4 = EntropyEstimator::new();
+        for _ in 0..250 {
+            for s in 0..4u32 {
+                est4.observe(s);
+            }
+        }
+        let h4 = est4.entropy_millibits();
+
+        let mut est8 = EntropyEstimator::new();
+        for _ in 0..125 {
+            for s in 0..8u32 {
+                est8.observe(s);
+            }
+        }
+        let h8 = est8.entropy_millibits();
+
+        assert!(h2 < h4, "H(uniform 2) < H(uniform 4)");
+        assert!(h4 < h8, "H(uniform 4) < H(uniform 8)");
+    }
+
+    #[test]
+    fn entropy_at_most_max_entropy() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..900 {
+            est.observe(0);
+        }
+        for _ in 0..100 {
+            est.observe(1);
+        }
+        let h = est.entropy_millibits();
+        let h_max = est.max_entropy_millibits();
+        assert!(
+            h <= h_max,
+            "H(X) should be <= H_max, got H={h}, H_max={h_max}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment round 2: hash determinism
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn compressed_evidence_hash_deterministic() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..100 {
+            est.observe(0);
+            est.observe(1);
+        }
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        let symbols = vec![0u32, 1, 0, 1, 0, 1];
+        let ce1 = coder.encode(&symbols).unwrap();
+        let ce2 = coder.encode(&symbols).unwrap();
+        assert_eq!(ce1.content_hash, ce2.content_hash);
+        assert_eq!(ce1.compressed_data, ce2.compressed_data);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment round 2: full pipeline integration
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn full_pipeline_encode_certify() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..500 {
+            est.observe(0);
+            est.observe(1);
+            est.observe(2);
+        }
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        let kraft = coder.verify_kraft_inequality().unwrap();
+        assert!(kraft <= MILLION + 1000);
+
+        let symbols: Vec<u32> = (0..300).map(|i| (i % 3) as u32).collect();
+        let compressed = coder.encode(&symbols).unwrap();
+        assert_eq!(compressed.schema, ENTROPY_SCHEMA_VERSION);
+
+        let cert = CompressionCertificate::build(&est, &compressed, kraft);
+        assert!(cert.kraft_satisfied);
+        assert!(cert.entropy_millibits_per_symbol > 0);
+        assert!(cert.shannon_lower_bound_bits > 0);
+        assert!(cert.achieved_bits > 0);
+
+        let ss = SufficientStatistic::from_estimator(
+            &est,
+            500_000,
+            1_000_000,
+            ContentHash::compute(b"pipe"),
+        );
+        assert!(ss.is_consistent());
+        assert!(ss.is_fisher_sufficient);
+    }
+
+    #[test]
+    fn full_pipeline_serde_all_artifacts() {
+        let mut est = EntropyEstimator::new();
+        for _ in 0..100 {
+            est.observe(0);
+            est.observe(1);
+        }
+        let coder = ArithmeticCoder::from_estimator(&est).unwrap();
+        let symbols: Vec<u32> = (0..50).map(|i| i % 2).collect();
+        let compressed = coder.encode(&symbols).unwrap();
+        let kraft = coder.verify_kraft_inequality().unwrap();
+        let cert = CompressionCertificate::build(&est, &compressed, kraft);
+        let ss = SufficientStatistic::from_estimator(
+            &est,
+            200_000,
+            400_000,
+            ContentHash::compute(b"all"),
+        );
+
+        let est_json = serde_json::to_string(&est).unwrap();
+        let coder_json = serde_json::to_string(&coder).unwrap();
+        let compressed_json = serde_json::to_string(&compressed).unwrap();
+        let cert_json = serde_json::to_string(&cert).unwrap();
+        let ss_json = serde_json::to_string(&ss).unwrap();
+
+        assert_eq!(
+            est,
+            serde_json::from_str::<EntropyEstimator>(&est_json).unwrap()
+        );
+        assert_eq!(
+            coder,
+            serde_json::from_str::<ArithmeticCoder>(&coder_json).unwrap()
+        );
+        assert_eq!(
+            compressed,
+            serde_json::from_str::<CompressedEvidence>(&compressed_json).unwrap()
+        );
+        assert_eq!(
+            cert,
+            serde_json::from_str::<CompressionCertificate>(&cert_json).unwrap()
+        );
+        assert_eq!(
+            ss,
+            serde_json::from_str::<SufficientStatistic>(&ss_json).unwrap()
+        );
+    }
 }
