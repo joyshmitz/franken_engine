@@ -1,0 +1,253 @@
+{
+  "schema_version": "franken-engine.runtime-hotspot-optimization-campaign.v1",
+  "campaign_version": "1.0.0",
+  "metric_schema_version": "franken-engine.runtime-hotspot-telemetry.v1",
+  "required_log_keys": [
+    "schema_version",
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "campaign_runs": [
+    {
+      "campaign_id": "rt-cmp-scheduler-propagation",
+      "lever_id": "scheduler_propagation",
+      "lever_category": "scheduler",
+      "commit": "deadbeef1001",
+      "run_id": "rt-cmp-run-001",
+      "generated_at_utc": "2026-02-28T00:00:00Z",
+      "changed_paths": [
+        "crates/franken-engine/src/scheduler_lane.rs"
+      ],
+      "hotspot": {
+        "hotspot_id": "runtime-hotspot-scheduler",
+        "phase": "scheduler_propagation",
+        "baseline_share_millionths": 320000,
+        "baseline_profile_ref": "artifacts/flamegraph_pipeline/<timestamp>/scheduler_lane.folded"
+      },
+      "attribution_note": "Scheduler queue compaction reduces propagation stalls while preserving deterministic turn order.",
+      "baseline_metrics": {
+        "scheduler_propagation_ns": 7200000,
+        "dom_commit_batch_ns": 9800000,
+        "lane_router_decision_ns": 2100000,
+        "js_wasm_boundary_ns": 4600000,
+        "interaction_p95_latency_ns": 16500000
+      },
+      "candidate_metrics": {
+        "scheduler_propagation_ns": 5760000,
+        "dom_commit_batch_ns": 9702000,
+        "lane_router_decision_ns": 2079000,
+        "js_wasm_boundary_ns": 4554000,
+        "interaction_p95_latency_ns": 15675000
+      },
+      "ev_inputs": {
+        "impact": 260,
+        "confidence": 230,
+        "reuse": 180,
+        "effort": 140,
+        "friction": 120
+      },
+      "expected_ev_score_millionths": 640714285,
+      "expected_gain_millionths": 56000,
+      "semantic_proof": {
+        "proof_method": "metamorphic_oracle",
+        "verification_contract_ref": "crates/franken-engine/tests/runtime_observability_integration.rs",
+        "drift_status": "no_drift"
+      },
+      "rollback_plan_ref": "docs/FRX_OPTIMIZATION_LANE_CHARTER_V1.md#Regression-and-Rollback-Gates",
+      "replay_command": "./scripts/run_runtime_hotspot_optimization_campaign.sh test",
+      "artifact_manifest": "artifacts/runtime_hotspot_optimization_campaign/<timestamp>/run_manifest.json",
+      "artifact_report": "artifacts/runtime_hotspot_optimization_campaign/<timestamp>/campaign_report_rt-cmp-scheduler-propagation.json"
+    },
+    {
+      "campaign_id": "rt-cmp-dom-commit-batching",
+      "lever_id": "dom_commit_batching",
+      "lever_category": "dom_commit",
+      "commit": "deadbeef1002",
+      "run_id": "rt-cmp-run-002",
+      "generated_at_utc": "2026-02-28T00:05:00Z",
+      "changed_paths": [
+        "crates/franken-engine/src/js_runtime_lane.rs"
+      ],
+      "hotspot": {
+        "hotspot_id": "runtime-hotspot-dom-commit",
+        "phase": "dom_commit_batching",
+        "baseline_share_millionths": 280000,
+        "baseline_profile_ref": "artifacts/flamegraph_pipeline/<timestamp>/js_runtime_lane.folded"
+      },
+      "attribution_note": "Commit-path batch coalescing reduces DOM flush churn under bursty interactions.",
+      "baseline_metrics": {
+        "scheduler_propagation_ns": 7200000,
+        "dom_commit_batch_ns": 9800000,
+        "lane_router_decision_ns": 2100000,
+        "js_wasm_boundary_ns": 4600000,
+        "interaction_p95_latency_ns": 16500000
+      },
+      "candidate_metrics": {
+        "scheduler_propagation_ns": 7128000,
+        "dom_commit_batch_ns": 8330000,
+        "lane_router_decision_ns": 2058000,
+        "js_wasm_boundary_ns": 4416000,
+        "interaction_p95_latency_ns": 14850000
+      },
+      "ev_inputs": {
+        "impact": 320,
+        "confidence": 250,
+        "reuse": 220,
+        "effort": 150,
+        "friction": 130
+      },
+      "expected_ev_score_millionths": 902564102,
+      "expected_gain_millionths": 64000,
+      "semantic_proof": {
+        "proof_method": "differential_oracle",
+        "verification_contract_ref": "crates/franken-engine/tests/js_runtime_lane_integration.rs",
+        "drift_status": "no_drift"
+      },
+      "rollback_plan_ref": "docs/FRX_OPTIMIZATION_LANE_CHARTER_V1.md#Regression-and-Rollback-Gates",
+      "replay_command": "./scripts/run_runtime_hotspot_optimization_campaign.sh test",
+      "artifact_manifest": "artifacts/runtime_hotspot_optimization_campaign/<timestamp>/run_manifest.json",
+      "artifact_report": "artifacts/runtime_hotspot_optimization_campaign/<timestamp>/campaign_report_rt-cmp-dom-commit-batching.json"
+    },
+    {
+      "campaign_id": "rt-cmp-lane-router-overhead",
+      "lever_id": "lane_router_overhead",
+      "lever_category": "lane_router",
+      "commit": "deadbeef1003",
+      "run_id": "rt-cmp-run-003",
+      "generated_at_utc": "2026-02-28T00:10:00Z",
+      "changed_paths": [
+        "crates/franken-engine/src/hybrid_lane_router.rs"
+      ],
+      "hotspot": {
+        "hotspot_id": "runtime-hotspot-lane-router",
+        "phase": "lane_router_overhead",
+        "baseline_share_millionths": 210000,
+        "baseline_profile_ref": "artifacts/flamegraph_pipeline/<timestamp>/hybrid_lane_router.folded"
+      },
+      "attribution_note": "Decision lattice fast-pathing cuts router overhead while preserving decision provenance.",
+      "baseline_metrics": {
+        "scheduler_propagation_ns": 7200000,
+        "dom_commit_batch_ns": 9800000,
+        "lane_router_decision_ns": 2100000,
+        "js_wasm_boundary_ns": 4600000,
+        "interaction_p95_latency_ns": 16500000
+      },
+      "candidate_metrics": {
+        "scheduler_propagation_ns": 7128000,
+        "dom_commit_batch_ns": 9604000,
+        "lane_router_decision_ns": 1680000,
+        "js_wasm_boundary_ns": 4370000,
+        "interaction_p95_latency_ns": 15675000
+      },
+      "ev_inputs": {
+        "impact": 280,
+        "confidence": 240,
+        "reuse": 210,
+        "effort": 160,
+        "friction": 140
+      },
+      "expected_ev_score_millionths": 630000000,
+      "expected_gain_millionths": 66000,
+      "semantic_proof": {
+        "proof_method": "proof_specialization_receipt",
+        "verification_contract_ref": "crates/franken-engine/tests/runtime_decision_theory_integration.rs",
+        "drift_status": "no_drift"
+      },
+      "rollback_plan_ref": "docs/FRX_OPTIMIZATION_LANE_CHARTER_V1.md#Regression-and-Rollback-Gates",
+      "replay_command": "./scripts/run_runtime_hotspot_optimization_campaign.sh test",
+      "artifact_manifest": "artifacts/runtime_hotspot_optimization_campaign/<timestamp>/run_manifest.json",
+      "artifact_report": "artifacts/runtime_hotspot_optimization_campaign/<timestamp>/campaign_report_rt-cmp-lane-router-overhead.json"
+    },
+    {
+      "campaign_id": "rt-cmp-js-wasm-boundary",
+      "lever_id": "js_wasm_boundary",
+      "lever_category": "js_wasm_boundary",
+      "commit": "deadbeef1004",
+      "run_id": "rt-cmp-run-004",
+      "generated_at_utc": "2026-02-28T00:15:00Z",
+      "changed_paths": [
+        "crates/franken-engine/src/wasm_runtime_lane.rs"
+      ],
+      "hotspot": {
+        "hotspot_id": "runtime-hotspot-js-wasm-boundary",
+        "phase": "js_wasm_boundary",
+        "baseline_share_millionths": 190000,
+        "baseline_profile_ref": "artifacts/flamegraph_pipeline/<timestamp>/wasm_runtime_lane.folded"
+      },
+      "attribution_note": "Boundary marshaling memoization reduces JS↔WASM bridge overhead on hot loops.",
+      "baseline_metrics": {
+        "scheduler_propagation_ns": 7200000,
+        "dom_commit_batch_ns": 9800000,
+        "lane_router_decision_ns": 2100000,
+        "js_wasm_boundary_ns": 4600000,
+        "interaction_p95_latency_ns": 16500000
+      },
+      "candidate_metrics": {
+        "scheduler_propagation_ns": 7128000,
+        "dom_commit_batch_ns": 9604000,
+        "lane_router_decision_ns": 2037000,
+        "js_wasm_boundary_ns": 3772000,
+        "interaction_p95_latency_ns": 15510000
+      },
+      "ev_inputs": {
+        "impact": 240,
+        "confidence": 220,
+        "reuse": 200,
+        "effort": 140,
+        "friction": 130
+      },
+      "expected_ev_score_millionths": 580219780,
+      "expected_gain_millionths": 60000,
+      "semantic_proof": {
+        "proof_method": "verification_lane_charter_suite",
+        "verification_contract_ref": "crates/franken-engine/tests/frx_track_d_wasm_lane_hybrid_router_sprint.rs",
+        "drift_status": "no_drift"
+      },
+      "rollback_plan_ref": "docs/FRX_OPTIMIZATION_LANE_CHARTER_V1.md#Regression-and-Rollback-Gates",
+      "replay_command": "./scripts/run_runtime_hotspot_optimization_campaign.sh test",
+      "artifact_manifest": "artifacts/runtime_hotspot_optimization_campaign/<timestamp>/run_manifest.json",
+      "artifact_report": "artifacts/runtime_hotspot_optimization_campaign/<timestamp>/campaign_report_rt-cmp-js-wasm-boundary.json"
+    }
+  ],
+  "expected_ev_ranking": [
+    "rt-cmp-dom-commit-batching",
+    "rt-cmp-scheduler-propagation",
+    "rt-cmp-lane-router-overhead",
+    "rt-cmp-js-wasm-boundary"
+  ],
+  "expected_gain_ranking": [
+    "rt-cmp-lane-router-overhead",
+    "rt-cmp-dom-commit-batching",
+    "rt-cmp-js-wasm-boundary",
+    "rt-cmp-scheduler-propagation"
+  ],
+  "expected_selected_campaign": "rt-cmp-dom-commit-batching",
+  "cross_subsystem_replay_scenarios": [
+    {
+      "scenario_id": "runtime-hotspot-normal",
+      "scenario_kind": "normal",
+      "replay_command": "./scripts/e2e/runtime_hotspot_optimization_campaign_replay.sh test",
+      "expected_pass": true,
+      "expected_outcome": "pass"
+    },
+    {
+      "scenario_id": "runtime-hotspot-adversarial-proof-missing",
+      "scenario_kind": "adversarial",
+      "replay_command": "./scripts/e2e/runtime_hotspot_optimization_campaign_replay.sh test",
+      "expected_pass": false,
+      "expected_outcome": "fail_closed"
+    },
+    {
+      "scenario_id": "runtime-hotspot-recovery-after-rollback",
+      "scenario_kind": "recovery",
+      "replay_command": "./scripts/e2e/runtime_hotspot_optimization_campaign_replay.sh test",
+      "expected_pass": true,
+      "expected_outcome": "recovered"
+    }
+  ]
+}
