@@ -693,7 +693,7 @@ impl SignedTrustRootOverrideArtifact {
         if self.justification.trim().is_empty() {
             return Err(TeeAttestationPolicyError::OverrideJustificationMissing);
         }
-        if current_epoch.as_u64() > self.expires_epoch.as_u64() {
+        if current_epoch.as_u64() >= self.expires_epoch.as_u64() {
             return Err(TeeAttestationPolicyError::OverrideExpired {
                 current_epoch,
                 expires_epoch: self.expires_epoch,
@@ -789,10 +789,10 @@ impl TemporaryTrustRootOverride {
             || self.trust_root.root_id != self.artifact.target_root_id
         {
             return Err(TeeAttestationPolicyError::OverrideTargetMismatch {
-                expected_platform: self.trust_root.platform,
-                expected_root_id: self.trust_root.root_id.clone(),
-                actual_platform: self.artifact.target_platform,
-                actual_root_id: self.artifact.target_root_id.clone(),
+                expected_platform: self.artifact.target_platform,
+                expected_root_id: self.artifact.target_root_id.clone(),
+                actual_platform: self.trust_root.platform,
+                actual_root_id: self.trust_root.root_id.clone(),
             });
         }
         Ok(())

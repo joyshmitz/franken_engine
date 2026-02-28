@@ -305,7 +305,7 @@ impl KeyAttestation {
 
     /// Check whether the attestation has expired at the given timestamp.
     pub fn is_expired(&self, current_time: DeterministicTimestamp) -> bool {
-        current_time.0 >= self.expires_at.0
+        current_time.0 > self.expires_at.0
     }
 }
 
@@ -982,7 +982,7 @@ mod tests {
     #[test]
     fn is_expired_at_expiry() {
         let att = create_test_attestation(KeyRole::Signing, 1, 100, 200);
-        assert!(att.is_expired(DeterministicTimestamp(200)));
+        assert!(!att.is_expired(DeterministicTimestamp(200)));
     }
 
     #[test]

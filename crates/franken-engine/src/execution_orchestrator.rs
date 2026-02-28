@@ -1076,7 +1076,7 @@ impl ExecutionOrchestrator {
         match action {
             ContainmentAction::Quarantine => Some(SagaType::Quarantine),
             ContainmentAction::Terminate => Some(SagaType::Eviction),
-            ContainmentAction::Suspend => Some(SagaType::Suspension),
+            ContainmentAction::Suspend => Some(SagaType::Revocation),
             _ => None,
         }
     }
