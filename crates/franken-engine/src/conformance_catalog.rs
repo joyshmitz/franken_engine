@@ -1765,4 +1765,941 @@ mod tests {
         let decoded: CatalogValidationError = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(err, decoded);
     }
+
+    // ── Copy/Clone semantics ───────────────────────────────────────────
+
+    #[test]
+    fn sibling_repo_copy_semantics() {
+        let original = SiblingRepo::Frankentui;
+        let copy = original;
+        assert_eq!(original, copy);
+        // both are independently usable after copy
+        assert_eq!(original.as_str(), "frankentui");
+        assert_eq!(copy.as_str(), "frankentui");
+    }
+
+    #[test]
+    fn surface_kind_copy_semantics() {
+        let original = SurfaceKind::TelemetrySchema;
+        let copy = original;
+        assert_eq!(original, copy);
+        assert_eq!(original.as_str(), copy.as_str());
+    }
+
+    #[test]
+    fn version_class_copy_semantics() {
+        let original = VersionClass::Major;
+        let copy = original;
+        assert_eq!(original, copy);
+        assert!(copy.allows_breaking_changes());
+    }
+
+    #[test]
+    fn version_compatibility_copy_semantics() {
+        let original = VersionCompatibility::PatchCompatible;
+        let copy = original;
+        assert_eq!(original, copy);
+        assert!(copy.is_compatible());
+    }
+
+    #[test]
+    fn failure_severity_copy_semantics() {
+        let original = FailureSeverity::Critical;
+        let copy = original;
+        assert_eq!(original, copy);
+        assert_eq!(original.as_str(), "critical");
+    }
+
+    #[test]
+    fn required_response_copy_semantics() {
+        let original = RequiredResponse::Block;
+        let copy = original;
+        assert_eq!(original, copy);
+        assert_eq!(copy.as_str(), "block");
+    }
+
+    #[test]
+    fn semantic_version_copy_semantics() {
+        let original = SemanticVersion::new(3, 1, 4);
+        let copy = original;
+        assert_eq!(original, copy);
+        assert_eq!(copy.to_string(), "3.1.4");
+    }
+
+    #[test]
+    fn change_kind_copy_semantics() {
+        let original = ChangeKind::TaxonomyUpdated;
+        let copy = original;
+        assert_eq!(original, copy);
+    }
+
+    // ── Clone independence ─────────────────────────────────────────────
+
+    #[test]
+    fn boundary_surface_clone_independence() {
+        let surface = BoundarySurface {
+            sibling: SiblingRepo::Asupersync,
+            surface_id: "test/clone".to_string(),
+            surface_kind: SurfaceKind::ApiMessage,
+            description: "original".to_string(),
+            covered_fields: ["f1"].iter().map(|s| s.to_string()).collect(),
+            version_class: VersionClass::Patch,
+        };
+        let mut cloned = surface.clone();
+        cloned.description = "mutated".to_string();
+        assert_eq!(surface.description, "original");
+        assert_eq!(cloned.description, "mutated");
+    }
+
+    #[test]
+    fn replay_obligation_clone_independence() {
+        let ob = ReplayObligation::standard("t1", SiblingRepo::FrankenNode);
+        let mut cloned = ob.clone();
+        cloned.must_capture_input = false;
+        assert!(ob.must_capture_input);
+        assert!(!cloned.must_capture_input);
+    }
+
+    #[test]
+    fn conformance_catalog_clone_independence() {
+        let catalog = build_canonical_catalog();
+        let mut cloned = catalog.clone();
+        cloned.entries.clear();
+        assert!(!catalog.entries.is_empty());
+        assert!(cloned.entries.is_empty());
+    }
+
+    #[test]
+    fn failure_taxonomy_entry_clone_independence() {
+        let entry = FailureTaxonomyEntry {
+            regression_class: RegressionClass::Performance,
+            severity: FailureSeverity::Warning,
+            required_response: RequiredResponse::Log,
+            evidence_requirements: vec!["metric".to_string()],
+            description: "original".to_string(),
+        };
+        let mut cloned = entry.clone();
+        cloned.description = "mutated".to_string();
+        assert_eq!(entry.description, "original");
+    }
+
+    // ── Debug output non-empty and distinct ───────────────────────────
+
+    #[test]
+    fn sibling_repo_debug_distinct() {
+        let debugs: BTreeSet<String> = SiblingRepo::all()
+            .iter()
+            .map(|r| format!("{r:?}"))
+            .collect();
+        assert_eq!(debugs.len(), 6);
+        for d in &debugs {
+            assert!(!d.is_empty());
+        }
+    }
+
+    #[test]
+    fn surface_kind_debug_distinct() {
+        let kinds = [
+            SurfaceKind::IdentifierSchema,
+            SurfaceKind::DecisionPayload,
+            SurfaceKind::EvidencePayload,
+            SurfaceKind::ApiMessage,
+            SurfaceKind::PersistenceSemantics,
+            SurfaceKind::ReplayFormat,
+            SurfaceKind::ExportFormat,
+            SurfaceKind::TuiEventContract,
+            SurfaceKind::TuiStateContract,
+            SurfaceKind::TelemetrySchema,
+        ];
+        let debugs: BTreeSet<String> = kinds.iter().map(|k| format!("{k:?}")).collect();
+        assert_eq!(debugs.len(), 10);
+    }
+
+    #[test]
+    fn failure_severity_debug_distinct() {
+        let variants = [
+            FailureSeverity::Info,
+            FailureSeverity::Warning,
+            FailureSeverity::Error,
+            FailureSeverity::Critical,
+        ];
+        let debugs: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(debugs.len(), 4);
+    }
+
+    #[test]
+    fn required_response_debug_distinct() {
+        let variants = [
+            RequiredResponse::Log,
+            RequiredResponse::Warn,
+            RequiredResponse::Block,
+        ];
+        let debugs: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(debugs.len(), 3);
+    }
+
+    #[test]
+    fn change_kind_debug_distinct() {
+        let kinds = [
+            ChangeKind::EntryAdded,
+            ChangeKind::EntryModified,
+            ChangeKind::EntryRemoved,
+            ChangeKind::TaxonomyUpdated,
+            ChangeKind::VectorAdded,
+            ChangeKind::VectorRemoved,
+        ];
+        let debugs: BTreeSet<String> = kinds.iter().map(|k| format!("{k:?}")).collect();
+        assert_eq!(debugs.len(), 6);
+    }
+
+    // ── Serde variant distinctness ─────────────────────────────────────
+
+    #[test]
+    fn sibling_repo_serde_variants_distinct() {
+        let jsons: BTreeSet<String> = SiblingRepo::all()
+            .iter()
+            .map(|r| serde_json::to_string(r).expect("serialize"))
+            .collect();
+        assert_eq!(jsons.len(), 6, "all 6 sibling repo variants serialize distinctly");
+    }
+
+    #[test]
+    fn surface_kind_serde_variants_distinct() {
+        let kinds = [
+            SurfaceKind::IdentifierSchema,
+            SurfaceKind::DecisionPayload,
+            SurfaceKind::EvidencePayload,
+            SurfaceKind::ApiMessage,
+            SurfaceKind::PersistenceSemantics,
+            SurfaceKind::ReplayFormat,
+            SurfaceKind::ExportFormat,
+            SurfaceKind::TuiEventContract,
+            SurfaceKind::TuiStateContract,
+            SurfaceKind::TelemetrySchema,
+        ];
+        let jsons: BTreeSet<String> = kinds
+            .iter()
+            .map(|k| serde_json::to_string(k).expect("serialize"))
+            .collect();
+        assert_eq!(jsons.len(), 10);
+    }
+
+    #[test]
+    fn version_class_serde_variants_distinct() {
+        let variants = [VersionClass::Patch, VersionClass::Minor, VersionClass::Major];
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).expect("serialize"))
+            .collect();
+        assert_eq!(jsons.len(), 3);
+    }
+
+    #[test]
+    fn version_compatibility_serde_variants_distinct() {
+        let variants = [
+            VersionCompatibility::Exact,
+            VersionCompatibility::PatchCompatible,
+            VersionCompatibility::MinorCompatible,
+            VersionCompatibility::MajorIncompatible,
+        ];
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).expect("serialize"))
+            .collect();
+        assert_eq!(jsons.len(), 4);
+    }
+
+    #[test]
+    fn failure_severity_serde_variants_distinct() {
+        let variants = [
+            FailureSeverity::Info,
+            FailureSeverity::Warning,
+            FailureSeverity::Error,
+            FailureSeverity::Critical,
+        ];
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).expect("serialize"))
+            .collect();
+        assert_eq!(jsons.len(), 4);
+    }
+
+    #[test]
+    fn required_response_serde_variants_distinct() {
+        let variants = [RequiredResponse::Log, RequiredResponse::Warn, RequiredResponse::Block];
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).expect("serialize"))
+            .collect();
+        assert_eq!(jsons.len(), 3);
+    }
+
+    #[test]
+    fn change_kind_serde_variants_distinct() {
+        let kinds = [
+            ChangeKind::EntryAdded,
+            ChangeKind::EntryModified,
+            ChangeKind::EntryRemoved,
+            ChangeKind::TaxonomyUpdated,
+            ChangeKind::VectorAdded,
+            ChangeKind::VectorRemoved,
+        ];
+        let jsons: BTreeSet<String> = kinds
+            .iter()
+            .map(|k| serde_json::to_string(k).expect("serialize"))
+            .collect();
+        assert_eq!(jsons.len(), 6);
+    }
+
+    // ── JSON field-name stability ──────────────────────────────────────
+
+    #[test]
+    fn semantic_version_json_field_names() {
+        let v = SemanticVersion::new(1, 2, 3);
+        let json = serde_json::to_string(&v).expect("serialize");
+        assert!(json.contains("\"major\""), "expected 'major' field");
+        assert!(json.contains("\"minor\""), "expected 'minor' field");
+        assert!(json.contains("\"patch\""), "expected 'patch' field");
+        assert!(json.contains("1"));
+        assert!(json.contains("2"));
+        assert!(json.contains("3"));
+    }
+
+    #[test]
+    fn replay_artifact_json_field_names() {
+        let mut versions = BTreeMap::new();
+        versions.insert("repo".to_string(), SemanticVersion::new(1, 0, 0));
+        let artifact = ReplayArtifact {
+            test_id: "t1".to_string(),
+            boundary: SiblingRepo::Frankentui,
+            deterministic_seed: 7,
+            pinned_versions: versions,
+            input_snapshot: vec![1],
+            expected_output_hash: "hash".to_string(),
+            reproduction_command: "cmd".to_string(),
+        };
+        let json = serde_json::to_string(&artifact).expect("serialize");
+        assert!(json.contains("\"test_id\""));
+        assert!(json.contains("\"boundary\""));
+        assert!(json.contains("\"deterministic_seed\""));
+        assert!(json.contains("\"pinned_versions\""));
+        assert!(json.contains("\"input_snapshot\""));
+        assert!(json.contains("\"expected_output_hash\""));
+        assert!(json.contains("\"reproduction_command\""));
+    }
+
+    #[test]
+    fn replay_obligation_json_field_names() {
+        let ob = ReplayObligation::standard("tid", SiblingRepo::Asupersync);
+        let json = serde_json::to_string(&ob).expect("serialize");
+        assert!(json.contains("\"test_id\""));
+        assert!(json.contains("\"boundary\""));
+        assert!(json.contains("\"must_pin_versions\""));
+        assert!(json.contains("\"must_provide_seed\""));
+        assert!(json.contains("\"must_capture_input\""));
+        assert!(json.contains("\"must_hash_output\""));
+    }
+
+    #[test]
+    fn catalog_validation_error_json_field_names() {
+        let err = CatalogValidationError {
+            entry_id: Some("e1".to_string()),
+            field: "f1".to_string(),
+            detail: "d1".to_string(),
+        };
+        let json = serde_json::to_string(&err).expect("serialize");
+        assert!(json.contains("\"entry_id\""));
+        assert!(json.contains("\"field\""));
+        assert!(json.contains("\"detail\""));
+    }
+
+    #[test]
+    fn catalog_change_record_json_field_names() {
+        let record = CatalogChangeRecord {
+            version: SemanticVersion::new(1, 0, 0),
+            description: "added".to_string(),
+            affected_entries: vec!["e1".to_string()],
+            change_kind: ChangeKind::EntryAdded,
+        };
+        let json = serde_json::to_string(&record).expect("serialize");
+        assert!(json.contains("\"version\""));
+        assert!(json.contains("\"description\""));
+        assert!(json.contains("\"affected_entries\""));
+        assert!(json.contains("\"change_kind\""));
+    }
+
+    // ── Display format checks ──────────────────────────────────────────
+
+    #[test]
+    fn failure_severity_display_all() {
+        assert_eq!(FailureSeverity::Info.to_string(), "info");
+        assert_eq!(FailureSeverity::Warning.to_string(), "warning");
+        assert_eq!(FailureSeverity::Error.to_string(), "error");
+        assert_eq!(FailureSeverity::Critical.to_string(), "critical");
+    }
+
+    #[test]
+    fn required_response_display_all() {
+        assert_eq!(RequiredResponse::Log.to_string(), "log");
+        assert_eq!(RequiredResponse::Warn.to_string(), "warn");
+        assert_eq!(RequiredResponse::Block.to_string(), "block");
+    }
+
+    #[test]
+    fn change_kind_display_all() {
+        assert_eq!(ChangeKind::EntryAdded.to_string(), "entry_added");
+        assert_eq!(ChangeKind::EntryModified.to_string(), "entry_modified");
+        assert_eq!(ChangeKind::EntryRemoved.to_string(), "entry_removed");
+        assert_eq!(ChangeKind::TaxonomyUpdated.to_string(), "taxonomy_updated");
+        assert_eq!(ChangeKind::VectorAdded.to_string(), "vector_added");
+        assert_eq!(ChangeKind::VectorRemoved.to_string(), "vector_removed");
+    }
+
+    #[test]
+    fn surface_kind_display_matches_as_str() {
+        let kinds = [
+            SurfaceKind::IdentifierSchema,
+            SurfaceKind::DecisionPayload,
+            SurfaceKind::EvidencePayload,
+            SurfaceKind::ApiMessage,
+            SurfaceKind::PersistenceSemantics,
+            SurfaceKind::ReplayFormat,
+            SurfaceKind::ExportFormat,
+            SurfaceKind::TuiEventContract,
+            SurfaceKind::TuiStateContract,
+            SurfaceKind::TelemetrySchema,
+        ];
+        for kind in &kinds {
+            assert_eq!(kind.to_string(), kind.as_str());
+        }
+    }
+
+    #[test]
+    fn version_class_display_matches_as_str() {
+        let variants = [VersionClass::Patch, VersionClass::Minor, VersionClass::Major];
+        for v in &variants {
+            assert_eq!(v.to_string(), v.as_str());
+        }
+    }
+
+    #[test]
+    fn failure_severity_display_matches_as_str() {
+        let variants = [
+            FailureSeverity::Info,
+            FailureSeverity::Warning,
+            FailureSeverity::Error,
+            FailureSeverity::Critical,
+        ];
+        for v in &variants {
+            assert_eq!(v.to_string(), v.as_str());
+        }
+    }
+
+    #[test]
+    fn required_response_display_matches_as_str() {
+        let variants = [RequiredResponse::Log, RequiredResponse::Warn, RequiredResponse::Block];
+        for v in &variants {
+            assert_eq!(v.to_string(), v.as_str());
+        }
+    }
+
+    // ── Hash consistency ───────────────────────────────────────────────
+
+    #[test]
+    fn sibling_repo_hash_consistent() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let repo = SiblingRepo::Frankensqlite;
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        repo.hash(&mut h1);
+        repo.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn sibling_repo_hash_distinct_across_variants() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let hashes: BTreeSet<u64> = SiblingRepo::all()
+            .iter()
+            .map(|r| {
+                let mut h = DefaultHasher::new();
+                r.hash(&mut h);
+                h.finish()
+            })
+            .collect();
+        assert_eq!(hashes.len(), 6, "all sibling repo variants hash distinctly");
+    }
+
+    #[test]
+    fn semantic_version_hash_consistent() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let v = SemanticVersion::new(1, 2, 3);
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        v.hash(&mut h1);
+        v.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn semantic_version_hash_distinct_across_values() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let versions = [
+            SemanticVersion::new(1, 0, 0),
+            SemanticVersion::new(2, 0, 0),
+            SemanticVersion::new(1, 1, 0),
+            SemanticVersion::new(1, 0, 1),
+        ];
+        let hashes: BTreeSet<u64> = versions
+            .iter()
+            .map(|v| {
+                let mut h = DefaultHasher::new();
+                v.hash(&mut h);
+                h.finish()
+            })
+            .collect();
+        assert_eq!(hashes.len(), 4, "distinct versions should hash distinctly");
+    }
+
+    // ── Boundary/edge cases ────────────────────────────────────────────
+
+    #[test]
+    fn semantic_version_max_fields() {
+        let v = SemanticVersion::new(u32::MAX, u32::MAX, u32::MAX);
+        let json = serde_json::to_string(&v).expect("serialize");
+        let decoded: SemanticVersion = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(v, decoded);
+        assert_eq!(v.major, u32::MAX);
+        assert_eq!(v.minor, u32::MAX);
+        assert_eq!(v.patch, u32::MAX);
+    }
+
+    #[test]
+    fn replay_artifact_empty_input_snapshot_detected() {
+        let ob = ReplayObligation {
+            test_id: "t1".to_string(),
+            boundary: SiblingRepo::FrankenNode,
+            must_pin_versions: false,
+            must_provide_seed: false,
+            must_capture_input: true,
+            must_hash_output: false,
+        };
+        let artifact = ReplayArtifact {
+            test_id: "t1".to_string(),
+            boundary: SiblingRepo::FrankenNode,
+            deterministic_seed: 1,
+            pinned_versions: BTreeMap::new(),
+            input_snapshot: vec![],
+            expected_output_hash: "hash".to_string(),
+            reproduction_command: "cmd".to_string(),
+        };
+        let errors = ob.verify(&artifact);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("input_snapshot"));
+    }
+
+    #[test]
+    fn replay_obligation_verify_empty_hash_detected() {
+        let ob = ReplayObligation {
+            test_id: "t1".to_string(),
+            boundary: SiblingRepo::FastapiRust,
+            must_pin_versions: false,
+            must_provide_seed: false,
+            must_capture_input: false,
+            must_hash_output: true,
+        };
+        let artifact = ReplayArtifact {
+            test_id: "t1".to_string(),
+            boundary: SiblingRepo::FastapiRust,
+            deterministic_seed: 1,
+            pinned_versions: BTreeMap::new(),
+            input_snapshot: vec![],
+            expected_output_hash: "".to_string(),
+            reproduction_command: "cmd".to_string(),
+        };
+        let errors = ob.verify(&artifact);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("expected_output_hash"));
+    }
+
+    #[test]
+    fn replay_obligation_verify_test_id_mismatch_detected() {
+        let ob = ReplayObligation {
+            test_id: "expected-id".to_string(),
+            boundary: SiblingRepo::SqlmodelRust,
+            must_pin_versions: false,
+            must_provide_seed: false,
+            must_capture_input: false,
+            must_hash_output: false,
+        };
+        let artifact = ReplayArtifact {
+            test_id: "wrong-id".to_string(),
+            boundary: SiblingRepo::SqlmodelRust,
+            deterministic_seed: 1,
+            pinned_versions: BTreeMap::new(),
+            input_snapshot: vec![],
+            expected_output_hash: "hash".to_string(),
+            reproduction_command: "cmd".to_string(),
+        };
+        let errors = ob.verify(&artifact);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("test_id mismatch"));
+        assert!(errors[0].contains("expected-id"));
+        assert!(errors[0].contains("wrong-id"));
+    }
+
+    #[test]
+    fn conformance_vector_serde_roundtrip_with_regression_class() {
+        let v = ConformanceVector {
+            vector_id: "v1".to_string(),
+            description: "desc".to_string(),
+            input_json: "{\"x\": 1}".to_string(),
+            expected_pass: false,
+            expected_regression_class: Some(RegressionClass::Breaking),
+        };
+        let json = serde_json::to_string(&v).expect("serialize");
+        let decoded: ConformanceVector = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(v, decoded);
+    }
+
+    #[test]
+    fn conformance_vector_serde_roundtrip_no_regression_class() {
+        let v = ConformanceVector {
+            vector_id: "v2".to_string(),
+            description: "passes".to_string(),
+            input_json: "{}".to_string(),
+            expected_pass: true,
+            expected_regression_class: None,
+        };
+        let json = serde_json::to_string(&v).expect("serialize");
+        let decoded: ConformanceVector = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(v, decoded);
+        assert!(decoded.expected_regression_class.is_none());
+    }
+
+    #[test]
+    fn catalog_entry_has_required_vectors_true_when_both_present() {
+        let make_entry = |id: &str, pos: Vec<ConformanceVector>, neg: Vec<ConformanceVector>| CatalogEntry {
+            entry_id: id.to_string(),
+            boundary: BoundarySurface {
+                sibling: SiblingRepo::Frankentui,
+                surface_id: id.to_string(),
+                surface_kind: SurfaceKind::ApiMessage,
+                description: "test".to_string(),
+                covered_fields: ["f"].iter().map(|s| s.to_string()).collect(),
+                version_class: VersionClass::Minor,
+            },
+            positive_vectors: pos,
+            negative_vectors: neg,
+            replay_obligation: ReplayObligation::standard(id, SiblingRepo::Frankentui),
+            failure_class: RegressionClass::Behavioral,
+            approved: false,
+            approval_epoch: None,
+        };
+        let pos_vec = ConformanceVector {
+            vector_id: "p".to_string(),
+            description: "positive".to_string(),
+            input_json: "{}".to_string(),
+            expected_pass: true,
+            expected_regression_class: None,
+        };
+        let neg_vec = ConformanceVector {
+            vector_id: "n".to_string(),
+            description: "negative".to_string(),
+            input_json: "{}".to_string(),
+            expected_pass: false,
+            expected_regression_class: Some(RegressionClass::Behavioral),
+        };
+        let e_both = make_entry("e1", vec![pos_vec.clone()], vec![neg_vec.clone()]);
+        assert!(e_both.has_required_vectors());
+        let e_no_neg = make_entry("e2", vec![pos_vec.clone()], vec![]);
+        assert!(!e_no_neg.has_required_vectors());
+        let e_no_pos = make_entry("e3", vec![], vec![neg_vec.clone()]);
+        assert!(!e_no_pos.has_required_vectors());
+        let e_none = make_entry("e4", vec![], vec![]);
+        assert!(!e_none.has_required_vectors());
+    }
+
+    #[test]
+    fn catalog_entry_serde_roundtrip() {
+        let entry = CatalogEntry {
+            entry_id: "serde/test_entry".to_string(),
+            boundary: BoundarySurface {
+                sibling: SiblingRepo::Frankensqlite,
+                surface_id: "serde/test_entry".to_string(),
+                surface_kind: SurfaceKind::PersistenceSemantics,
+                description: "serde test".to_string(),
+                covered_fields: ["key", "value"].iter().map(|s| s.to_string()).collect(),
+                version_class: VersionClass::Major,
+            },
+            positive_vectors: vec![ConformanceVector {
+                vector_id: "serde/pos".to_string(),
+                description: "positive".to_string(),
+                input_json: "{\"key\": \"k\"}".to_string(),
+                expected_pass: true,
+                expected_regression_class: None,
+            }],
+            negative_vectors: vec![ConformanceVector {
+                vector_id: "serde/neg".to_string(),
+                description: "negative".to_string(),
+                input_json: "{}".to_string(),
+                expected_pass: false,
+                expected_regression_class: Some(RegressionClass::Breaking),
+            }],
+            replay_obligation: ReplayObligation::standard(
+                "serde/test_entry",
+                SiblingRepo::Frankensqlite,
+            ),
+            failure_class: RegressionClass::Breaking,
+            approved: true,
+            approval_epoch: Some(42),
+        };
+        let json = serde_json::to_string(&entry).expect("serialize");
+        let decoded: CatalogEntry = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(entry, decoded);
+    }
+
+    #[test]
+    fn boundary_surface_serde_roundtrip() {
+        let surface = BoundarySurface {
+            sibling: SiblingRepo::SqlmodelRust,
+            surface_id: "sqlmodel/test".to_string(),
+            surface_kind: SurfaceKind::PersistenceSemantics,
+            description: "roundtrip test".to_string(),
+            covered_fields: ["store_query", "batch_put_entry"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            version_class: VersionClass::Minor,
+        };
+        let json = serde_json::to_string(&surface).expect("serialize");
+        let decoded: BoundarySurface = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(surface, decoded);
+    }
+
+    #[test]
+    fn field_version_coverage_serde_roundtrip() {
+        let fvc = FieldVersionCoverage {
+            field_name: "decision_id".to_string(),
+            protected_at: VersionClass::Minor,
+            required: true,
+        };
+        let json = serde_json::to_string(&fvc).expect("serialize");
+        let decoded: FieldVersionCoverage = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(fvc, decoded);
+        assert_eq!(decoded.protected_at, VersionClass::Minor);
+        assert!(decoded.required);
+    }
+
+    #[test]
+    fn field_version_coverage_clone_independence() {
+        let fvc = FieldVersionCoverage {
+            field_name: "trace_id".to_string(),
+            protected_at: VersionClass::Patch,
+            required: false,
+        };
+        let mut cloned = fvc.clone();
+        cloned.required = true;
+        assert!(!fvc.required);
+        assert!(cloned.required);
+    }
+
+    // ── Additional integration: classify_failure edge cases ────────────
+
+    #[test]
+    fn classify_failure_returns_none_for_empty_taxonomy() {
+        let empty: Vec<FailureTaxonomyEntry> = vec![];
+        assert!(classify_failure(&empty, RegressionClass::Breaking).is_none());
+    }
+
+    #[test]
+    fn classify_failure_returns_correct_entry_for_each_class() {
+        let taxonomy = failure_taxonomy();
+        for class in [
+            RegressionClass::Breaking,
+            RegressionClass::Behavioral,
+            RegressionClass::Observability,
+            RegressionClass::Performance,
+        ] {
+            let entry = classify_failure(&taxonomy, class);
+            assert!(entry.is_some(), "should find entry for {class:?}");
+            assert_eq!(entry.unwrap().regression_class, class);
+        }
+    }
+
+    #[test]
+    fn catalog_entries_by_class_sums_to_total_entries() {
+        let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
+        // Add entries across different classes
+        for (id, class) in [
+            ("e1", RegressionClass::Breaking),
+            ("e2", RegressionClass::Behavioral),
+            ("e3", RegressionClass::Observability),
+            ("e4", RegressionClass::Performance),
+            ("e5", RegressionClass::Breaking),
+        ] {
+            catalog.add_entry(CatalogEntry {
+                entry_id: id.to_string(),
+                boundary: BoundarySurface {
+                    sibling: SiblingRepo::Asupersync,
+                    surface_id: id.to_string(),
+                    surface_kind: SurfaceKind::EvidencePayload,
+                    description: "test".to_string(),
+                    covered_fields: ["f"].iter().map(|s| s.to_string()).collect(),
+                    version_class: VersionClass::Patch,
+                },
+                positive_vectors: vec![ConformanceVector {
+                    vector_id: format!("{id}/p"),
+                    description: "pos".to_string(),
+                    input_json: "{}".to_string(),
+                    expected_pass: true,
+                    expected_regression_class: None,
+                }],
+                negative_vectors: vec![ConformanceVector {
+                    vector_id: format!("{id}/n"),
+                    description: "neg".to_string(),
+                    input_json: "{}".to_string(),
+                    expected_pass: false,
+                    expected_regression_class: Some(class),
+                }],
+                replay_obligation: ReplayObligation::standard(id, SiblingRepo::Asupersync),
+                failure_class: class,
+                approved: true,
+                approval_epoch: None,
+            });
+        }
+        let counts = catalog.entries_by_class();
+        let total: usize = counts.values().sum();
+        assert_eq!(total, catalog.entries.len());
+        assert_eq!(*counts.get(&RegressionClass::Breaking).unwrap(), 2);
+        assert_eq!(*counts.get(&RegressionClass::Behavioral).unwrap(), 1);
+    }
+
+    #[test]
+    fn covered_boundaries_returns_correct_set() {
+        let catalog = build_canonical_catalog();
+        let covered = catalog.covered_boundaries();
+        // All 6 sibling repos should be covered by canonical catalog
+        assert_eq!(covered.len(), 6);
+        for repo in SiblingRepo::all() {
+            assert!(covered.contains(repo), "expected {repo} in covered boundaries");
+        }
+    }
+
+    #[test]
+    fn catalog_get_entry_returns_correct_entry() {
+        let catalog = build_canonical_catalog();
+        let entry = catalog.get_entry("frankensqlite/store_record");
+        assert!(entry.is_some());
+        let e = entry.unwrap();
+        assert_eq!(e.entry_id, "frankensqlite/store_record");
+        assert_eq!(e.boundary.sibling, SiblingRepo::Frankensqlite);
+        assert_eq!(e.boundary.surface_kind, SurfaceKind::PersistenceSemantics);
+    }
+
+    #[test]
+    fn version_negotiation_result_with_migration_path_serde_roundtrip() {
+        let result = VersionNegotiationResult {
+            boundary: SiblingRepo::FrankenNode,
+            local_version: SemanticVersion::new(1, 0, 0),
+            remote_version: SemanticVersion::new(2, 0, 0),
+            compatibility: VersionCompatibility::MajorIncompatible,
+            migration_required: true,
+            migration_path: Some("migrate_v1_to_v2.sh".to_string()),
+        };
+        let json = serde_json::to_string(&result).expect("serialize");
+        let decoded: VersionNegotiationResult = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(result, decoded);
+        assert!(decoded.migration_required);
+        assert_eq!(decoded.migration_path, Some("migrate_v1_to_v2.sh".to_string()));
+    }
+
+    #[test]
+    fn catalog_change_record_serde_roundtrip() {
+        let record = CatalogChangeRecord {
+            version: SemanticVersion::new(2, 1, 0),
+            description: "modified entry for frankentui".to_string(),
+            affected_entries: vec!["frankentui/adapter_envelope".to_string()],
+            change_kind: ChangeKind::EntryModified,
+        };
+        let json = serde_json::to_string(&record).expect("serialize");
+        let decoded: CatalogChangeRecord = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(record, decoded);
+        assert_eq!(decoded.change_kind, ChangeKind::EntryModified);
+    }
+
+    #[test]
+    fn validate_catalog_detects_duplicate_vector_ids() {
+        let mut catalog = ConformanceCatalog::new(SemanticVersion::new(1, 0, 0));
+        let dup_vector = ConformanceVector {
+            vector_id: "same-id".to_string(),
+            description: "dup".to_string(),
+            input_json: "{}".to_string(),
+            expected_pass: true,
+            expected_regression_class: None,
+        };
+        catalog.add_entry(CatalogEntry {
+            entry_id: "test/dup_vectors".to_string(),
+            boundary: BoundarySurface {
+                sibling: SiblingRepo::SqlmodelRust,
+                surface_id: "test/dup_vectors".to_string(),
+                surface_kind: SurfaceKind::ExportFormat,
+                description: "test".to_string(),
+                covered_fields: ["f1"].iter().map(|s| s.to_string()).collect(),
+                version_class: VersionClass::Minor,
+            },
+            positive_vectors: vec![dup_vector.clone()],
+            negative_vectors: vec![
+                ConformanceVector {
+                    vector_id: "same-id".to_string(), // duplicate!
+                    description: "negative with dup id".to_string(),
+                    input_json: "{}".to_string(),
+                    expected_pass: false,
+                    expected_regression_class: Some(RegressionClass::Behavioral),
+                },
+            ],
+            replay_obligation: ReplayObligation::standard(
+                "test/dup_vectors",
+                SiblingRepo::SqlmodelRust,
+            ),
+            failure_class: RegressionClass::Behavioral,
+            approved: false,
+            approval_epoch: None,
+        });
+        let errors = validate_catalog(&catalog);
+        assert!(
+            errors.iter().any(|e| e.detail.contains("duplicate vector ID")),
+            "expected duplicate vector ID error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn version_class_as_str_patch() {
+        assert_eq!(VersionClass::Patch.as_str(), "patch");
+    }
+
+    #[test]
+    fn negotiate_version_same_major_different_minor_and_patch_is_minor_compatible() {
+        // When minor differs, even if patch also differs, result is MinorCompatible
+        let local = SemanticVersion::new(1, 2, 0);
+        let remote = SemanticVersion::new(1, 3, 5);
+        assert_eq!(negotiate_version(local, remote), VersionCompatibility::MinorCompatible);
+    }
+
+    #[test]
+    fn sibling_repo_ordering_is_deterministic() {
+        // BTreeSet should consistently sort sibling repos
+        let mut set = BTreeSet::new();
+        for repo in SiblingRepo::all() {
+            set.insert(*repo);
+        }
+        assert_eq!(set.len(), 6);
+        let first = *set.iter().next().unwrap();
+        // Asupersync should be first alphabetically
+        assert_eq!(first, SiblingRepo::Asupersync);
+    }
 }

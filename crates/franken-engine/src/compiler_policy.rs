@@ -2022,4 +2022,759 @@ mod tests {
         let back: OptimizationClassPolicy = serde_json::from_str(&json).unwrap();
         assert_eq!(policy, back);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 3: Copy/Clone, Debug, serde distinctness, field names,
+    // Display, Hash consistency, boundary/edge cases, Error trait
+    // -----------------------------------------------------------------------
+
+    // --- Copy/Clone semantics for Copy types ---
+
+    #[test]
+    fn specialization_outcome_is_copy() {
+        let a = SpecializationOutcome::Applied;
+        let b = a; // Copy
+        assert_eq!(a, b);
+        let c = SpecializationOutcome::RejectedGlobalDisable;
+        let d = c;
+        assert_eq!(c, d);
+    }
+
+    #[test]
+    fn optimization_class_is_copy() {
+        let a = OptimizationClass::HostcallDispatchSpecialization;
+        let b = a; // Copy
+        assert_eq!(a, b);
+        let c = OptimizationClass::PathElimination;
+        let d = c;
+        assert_eq!(c, d);
+    }
+
+    #[test]
+    fn proof_type_is_copy() {
+        let a = ProofType::CapabilityWitness;
+        let b = a; // Copy
+        assert_eq!(a, b);
+        let c = ProofType::FlowProof;
+        let d = c;
+        assert_eq!(c, d);
+    }
+
+    // --- Debug output non-empty and distinct across variants ---
+
+    #[test]
+    fn specialization_outcome_debug_non_empty_and_distinct() {
+        let outcomes = [
+            SpecializationOutcome::Applied,
+            SpecializationOutcome::RejectedGlobalDisable,
+            SpecializationOutcome::RejectedClassDisabled,
+            SpecializationOutcome::RejectedNoProofs,
+            SpecializationOutcome::RejectedInsufficientProofs,
+            SpecializationOutcome::RejectedMissingRequiredProofTypes,
+            SpecializationOutcome::RejectedProofExpired,
+            SpecializationOutcome::RejectedEpochMismatch,
+            SpecializationOutcome::RejectedProofNotFound,
+            SpecializationOutcome::InvalidatedByEpochChange,
+        ];
+        let mut debug_strs: BTreeSet<String> = BTreeSet::new();
+        for o in &outcomes {
+            let s = format!("{o:?}");
+            assert!(!s.is_empty(), "debug output must be non-empty");
+            debug_strs.insert(s);
+        }
+        assert_eq!(
+            debug_strs.len(),
+            outcomes.len(),
+            "all Debug strings must be distinct"
+        );
+    }
+
+    #[test]
+    fn optimization_class_debug_non_empty_and_distinct() {
+        let classes = [
+            OptimizationClass::HostcallDispatchSpecialization,
+            OptimizationClass::IfcCheckElision,
+            OptimizationClass::SuperinstructionFusion,
+            OptimizationClass::PathElimination,
+        ];
+        let mut debug_strs: BTreeSet<String> = BTreeSet::new();
+        for c in &classes {
+            let s = format!("{c:?}");
+            assert!(!s.is_empty());
+            debug_strs.insert(s);
+        }
+        assert_eq!(debug_strs.len(), classes.len());
+    }
+
+    #[test]
+    fn proof_type_debug_non_empty_and_distinct() {
+        let types = [
+            ProofType::CapabilityWitness,
+            ProofType::FlowProof,
+            ProofType::ReplayMotif,
+        ];
+        let mut debug_strs: BTreeSet<String> = BTreeSet::new();
+        for t in &types {
+            let s = format!("{t:?}");
+            assert!(!s.is_empty());
+            debug_strs.insert(s);
+        }
+        assert_eq!(debug_strs.len(), types.len());
+    }
+
+    #[test]
+    fn security_proof_debug_non_empty_and_distinct() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let cw = cap_witness_proof("dbg-cw", epoch);
+        let fp = flow_proof("dbg-fp", epoch);
+        let rm = replay_motif_proof("dbg-rm", epoch);
+        let s_cw = format!("{cw:?}");
+        let s_fp = format!("{fp:?}");
+        let s_rm = format!("{rm:?}");
+        assert!(!s_cw.is_empty());
+        assert!(!s_fp.is_empty());
+        assert!(!s_rm.is_empty());
+        assert_ne!(s_cw, s_fp);
+        assert_ne!(s_fp, s_rm);
+        assert_ne!(s_cw, s_rm);
+    }
+
+    // --- Serde variant distinctness ---
+
+    #[test]
+    fn specialization_outcome_serde_variants_distinct() {
+        let outcomes = [
+            SpecializationOutcome::Applied,
+            SpecializationOutcome::RejectedGlobalDisable,
+            SpecializationOutcome::RejectedClassDisabled,
+            SpecializationOutcome::RejectedNoProofs,
+            SpecializationOutcome::RejectedInsufficientProofs,
+            SpecializationOutcome::RejectedMissingRequiredProofTypes,
+            SpecializationOutcome::RejectedProofExpired,
+            SpecializationOutcome::RejectedEpochMismatch,
+            SpecializationOutcome::RejectedProofNotFound,
+            SpecializationOutcome::InvalidatedByEpochChange,
+        ];
+        let mut jsons: BTreeSet<String> = BTreeSet::new();
+        for o in &outcomes {
+            let j = serde_json::to_string(o).unwrap();
+            jsons.insert(j);
+        }
+        assert_eq!(jsons.len(), outcomes.len(), "all variants must serialize distinctly");
+    }
+
+    #[test]
+    fn optimization_class_serde_variants_distinct() {
+        let classes = [
+            OptimizationClass::HostcallDispatchSpecialization,
+            OptimizationClass::IfcCheckElision,
+            OptimizationClass::SuperinstructionFusion,
+            OptimizationClass::PathElimination,
+        ];
+        let mut jsons: BTreeSet<String> = BTreeSet::new();
+        for c in &classes {
+            let j = serde_json::to_string(c).unwrap();
+            jsons.insert(j);
+        }
+        assert_eq!(jsons.len(), classes.len());
+    }
+
+    #[test]
+    fn proof_type_serde_variants_distinct() {
+        let types = [
+            ProofType::CapabilityWitness,
+            ProofType::FlowProof,
+            ProofType::ReplayMotif,
+        ];
+        let mut jsons: BTreeSet<String> = BTreeSet::new();
+        for t in &types {
+            let j = serde_json::to_string(t).unwrap();
+            jsons.insert(j);
+        }
+        assert_eq!(jsons.len(), types.len());
+    }
+
+    #[test]
+    fn security_proof_serde_variants_distinct() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let cw = cap_witness_proof("sv-cw", epoch);
+        let fp = flow_proof("sv-fp", epoch);
+        let rm = replay_motif_proof("sv-rm", epoch);
+        let j_cw = serde_json::to_string(&cw).unwrap();
+        let j_fp = serde_json::to_string(&fp).unwrap();
+        let j_rm = serde_json::to_string(&rm).unwrap();
+        assert_ne!(j_cw, j_fp);
+        assert_ne!(j_fp, j_rm);
+        assert_ne!(j_cw, j_rm);
+    }
+
+    // --- Clone independence ---
+
+    #[test]
+    fn marked_region_clone_independence() {
+        let id = make_proof_id("clone-ind");
+        let original = MarkedRegion {
+            region_id: "original".to_string(),
+            optimization_class: OptimizationClass::PathElimination,
+            proof_refs: vec![id.clone()],
+            elided_check_description: "original description".to_string(),
+        };
+        let mut cloned = original.clone();
+        cloned.region_id = "cloned".to_string();
+        cloned.elided_check_description = "cloned description".to_string();
+        assert_eq!(original.region_id, "original");
+        assert_eq!(original.elided_check_description, "original description");
+    }
+
+    #[test]
+    fn optimization_class_policy_clone_independence() {
+        let original = OptimizationClassPolicy {
+            enabled: true,
+            min_proof_count: 5,
+            required_proof_types: BTreeSet::from([ProofType::CapabilityWitness]),
+            governance_approved: false,
+        };
+        let mut cloned = original.clone();
+        cloned.enabled = false;
+        cloned.min_proof_count = 1;
+        assert!(original.enabled);
+        assert_eq!(original.min_proof_count, 5);
+    }
+
+    #[test]
+    fn compiler_policy_config_clone_independence() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let original = CompilerPolicyConfig::new("orig", epoch);
+        let mut cloned = original.clone();
+        cloned.global_disable = true;
+        cloned.policy_id = "cloned".to_string();
+        assert!(!original.global_disable);
+        assert_eq!(original.policy_id, "orig");
+    }
+
+    #[test]
+    fn proof_store_clone_independence() {
+        let mut original = ProofStore::new();
+        let epoch = SecurityEpoch::from_raw(1);
+        let p = cap_witness_proof("clone-store", epoch);
+        let pid = p.proof_id().clone();
+        original.insert(p);
+
+        let mut cloned = original.clone();
+        cloned.remove(&pid);
+
+        // Original still has the proof
+        assert_eq!(original.len(), 1);
+        assert!(original.get(&pid).is_some());
+        // Clone does not
+        assert!(cloned.is_empty());
+    }
+
+    // --- JSON field-name stability ---
+
+    #[test]
+    fn compiler_policy_config_json_field_names() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let config = CompilerPolicyConfig::new("field-test", epoch);
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"current_epoch\""), "missing current_epoch field");
+        assert!(json.contains("\"class_policies\""), "missing class_policies field");
+        assert!(json.contains("\"global_disable\""), "missing global_disable field");
+        assert!(json.contains("\"policy_id\""), "missing policy_id field");
+    }
+
+    #[test]
+    fn marked_region_json_field_names() {
+        let region = MarkedRegion {
+            region_id: "r1".to_string(),
+            optimization_class: OptimizationClass::PathElimination,
+            proof_refs: vec![],
+            elided_check_description: "desc".to_string(),
+        };
+        let json = serde_json::to_string(&region).unwrap();
+        assert!(json.contains("\"region_id\""), "missing region_id field");
+        assert!(json.contains("\"optimization_class\""), "missing optimization_class field");
+        assert!(json.contains("\"proof_refs\""), "missing proof_refs field");
+        assert!(
+            json.contains("\"elided_check_description\""),
+            "missing elided_check_description field"
+        );
+    }
+
+    #[test]
+    fn specialization_decision_json_field_names() {
+        let decision = SpecializationDecision {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            region_id: "r".to_string(),
+            optimization_class: OptimizationClass::HostcallDispatchSpecialization,
+            outcome: SpecializationOutcome::Applied,
+            detail: "ok".to_string(),
+            proof_ids: vec![],
+            epoch: SecurityEpoch::from_raw(1),
+            timestamp_ns: 0,
+        };
+        let json = serde_json::to_string(&decision).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"region_id\""));
+        assert!(json.contains("\"optimization_class\""));
+        assert!(json.contains("\"outcome\""));
+        assert!(json.contains("\"detail\""));
+        assert!(json.contains("\"proof_ids\""));
+        assert!(json.contains("\"epoch\""));
+        assert!(json.contains("\"timestamp_ns\""));
+    }
+
+    #[test]
+    fn compiler_policy_event_json_field_names() {
+        let event = CompilerPolicyEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "o".to_string(),
+            error_code: Some("err".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"event\""));
+        assert!(json.contains("\"outcome\""));
+        assert!(json.contains("\"error_code\""));
+    }
+
+    // --- Display format checks ---
+
+    #[test]
+    fn optimization_class_display_non_empty_and_distinct() {
+        let classes = [
+            OptimizationClass::HostcallDispatchSpecialization,
+            OptimizationClass::IfcCheckElision,
+            OptimizationClass::SuperinstructionFusion,
+            OptimizationClass::PathElimination,
+        ];
+        let mut displays: BTreeSet<String> = BTreeSet::new();
+        for c in &classes {
+            let s = format!("{c}");
+            assert!(!s.is_empty(), "Display must be non-empty");
+            displays.insert(s);
+        }
+        assert_eq!(displays.len(), classes.len(), "Display values must be distinct");
+    }
+
+    #[test]
+    fn optimization_class_display_exact_values() {
+        assert_eq!(
+            format!("{}", OptimizationClass::HostcallDispatchSpecialization),
+            "hostcall_dispatch_specialization"
+        );
+        assert_eq!(
+            format!("{}", OptimizationClass::IfcCheckElision),
+            "ifc_check_elision"
+        );
+        assert_eq!(
+            format!("{}", OptimizationClass::SuperinstructionFusion),
+            "superinstruction_fusion"
+        );
+        assert_eq!(
+            format!("{}", OptimizationClass::PathElimination),
+            "path_elimination"
+        );
+    }
+
+    #[test]
+    fn proof_type_display_non_empty_and_distinct() {
+        let types = [
+            ProofType::CapabilityWitness,
+            ProofType::FlowProof,
+            ProofType::ReplayMotif,
+        ];
+        let mut displays: BTreeSet<String> = BTreeSet::new();
+        for t in &types {
+            let s = format!("{t}");
+            assert!(!s.is_empty());
+            displays.insert(s);
+        }
+        assert_eq!(displays.len(), types.len());
+    }
+
+    #[test]
+    fn proof_type_display_exact_values() {
+        assert_eq!(format!("{}", ProofType::CapabilityWitness), "capability_witness");
+        assert_eq!(format!("{}", ProofType::FlowProof), "flow_proof");
+        assert_eq!(format!("{}", ProofType::ReplayMotif), "replay_motif");
+    }
+
+    // --- Boundary/edge cases ---
+
+    #[test]
+    fn validity_window_ticks_zero_rejects_all_proof_types() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let mut engine = default_engine(epoch);
+
+        // FlowProof with zero ticks
+        let fp_id = make_proof_id("fp-zero");
+        engine.register_proof(SecurityProof::FlowProof {
+            proof_id: fp_id.clone(),
+            source_label: Label::Public,
+            sink_clearance: Label::Internal,
+            epoch,
+            validity_window_ticks: 0,
+        });
+        let region = make_region("r-fp", OptimizationClass::IfcCheckElision, vec![fp_id]);
+        let d = engine.evaluate(&region, "t-fp", 0);
+        assert_eq!(d.outcome, SpecializationOutcome::RejectedProofExpired);
+
+        // ReplayMotif with zero ticks
+        let rm_id = make_proof_id("rm-zero");
+        engine.register_proof(SecurityProof::ReplayMotif {
+            proof_id: rm_id.clone(),
+            motif_hash: "hash".to_string(),
+            epoch,
+            validity_window_ticks: 0,
+        });
+        let region2 = make_region("r-rm", OptimizationClass::SuperinstructionFusion, vec![rm_id]);
+        let d2 = engine.evaluate(&region2, "t-rm", 0);
+        assert_eq!(d2.outcome, SpecializationOutcome::RejectedProofExpired);
+    }
+
+    #[test]
+    fn empty_string_region_id_is_valid() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let mut engine = default_engine(epoch);
+        let proof = cap_witness_proof("empty-region", epoch);
+        let pid = proof.proof_id().clone();
+        engine.register_proof(proof);
+
+        let region = make_region("", OptimizationClass::HostcallDispatchSpecialization, vec![pid]);
+        let d = engine.evaluate(&region, "trace-empty", 0);
+        assert!(d.outcome.is_applied());
+        assert_eq!(d.region_id, "");
+        assert_eq!(engine.decisions_for_region("").len(), 1);
+    }
+
+    #[test]
+    fn max_validity_window_ticks_passes() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let mut engine = default_engine(epoch);
+        let max_id = make_proof_id("max-ticks");
+        engine.register_proof(SecurityProof::CapabilityWitness {
+            proof_id: max_id.clone(),
+            capability_name: "max".to_string(),
+            epoch,
+            validity_window_ticks: u64::MAX,
+        });
+        let region = make_region(
+            "r-max",
+            OptimizationClass::HostcallDispatchSpecialization,
+            vec![max_id],
+        );
+        let d = engine.evaluate(&region, "t-max", u64::MAX);
+        assert!(d.outcome.is_applied());
+        assert_eq!(d.timestamp_ns, u64::MAX);
+    }
+
+    #[test]
+    fn min_proof_count_zero_always_passes_count_check() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let mut config = CompilerPolicyConfig::new("p-zero-min", epoch);
+        config.class_policies.insert(
+            OptimizationClass::PathElimination,
+            OptimizationClassPolicy {
+                enabled: true,
+                min_proof_count: 0,
+                required_proof_types: BTreeSet::new(),
+                governance_approved: false,
+            },
+        );
+        let mut engine = CompilerPolicyEngine::new(config);
+        let proof = cap_witness_proof("pzm", epoch);
+        let pid = proof.proof_id().clone();
+        engine.register_proof(proof);
+
+        let region = make_region("r-zmin", OptimizationClass::PathElimination, vec![pid]);
+        let d = engine.evaluate(&region, "t-zmin", 0);
+        // min_proof_count=0, 1 proof is sufficient — applied
+        assert!(d.outcome.is_applied());
+    }
+
+    #[test]
+    fn epoch_zero_is_valid() {
+        let epoch = SecurityEpoch::from_raw(0);
+        let mut engine = default_engine(epoch);
+        let proof = cap_witness_proof("epoch-zero", epoch);
+        let pid = proof.proof_id().clone();
+        engine.register_proof(proof);
+
+        let region = make_region(
+            "r-ez",
+            OptimizationClass::HostcallDispatchSpecialization,
+            vec![pid],
+        );
+        let d = engine.evaluate(&region, "t-ez", 0);
+        assert!(d.outcome.is_applied());
+        assert_eq!(d.epoch.as_u64(), 0);
+    }
+
+    // --- ProofStore serde roundtrip ---
+
+    #[test]
+    fn proof_store_serde_roundtrip_empty() {
+        let store = ProofStore::new();
+        let json = serde_json::to_string(&store).unwrap();
+        let back: ProofStore = serde_json::from_str(&json).unwrap();
+        assert!(back.is_empty());
+    }
+
+    #[test]
+    fn proof_store_serde_roundtrip_with_proofs() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let mut store = ProofStore::new();
+        store.insert(cap_witness_proof("sr-a", epoch));
+        store.insert(flow_proof("sr-b", epoch));
+        store.insert(replay_motif_proof("sr-c", epoch));
+
+        let json = serde_json::to_string(&store).unwrap();
+        let back: ProofStore = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.len(), 3);
+    }
+
+    // --- Additional engine behavior tests ---
+
+    #[test]
+    fn engine_decision_counter_increments() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let mut engine = default_engine(epoch);
+        let proof = cap_witness_proof("counter", epoch);
+        let pid = proof.proof_id().clone();
+        engine.register_proof(proof);
+
+        let region = make_region(
+            "r-counter",
+            OptimizationClass::HostcallDispatchSpecialization,
+            vec![pid],
+        );
+        let d1 = engine.evaluate(&region, "t1", 0);
+        let d2 = engine.evaluate(&region, "t2", 1);
+        assert_ne!(d1.decision_id, d2.decision_id);
+        assert!(d1.decision_id.starts_with("cpe-"));
+        assert!(d2.decision_id.starts_with("cpe-"));
+    }
+
+    #[test]
+    fn engine_multiple_epoch_changes_accumulate() {
+        let e1 = SecurityEpoch::from_raw(1);
+        let e2 = SecurityEpoch::from_raw(2);
+        let e3 = SecurityEpoch::from_raw(3);
+        let mut engine = default_engine(e1);
+
+        engine.register_proof(cap_witness_proof("p-e1", e1));
+        engine.on_epoch_change(e1, e2, "t1", 1000);
+        assert_eq!(engine.config().current_epoch, e2);
+        assert!(engine.proof_store().is_empty());
+
+        engine.register_proof(cap_witness_proof("p-e2", e2));
+        engine.on_epoch_change(e2, e3, "t2", 2000);
+        assert_eq!(engine.config().current_epoch, e3);
+        assert!(engine.proof_store().is_empty());
+    }
+
+    #[test]
+    fn engine_last_applied_proof_inputs_after_mixed_decisions() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let mut engine = default_engine(epoch);
+
+        // First: rejected (no proofs)
+        let region_bad = make_region(
+            "r-bad",
+            OptimizationClass::PathElimination,
+            vec![],
+        );
+        engine.evaluate(&region_bad, "t1", 0);
+        // No applied decision yet
+        assert!(engine.last_applied_proof_inputs().is_none());
+
+        // Then: applied
+        let proof = cap_witness_proof("lap", epoch);
+        let pid = proof.proof_id().clone();
+        engine.register_proof(proof);
+        let region_good = make_region(
+            "r-good",
+            OptimizationClass::HostcallDispatchSpecialization,
+            vec![pid],
+        );
+        engine.evaluate(&region_good, "t2", 1);
+        let inputs = engine.last_applied_proof_inputs().unwrap();
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].proof_type, ProofType::CapabilityWitness);
+    }
+
+    #[test]
+    fn proof_store_remove_nonexistent_returns_none() {
+        let mut store = ProofStore::new();
+        let fake = make_proof_id("nonexistent-remove");
+        let result = store.remove(&fake);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn proof_store_remove_returns_proof() {
+        let mut store = ProofStore::new();
+        let epoch = SecurityEpoch::from_raw(1);
+        let proof = cap_witness_proof("removable", epoch);
+        let pid = proof.proof_id().clone();
+        store.insert(proof);
+        let removed = store.remove(&pid).unwrap();
+        assert_eq!(removed.proof_id(), &pid);
+        assert!(store.is_empty());
+    }
+
+    #[test]
+    fn proof_store_insert_overwrites_same_id() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let mut store = ProofStore::new();
+        let id = make_proof_id("overwrite");
+
+        let p1 = SecurityProof::CapabilityWitness {
+            proof_id: id.clone(),
+            capability_name: "cap-v1".to_string(),
+            epoch,
+            validity_window_ticks: 100,
+        };
+        let p2 = SecurityProof::CapabilityWitness {
+            proof_id: id.clone(),
+            capability_name: "cap-v2".to_string(),
+            epoch,
+            validity_window_ticks: 200,
+        };
+        store.insert(p1);
+        assert_eq!(store.len(), 1);
+        store.insert(p2);
+        // Overwrites, len still 1
+        assert_eq!(store.len(), 1);
+        let retrieved = store.get(&id).unwrap();
+        assert_eq!(retrieved.validity_window_ticks(), 200);
+    }
+
+    #[test]
+    fn flow_proof_label_variants_accepted() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let mut engine = default_engine(epoch);
+
+        let labels = [
+            (Label::Public, Label::Internal),
+            (Label::Internal, Label::Confidential),
+            (Label::Confidential, Label::Secret),
+            (Label::Secret, Label::TopSecret),
+        ];
+
+        for (i, (src, sink)) in labels.iter().enumerate() {
+            let tag = format!("fp-label-{i}");
+            let pid = make_proof_id(&tag);
+            engine.register_proof(SecurityProof::FlowProof {
+                proof_id: pid.clone(),
+                source_label: src.clone(),
+                sink_clearance: sink.clone(),
+                epoch,
+                validity_window_ticks: 100,
+            });
+            let region = make_region(
+                &format!("r-label-{i}"),
+                OptimizationClass::IfcCheckElision,
+                vec![pid],
+            );
+            let d = engine.evaluate(&region, &format!("t-label-{i}"), i as u64);
+            assert!(d.outcome.is_applied(), "label pair {i} should apply");
+        }
+    }
+
+    #[test]
+    fn required_proof_types_with_replay_motif_only() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let mut config = CompilerPolicyConfig::new("rpt-rm", epoch);
+        let mut required = BTreeSet::new();
+        required.insert(ProofType::ReplayMotif);
+        config.class_policies.insert(
+            OptimizationClass::SuperinstructionFusion,
+            OptimizationClassPolicy {
+                enabled: true,
+                min_proof_count: 1,
+                required_proof_types: required,
+                governance_approved: false,
+            },
+        );
+        let mut engine = CompilerPolicyEngine::new(config);
+
+        // Provide only CapabilityWitness — should fail
+        let cw = cap_witness_proof("rpt-cw", epoch);
+        let cw_id = cw.proof_id().clone();
+        engine.register_proof(cw);
+        let region = make_region(
+            "r-rpt",
+            OptimizationClass::SuperinstructionFusion,
+            vec![cw_id],
+        );
+        let d = engine.evaluate(&region, "t-rpt", 0);
+        assert_eq!(
+            d.outcome,
+            SpecializationOutcome::RejectedMissingRequiredProofTypes
+        );
+
+        // Provide ReplayMotif — should pass
+        let rm = replay_motif_proof("rpt-rm2", epoch);
+        let rm_id = rm.proof_id().clone();
+        engine.register_proof(rm);
+        let region2 = make_region(
+            "r-rpt2",
+            OptimizationClass::SuperinstructionFusion,
+            vec![rm_id],
+        );
+        let d2 = engine.evaluate(&region2, "t-rpt2", 1);
+        assert!(d2.outcome.is_applied());
+    }
+
+    #[test]
+    fn decision_detail_contains_expected_content_on_rejection() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let mut engine = default_engine(epoch);
+
+        // No proofs
+        let region = make_region("r", OptimizationClass::PathElimination, vec![]);
+        let d = engine.evaluate(&region, "t", 0);
+        assert!(!d.detail.is_empty(), "detail must be non-empty on rejection");
+    }
+
+    #[test]
+    fn decision_detail_mentions_proof_count_on_applied() {
+        let epoch = SecurityEpoch::from_raw(1);
+        let mut engine = default_engine(epoch);
+        let proof = cap_witness_proof("detail-test", epoch);
+        let pid = proof.proof_id().clone();
+        engine.register_proof(proof);
+
+        let region = make_region(
+            "r-detail",
+            OptimizationClass::HostcallDispatchSpecialization,
+            vec![pid],
+        );
+        let d = engine.evaluate(&region, "t-detail", 0);
+        assert!(d.outcome.is_applied());
+        assert!(!d.detail.is_empty(), "detail must be non-empty on applied");
+    }
+
+    #[test]
+    fn epoch_change_updates_config_epoch() {
+        let e1 = SecurityEpoch::from_raw(10);
+        let e2 = SecurityEpoch::from_raw(20);
+        let mut engine = default_engine(e1);
+        assert_eq!(engine.config().current_epoch, e1);
+        engine.on_epoch_change(e1, e2, "t", 0);
+        assert_eq!(engine.config().current_epoch, e2);
+    }
 }

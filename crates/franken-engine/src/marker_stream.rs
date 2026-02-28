@@ -1870,4 +1870,522 @@ mod tests {
     fn correlation_id_empty_rejected() {
         assert!(CorrelationId::new("").is_err());
     }
+
+    // ── enrichment tests ────────────────────────────────────
+
+    #[test]
+    fn correlation_id_too_long_rejected() {
+        let long = "a".repeat(129);
+        assert!(CorrelationId::new(long).is_err());
+    }
+
+    #[test]
+    fn correlation_id_exactly_128_accepted() {
+        let exact = "b".repeat(128);
+        assert!(CorrelationId::new(exact).is_ok());
+    }
+
+    #[test]
+    fn correlation_id_unsupported_chars_rejected() {
+        assert!(CorrelationId::new("hello world").is_err()); // space
+        assert!(CorrelationId::new("abc@def").is_err()); // @
+    }
+
+    #[test]
+    fn correlation_id_allowed_special_chars() {
+        assert!(CorrelationId::new("abc-def_ghi.123").is_ok());
+    }
+
+    #[test]
+    fn correlation_id_hash_consistent() {
+        use std::hash::{Hash, Hasher};
+        let a = CorrelationId::new("trace-1").unwrap();
+        let b = CorrelationId::new("trace-1").unwrap();
+        let mut ha = std::collections::hash_map::DefaultHasher::new();
+        let mut hb = std::collections::hash_map::DefaultHasher::new();
+        a.hash(&mut ha);
+        b.hash(&mut hb);
+        assert_eq!(ha.finish(), hb.finish());
+    }
+
+    #[test]
+    fn correlation_id_hash_distinct() {
+        use std::hash::{Hash, Hasher};
+        let a = CorrelationId::new("trace-1").unwrap();
+        let b = CorrelationId::new("trace-2").unwrap();
+        let mut ha = std::collections::hash_map::DefaultHasher::new();
+        let mut hb = std::collections::hash_map::DefaultHasher::new();
+        a.hash(&mut ha);
+        b.hash(&mut hb);
+        assert_ne!(ha.finish(), hb.finish());
+    }
+
+    #[test]
+    fn correlation_id_ord_consistent() {
+        let a = CorrelationId::new("aaa").unwrap();
+        let b = CorrelationId::new("bbb").unwrap();
+        assert!(a < b);
+    }
+
+    #[test]
+    fn security_action_kind_debug_distinct() {
+        let variants = [
+            SecurityActionKind::Quarantine,
+            SecurityActionKind::Suspend,
+            SecurityActionKind::Terminate,
+        ];
+        let dbgs: Vec<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        for (i, a) in dbgs.iter().enumerate() {
+            assert!(!a.is_empty());
+            for (j, b) in dbgs.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn policy_transition_kind_debug_distinct() {
+        let variants = [
+            PolicyTransitionKind::Activation,
+            PolicyTransitionKind::Deactivation,
+            PolicyTransitionKind::EpochAdvancement,
+        ];
+        let dbgs: Vec<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        for (i, a) in dbgs.iter().enumerate() {
+            for (j, b) in dbgs.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn revocation_kind_debug_distinct() {
+        let a = format!("{:?}", RevocationKind::Issuance);
+        let b = format!("{:?}", RevocationKind::PropagationConfirmation);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn chain_integrity_error_all_variants_serde_distinct() {
+        let zero = ContentHash([0u8; 32]);
+        let one = ContentHash([1u8; 32]);
+        let variants = vec![
+            ChainIntegrityError::MarkerHashMismatch {
+                marker_id: 1,
+                expected: zero.clone(),
+                computed: one.clone(),
+            },
+            ChainIntegrityError::ChainLinkBroken {
+                marker_id: 2,
+                expected_prev: zero.clone(),
+                actual_prev: one.clone(),
+            },
+            ChainIntegrityError::EmptyStream,
+            ChainIntegrityError::NonMonotonicId {
+                marker_id: 1,
+                prev_marker_id: 5,
+            },
+            ChainIntegrityError::HeadMismatch,
+        ];
+        let jsons: Vec<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        for (i, a) in jsons.iter().enumerate() {
+            for (j, b) in jsons.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b, "variants {i} and {j} collide");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn chain_integrity_error_clone_independence() {
+        let e = ChainIntegrityError::MarkerHashMismatch {
+            marker_id: 42,
+            expected: ContentHash([0u8; 32]),
+            computed: ContentHash([1u8; 32]),
+        };
+        let cloned = e.clone();
+        assert_eq!(e, cloned);
+        // Both are independent allocations
+        let j1 = serde_json::to_string(&e).unwrap();
+        let j2 = serde_json::to_string(&cloned).unwrap();
+        assert_eq!(j1, j2);
+    }
+
+    #[test]
+    fn trace_context_clone_independence() {
+        let t = TraceContext {
+            traceparent: "00-abc-def-01".to_string(),
+            tracestate: Some("vendor=value".to_string()),
+            baggage: None,
+        };
+        let mut cloned = t.clone();
+        cloned.traceparent = "changed".to_string();
+        assert_eq!(t.traceparent, "00-abc-def-01");
+    }
+
+    #[test]
+    fn trace_context_json_field_names() {
+        let t = TraceContext {
+            traceparent: "tp".to_string(),
+            tracestate: Some("ts".to_string()),
+            baggage: Some("bg".to_string()),
+        };
+        let j = serde_json::to_string(&t).unwrap();
+        assert!(j.contains("\"traceparent\""));
+        assert!(j.contains("\"tracestate\""));
+        assert!(j.contains("\"baggage\""));
+    }
+
+    #[test]
+    fn redacted_payload_json_field_names() {
+        let r = RedactedPayload {
+            redacted_summary: "s".to_string(),
+            payload_hash: ContentHash([0u8; 32]),
+            redaction_applied: true,
+        };
+        let j = serde_json::to_string(&r).unwrap();
+        assert!(j.contains("\"redacted_summary\""));
+        assert!(j.contains("\"payload_hash\""));
+        assert!(j.contains("\"redaction_applied\""));
+    }
+
+    #[test]
+    fn redacted_payload_clone_independence() {
+        let r = RedactedPayload {
+            redacted_summary: "original".to_string(),
+            payload_hash: ContentHash([5u8; 32]),
+            redaction_applied: false,
+        };
+        let mut cloned = r.clone();
+        cloned.redacted_summary = "modified".to_string();
+        assert_eq!(r.redacted_summary, "original");
+    }
+
+    #[test]
+    fn integrity_checkpoint_json_field_names() {
+        let c = IntegrityCheckpoint {
+            at_marker_id: 5,
+            marker_hash: ContentHash([0u8; 32]),
+            chain_length: 5,
+            signed_hash: AuthenticityHash([0u8; 32]),
+        };
+        let j = serde_json::to_string(&c).unwrap();
+        for field in &["at_marker_id", "marker_hash", "chain_length", "signed_hash"] {
+            assert!(j.contains(field), "missing: {field}");
+        }
+    }
+
+    #[test]
+    fn audit_chain_head_json_field_names() {
+        let h = AuditChainHead {
+            head_marker_id: 1,
+            latest_marker_hash: ContentHash([0u8; 32]),
+            rolling_chain_hash: ContentHash([0u8; 32]),
+            signed_head_hash: AuthenticityHash([0u8; 32]),
+        };
+        let j = serde_json::to_string(&h).unwrap();
+        for field in &["head_marker_id", "latest_marker_hash", "rolling_chain_hash", "signed_head_hash"] {
+            assert!(j.contains(field), "missing: {field}");
+        }
+    }
+
+    #[test]
+    fn audit_chain_head_clone_independence() {
+        let h = AuditChainHead {
+            head_marker_id: 10,
+            latest_marker_hash: ContentHash([1u8; 32]),
+            rolling_chain_hash: ContentHash([2u8; 32]),
+            signed_head_hash: AuthenticityHash([3u8; 32]),
+        };
+        let cloned = h.clone();
+        assert_eq!(h, cloned);
+    }
+
+    #[test]
+    fn marker_event_json_field_names() {
+        let e = MarkerEvent {
+            marker_id: 1,
+            marker_type: "security".to_string(),
+            chain_length: 1,
+            decision_id: "d".to_string(),
+            policy_id: None,
+            principal_id: None,
+            correlation_id: "c".to_string(),
+            trace_id: "t".to_string(),
+            component: "marker_stream".to_string(),
+            event: "appended".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+        };
+        let j = serde_json::to_string(&e).unwrap();
+        for field in &["marker_id", "marker_type", "chain_length", "decision_id", "correlation_id", "trace_id", "component", "event", "outcome"] {
+            assert!(j.contains(field), "missing: {field}");
+        }
+    }
+
+    #[test]
+    fn decision_type_epoch_display_format() {
+        let d = DecisionType::EpochTransition {
+            from_epoch: 3,
+            to_epoch: 4,
+        };
+        assert_eq!(d.to_string(), "epoch_transition:3->4");
+    }
+
+    #[test]
+    fn decision_type_emergency_override_display() {
+        let d = DecisionType::EmergencyOverride {
+            override_reason: "test-reason".to_string(),
+        };
+        assert_eq!(d.to_string(), "emergency_override");
+    }
+
+    #[test]
+    fn decision_type_guardrail_display() {
+        let d = DecisionType::GuardrailTriggered {
+            guardrail_id: "g-1".to_string(),
+        };
+        assert_eq!(d.to_string(), "guardrail_triggered:g-1");
+    }
+
+    #[test]
+    fn by_event_type_filters_correctly() {
+        let mut stream = make_stream();
+        let input1 = make_input(DecisionType::SecurityAction {
+            action: SecurityActionKind::Quarantine,
+        });
+        let input2 = make_input(DecisionType::EmergencyOverride {
+            override_reason: "test".to_string(),
+        });
+        stream.append(input1);
+        stream.append(input2);
+        let results = stream.by_event_type("security_action:quarantine");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn by_time_range_empty_when_no_match() {
+        let mut stream = make_stream();
+        let input = make_input(DecisionType::SecurityAction {
+            action: SecurityActionKind::Suspend,
+        });
+        stream.append(input);
+        // All markers have timestamp_ticks=100, so 200..300 should be empty
+        let results = stream.by_time_range(200, 300);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn verify_head_on_single_marker_stream() {
+        let mut stream = make_stream();
+        let input = make_input(DecisionType::SecurityAction {
+            action: SecurityActionKind::Terminate,
+        });
+        stream.append(input);
+        assert!(stream.verify_head().is_ok());
+    }
+
+    #[test]
+    fn verify_head_on_empty_stream_ok() {
+        let stream = make_stream();
+        assert!(stream.verify_head().is_ok());
+    }
+
+    #[test]
+    fn verify_range_invalid_ids_returns_empty_stream_error() {
+        let mut stream = make_stream();
+        let input = make_input(DecisionType::SecurityAction {
+            action: SecurityActionKind::Quarantine,
+        });
+        stream.append(input);
+        let result = stream.verify_range(999, 1000);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn non_monotonic_id_display_format() {
+        let e = ChainIntegrityError::NonMonotonicId {
+            marker_id: 3,
+            prev_marker_id: 7,
+        };
+        assert_eq!(e.to_string(), "non-monotonic: 3 after 7");
+    }
+
+    #[test]
+    fn head_mismatch_display_format() {
+        let e = ChainIntegrityError::HeadMismatch;
+        assert_eq!(e.to_string(), "chain head mismatch");
+    }
+
+    #[test]
+    fn empty_stream_display_format() {
+        let e = ChainIntegrityError::EmptyStream;
+        assert_eq!(e.to_string(), "empty stream");
+    }
+
+    #[test]
+    fn marker_hash_mismatch_display_contains_id() {
+        let e = ChainIntegrityError::MarkerHashMismatch {
+            marker_id: 42,
+            expected: ContentHash([0u8; 32]),
+            computed: ContentHash([1u8; 32]),
+        };
+        let s = e.to_string();
+        assert!(s.contains("42"));
+        assert!(s.contains("hash mismatch"));
+    }
+
+    #[test]
+    fn chain_link_broken_display_contains_id() {
+        let e = ChainIntegrityError::ChainLinkBroken {
+            marker_id: 99,
+            expected_prev: ContentHash([0u8; 32]),
+            actual_prev: ContentHash([1u8; 32]),
+        };
+        let s = e.to_string();
+        assert!(s.contains("99"));
+        assert!(s.contains("chain link broken"));
+    }
+
+    #[test]
+    fn stream_len_and_is_empty() {
+        let mut stream = make_stream();
+        assert_eq!(stream.len(), 0);
+        assert!(stream.is_empty());
+        let input = make_input(DecisionType::SecurityAction {
+            action: SecurityActionKind::Quarantine,
+        });
+        stream.append(input);
+        assert_eq!(stream.len(), 1);
+        assert!(!stream.is_empty());
+    }
+
+    #[test]
+    fn decision_type_security_action_display_all_kinds() {
+        for (kind, expected) in [
+            (SecurityActionKind::Quarantine, "security_action:quarantine"),
+            (SecurityActionKind::Suspend, "security_action:suspend"),
+            (SecurityActionKind::Terminate, "security_action:terminate"),
+        ] {
+            let dt = DecisionType::SecurityAction { action: kind };
+            assert_eq!(dt.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn decision_type_policy_transition_display_all_kinds() {
+        for (kind, expected) in [
+            (PolicyTransitionKind::Activation, "policy_transition:activation"),
+            (PolicyTransitionKind::Deactivation, "policy_transition:deactivation"),
+            (PolicyTransitionKind::EpochAdvancement, "policy_transition:epoch_advancement"),
+        ] {
+            let dt = DecisionType::PolicyTransition { transition: kind };
+            assert_eq!(dt.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn decision_type_revocation_event_display_all_kinds() {
+        for (kind, expected) in [
+            (RevocationKind::Issuance, "revocation_event:issuance"),
+            (RevocationKind::PropagationConfirmation, "revocation_event:propagation_confirmation"),
+        ] {
+            let dt = DecisionType::RevocationEvent { revocation: kind };
+            assert_eq!(dt.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn multiple_checkpoints_emitted() {
+        let mut stream = DecisionMarkerStream::new(2, b"key".to_vec());
+        for _ in 0..4 {
+            let input = make_input(DecisionType::SecurityAction {
+                action: SecurityActionKind::Quarantine,
+            });
+            stream.append(input);
+        }
+        // checkpoint_interval=2, so checkpoints at marker 2 and 4
+        assert_eq!(stream.checkpoints().len(), 2);
+    }
+
+    #[test]
+    fn chain_head_updates_on_each_append() {
+        let mut stream = make_stream();
+        let input1 = make_input(DecisionType::SecurityAction {
+            action: SecurityActionKind::Quarantine,
+        });
+        stream.append(input1);
+        let head1 = stream.chain_head().unwrap().head_marker_id;
+        let input2 = make_input(DecisionType::SecurityAction {
+            action: SecurityActionKind::Suspend,
+        });
+        stream.append(input2);
+        let head2 = stream.chain_head().unwrap().head_marker_id;
+        assert!(head2 > head1);
+    }
+
+    #[test]
+    fn by_principal_id_empty_when_no_match() {
+        let mut stream = make_stream();
+        let input = make_input(DecisionType::SecurityAction {
+            action: SecurityActionKind::Quarantine,
+        });
+        stream.append(input);
+        let results = stream.by_principal_id("nonexistent");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn by_error_code_empty_when_no_match() {
+        let mut stream = make_stream();
+        let input = make_input(DecisionType::SecurityAction {
+            action: SecurityActionKind::Quarantine,
+        });
+        stream.append(input);
+        let results = stream.by_error_code("NONEXISTENT");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn decision_marker_debug_nonempty() {
+        let mut stream = make_stream();
+        let input = make_input(DecisionType::SecurityAction {
+            action: SecurityActionKind::Quarantine,
+        });
+        stream.append(input);
+        let marker = stream.get(1).unwrap();
+        let dbg = format!("{marker:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("DecisionMarker"));
+    }
+
+    #[test]
+    fn marker_event_debug_nonempty() {
+        let mut stream = make_stream();
+        let input = make_input(DecisionType::SecurityAction {
+            action: SecurityActionKind::Quarantine,
+        });
+        stream.append(input);
+        let events = stream.drain_events();
+        assert!(!events.is_empty());
+        let dbg = format!("{:?}", events[0]);
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("MarkerEvent"));
+    }
+
+    #[test]
+    fn decision_marker_stream_debug_nonempty() {
+        let stream = make_stream();
+        let dbg = format!("{stream:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("DecisionMarkerStream"));
+    }
 }

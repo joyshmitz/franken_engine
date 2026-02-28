@@ -39,6 +39,19 @@ const REQUIRED_CORRELATION_IDS: [&str; 5] = [
     "seed",
 ];
 
+const REDACTION_AUDIT_SCHEMA_VERSION: &str = "rgc.redaction-audit-report.v1";
+const REDACTION_AUDIT_COMPONENT: &str = "rgc_redaction_audit";
+const REDACTION_AUDIT_EVENT: &str = "apply_redaction_with_audit";
+
+const SECRET_PATTERN_PASSWORD_INLINE: &str = "password_inline";
+const SECRET_PATTERN_SECRET_INLINE: &str = "secret_inline";
+const SECRET_PATTERN_API_KEY_INLINE: &str = "api_key_inline";
+const SECRET_PATTERN_ACCESS_TOKEN_INLINE: &str = "access_token_inline";
+const SECRET_PATTERN_BEARER_TOKEN: &str = "bearer_token";
+const SECRET_PATTERN_AWS_ACCESS_KEY_ID: &str = "aws_access_key_id";
+const SECRET_PATTERN_GITHUB_PERSONAL_TOKEN: &str = "github_personal_token";
+const SECRET_PATTERN_SLACK_TOKEN: &str = "slack_token";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TestLane {
@@ -60,7 +73,7 @@ pub enum FailureTaxonomy {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DataSensitivity {
     Public,
@@ -69,7 +82,7 @@ pub enum DataSensitivity {
     Secret,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RedactionAction {
     Redact,
@@ -184,6 +197,7 @@ pub enum ValidationErrorCode {
     SchemaVersionMismatch,
     CorrelationMismatch,
     RedactionPolicyViolation,
+    SecretPatternLeak,
     ContractValidationViolation,
 }
 
@@ -239,6 +253,18 @@ impl ValidationFailure {
             outcome: "fail".to_string(),
             error_code: ValidationErrorCode::RedactionPolicyViolation,
             message: format!("sensitive field `{path}` is present without redaction"),
+        }
+    }
+
+    fn secret_pattern_leak(path: &str, pattern_id: &str) -> Self {
+        Self {
+            component: TEST_LOGGING_COMPONENT.to_string(),
+            event: "validate_redaction".to_string(),
+            outcome: "fail".to_string(),
+            error_code: ValidationErrorCode::SecretPatternLeak,
+            message: format!(
+                "secret pattern `{pattern_id}` detected in unresolved field `{path}`"
+            ),
         }
     }
 
@@ -368,26 +394,221 @@ pub fn validate_correlation(events: &[TestLogEvent]) -> Vec<ValidationFailure> {
     failures
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretPatternMatch {
+    pub field_path: String,
+    pub pattern_id: String,
+    pub value_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RedactionAuditEntry {
+    pub field_path: String,
+    pub sensitivity: DataSensitivity,
+    pub action: RedactionAction,
+    pub original_present: bool,
+    pub original_value_hash: Option<String>,
+    pub output_value_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RedactionAuditReport {
+    pub schema_version: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub redacted_record: BTreeMap<String, String>,
+    pub audit_entries: Vec<RedactionAuditEntry>,
+    pub detected_secret_patterns: Vec<SecretPatternMatch>,
+    pub report_hash: String,
+}
+
+fn stable_sensitive_hash(value: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(value.as_bytes());
+    format!("sha256:{}", hex::encode(hasher.finalize()))
+}
+
+fn contains_ascii_uppercase_alnum(value: &str) -> bool {
+    value.bytes().all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+}
+
+fn looks_like_aws_access_key_id(value: &str) -> bool {
+    if value.len() != 20 || !value.starts_with("AKIA") {
+        return false;
+    }
+    contains_ascii_uppercase_alnum(&value[4..])
+}
+
+fn looks_like_github_personal_token(value: &str) -> bool {
+    if !value.starts_with("ghp_") {
+        return false;
+    }
+    let suffix = &value[4..];
+    suffix.len() >= 20 && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
+fn looks_like_slack_token(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.starts_with("xoxb-")
+        || lower.starts_with("xoxp-")
+        || lower.starts_with("xoxa-")
+        || lower.starts_with("xoxr-")
+}
+
+fn detect_secret_pattern_ids(value: &str) -> Vec<&'static str> {
+    let mut pattern_ids = Vec::new();
+    let trimmed = value.trim();
+
+    if trimmed.is_empty() || trimmed == "[REDACTED]" || trimmed.starts_with("sha256:") {
+        return pattern_ids;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("password=") || lower.contains("password:") {
+        pattern_ids.push(SECRET_PATTERN_PASSWORD_INLINE);
+    }
+    if lower.contains("secret=") || lower.contains("secret:") {
+        pattern_ids.push(SECRET_PATTERN_SECRET_INLINE);
+    }
+    if lower.contains("api_key=") || lower.contains("api-key=") || lower.contains("apikey=") {
+        pattern_ids.push(SECRET_PATTERN_API_KEY_INLINE);
+    }
+    if lower.contains("access_token=") || lower.contains("access-token=") {
+        pattern_ids.push(SECRET_PATTERN_ACCESS_TOKEN_INLINE);
+    }
+    if lower.contains("bearer ") {
+        pattern_ids.push(SECRET_PATTERN_BEARER_TOKEN);
+    }
+    if looks_like_aws_access_key_id(trimmed) {
+        pattern_ids.push(SECRET_PATTERN_AWS_ACCESS_KEY_ID);
+    }
+    if looks_like_github_personal_token(trimmed) {
+        pattern_ids.push(SECRET_PATTERN_GITHUB_PERSONAL_TOKEN);
+    }
+    if looks_like_slack_token(trimmed) {
+        pattern_ids.push(SECRET_PATTERN_SLACK_TOKEN);
+    }
+
+    pattern_ids.sort_unstable();
+    pattern_ids.dedup();
+    pattern_ids
+}
+
+pub fn detect_secret_patterns(record: &BTreeMap<String, String>) -> Vec<SecretPatternMatch> {
+    let mut matches = Vec::new();
+    for (field_path, value) in record {
+        for pattern_id in detect_secret_pattern_ids(value) {
+            matches.push(SecretPatternMatch {
+                field_path: field_path.clone(),
+                pattern_id: pattern_id.to_string(),
+                value_hash: stable_sensitive_hash(value),
+            });
+        }
+    }
+    matches.sort_by(|left, right| {
+        left.field_path
+            .cmp(&right.field_path)
+            .then(left.pattern_id.cmp(&right.pattern_id))
+            .then(left.value_hash.cmp(&right.value_hash))
+    });
+    matches
+}
+
+fn stable_rule_order(spec: &TestLoggingSchemaSpec) -> Vec<RedactionRule> {
+    let mut rules = spec.redaction_rules.clone();
+    rules.sort_by(|left, right| {
+        left.field_path
+            .cmp(&right.field_path)
+            .then(left.sensitivity.cmp(&right.sensitivity))
+            .then(left.action.cmp(&right.action))
+            .then(left.rationale.cmp(&right.rationale))
+    });
+    rules
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct RedactionAuditHashInput<'a> {
+    schema_version: &'a str,
+    component: &'a str,
+    event: &'a str,
+    outcome: &'a str,
+    redacted_record: &'a BTreeMap<String, String>,
+    audit_entries: &'a [RedactionAuditEntry],
+    detected_secret_patterns: &'a [SecretPatternMatch],
+}
+
+pub fn apply_redaction_with_audit(
+    record: &BTreeMap<String, String>,
+    spec: &TestLoggingSchemaSpec,
+) -> RedactionAuditReport {
+    let mut redacted_record = record.clone();
+    let mut audit_entries = Vec::new();
+    for rule in stable_rule_order(spec) {
+        let existing = redacted_record.get(&rule.field_path).cloned();
+        let original_present = existing.is_some();
+        let original_value_hash = existing.as_deref().map(stable_sensitive_hash);
+
+        let output_value_hash = if let Some(value) = existing {
+            let replacement = match rule.action {
+                RedactionAction::Redact => "[REDACTED]".to_string(),
+                RedactionAction::Hash => stable_sensitive_hash(&value),
+                RedactionAction::Drop => String::new(),
+            };
+            let replacement_hash = stable_sensitive_hash(&replacement);
+            redacted_record.insert(rule.field_path.clone(), replacement);
+            Some(replacement_hash)
+        } else {
+            None
+        };
+
+        audit_entries.push(RedactionAuditEntry {
+            field_path: rule.field_path,
+            sensitivity: rule.sensitivity,
+            action: rule.action,
+            original_present,
+            original_value_hash,
+            output_value_hash,
+        });
+    }
+
+    let detected_secret_patterns = detect_secret_patterns(&redacted_record);
+    let outcome = if detected_secret_patterns.is_empty() {
+        "pass".to_string()
+    } else {
+        "fail".to_string()
+    };
+
+    let hash_input = RedactionAuditHashInput {
+        schema_version: REDACTION_AUDIT_SCHEMA_VERSION,
+        component: REDACTION_AUDIT_COMPONENT,
+        event: REDACTION_AUDIT_EVENT,
+        outcome: &outcome,
+        redacted_record: &redacted_record,
+        audit_entries: &audit_entries,
+        detected_secret_patterns: &detected_secret_patterns,
+    };
+    let report_hash = stable_sensitive_hash(
+        &serde_json::to_string(&hash_input).expect("redaction audit report must serialize"),
+    );
+
+    RedactionAuditReport {
+        schema_version: REDACTION_AUDIT_SCHEMA_VERSION.to_string(),
+        component: REDACTION_AUDIT_COMPONENT.to_string(),
+        event: REDACTION_AUDIT_EVENT.to_string(),
+        outcome,
+        redacted_record,
+        audit_entries,
+        detected_secret_patterns,
+        report_hash,
+    }
+}
+
 pub fn apply_redaction(
     record: &BTreeMap<String, String>,
     spec: &TestLoggingSchemaSpec,
 ) -> BTreeMap<String, String> {
-    let mut redacted = record.clone();
-    for rule in &spec.redaction_rules {
-        if let Some(value) = redacted.get(&rule.field_path).cloned() {
-            let replacement = match rule.action {
-                RedactionAction::Redact => "[REDACTED]".to_string(),
-                RedactionAction::Hash => {
-                    let mut hasher = Sha256::new();
-                    hasher.update(value.as_bytes());
-                    format!("sha256:{}", hex::encode(hasher.finalize()))
-                }
-                RedactionAction::Drop => String::new(),
-            };
-            redacted.insert(rule.field_path.clone(), replacement);
-        }
-    }
-    redacted
+    apply_redaction_with_audit(record, spec).redacted_record
 }
 
 pub fn validate_redaction(
@@ -410,6 +631,13 @@ pub fn validate_redaction(
         if violation {
             failures.push(ValidationFailure::redaction_violation(&rule.field_path));
         }
+    }
+
+    for detected in detect_secret_patterns(record) {
+        failures.push(ValidationFailure::secret_pattern_leak(
+            &detected.field_path,
+            &detected.pattern_id,
+        ));
     }
 
     failures
@@ -851,6 +1079,8 @@ mod tests {
             ValidationErrorCode::SchemaVersionMismatch,
             ValidationErrorCode::CorrelationMismatch,
             ValidationErrorCode::RedactionPolicyViolation,
+            ValidationErrorCode::SecretPatternLeak,
+            ValidationErrorCode::ContractValidationViolation,
         ] {
             let json = serde_json::to_string(&code).unwrap();
             let back: ValidationErrorCode = serde_json::from_str(&json).unwrap();
@@ -1134,6 +1364,94 @@ mod tests {
         let spec = TestLoggingSchemaSpec::default();
         let failures = validate_redaction(&record, &spec);
         assert!(failures.is_empty());
+    }
+
+    #[test]
+    fn detect_secret_patterns_finds_known_token_shapes() {
+        let record = BTreeMap::from([
+            (
+                "payload.aws_access_key".to_string(),
+                "AKIA1234567890ABCDEF".to_string(),
+            ),
+            (
+                "payload.github_token".to_string(),
+                "ghp_abcdefghijklmnopqrstuvwxyz123456".to_string(),
+            ),
+            ("payload.inline".to_string(), "password=supersecret".to_string()),
+        ]);
+
+        let matches = detect_secret_patterns(&record);
+        assert!(
+            matches
+                .iter()
+                .any(|entry| entry.pattern_id == SECRET_PATTERN_AWS_ACCESS_KEY_ID)
+        );
+        assert!(
+            matches
+                .iter()
+                .any(|entry| entry.pattern_id == SECRET_PATTERN_GITHUB_PERSONAL_TOKEN)
+        );
+        assert!(
+            matches
+                .iter()
+                .any(|entry| entry.pattern_id == SECRET_PATTERN_PASSWORD_INLINE)
+        );
+    }
+
+    #[test]
+    fn validate_redaction_flags_secret_pattern_leaks_in_unruled_fields() {
+        let record = BTreeMap::from([(
+            "payload.misc".to_string(),
+            "bearer top-secret-token".to_string(),
+        )]);
+        let spec = TestLoggingSchemaSpec::default();
+        let failures = validate_redaction(&record, &spec);
+        assert!(
+            failures
+                .iter()
+                .any(|failure| failure.error_code == ValidationErrorCode::SecretPatternLeak)
+        );
+    }
+
+    #[test]
+    fn apply_redaction_with_audit_is_deterministic_under_rule_reordering() {
+        let mut record = BTreeMap::new();
+        record.insert(
+            "payload.user_email".to_string(),
+            "alice@example.com".to_string(),
+        );
+        record.insert("payload.auth_token".to_string(), "ghp_supersecret".to_string());
+        record.insert("payload.ip_address".to_string(), "127.0.0.1".to_string());
+
+        let mut reversed_spec = TestLoggingSchemaSpec::default();
+        reversed_spec.redaction_rules.reverse();
+        let baseline_spec = TestLoggingSchemaSpec::default();
+
+        let report_a = apply_redaction_with_audit(&record, &baseline_spec);
+        let report_b = apply_redaction_with_audit(&record, &reversed_spec);
+
+        assert_eq!(report_a.redacted_record, report_b.redacted_record);
+        assert_eq!(report_a.audit_entries, report_b.audit_entries);
+        assert_eq!(report_a.report_hash, report_b.report_hash);
+    }
+
+    #[test]
+    fn apply_redaction_with_audit_emits_secret_detection_after_redaction() {
+        let record = BTreeMap::from([(
+            "payload.unknown".to_string(),
+            "xoxb-1234-5678-unsafe".to_string(),
+        )]);
+        let spec = TestLoggingSchemaSpec::default();
+
+        let report = apply_redaction_with_audit(&record, &spec);
+        assert_eq!(report.outcome, "fail");
+        assert!(
+            report
+                .detected_secret_patterns
+                .iter()
+                .any(|entry| entry.pattern_id == SECRET_PATTERN_SLACK_TOKEN)
+        );
+        assert!(report.report_hash.starts_with("sha256:"));
     }
 
     // -- Enrichment: validate_events integration --

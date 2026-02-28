@@ -1750,4 +1750,809 @@ mod tests {
         assert!(envelope.allows_flow(&secret_flow));
         assert!(!envelope.denies_flow(&secret_flow));
     }
+
+    // -- Copy/Clone semantics -----------------------------------------------
+
+    #[test]
+    fn flow_discovery_method_is_copy() {
+        let m = FlowDiscoveryMethod::StaticAnalysis;
+        let copy = m;
+        // Both are usable after copy.
+        assert_eq!(m, copy);
+        assert_eq!(m, FlowDiscoveryMethod::StaticAnalysis);
+    }
+
+    #[test]
+    fn flow_proof_method_is_copy() {
+        let m = FlowProofMethod::Declassification;
+        let copy = m;
+        assert_eq!(m, copy);
+        assert_eq!(copy, FlowProofMethod::Declassification);
+    }
+
+    #[test]
+    fn synthesis_pass_is_copy() {
+        let p = SynthesisPass::DynamicFlowAblation;
+        let copy = p;
+        assert_eq!(p, copy);
+        assert_eq!(copy, SynthesisPass::DynamicFlowAblation);
+    }
+
+    #[test]
+    fn fallback_quality_is_copy() {
+        let q = FallbackQuality::PartialAblation;
+        let copy = q;
+        assert_eq!(q, copy);
+        assert_eq!(copy, FallbackQuality::PartialAblation);
+    }
+
+    #[test]
+    fn flow_confidence_interval_is_copy() {
+        let ci = FlowConfidenceInterval {
+            lower_millionths: 900_000,
+            upper_millionths: 1_000_000,
+            n_trials: 10,
+            n_essential: 9,
+        };
+        let copy = ci;
+        assert_eq!(ci, copy);
+    }
+
+    // -- Debug output is non-empty and distinct across variants --------------
+
+    #[test]
+    fn flow_discovery_method_debug_distinct() {
+        let variants = [
+            FlowDiscoveryMethod::StaticAnalysis,
+            FlowDiscoveryMethod::DynamicAblation,
+            FlowDiscoveryMethod::RuntimeObservation,
+            FlowDiscoveryMethod::ManifestDeclaration,
+        ];
+        let mut debugs: BTreeSet<String> = BTreeSet::new();
+        for v in variants {
+            let s = format!("{v:?}");
+            assert!(!s.is_empty());
+            debugs.insert(s);
+        }
+        assert_eq!(debugs.len(), 4);
+    }
+
+    #[test]
+    fn flow_proof_method_debug_distinct() {
+        let variants = [
+            FlowProofMethod::StaticAnalysis,
+            FlowProofMethod::RuntimeCheck,
+            FlowProofMethod::Declassification,
+            FlowProofMethod::OperatorAttestation,
+        ];
+        let mut debugs: BTreeSet<String> = BTreeSet::new();
+        for v in variants {
+            let s = format!("{v:?}");
+            assert!(!s.is_empty());
+            debugs.insert(s);
+        }
+        assert_eq!(debugs.len(), 4);
+    }
+
+    #[test]
+    fn synthesis_pass_debug_distinct() {
+        let variants = [
+            SynthesisPass::StaticFlowAnalysis,
+            SynthesisPass::DynamicFlowAblation,
+        ];
+        let mut debugs: BTreeSet<String> = BTreeSet::new();
+        for v in variants {
+            let s = format!("{v:?}");
+            assert!(!s.is_empty());
+            debugs.insert(s);
+        }
+        assert_eq!(debugs.len(), 2);
+    }
+
+    #[test]
+    fn fallback_quality_debug_distinct() {
+        let a = format!("{:?}", FallbackQuality::StaticBound);
+        let b = format!("{:?}", FallbackQuality::PartialAblation);
+        assert!(!a.is_empty());
+        assert!(!b.is_empty());
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn envelope_error_debug_distinct() {
+        let errors: Vec<EnvelopeError> = vec![
+            EnvelopeError::EmptyExtensionId,
+            EnvelopeError::EmptyUpperBound,
+            EnvelopeError::OverlappingFlows { overlap_count: 2 },
+            EnvelopeError::MissingProofObligation {
+                rule: rule(Label::Public, Label::Internal),
+            },
+            EnvelopeError::IdDerivation("x".into()),
+            EnvelopeError::SignatureError("y".into()),
+            EnvelopeError::BudgetExhausted { phase: "p".into() },
+        ];
+        let mut debugs: BTreeSet<String> = BTreeSet::new();
+        for e in &errors {
+            let s = format!("{e:?}");
+            assert!(!s.is_empty());
+            debugs.insert(s);
+        }
+        assert_eq!(debugs.len(), errors.len());
+    }
+
+    // -- Serde variant distinctness -----------------------------------------
+
+    #[test]
+    fn flow_discovery_method_serializes_distinctly() {
+        let variants = [
+            FlowDiscoveryMethod::StaticAnalysis,
+            FlowDiscoveryMethod::DynamicAblation,
+            FlowDiscoveryMethod::RuntimeObservation,
+            FlowDiscoveryMethod::ManifestDeclaration,
+        ];
+        let mut serialized: BTreeSet<String> = BTreeSet::new();
+        for v in variants {
+            serialized.insert(serde_json::to_string(&v).unwrap());
+        }
+        assert_eq!(serialized.len(), 4);
+    }
+
+    #[test]
+    fn flow_proof_method_serializes_distinctly() {
+        let variants = [
+            FlowProofMethod::StaticAnalysis,
+            FlowProofMethod::RuntimeCheck,
+            FlowProofMethod::Declassification,
+            FlowProofMethod::OperatorAttestation,
+        ];
+        let mut serialized: BTreeSet<String> = BTreeSet::new();
+        for v in variants {
+            serialized.insert(serde_json::to_string(&v).unwrap());
+        }
+        assert_eq!(serialized.len(), 4);
+    }
+
+    #[test]
+    fn synthesis_pass_serializes_distinctly() {
+        let a = serde_json::to_string(&SynthesisPass::StaticFlowAnalysis).unwrap();
+        let b = serde_json::to_string(&SynthesisPass::DynamicFlowAblation).unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn fallback_quality_serializes_distinctly() {
+        let a = serde_json::to_string(&FallbackQuality::StaticBound).unwrap();
+        let b = serde_json::to_string(&FallbackQuality::PartialAblation).unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn envelope_error_all_variants_serialize_distinctly() {
+        let errors: Vec<EnvelopeError> = vec![
+            EnvelopeError::EmptyExtensionId,
+            EnvelopeError::EmptyUpperBound,
+            EnvelopeError::OverlappingFlows { overlap_count: 1 },
+            EnvelopeError::MissingProofObligation {
+                rule: rule(Label::Secret, Label::Public),
+            },
+            EnvelopeError::IdDerivation("id".into()),
+            EnvelopeError::SignatureError("sig".into()),
+            EnvelopeError::BudgetExhausted { phase: "dyn".into() },
+        ];
+        let mut serialized: BTreeSet<String> = BTreeSet::new();
+        for e in &errors {
+            serialized.insert(serde_json::to_string(e).unwrap());
+        }
+        assert_eq!(serialized.len(), errors.len());
+    }
+
+    // -- Clone independence -------------------------------------------------
+
+    #[test]
+    fn flow_envelope_clone_independence() {
+        let original = FlowEnvelope::build(valid_input()).unwrap();
+        let mut cloned = original.clone();
+        cloned.extension_id = "mutated".to_string();
+        assert_eq!(original.extension_id, "ext-test-001");
+        assert_eq!(cloned.extension_id, "mutated");
+    }
+
+    #[test]
+    fn flow_requirement_clone_independence() {
+        let original = FlowRequirement {
+            rule: rule(Label::Public, Label::Internal),
+            discovery_method: FlowDiscoveryMethod::StaticAnalysis,
+            source_location: Some("a.rs".to_string()),
+            sink_location: None,
+        };
+        let mut cloned = original.clone();
+        cloned.source_location = Some("b.rs".to_string());
+        assert_eq!(original.source_location, Some("a.rs".to_string()));
+    }
+
+    #[test]
+    fn flow_proof_obligation_clone_independence() {
+        let original = FlowProofObligation {
+            rule: rule(Label::Secret, Label::Public),
+            required_method: FlowProofMethod::Declassification,
+            justification: "original justification".to_string(),
+            proof_artifact_hash: None,
+        };
+        let mut cloned = original.clone();
+        cloned.justification = "mutated".to_string();
+        assert_eq!(original.justification, "original justification");
+    }
+
+    #[test]
+    fn synthesis_pass_result_clone_independence() {
+        let original = SynthesisPassResult {
+            pass: SynthesisPass::StaticFlowAnalysis,
+            required_flows: {
+                let mut s = BTreeSet::new();
+                s.insert(rule(Label::Public, Label::Internal));
+                s
+            },
+            removable_flows: BTreeSet::new(),
+            time_consumed_ns: 100,
+            completed: true,
+        };
+        let mut cloned = original.clone();
+        cloned.time_consumed_ns = 999;
+        assert_eq!(original.time_consumed_ns, 100);
+    }
+
+    // -- JSON field-name stability ------------------------------------------
+
+    #[test]
+    fn flow_confidence_interval_json_field_names() {
+        let ci = FlowConfidenceInterval {
+            lower_millionths: 800_000,
+            upper_millionths: 1_000_000,
+            n_trials: 50,
+            n_essential: 40,
+        };
+        let json = serde_json::to_string(&ci).unwrap();
+        assert!(json.contains("\"lower_millionths\""));
+        assert!(json.contains("\"upper_millionths\""));
+        assert!(json.contains("\"n_trials\""));
+        assert!(json.contains("\"n_essential\""));
+    }
+
+    #[test]
+    fn flow_proof_obligation_json_field_names() {
+        let obl = FlowProofObligation {
+            rule: rule(Label::Public, Label::Internal),
+            required_method: FlowProofMethod::StaticAnalysis,
+            justification: "j".to_string(),
+            proof_artifact_hash: None,
+        };
+        let json = serde_json::to_string(&obl).unwrap();
+        assert!(json.contains("\"rule\""));
+        assert!(json.contains("\"required_method\""));
+        assert!(json.contains("\"justification\""));
+        assert!(json.contains("\"proof_artifact_hash\""));
+    }
+
+    #[test]
+    fn envelope_event_json_field_names() {
+        let ev = EnvelopeEvent {
+            trace_id: "t".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            extension_id: None,
+            flow_count: None,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"event\""));
+        assert!(json.contains("\"outcome\""));
+        assert!(json.contains("\"error_code\""));
+        assert!(json.contains("\"extension_id\""));
+        assert!(json.contains("\"flow_count\""));
+    }
+
+    #[test]
+    fn flow_envelope_ref_json_field_names() {
+        let r = FlowEnvelopeRef {
+            envelope_id: EngineObjectId([0u8; 32]),
+            envelope_hash: ContentHash::compute(b"x"),
+            envelope_epoch: SecurityEpoch::from_raw(5),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"envelope_id\""));
+        assert!(json.contains("\"envelope_hash\""));
+        assert!(json.contains("\"envelope_epoch\""));
+    }
+
+    #[test]
+    fn flow_envelope_json_field_names() {
+        let envelope = FlowEnvelope::build(valid_input()).unwrap();
+        let json = serde_json::to_string(&envelope).unwrap();
+        assert!(json.contains("\"envelope_id\""));
+        assert!(json.contains("\"extension_id\""));
+        assert!(json.contains("\"required_flows\""));
+        assert!(json.contains("\"denied_flows\""));
+        assert!(json.contains("\"confidence\""));
+        assert!(json.contains("\"is_fallback\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"timestamp_ns\""));
+        assert!(json.contains("\"validity_epoch\""));
+    }
+
+    // -- Hash consistency ---------------------------------------------------
+
+    #[test]
+    fn flow_discovery_method_hash_consistent() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        fn hash_val<T: Hash>(v: &T) -> u64 {
+            let mut h = DefaultHasher::new();
+            v.hash(&mut h);
+            h.finish()
+        }
+
+        let m = FlowDiscoveryMethod::StaticAnalysis;
+        assert_eq!(hash_val(&m), hash_val(&FlowDiscoveryMethod::StaticAnalysis));
+        assert_ne!(
+            hash_val(&FlowDiscoveryMethod::StaticAnalysis),
+            hash_val(&FlowDiscoveryMethod::DynamicAblation)
+        );
+    }
+
+    #[test]
+    fn flow_proof_method_hash_consistent() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        fn hash_val<T: Hash>(v: &T) -> u64 {
+            let mut h = DefaultHasher::new();
+            v.hash(&mut h);
+            h.finish()
+        }
+
+        let m = FlowProofMethod::RuntimeCheck;
+        assert_eq!(hash_val(&m), hash_val(&FlowProofMethod::RuntimeCheck));
+        assert_ne!(
+            hash_val(&FlowProofMethod::RuntimeCheck),
+            hash_val(&FlowProofMethod::Declassification)
+        );
+    }
+
+    #[test]
+    fn synthesis_pass_hash_consistent() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        fn hash_val<T: Hash>(v: &T) -> u64 {
+            let mut h = DefaultHasher::new();
+            v.hash(&mut h);
+            h.finish()
+        }
+
+        assert_eq!(
+            hash_val(&SynthesisPass::StaticFlowAnalysis),
+            hash_val(&SynthesisPass::StaticFlowAnalysis)
+        );
+        assert_ne!(
+            hash_val(&SynthesisPass::StaticFlowAnalysis),
+            hash_val(&SynthesisPass::DynamicFlowAblation)
+        );
+    }
+
+    // -- Boundary / edge cases ---------------------------------------------
+
+    #[test]
+    fn confidence_interval_zero_trials() {
+        let ci = FlowConfidenceInterval {
+            lower_millionths: 0,
+            upper_millionths: 0,
+            n_trials: 0,
+            n_essential: 0,
+        };
+        let json = serde_json::to_string(&ci).unwrap();
+        let deser: FlowConfidenceInterval = serde_json::from_str(&json).unwrap();
+        assert_eq!(ci, deser);
+    }
+
+    #[test]
+    fn confidence_interval_max_values() {
+        let ci = FlowConfidenceInterval {
+            lower_millionths: i64::MAX,
+            upper_millionths: i64::MAX,
+            n_trials: u32::MAX,
+            n_essential: u32::MAX,
+        };
+        let json = serde_json::to_string(&ci).unwrap();
+        let deser: FlowConfidenceInterval = serde_json::from_str(&json).unwrap();
+        assert_eq!(ci, deser);
+    }
+
+    #[test]
+    fn confidence_interval_negative_lower_bound() {
+        let ci = FlowConfidenceInterval {
+            lower_millionths: -500_000,
+            upper_millionths: 1_000_000,
+            n_trials: 20,
+            n_essential: 8,
+        };
+        let json = serde_json::to_string(&ci).unwrap();
+        let deser: FlowConfidenceInterval = serde_json::from_str(&json).unwrap();
+        assert_eq!(ci, deser);
+    }
+
+    #[test]
+    fn envelope_event_with_all_optional_fields_populated() {
+        let ev = EnvelopeEvent {
+            trace_id: "long-trace-id-xyz-123".to_string(),
+            component: "flow_envelope".to_string(),
+            event: "budget_exhausted".to_string(),
+            outcome: "error".to_string(),
+            error_code: Some("ENVELOPE_BUDGET_EXHAUSTED".to_string()),
+            extension_id: Some("ext-edge".to_string()),
+            flow_count: Some(0),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let deser: EnvelopeEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, deser);
+        assert!(json.contains("\"flow_count\":0"));
+    }
+
+    #[test]
+    fn flow_requirement_all_location_none() {
+        let req = FlowRequirement {
+            rule: rule(Label::TopSecret, Label::Public),
+            discovery_method: FlowDiscoveryMethod::ManifestDeclaration,
+            source_location: None,
+            sink_location: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let deser: FlowRequirement = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, deser);
+        assert!(json.contains("null"));
+    }
+
+    #[test]
+    fn flow_proof_obligation_with_satisfied_hash() {
+        let obl = FlowProofObligation {
+            rule: rule(Label::Internal, Label::Confidential),
+            required_method: FlowProofMethod::StaticAnalysis,
+            justification: "proven safe".to_string(),
+            proof_artifact_hash: Some(ContentHash::compute(b"proof-artifact-bytes")),
+        };
+        let json = serde_json::to_string(&obl).unwrap();
+        let deser: FlowProofObligation = serde_json::from_str(&json).unwrap();
+        assert_eq!(obl, deser);
+        assert!(obl.proof_artifact_hash.is_some());
+    }
+
+    #[test]
+    fn synthesis_pass_result_empty_sets() {
+        let result = SynthesisPassResult {
+            pass: SynthesisPass::DynamicFlowAblation,
+            required_flows: BTreeSet::new(),
+            removable_flows: BTreeSet::new(),
+            time_consumed_ns: 0,
+            completed: false,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let deser: SynthesisPassResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, deser);
+        assert!(!deser.completed);
+    }
+
+    // -- Error trait checks -------------------------------------------------
+
+    #[test]
+    fn envelope_error_source_is_none() {
+        use std::error::Error;
+        // EnvelopeError has no chained source (no #[source] attribute).
+        let e = EnvelopeError::EmptyExtensionId;
+        assert!(e.source().is_none());
+    }
+
+    #[test]
+    fn envelope_error_display_contains_meaningful_fields() {
+        let err = EnvelopeError::OverlappingFlows { overlap_count: 7 };
+        let msg = format!("{err}");
+        assert!(msg.contains("7"));
+
+        let err = EnvelopeError::MissingProofObligation {
+            rule: rule(Label::TopSecret, Label::Public),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("top_secret") || msg.contains("TopSecret"));
+
+        let err = EnvelopeError::BudgetExhausted {
+            phase: "ablation".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("ablation"));
+    }
+
+    #[test]
+    fn all_error_codes_unique() {
+        let errors = vec![
+            EnvelopeError::EmptyExtensionId,
+            EnvelopeError::EmptyUpperBound,
+            EnvelopeError::OverlappingFlows { overlap_count: 1 },
+            EnvelopeError::MissingProofObligation {
+                rule: rule(Label::Public, Label::Public),
+            },
+            EnvelopeError::IdDerivation(String::new()),
+            EnvelopeError::SignatureError(String::new()),
+            EnvelopeError::BudgetExhausted { phase: String::new() },
+        ];
+        let codes: BTreeSet<&'static str> = errors.iter().map(error_code).collect();
+        assert_eq!(codes.len(), errors.len());
+    }
+
+    // -- Additional synthesizer/build coverage ------------------------------
+
+    #[test]
+    fn synthesizer_new_stores_fields() {
+        let synth = FlowEnvelopeSynthesizer::new("my-ext", 5_000_000, SecurityEpoch::from_raw(7));
+        assert_eq!(synth.extension_id, "my-ext");
+        assert_eq!(synth.time_budget_ns, 5_000_000);
+        assert_eq!(synth.epoch, SecurityEpoch::from_raw(7));
+        assert!(synth.events.is_empty());
+    }
+
+    #[test]
+    fn synthesizer_serde_roundtrip() {
+        let synth =
+            FlowEnvelopeSynthesizer::new("ext-serde", 1_000_000_000, SecurityEpoch::from_raw(3));
+        let json = serde_json::to_string(&synth).unwrap();
+        let deser: FlowEnvelopeSynthesizer = serde_json::from_str(&json).unwrap();
+        assert_eq!(synth.extension_id, deser.extension_id);
+        assert_eq!(synth.time_budget_ns, deser.time_budget_ns);
+        assert_eq!(synth.epoch, deser.epoch);
+        assert_eq!(synth.events.len(), deser.events.len());
+    }
+
+    #[test]
+    fn synthesizer_fallback_partial_ablation_quality() {
+        let upper = test_upper_bound();
+        let mut synth =
+            FlowEnvelopeSynthesizer::new("ext-fb2", 30_000_000_000, SecurityEpoch::from_raw(2));
+        let envelope = synth
+            .synthesize_fallback(
+                &upper,
+                "policy-fb",
+                9_999,
+                FallbackQuality::PartialAblation,
+                "trace-fb",
+            )
+            .unwrap();
+        assert!(envelope.is_fallback);
+        assert_eq!(
+            envelope.fallback_quality,
+            Some(FallbackQuality::PartialAblation)
+        );
+        assert!(envelope.verify_content_address());
+    }
+
+    #[test]
+    fn fallback_envelope_uses_runtime_check_proof_method() {
+        let upper = test_upper_bound();
+        let mut synth =
+            FlowEnvelopeSynthesizer::new("ext-fb3", 30_000_000_000, SecurityEpoch::from_raw(1));
+        let envelope = synth
+            .synthesize_fallback(
+                &upper,
+                "policy-fb",
+                0,
+                FallbackQuality::StaticBound,
+                "t",
+            )
+            .unwrap();
+        for obl in &envelope.proof_obligations {
+            assert_eq!(obl.required_method, FlowProofMethod::RuntimeCheck);
+        }
+    }
+
+    #[test]
+    fn synthesizer_fallback_rejects_empty_extension_id() {
+        let upper = test_upper_bound();
+        let mut synth =
+            FlowEnvelopeSynthesizer::new("", 30_000_000_000, SecurityEpoch::from_raw(1));
+        let err = synth
+            .synthesize_fallback(&upper, "p", 0, FallbackQuality::StaticBound, "t")
+            .unwrap_err();
+        assert_eq!(err, EnvelopeError::EmptyExtensionId);
+    }
+
+    #[test]
+    fn synthesizer_fallback_rejects_empty_upper_bound() {
+        let empty: BTreeSet<FlowRule> = BTreeSet::new();
+        let mut synth =
+            FlowEnvelopeSynthesizer::new("ext-ok", 30_000_000_000, SecurityEpoch::from_raw(1));
+        let err = synth
+            .synthesize_fallback(&empty, "p", 0, FallbackQuality::StaticBound, "t")
+            .unwrap_err();
+        assert_eq!(err, EnvelopeError::EmptyUpperBound);
+    }
+
+    #[test]
+    fn envelope_with_ablation_required_uses_ablation_set() {
+        // When ablation_required is non-empty, it should take precedence over
+        // static_upper_bound for required_flows.
+        let mut input = valid_input();
+        // Limit ablation_required to just one flow.
+        let single_flow = rule(Label::Public, Label::Internal);
+        let mut just_one: BTreeSet<FlowRule> = BTreeSet::new();
+        just_one.insert(single_flow.clone());
+        input.ablation_required = just_one;
+        input.ablation_removable = BTreeSet::new();
+        let envelope = FlowEnvelope::build(input).unwrap();
+        assert_eq!(envelope.required_flows.len(), 1);
+        assert!(envelope.allows_flow(&single_flow));
+    }
+
+    #[test]
+    fn envelope_with_empty_ablation_required_falls_back_to_static_upper_bound() {
+        let mut input = valid_input();
+        input.ablation_required = BTreeSet::new();
+        input.ablation_removable = BTreeSet::new();
+        let envelope = FlowEnvelope::build(input).unwrap();
+        // Falls back to static_upper_bound (4 flows).
+        assert_eq!(envelope.required_flows.len(), 4);
+    }
+
+    #[test]
+    fn unsatisfied_obligations_decreases_when_hash_set() {
+        let mut input = valid_input();
+        // Give one obligation a satisfied hash.
+        if let Some(first) = input.proof_obligations.first_mut() {
+            first.proof_artifact_hash = Some(ContentHash::compute(b"satisfied"));
+        }
+        let envelope = FlowEnvelope::build(input).unwrap();
+        // We have 2 obligations total, one satisfied → 1 unsatisfied.
+        assert_eq!(envelope.unsatisfied_obligations(), 1);
+    }
+
+    #[test]
+    fn unsatisfied_obligations_zero_when_all_satisfied() {
+        let mut input = valid_input();
+        for obl in &mut input.proof_obligations {
+            obl.proof_artifact_hash = Some(ContentHash::compute(b"done"));
+        }
+        let envelope = FlowEnvelope::build(input).unwrap();
+        assert_eq!(envelope.unsatisfied_obligations(), 0);
+    }
+
+    #[test]
+    fn envelope_ref_clone_independence() {
+        let original = FlowEnvelopeRef {
+            envelope_id: EngineObjectId([0xBB; 32]),
+            envelope_hash: ContentHash::compute(b"ref-hash"),
+            envelope_epoch: SecurityEpoch::from_raw(3),
+        };
+        let mut cloned = original.clone();
+        cloned.envelope_epoch = SecurityEpoch::from_raw(99);
+        assert_eq!(original.envelope_epoch, SecurityEpoch::from_raw(3));
+    }
+
+    #[test]
+    fn static_pass_only_marks_safe_flows_required() {
+        let mut synth =
+            FlowEnvelopeSynthesizer::new("ext-sp", 30_000_000_000, SecurityEpoch::from_raw(1));
+        let upper = test_upper_bound();
+        let result = synth.static_pass(&upper, "t");
+        // Safe flows: Public→Internal, Internal→Confidential
+        assert!(
+            result
+                .required_flows
+                .contains(&rule(Label::Public, Label::Internal))
+        );
+        assert!(
+            result
+                .required_flows
+                .contains(&rule(Label::Internal, Label::Confidential))
+        );
+        // Declassification flows go to removable.
+        assert!(
+            result
+                .removable_flows
+                .contains(&rule(Label::Confidential, Label::Public))
+        );
+        assert!(
+            result
+                .removable_flows
+                .contains(&rule(Label::Secret, Label::Internal))
+        );
+    }
+
+    #[test]
+    fn dynamic_pass_with_empty_removable_returns_static_required() {
+        let mut synth =
+            FlowEnvelopeSynthesizer::new("ext-dp", 30_000_000_000, SecurityEpoch::from_raw(1));
+        let upper = test_upper_bound();
+        // Build a static result with empty removable set.
+        let static_result = SynthesisPassResult {
+            pass: SynthesisPass::StaticFlowAnalysis,
+            required_flows: {
+                let mut s = BTreeSet::new();
+                s.insert(rule(Label::Public, Label::Internal));
+                s
+            },
+            removable_flows: BTreeSet::new(),
+            time_consumed_ns: 0,
+            completed: true,
+        };
+        let oracle = |_: &FlowRule| true; // Should not be called.
+        let dynamic = synth.dynamic_pass(&static_result, &oracle, "t");
+        assert_eq!(dynamic.required_flows.len(), 1);
+        assert!(dynamic.removable_flows.is_empty());
+        let _ = upper; // suppress unused warning
+    }
+
+    #[test]
+    fn synthesize_confidence_reflects_essential_ratio() {
+        let oracle = |r: &FlowRule| {
+            // Only Confidential→Public is essential.
+            r.source_label == Label::Confidential && r.sink_clearance == Label::Public
+        };
+        let upper = test_upper_bound();
+        let mut synth =
+            FlowEnvelopeSynthesizer::new("ext-conf", 30_000_000_000, SecurityEpoch::from_raw(1));
+        let envelope = synth.synthesize(&upper, &oracle, "p", 0, "t").unwrap();
+
+        // 3 required (2 safe + 1 promoted), 1 removable → ratio = 3/4
+        assert_eq!(envelope.confidence.n_trials, 4);
+        assert_eq!(envelope.confidence.n_essential, 3);
+        // lower = 3_000_000 / 4 = 750_000
+        assert_eq!(envelope.confidence.lower_millionths, 750_000);
+    }
+
+    #[test]
+    fn flow_envelope_debug_is_non_empty() {
+        let envelope = FlowEnvelope::build(valid_input()).unwrap();
+        let dbg = format!("{envelope:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("FlowEnvelope"));
+    }
+
+    #[test]
+    fn synthesizer_events_after_fallback_contain_trace_id() {
+        let upper = test_upper_bound();
+        let mut synth =
+            FlowEnvelopeSynthesizer::new("ext-evfb", 30_000_000_000, SecurityEpoch::from_raw(1));
+        synth
+            .synthesize_fallback(&upper, "p", 0, FallbackQuality::StaticBound, "fb-trace-99")
+            .unwrap();
+        for ev in &synth.events {
+            assert_eq!(ev.trace_id, "fb-trace-99");
+        }
+    }
+
+    #[test]
+    fn is_out_of_envelope_false_for_required_flow() {
+        let envelope = FlowEnvelope::build(valid_input()).unwrap();
+        let safe = rule(Label::Public, Label::Internal);
+        assert!(!envelope.is_out_of_envelope(&safe));
+    }
+
+    #[test]
+    fn is_out_of_envelope_false_for_denied_flow() {
+        let envelope = FlowEnvelope::build(valid_input()).unwrap();
+        let denied = rule(Label::Confidential, Label::Public);
+        assert!(!envelope.is_out_of_envelope(&denied));
+    }
+
+    #[test]
+    fn allows_and_denies_are_mutually_exclusive_for_any_known_flow() {
+        let envelope = FlowEnvelope::build(valid_input()).unwrap();
+        for r in &envelope.required_flows {
+            assert!(envelope.allows_flow(r));
+            assert!(!envelope.denies_flow(r));
+        }
+        for r in &envelope.denied_flows {
+            assert!(envelope.denies_flow(r));
+            assert!(!envelope.allows_flow(r));
+        }
+    }
 }

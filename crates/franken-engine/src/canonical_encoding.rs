@@ -1580,4 +1580,726 @@ mod tests {
         bytes.push(0xFF); // trailing garbage
         assert!(CanonicalGuard::is_canonical_raw(&bytes).is_err());
     }
+
+    // -- Enrichment batch 4: Clone / PartialEq / Debug --
+
+    #[test]
+    fn canonical_violation_clone_is_independent() {
+        let orig = CanonicalViolation::DuplicateKey {
+            key: "alpha".to_string(),
+        };
+        let mut cloned = orig.clone();
+        // Mutate the clone by replacing with a different variant.
+        cloned = CanonicalViolation::TrailingBytes { count: 99 };
+        // Original unchanged.
+        assert_eq!(
+            orig,
+            CanonicalViolation::DuplicateKey {
+                key: "alpha".to_string()
+            }
+        );
+        assert_ne!(orig, cloned);
+    }
+
+    #[test]
+    fn non_canonical_error_clone_is_independent() {
+        let orig = NonCanonicalError {
+            object_class: ObjectDomain::PolicyObject,
+            input_hash: [0x01; 32],
+            violation: CanonicalViolation::TrailingBytes { count: 1 },
+            trace_id: "orig".to_string(),
+        };
+        let mut cloned = orig.clone();
+        cloned.trace_id = "cloned".to_string();
+        assert_eq!(orig.trace_id, "orig");
+        assert_eq!(cloned.trace_id, "cloned");
+    }
+
+    #[test]
+    fn guard_event_clone_is_independent() {
+        let orig = GuardEvent {
+            event_type: GuardEventType::Accepted,
+            object_class: ObjectDomain::PolicyObject,
+            trace_id: "t-orig".to_string(),
+            input_hash: [0x02; 32],
+        };
+        let mut cloned = orig.clone();
+        cloned.trace_id = "t-cloned".to_string();
+        assert_eq!(orig.trace_id, "t-orig");
+        assert_eq!(cloned.trace_id, "t-cloned");
+    }
+
+    #[test]
+    fn guard_event_type_clone_is_independent() {
+        let orig = GuardEventType::Rejected {
+            violation: CanonicalViolation::TrailingBytes { count: 5 },
+        };
+        let cloned = orig.clone();
+        assert_eq!(orig, cloned);
+    }
+
+    #[test]
+    fn canonical_violation_debug_non_empty() {
+        let violations = [
+            CanonicalViolation::NonLexicographicKeys {
+                prev_key: "b".to_string(),
+                current_key: "a".to_string(),
+            },
+            CanonicalViolation::DuplicateKey {
+                key: "k".to_string(),
+            },
+            CanonicalViolation::TrailingBytes { count: 7 },
+            CanonicalViolation::LeadingPadding { byte_count: 2 },
+            CanonicalViolation::RoundTripMismatch {
+                first_diff_offset: 10,
+                expected: 0xAB,
+                actual: 0xCD,
+            },
+            CanonicalViolation::LengthMismatch {
+                input_len: 50,
+                canonical_len: 48,
+            },
+            CanonicalViolation::DeserializationFailed {
+                detail: "boom".to_string(),
+            },
+            CanonicalViolation::InvalidTag { tag: 0x99, offset: 4 },
+            CanonicalViolation::SchemaViolation {
+                detail: "bad schema".to_string(),
+            },
+        ];
+        for v in &violations {
+            let dbg = format!("{v:?}");
+            assert!(!dbg.is_empty(), "Debug output must be non-empty: {v:?}");
+        }
+    }
+
+    #[test]
+    fn guard_event_type_debug_non_empty() {
+        let types = [
+            GuardEventType::Accepted,
+            GuardEventType::Rejected {
+                violation: CanonicalViolation::TrailingBytes { count: 1 },
+            },
+            GuardEventType::UnregisteredClass,
+        ];
+        for t in &types {
+            assert!(!format!("{t:?}").is_empty());
+        }
+    }
+
+    #[test]
+    fn guard_event_debug_non_empty() {
+        let event = GuardEvent {
+            event_type: GuardEventType::Accepted,
+            object_class: ObjectDomain::PolicyObject,
+            trace_id: "t".to_string(),
+            input_hash: [0u8; 32],
+        };
+        assert!(!format!("{event:?}").is_empty());
+    }
+
+    #[test]
+    fn non_canonical_error_debug_non_empty() {
+        let err = NonCanonicalError {
+            object_class: ObjectDomain::Revocation,
+            input_hash: [0u8; 32],
+            violation: CanonicalViolation::TrailingBytes { count: 3 },
+            trace_id: "t".to_string(),
+        };
+        assert!(!format!("{err:?}").is_empty());
+    }
+
+    // -- Enrichment batch 5: Serde variant distinctness --
+
+    #[test]
+    fn canonical_violation_variants_serialize_distinctly() {
+        let violations = [
+            CanonicalViolation::NonLexicographicKeys {
+                prev_key: "b".to_string(),
+                current_key: "a".to_string(),
+            },
+            CanonicalViolation::DuplicateKey {
+                key: "k".to_string(),
+            },
+            CanonicalViolation::TrailingBytes { count: 1 },
+            CanonicalViolation::LeadingPadding { byte_count: 1 },
+            CanonicalViolation::RoundTripMismatch {
+                first_diff_offset: 0,
+                expected: 0x01,
+                actual: 0x02,
+            },
+            CanonicalViolation::LengthMismatch {
+                input_len: 5,
+                canonical_len: 4,
+            },
+            CanonicalViolation::DeserializationFailed {
+                detail: "e".to_string(),
+            },
+            CanonicalViolation::InvalidTag { tag: 0x01, offset: 0 },
+            CanonicalViolation::SchemaViolation {
+                detail: "s".to_string(),
+            },
+        ];
+        let mut serialized = std::collections::BTreeSet::new();
+        for v in &violations {
+            let s = serde_json::to_string(v).unwrap();
+            serialized.insert(s);
+        }
+        assert_eq!(serialized.len(), violations.len(), "each variant serializes distinctly");
+    }
+
+    #[test]
+    fn guard_event_type_variants_serialize_distinctly() {
+        let types = [
+            GuardEventType::Accepted,
+            GuardEventType::Rejected {
+                violation: CanonicalViolation::TrailingBytes { count: 1 },
+            },
+            GuardEventType::UnregisteredClass,
+        ];
+        let mut serialized = std::collections::BTreeSet::new();
+        for t in &types {
+            serialized.insert(serde_json::to_string(t).unwrap());
+        }
+        assert_eq!(serialized.len(), 3);
+    }
+
+    // -- Enrichment batch 6: JSON field-name stability --
+
+    #[test]
+    fn canonical_violation_trailing_bytes_field_names() {
+        let v = CanonicalViolation::TrailingBytes { count: 7 };
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains("TrailingBytes"), "variant key must be present");
+        assert!(json.contains("count"), "field 'count' must be present");
+    }
+
+    #[test]
+    fn canonical_violation_leading_padding_field_names() {
+        let v = CanonicalViolation::LeadingPadding { byte_count: 3 };
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains("LeadingPadding"));
+        assert!(json.contains("byte_count"));
+    }
+
+    #[test]
+    fn canonical_violation_round_trip_mismatch_field_names() {
+        let v = CanonicalViolation::RoundTripMismatch {
+            first_diff_offset: 10,
+            expected: 0xAB,
+            actual: 0xCD,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains("RoundTripMismatch"));
+        assert!(json.contains("first_diff_offset"));
+        assert!(json.contains("expected"));
+        assert!(json.contains("actual"));
+    }
+
+    #[test]
+    fn canonical_violation_length_mismatch_field_names() {
+        let v = CanonicalViolation::LengthMismatch {
+            input_len: 100,
+            canonical_len: 99,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains("LengthMismatch"));
+        assert!(json.contains("input_len"));
+        assert!(json.contains("canonical_len"));
+    }
+
+    #[test]
+    fn canonical_violation_invalid_tag_field_names() {
+        let v = CanonicalViolation::InvalidTag { tag: 0xFF, offset: 5 };
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains("InvalidTag"));
+        assert!(json.contains("tag"));
+        assert!(json.contains("offset"));
+    }
+
+    #[test]
+    fn non_canonical_error_field_names() {
+        let err = NonCanonicalError {
+            object_class: ObjectDomain::PolicyObject,
+            input_hash: [0u8; 32],
+            violation: CanonicalViolation::TrailingBytes { count: 1 },
+            trace_id: "t".to_string(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("object_class"));
+        assert!(json.contains("input_hash"));
+        assert!(json.contains("violation"));
+        assert!(json.contains("trace_id"));
+    }
+
+    #[test]
+    fn guard_event_field_names() {
+        let event = GuardEvent {
+            event_type: GuardEventType::Accepted,
+            object_class: ObjectDomain::PolicyObject,
+            trace_id: "t".to_string(),
+            input_hash: [0u8; 32],
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("event_type"));
+        assert!(json.contains("object_class"));
+        assert!(json.contains("trace_id"));
+        assert!(json.contains("input_hash"));
+    }
+
+    // -- Enrichment batch 7: Display format detail checks --
+
+    #[test]
+    fn violation_display_non_lexicographic_shows_keys() {
+        let v = CanonicalViolation::NonLexicographicKeys {
+            prev_key: "zoo".to_string(),
+            current_key: "ant".to_string(),
+        };
+        let s = v.to_string();
+        assert!(s.contains("zoo"), "prev_key must appear in display");
+        assert!(s.contains("ant"), "current_key must appear in display");
+    }
+
+    #[test]
+    fn violation_display_round_trip_mismatch_shows_offset_and_bytes() {
+        let v = CanonicalViolation::RoundTripMismatch {
+            first_diff_offset: 42,
+            expected: 0x0A,
+            actual: 0x0B,
+        };
+        let s = v.to_string();
+        assert!(s.contains("42"), "offset must appear");
+        assert!(s.contains("0a"), "expected byte hex must appear");
+        assert!(s.contains("0b"), "actual byte hex must appear");
+    }
+
+    #[test]
+    fn violation_display_length_mismatch_shows_lengths() {
+        let v = CanonicalViolation::LengthMismatch {
+            input_len: 123,
+            canonical_len: 456,
+        };
+        let s = v.to_string();
+        assert!(s.contains("123"));
+        assert!(s.contains("456"));
+    }
+
+    #[test]
+    fn violation_display_invalid_tag_shows_tag_and_offset() {
+        let v = CanonicalViolation::InvalidTag { tag: 0xBE, offset: 7 };
+        let s = v.to_string();
+        assert!(s.contains("be") || s.contains("BE"), "hex tag must appear");
+        assert!(s.contains("7"), "offset must appear");
+    }
+
+    #[test]
+    fn violation_display_deserialization_failed_shows_detail() {
+        let v = CanonicalViolation::DeserializationFailed {
+            detail: "unexpected_eof_xyz".to_string(),
+        };
+        let s = v.to_string();
+        assert!(s.contains("unexpected_eof_xyz"));
+    }
+
+    #[test]
+    fn violation_display_schema_violation_shows_detail() {
+        let v = CanonicalViolation::SchemaViolation {
+            detail: "schema_mismatch_detail_xyz".to_string(),
+        };
+        let s = v.to_string();
+        assert!(s.contains("schema_mismatch_detail_xyz"));
+    }
+
+    #[test]
+    fn guard_event_type_display_rejected_shows_violation() {
+        let t = GuardEventType::Rejected {
+            violation: CanonicalViolation::TrailingBytes { count: 11 },
+        };
+        let s = t.to_string();
+        assert!(s.contains("rejected"));
+        assert!(s.contains("11"));
+    }
+
+    #[test]
+    fn non_canonical_error_display_shows_all_parts() {
+        let err = NonCanonicalError {
+            object_class: ObjectDomain::EvidenceRecord,
+            input_hash: [0u8; 32],
+            violation: CanonicalViolation::DuplicateKey {
+                key: "mykey".to_string(),
+            },
+            trace_id: "trc-999".to_string(),
+        };
+        let s = err.to_string();
+        assert!(s.contains("evidence_record"));
+        assert!(s.contains("mykey"));
+        assert!(s.contains("trc-999"));
+    }
+
+    // -- Enrichment batch 8: edge-case boundary values --
+
+    #[test]
+    fn violation_trailing_bytes_zero_count_serde_roundtrip() {
+        let v = CanonicalViolation::TrailingBytes { count: 0 };
+        let json = serde_json::to_string(&v).unwrap();
+        let restored: CanonicalViolation = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, restored);
+    }
+
+    #[test]
+    fn violation_leading_padding_zero_bytes_serde_roundtrip() {
+        let v = CanonicalViolation::LeadingPadding { byte_count: 0 };
+        let json = serde_json::to_string(&v).unwrap();
+        let restored: CanonicalViolation = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, restored);
+    }
+
+    #[test]
+    fn violation_round_trip_mismatch_zero_offset_serde_roundtrip() {
+        let v = CanonicalViolation::RoundTripMismatch {
+            first_diff_offset: 0,
+            expected: 0,
+            actual: 255,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let restored: CanonicalViolation = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, restored);
+    }
+
+    #[test]
+    fn violation_length_mismatch_equal_lengths_serde_roundtrip() {
+        // edge case: input_len == canonical_len (which compare_bytes wouldn't produce,
+        // but still a valid struct value).
+        let v = CanonicalViolation::LengthMismatch {
+            input_len: 100,
+            canonical_len: 100,
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let restored: CanonicalViolation = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, restored);
+    }
+
+    #[test]
+    fn violation_invalid_tag_zero_offset_max_tag_serde_roundtrip() {
+        let v = CanonicalViolation::InvalidTag { tag: 0xFF, offset: 0 };
+        let json = serde_json::to_string(&v).unwrap();
+        let restored: CanonicalViolation = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, restored);
+    }
+
+    #[test]
+    fn violation_empty_key_strings_serde_roundtrip() {
+        let v = CanonicalViolation::DuplicateKey { key: String::new() };
+        let json = serde_json::to_string(&v).unwrap();
+        let restored: CanonicalViolation = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, restored);
+    }
+
+    #[test]
+    fn non_canonical_error_all_zero_hash_serde_roundtrip() {
+        let err = NonCanonicalError {
+            object_class: ObjectDomain::KeyBundle,
+            input_hash: [0u8; 32],
+            violation: CanonicalViolation::InvalidTag { tag: 0, offset: 0 },
+            trace_id: String::new(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let restored: NonCanonicalError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, restored);
+    }
+
+    #[test]
+    fn non_canonical_error_all_max_hash_serde_roundtrip() {
+        let err = NonCanonicalError {
+            object_class: ObjectDomain::SignedManifest,
+            input_hash: [0xFF; 32],
+            violation: CanonicalViolation::TrailingBytes { count: usize::MAX },
+            trace_id: "max".to_string(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let restored: NonCanonicalError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, restored);
+    }
+
+    // -- Enrichment batch 9: guard behaviour edge cases --
+
+    #[test]
+    fn validate_from_registry_too_short_rejected() {
+        let mut guard = CanonicalGuard::new();
+        guard.register_class(ObjectDomain::PolicyObject, "P", 1, b"ps");
+        // 31 bytes — just below the 32-byte schema-prefix threshold.
+        let too_short = vec![0u8; 31];
+        assert!(guard.validate_from_registry(&too_short, "t-tshort").is_err());
+    }
+
+    #[test]
+    fn validate_from_registry_empty_rejected() {
+        let mut guard = CanonicalGuard::new();
+        guard.register_class(ObjectDomain::PolicyObject, "P", 1, b"ps");
+        assert!(guard.validate_from_registry(&[], "t-empty-reg").is_err());
+    }
+
+    #[test]
+    fn validate_from_registry_schema_not_in_any_class() {
+        let mut guard = CanonicalGuard::new();
+        guard.register_class(ObjectDomain::PolicyObject, "P", 1, b"schema-A");
+        // Build bytes using a different schema not registered.
+        let other_schema = SchemaHash::from_definition(b"schema-B");
+        let bytes = make_canonical_payload(&other_schema, &CanonicalValue::Null);
+        let err = guard.validate_from_registry(&bytes, "t-notfound").unwrap_err();
+        assert!(matches!(
+            err.violation,
+            CanonicalViolation::SchemaViolation { .. }
+        ));
+    }
+
+    #[test]
+    fn leading_newline_rejected() {
+        let (mut guard, schema) = setup_guard();
+        let mut bytes = vec![b'\n'];
+        bytes.extend_from_slice(&make_canonical_payload(&schema, &CanonicalValue::Null));
+        let err = guard
+            .validate(ObjectDomain::PolicyObject, &bytes, "t-newline")
+            .unwrap_err();
+        assert!(matches!(
+            err.violation,
+            CanonicalViolation::LeadingPadding { byte_count: 1 }
+        ));
+    }
+
+    #[test]
+    fn leading_carriage_return_rejected() {
+        let (mut guard, schema) = setup_guard();
+        let mut bytes = vec![b'\r'];
+        bytes.extend_from_slice(&make_canonical_payload(&schema, &CanonicalValue::Null));
+        let err = guard
+            .validate(ObjectDomain::PolicyObject, &bytes, "t-cr")
+            .unwrap_err();
+        assert!(matches!(
+            err.violation,
+            CanonicalViolation::LeadingPadding { byte_count: 1 }
+        ));
+    }
+
+    #[test]
+    fn multiple_leading_whitespace_chars_count_correctly() {
+        let (mut guard, schema) = setup_guard();
+        // Mixed whitespace: space, tab, newline
+        let mut bytes = vec![b' ', b'\t', b'\n'];
+        bytes.extend_from_slice(&make_canonical_payload(&schema, &CanonicalValue::Null));
+        let err = guard
+            .validate(ObjectDomain::PolicyObject, &bytes, "t-mixed-ws")
+            .unwrap_err();
+        assert!(matches!(
+            err.violation,
+            CanonicalViolation::LeadingPadding { byte_count: 3 }
+        ));
+    }
+
+    #[test]
+    fn event_has_correct_input_hash_on_accept() {
+        let (mut guard, schema) = setup_guard();
+        let value = CanonicalValue::U64(777);
+        let bytes = make_canonical_payload(&schema, &value);
+        let expected_hash = compute_input_hash(&bytes);
+        guard
+            .validate(ObjectDomain::PolicyObject, &bytes, "t-hash-evt")
+            .unwrap();
+        let events = guard.drain_events();
+        assert_eq!(events[0].input_hash, expected_hash);
+    }
+
+    #[test]
+    fn event_has_correct_object_class_on_reject() {
+        let (mut guard, schema) = setup_guard();
+        let mut bad = make_canonical_payload(&schema, &CanonicalValue::Null);
+        bad.push(0x01);
+        guard
+            .validate(ObjectDomain::PolicyObject, &bad, "t-class-evt")
+            .unwrap_err();
+        let events = guard.drain_events();
+        assert_eq!(events[0].object_class, ObjectDomain::PolicyObject);
+    }
+
+    #[test]
+    fn acceptance_count_not_affected_by_rejections() {
+        let (mut guard, schema) = setup_guard();
+        // Reject three times.
+        for i in 0..3 {
+            let mut bad = make_canonical_payload(&schema, &CanonicalValue::U64(i));
+            bad.push(0xFF);
+            let _ = guard.validate(ObjectDomain::PolicyObject, &bad, "t-rej-acc");
+        }
+        assert_eq!(guard.acceptance_count(), 0);
+        assert_eq!(guard.rejection_count(), 3);
+    }
+
+    #[test]
+    fn is_canonical_raw_empty_bytes_ok() {
+        // empty bytes → no leading padding, and decode_value must handle it.
+        // The decoder should either succeed (if empty is a valid encoding of Null/something)
+        // or fail. Either way the function should not panic.
+        let _ = CanonicalGuard::is_canonical_raw(&[]);
+    }
+
+    #[test]
+    fn is_canonical_raw_bom_prefix_rejected() {
+        let value = CanonicalValue::U64(1);
+        let encoded = encode_value(&value);
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(&encoded);
+        let err = CanonicalGuard::is_canonical_raw(&bytes).unwrap_err();
+        assert!(matches!(err, CanonicalViolation::LeadingPadding { .. }));
+    }
+
+    #[test]
+    fn guard_event_type_equality() {
+        assert_eq!(GuardEventType::Accepted, GuardEventType::Accepted);
+        assert_eq!(GuardEventType::UnregisteredClass, GuardEventType::UnregisteredClass);
+        assert_ne!(GuardEventType::Accepted, GuardEventType::UnregisteredClass);
+    }
+
+    #[test]
+    fn guard_event_equality() {
+        let ev = GuardEvent {
+            event_type: GuardEventType::Accepted,
+            object_class: ObjectDomain::PolicyObject,
+            trace_id: "t".to_string(),
+            input_hash: [0u8; 32],
+        };
+        assert_eq!(ev, ev.clone());
+    }
+
+    #[test]
+    fn non_canonical_error_equality() {
+        let err = NonCanonicalError {
+            object_class: ObjectDomain::PolicyObject,
+            input_hash: [0u8; 32],
+            violation: CanonicalViolation::TrailingBytes { count: 1 },
+            trace_id: "t".to_string(),
+        };
+        assert_eq!(err, err.clone());
+        let mut other = err.clone();
+        other.trace_id = "different".to_string();
+        assert_ne!(err, other);
+    }
+
+    #[test]
+    fn canonical_violation_eq_reflexive() {
+        let v = CanonicalViolation::SchemaViolation {
+            detail: "x".to_string(),
+        };
+        assert_eq!(v, v.clone());
+    }
+
+    // -- Enrichment batch 10: additional CanonicalValue round-trips --
+
+    #[test]
+    fn canonical_value_i64_zero_round_trip() {
+        let (mut guard, schema) = setup_guard();
+        let value = CanonicalValue::I64(0);
+        let bytes = make_canonical_payload(&schema, &value);
+        assert_eq!(
+            guard
+                .validate(ObjectDomain::PolicyObject, &bytes, "t-i64-zero")
+                .unwrap(),
+            value
+        );
+    }
+
+    #[test]
+    fn canonical_value_i64_positive_round_trip() {
+        let (mut guard, schema) = setup_guard();
+        let value = CanonicalValue::I64(i64::MAX);
+        let bytes = make_canonical_payload(&schema, &value);
+        assert_eq!(
+            guard
+                .validate(ObjectDomain::PolicyObject, &bytes, "t-i64-max")
+                .unwrap(),
+            value
+        );
+    }
+
+    #[test]
+    fn canonical_value_bool_true_false_distinct() {
+        let (mut guard, schema) = setup_guard();
+        let t_bytes = make_canonical_payload(&schema, &CanonicalValue::Bool(true));
+        let f_bytes = make_canonical_payload(&schema, &CanonicalValue::Bool(false));
+        assert_ne!(t_bytes, f_bytes, "true and false must encode differently");
+        assert_eq!(
+            guard
+                .validate(ObjectDomain::PolicyObject, &t_bytes, "t-bool-t")
+                .unwrap(),
+            CanonicalValue::Bool(true)
+        );
+        assert_eq!(
+            guard
+                .validate(ObjectDomain::PolicyObject, &f_bytes, "t-bool-f")
+                .unwrap(),
+            CanonicalValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn canonical_value_large_bytes_payload_round_trip() {
+        let (mut guard, schema) = setup_guard();
+        let payload: Vec<u8> = (0u8..=255u8).collect();
+        let value = CanonicalValue::Bytes(payload);
+        let bytes = make_canonical_payload(&schema, &value);
+        assert_eq!(
+            guard
+                .validate(ObjectDomain::PolicyObject, &bytes, "t-large-bytes")
+                .unwrap(),
+            value
+        );
+    }
+
+    #[test]
+    fn canonical_value_unicode_string_round_trip() {
+        let (mut guard, schema) = setup_guard();
+        let value = CanonicalValue::String("日本語テスト🎉".to_string());
+        let bytes = make_canonical_payload(&schema, &value);
+        assert_eq!(
+            guard
+                .validate(ObjectDomain::PolicyObject, &bytes, "t-unicode")
+                .unwrap(),
+            value
+        );
+    }
+
+    #[test]
+    fn canonical_value_deeply_nested_array_round_trip() {
+        let (mut guard, schema) = setup_guard();
+        let value = CanonicalValue::Array(vec![CanonicalValue::Array(vec![
+            CanonicalValue::Array(vec![CanonicalValue::U64(1)]),
+        ])]);
+        let bytes = make_canonical_payload(&schema, &value);
+        assert_eq!(
+            guard
+                .validate(ObjectDomain::PolicyObject, &bytes, "t-deep-arr")
+                .unwrap(),
+            value
+        );
+    }
+
+    #[test]
+    fn canonical_value_map_with_all_value_types_round_trip() {
+        let (mut guard, schema) = setup_guard();
+        let mut map = BTreeMap::new();
+        map.insert("bool_f".to_string(), CanonicalValue::Bool(false));
+        map.insert("bool_t".to_string(), CanonicalValue::Bool(true));
+        map.insert("bytes".to_string(), CanonicalValue::Bytes(vec![0xAB, 0xCD]));
+        map.insert("i64".to_string(), CanonicalValue::I64(-42));
+        map.insert("null".to_string(), CanonicalValue::Null);
+        map.insert("str".to_string(), CanonicalValue::String("s".to_string()));
+        map.insert("u64".to_string(), CanonicalValue::U64(99));
+        let value = CanonicalValue::Map(map);
+        let bytes = make_canonical_payload(&schema, &value);
+        assert_eq!(
+            guard
+                .validate(ObjectDomain::PolicyObject, &bytes, "t-all-types-map")
+                .unwrap(),
+            value
+        );
+    }
 }

@@ -1184,4 +1184,570 @@ mod tests {
         let err = EngineObjectId::from_hex(&hex).unwrap_err();
         assert!(matches!(err, IdError::InvalidHexChar { .. }));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: Copy/Clone, Debug, serde distinctness, hash,
+    // boundary edge cases, error trait, JSON field stability
+    // -----------------------------------------------------------------------
+
+    // -- ObjectDomain Copy semantics --
+
+    #[test]
+    fn object_domain_is_copy() {
+        let d = ObjectDomain::PolicyObject;
+        let d2 = d; // copy, not move
+        assert_eq!(d, d2);
+    }
+
+    #[test]
+    fn object_domain_copy_independence() {
+        let original = ObjectDomain::EvidenceRecord;
+        let mut copy = original;
+        copy = ObjectDomain::Revocation;
+        assert_eq!(original, ObjectDomain::EvidenceRecord);
+        assert_eq!(copy, ObjectDomain::Revocation);
+    }
+
+    // -- Debug output non-empty and distinct --
+
+    #[test]
+    fn object_domain_debug_nonempty() {
+        for domain in ObjectDomain::ALL {
+            let s = format!("{domain:?}");
+            assert!(!s.is_empty(), "ObjectDomain::{domain:?} has empty Debug");
+        }
+    }
+
+    #[test]
+    fn object_domain_debug_distinct() {
+        let debugs: std::collections::BTreeSet<String> =
+            ObjectDomain::ALL.iter().map(|d| format!("{d:?}")).collect();
+        assert_eq!(
+            debugs.len(),
+            ObjectDomain::ALL.len(),
+            "all ObjectDomain Debug strings must be distinct"
+        );
+    }
+
+    #[test]
+    fn engine_object_id_debug_nonempty() {
+        let id = EngineObjectId([0x1a; OBJECT_ID_LEN]);
+        let s = format!("{id:?}");
+        assert!(!s.is_empty());
+    }
+
+    #[test]
+    fn schema_id_debug_nonempty() {
+        let sid = SchemaId::from_definition(b"debug-test");
+        let s = format!("{sid:?}");
+        assert!(!s.is_empty());
+    }
+
+    #[test]
+    fn id_error_debug_nonempty() {
+        let e = IdError::EmptyCanonicalBytes;
+        assert!(!format!("{e:?}").is_empty());
+    }
+
+    #[test]
+    fn id_error_debug_variants_distinct() {
+        let schema = test_schema_id();
+        let id_a = derive_id(ObjectDomain::PolicyObject, "z", &schema, b"a").unwrap();
+        let id_b = derive_id(ObjectDomain::PolicyObject, "z", &schema, b"b").unwrap();
+        let errors = vec![
+            IdError::EmptyCanonicalBytes,
+            IdError::IdMismatch {
+                expected: id_a,
+                computed: id_b,
+            },
+            IdError::NonCanonicalInput {
+                reason: "test-reason".into(),
+            },
+            IdError::InvalidHexLength {
+                expected: 64,
+                actual: 0,
+            },
+            IdError::InvalidHexChar { position: 7 },
+        ];
+        let debugs: std::collections::BTreeSet<String> =
+            errors.iter().map(|e| format!("{e:?}")).collect();
+        assert_eq!(debugs.len(), errors.len(), "all IdError debug strings must be distinct");
+    }
+
+    // -- Serde variant distinctness for ObjectDomain --
+
+    #[test]
+    fn object_domain_serde_variants_all_distinct() {
+        let jsons: std::collections::BTreeSet<String> = ObjectDomain::ALL
+            .iter()
+            .map(|d| serde_json::to_string(d).unwrap())
+            .collect();
+        assert_eq!(
+            jsons.len(),
+            ObjectDomain::ALL.len(),
+            "all ObjectDomain variants must serialize to distinct JSON"
+        );
+    }
+
+    // -- Serde variant distinctness for IdError --
+
+    #[test]
+    fn id_error_serde_variants_all_distinct() {
+        let schema = test_schema_id();
+        let id_a = derive_id(ObjectDomain::PolicyObject, "z", &schema, b"p").unwrap();
+        let id_b = derive_id(ObjectDomain::PolicyObject, "z", &schema, b"q").unwrap();
+        let errors = vec![
+            IdError::EmptyCanonicalBytes,
+            IdError::IdMismatch {
+                expected: id_a,
+                computed: id_b,
+            },
+            IdError::NonCanonicalInput {
+                reason: "reason".into(),
+            },
+            IdError::InvalidHexLength {
+                expected: 64,
+                actual: 5,
+            },
+            IdError::InvalidHexChar { position: 1 },
+        ];
+        let jsons: std::collections::BTreeSet<String> =
+            errors.iter().map(|e| serde_json::to_string(e).unwrap()).collect();
+        assert_eq!(jsons.len(), errors.len(), "all IdError variants must serialize to distinct JSON");
+    }
+
+    // -- Hash consistency --
+
+    #[test]
+    fn engine_object_id_hash_consistent() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let id = EngineObjectId([0x77; OBJECT_ID_LEN]);
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        id.hash(&mut h1);
+        id.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn engine_object_id_different_values_hash_differently() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let id_a = EngineObjectId([0x11; OBJECT_ID_LEN]);
+        let id_b = EngineObjectId([0x22; OBJECT_ID_LEN]);
+        let mut h_a = DefaultHasher::new();
+        let mut h_b = DefaultHasher::new();
+        id_a.hash(&mut h_a);
+        id_b.hash(&mut h_b);
+        assert_ne!(h_a.finish(), h_b.finish());
+    }
+
+    #[test]
+    fn schema_id_hash_consistent() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let sid = SchemaId::from_definition(b"hash-test");
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        sid.hash(&mut h1);
+        sid.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn schema_id_different_values_hash_differently() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let sid_a = SchemaId::from_definition(b"schema-one");
+        let sid_b = SchemaId::from_definition(b"schema-two");
+        let mut h_a = DefaultHasher::new();
+        let mut h_b = DefaultHasher::new();
+        sid_a.hash(&mut h_a);
+        sid_b.hash(&mut h_b);
+        assert_ne!(h_a.finish(), h_b.finish());
+    }
+
+    #[test]
+    fn object_domain_hash_consistent() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let d = ObjectDomain::CapabilityToken;
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        d.hash(&mut h1);
+        d.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    // -- Boundary/edge cases --
+
+    #[test]
+    fn derive_id_single_byte_all_domains() {
+        let schema = test_schema_id();
+        let mut ids = std::collections::BTreeSet::new();
+        for domain in ObjectDomain::ALL {
+            let id = derive_id(*domain, "z", &schema, &[0x01]).unwrap();
+            ids.insert(id);
+        }
+        assert_eq!(ids.len(), ObjectDomain::ALL.len());
+    }
+
+    #[test]
+    fn derive_id_empty_zone_is_valid() {
+        let schema = test_schema_id();
+        let id = derive_id(ObjectDomain::PolicyObject, "", &schema, b"content").unwrap();
+        assert_eq!(id.as_bytes().len(), OBJECT_ID_LEN);
+    }
+
+    #[test]
+    fn derive_id_empty_zone_differs_from_nonempty_zone() {
+        let schema = test_schema_id();
+        let id_empty = derive_id(ObjectDomain::PolicyObject, "", &schema, b"content").unwrap();
+        let id_nonempty = derive_id(ObjectDomain::PolicyObject, "z", &schema, b"content").unwrap();
+        assert_ne!(id_empty, id_nonempty);
+    }
+
+    #[test]
+    fn derive_id_large_content_is_deterministic() {
+        let schema = test_schema_id();
+        let content: Vec<u8> = (0u8..=255).cycle().take(65_536).collect();
+        let id1 = derive_id(ObjectDomain::RecoveryArtifact, "large", &schema, &content).unwrap();
+        let id2 = derive_id(ObjectDomain::RecoveryArtifact, "large", &schema, &content).unwrap();
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn derive_id_all_zero_content() {
+        let schema = test_schema_id();
+        let content = vec![0u8; 32];
+        let id = derive_id(ObjectDomain::KeyBundle, "z", &schema, &content).unwrap();
+        assert_eq!(id.as_bytes().len(), OBJECT_ID_LEN);
+    }
+
+    #[test]
+    fn derive_id_all_0xff_content() {
+        let schema = test_schema_id();
+        let content = vec![0xffu8; 32];
+        let id = derive_id(ObjectDomain::SignedManifest, "z", &schema, &content).unwrap();
+        assert_eq!(id.as_bytes().len(), OBJECT_ID_LEN);
+    }
+
+    #[test]
+    fn schema_id_from_bytes_zero_is_valid() {
+        let sid = SchemaId::from_bytes([0u8; OBJECT_ID_LEN]);
+        assert_eq!(*sid.as_bytes(), [0u8; OBJECT_ID_LEN]);
+    }
+
+    #[test]
+    fn schema_id_from_bytes_max_is_valid() {
+        let sid = SchemaId::from_bytes([0xffu8; OBJECT_ID_LEN]);
+        assert_eq!(*sid.as_bytes(), [0xffu8; OBJECT_ID_LEN]);
+    }
+
+    #[test]
+    fn engine_object_id_as_bytes_length() {
+        let id = EngineObjectId([0x5a; OBJECT_ID_LEN]);
+        assert_eq!(id.as_bytes().len(), OBJECT_ID_LEN);
+    }
+
+    #[test]
+    fn from_hex_position_zero_invalid() {
+        // First two chars are invalid hex
+        let hex = format!("zz{}", "00".repeat(31));
+        let err = EngineObjectId::from_hex(&hex).unwrap_err();
+        match err {
+            IdError::InvalidHexChar { position } => assert_eq!(position, 0),
+            other => panic!("expected InvalidHexChar, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn from_hex_position_last_invalid() {
+        // Last two chars are invalid hex
+        let hex = format!("{}zz", "00".repeat(31));
+        let err = EngineObjectId::from_hex(&hex).unwrap_err();
+        match err {
+            IdError::InvalidHexChar { position } => assert_eq!(position, 62),
+            other => panic!("expected InvalidHexChar, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn invalid_hex_length_error_fields() {
+        let err = EngineObjectId::from_hex("abcd").unwrap_err();
+        match err {
+            IdError::InvalidHexLength { expected, actual } => {
+                assert_eq!(expected, OBJECT_ID_LEN * 2);
+                assert_eq!(actual, 4);
+            }
+            other => panic!("expected InvalidHexLength, got {other:?}"),
+        }
+    }
+
+    // -- Error trait checks --
+
+    #[test]
+    fn id_error_is_std_error() {
+        fn assert_error<E: std::error::Error>(_: &E) {}
+        assert_error(&IdError::EmptyCanonicalBytes);
+        assert_error(&IdError::InvalidHexChar { position: 0 });
+        assert_error(&IdError::InvalidHexLength {
+            expected: 64,
+            actual: 0,
+        });
+        assert_error(&IdError::NonCanonicalInput {
+            reason: "x".into(),
+        });
+    }
+
+    #[test]
+    fn id_error_source_is_none() {
+        use std::error::Error;
+        assert!(IdError::EmptyCanonicalBytes.source().is_none());
+        assert!(IdError::InvalidHexChar { position: 0 }.source().is_none());
+    }
+
+    // -- JSON field-name stability --
+
+    #[test]
+    fn object_domain_policy_object_json_field() {
+        let json = serde_json::to_string(&ObjectDomain::PolicyObject).unwrap();
+        assert_eq!(json, "\"PolicyObject\"");
+    }
+
+    #[test]
+    fn object_domain_evidence_record_json_field() {
+        let json = serde_json::to_string(&ObjectDomain::EvidenceRecord).unwrap();
+        assert_eq!(json, "\"EvidenceRecord\"");
+    }
+
+    #[test]
+    fn object_domain_all_json_field_names_stable() {
+        let expected = [
+            "\"PolicyObject\"",
+            "\"EvidenceRecord\"",
+            "\"Revocation\"",
+            "\"SignedManifest\"",
+            "\"Attestation\"",
+            "\"CapabilityToken\"",
+            "\"CheckpointArtifact\"",
+            "\"RecoveryArtifact\"",
+            "\"KeyBundle\"",
+        ];
+        for (domain, exp) in ObjectDomain::ALL.iter().zip(expected.iter()) {
+            let json = serde_json::to_string(domain).unwrap();
+            assert_eq!(json, *exp, "stable JSON name mismatch for {domain:?}");
+        }
+    }
+
+    #[test]
+    fn id_error_empty_canonical_bytes_json_field() {
+        let json = serde_json::to_string(&IdError::EmptyCanonicalBytes).unwrap();
+        assert_eq!(json, "\"EmptyCanonicalBytes\"");
+    }
+
+    #[test]
+    fn id_error_invalid_hex_length_json_fields() {
+        let err = IdError::InvalidHexLength {
+            expected: 64,
+            actual: 8,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"InvalidHexLength\""));
+        assert!(json.contains("\"expected\""));
+        assert!(json.contains("\"actual\""));
+    }
+
+    #[test]
+    fn id_error_invalid_hex_char_json_fields() {
+        let err = IdError::InvalidHexChar { position: 3 };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"InvalidHexChar\""));
+        assert!(json.contains("\"position\""));
+    }
+
+    #[test]
+    fn id_error_non_canonical_input_json_fields() {
+        let err = IdError::NonCanonicalInput {
+            reason: "null byte".into(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"NonCanonicalInput\""));
+        assert!(json.contains("\"reason\""));
+    }
+
+    // -- Clone independence --
+
+    #[test]
+    fn engine_object_id_clone_independence() {
+        let id = EngineObjectId([0xab; OBJECT_ID_LEN]);
+        let mut cloned = id.clone();
+        cloned.0[0] = 0x00;
+        // original unchanged
+        assert_eq!(id.0[0], 0xab);
+        assert_eq!(cloned.0[0], 0x00);
+    }
+
+    #[test]
+    fn schema_id_clone_independence() {
+        let sid = SchemaId::from_bytes([0xcd; OBJECT_ID_LEN]);
+        let mut cloned = sid.clone();
+        cloned.0[0] = 0x00;
+        assert_eq!(sid.0[0], 0xcd);
+        assert_eq!(cloned.0[0], 0x00);
+    }
+
+    #[test]
+    fn id_error_clone_independence() {
+        let original = IdError::NonCanonicalInput {
+            reason: "original".into(),
+        };
+        let mut cloned = original.clone();
+        if let IdError::NonCanonicalInput { reason } = &mut cloned {
+            *reason = "mutated".into();
+        }
+        // original unchanged
+        assert_eq!(
+            original,
+            IdError::NonCanonicalInput {
+                reason: "original".into()
+            }
+        );
+    }
+
+    // -- Display format checks --
+
+    #[test]
+    fn engine_object_id_display_equals_to_hex() {
+        let id = derive_id(
+            ObjectDomain::CheckpointArtifact,
+            "chk",
+            &test_schema_id(),
+            b"checkpoint-data",
+        )
+        .unwrap();
+        assert_eq!(id.to_string(), id.to_hex());
+    }
+
+    #[test]
+    fn schema_id_display_equals_hex_encode() {
+        let sid = SchemaId::from_bytes([0x0f; OBJECT_ID_LEN]);
+        let display = sid.to_string();
+        // 0x0f = "0f" repeated 32 times
+        assert_eq!(display, "0f".repeat(32));
+    }
+
+    #[test]
+    fn id_error_display_all_variants_nonempty() {
+        let schema = test_schema_id();
+        let id_a = derive_id(ObjectDomain::PolicyObject, "z", &schema, b"a").unwrap();
+        let id_b = derive_id(ObjectDomain::PolicyObject, "z", &schema, b"b").unwrap();
+        let errors = vec![
+            IdError::EmptyCanonicalBytes,
+            IdError::IdMismatch {
+                expected: id_a,
+                computed: id_b,
+            },
+            IdError::NonCanonicalInput {
+                reason: "test".into(),
+            },
+            IdError::InvalidHexLength {
+                expected: 64,
+                actual: 4,
+            },
+            IdError::InvalidHexChar { position: 2 },
+        ];
+        for err in &errors {
+            let msg = err.to_string();
+            assert!(!msg.is_empty(), "IdError variant has empty Display: {err:?}");
+        }
+    }
+
+    // -- Domain tag byte properties --
+
+    #[test]
+    fn domain_tags_contain_frankengine_prefix() {
+        for domain in ObjectDomain::ALL {
+            let tag = domain.tag();
+            let tag_str = std::str::from_utf8(tag).expect("tag must be valid UTF-8");
+            assert!(
+                tag_str.starts_with("FrankenEngine."),
+                "{domain:?} tag does not start with 'FrankenEngine.': {tag_str}"
+            );
+        }
+    }
+
+    #[test]
+    fn domain_tags_end_with_v1_suffix() {
+        for domain in ObjectDomain::ALL {
+            let tag = domain.tag();
+            let tag_str = std::str::from_utf8(tag).expect("tag must be valid UTF-8");
+            assert!(
+                tag_str.ends_with(".v1"),
+                "{domain:?} tag does not end with '.v1': {tag_str}"
+            );
+        }
+    }
+
+    #[test]
+    fn domain_tags_nonempty() {
+        for domain in ObjectDomain::ALL {
+            assert!(!domain.tag().is_empty(), "{domain:?} has empty tag");
+        }
+    }
+
+    // -- BTreeMap/BTreeSet usage with derived types --
+
+    #[test]
+    fn engine_object_id_usable_as_btreeset_key() {
+        let schema = test_schema_id();
+        let mut set = std::collections::BTreeSet::new();
+        for domain in ObjectDomain::ALL {
+            let id = derive_id(*domain, "zone", &schema, b"data").unwrap();
+            set.insert(id);
+        }
+        assert_eq!(set.len(), ObjectDomain::ALL.len());
+    }
+
+    #[test]
+    fn object_domain_usable_as_btreeset_key() {
+        let mut set = std::collections::BTreeSet::new();
+        for domain in ObjectDomain::ALL {
+            set.insert(*domain);
+        }
+        assert_eq!(set.len(), ObjectDomain::ALL.len());
+    }
+
+    // -- verify_id propagates empty canonical bytes error --
+
+    #[test]
+    fn verify_id_propagates_empty_canonical_bytes_error() {
+        let schema = test_schema_id();
+        let dummy_id = EngineObjectId([0u8; OBJECT_ID_LEN]);
+        let err = verify_id(&dummy_id, ObjectDomain::PolicyObject, "z", &schema, b"").unwrap_err();
+        assert_eq!(err, IdError::EmptyCanonicalBytes);
+    }
+
+    // -- OBJECT_ID_LEN constant --
+
+    #[test]
+    fn object_id_len_constant_is_32() {
+        assert_eq!(OBJECT_ID_LEN, 32);
+    }
+
+    // -- derive_id output is always exactly OBJECT_ID_LEN bytes --
+
+    #[test]
+    fn derive_id_output_always_32_bytes_across_domains() {
+        let schema = test_schema_id();
+        for domain in ObjectDomain::ALL {
+            let id = derive_id(*domain, "test-zone", &schema, b"payload").unwrap();
+            assert_eq!(
+                id.as_bytes().len(),
+                OBJECT_ID_LEN,
+                "{domain:?} produced wrong output length"
+            );
+        }
+    }
 }

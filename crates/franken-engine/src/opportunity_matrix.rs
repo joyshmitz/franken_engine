@@ -1826,4 +1826,145 @@ mod tests {
         let pressure = benchmark_pressure_from_cases(&[], &[]);
         assert_eq!(pressure, 1_000_000);
     }
+
+    // ── enrichment wave 2 ──────────────────────────────────
+
+    #[test]
+    fn opportunity_status_all_variants_serde_distinct() {
+        let variants = vec![
+            OpportunityStatus::Selected,
+            OpportunityStatus::RejectedLowScore,
+            OpportunityStatus::RejectedSecurityClearance,
+            OpportunityStatus::RejectedMissingHotspot,
+        ];
+        let jsons: Vec<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        for (i, a) in jsons.iter().enumerate() {
+            for (j, b) in jsons.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b, "variants {i} and {j} collide");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn opportunity_status_rename_all_snake_case() {
+        let j = serde_json::to_string(&OpportunityStatus::RejectedLowScore).unwrap();
+        assert_eq!(j, "\"rejected_low_score\"");
+        let j2 = serde_json::to_string(&OpportunityStatus::RejectedSecurityClearance).unwrap();
+        assert_eq!(j2, "\"rejected_security_clearance\"");
+    }
+
+    #[test]
+    fn scored_opportunity_clone_independence() {
+        let s = ScoredOpportunity {
+            opportunity_id: "opp-1".to_string(),
+            target_module: "m".to_string(),
+            target_function: "f".to_string(),
+            estimated_speedup_millionths: 1_500_000,
+            hotpath_weight_millionths: 500_000,
+            benchmark_pressure_millionths: 1_200_000,
+            voi_millionths: 2_000_000,
+            score_millionths: 3_000_000,
+            threshold_met: true,
+            status: OpportunityStatus::Selected,
+            rejection_reason: None,
+        };
+        let mut cloned = s.clone();
+        cloned.opportunity_id = "opp-2".to_string();
+        assert_eq!(s.opportunity_id, "opp-1");
+        assert_eq!(cloned.opportunity_id, "opp-2");
+    }
+
+    #[test]
+    fn opportunity_history_record_signed_error_negative() {
+        let h = OpportunityHistoryRecord {
+            opportunity_id: "h1".to_string(),
+            predicted_gain_millionths: 2_000_000,
+            actual_gain_millionths: 1_500_000,
+            signed_error_millionths: -500_000,
+            absolute_error_millionths: 500_000,
+            completed_at_utc: "2026-01-01T00:00:00Z".to_string(),
+        };
+        assert!(h.signed_error_millionths < 0);
+        assert!(h.absolute_error_millionths > 0);
+    }
+
+    #[test]
+    fn opportunity_matrix_event_json_field_names() {
+        let e = OpportunityMatrixEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "ev".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+            opportunity_id: Some("opp-1".to_string()),
+        };
+        let j = serde_json::to_string(&e).unwrap();
+        for field in &["trace_id", "decision_id", "policy_id", "component", "event", "outcome", "error_code", "opportunity_id"] {
+            assert!(j.contains(field), "missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn decision_empty_decision_id_rejected() {
+        let mut req = base_request();
+        req.decision_id = "   ".to_string();
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+    }
+
+    #[test]
+    fn decision_empty_policy_id_rejected() {
+        let mut req = base_request();
+        req.policy_id = String::new();
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+    }
+
+    #[test]
+    fn decision_empty_optimization_run_id_rejected() {
+        let mut req = base_request();
+        req.optimization_run_id = "  ".to_string();
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+    }
+
+    #[test]
+    fn decision_duplicate_candidate_ids_rejected() {
+        let mut req = base_request();
+        let mut dup = req.candidates[0].clone();
+        dup.opportunity_id = req.candidates[0].opportunity_id.clone();
+        req.candidates.push(dup);
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+        assert!(d.error_code.as_deref() == Some("FE-OPPM-1002"));
+    }
+
+    #[test]
+    fn decision_negative_benchmark_pressure_rejected() {
+        let mut req = base_request();
+        req.benchmark_pressure_millionths = -1;
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+    }
+
+    #[test]
+    fn decision_invalid_historical_timestamp_rejected() {
+        let mut req = base_request();
+        req.historical_outcomes.push(OpportunityOutcomeObservation {
+            opportunity_id: "hist-1".to_string(),
+            predicted_gain_millionths: 1_000_000,
+            actual_gain_millionths: 900_000,
+            completed_at_utc: "not-a-date".to_string(),
+        });
+        let d = run_opportunity_matrix_scoring(&req);
+        assert_eq!(d.outcome, "fail");
+        assert!(d.error_code.as_deref() == Some("FE-OPPM-1003"));
+    }
 }
