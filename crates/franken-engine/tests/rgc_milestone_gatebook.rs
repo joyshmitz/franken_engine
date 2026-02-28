@@ -1,0 +1,345 @@
+#![forbid(unsafe_code)]
+
+use std::{collections::BTreeSet, fs, path::PathBuf};
+
+use serde::Deserialize;
+
+const GATEBOOK_SCHEMA_VERSION: &str = "rgc.milestone-gatebook.v1";
+const GATEBOOK_JSON: &str = include_str!("../../../docs/rgc_milestone_gatebook_v1.json");
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct MilestoneGatebook {
+    schema_version: String,
+    bead_id: String,
+    generated_by: String,
+    generated_at_utc: String,
+    track: GateTrack,
+    automation: AutomationContract,
+    blocker_classes: Vec<BlockerClass>,
+    milestones: Vec<MilestoneGate>,
+    operator_verification: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct GateTrack {
+    id: String,
+    name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct AutomationContract {
+    ci_contract_version: String,
+    required_structured_log_fields: Vec<String>,
+    required_artifact_triad: Vec<String>,
+    decision_event_required_fields: Vec<String>,
+    default_mode: String,
+    report_only_transition_rules: Vec<TransitionRule>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct TransitionRule {
+    milestone: String,
+    report_only_until_utc: String,
+    fail_closed_after_utc: String,
+    transition_predicate: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct BlockerClass {
+    class_id: String,
+    severity: String,
+    predicate: String,
+    required_evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct MilestoneGate {
+    milestone: String,
+    objective: String,
+    gate_owner: String,
+    pass_predicates: Vec<PassPredicate>,
+    required_artifacts: Vec<String>,
+    rollback_triggers: Vec<RollbackTrigger>,
+    decision_authority: DecisionAuthority,
+    ci_gate: CiGate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct PassPredicate {
+    predicate_id: String,
+    description: String,
+    metric: String,
+    comparator: String,
+    threshold: serde_json::Value,
+    unit: String,
+    source_beads: Vec<String>,
+    evaluation_command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct RollbackTrigger {
+    trigger_id: String,
+    condition_expression: String,
+    required_probe_command: String,
+    rollback_action: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct DecisionAuthority {
+    primary_role: String,
+    secondary_role: String,
+    escalation_roles: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CiGate {
+    workflow_id: String,
+    command: String,
+    report_only_until_utc: String,
+    fail_closed_after_utc: String,
+}
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn parse_gatebook() -> MilestoneGatebook {
+    serde_json::from_str(GATEBOOK_JSON).expect("milestone gatebook json must parse")
+}
+
+#[test]
+fn rgc_012_doc_contains_required_sections() {
+    let path = repo_root().join("docs/RGC_MILESTONE_GATEBOOK_V1.md");
+    let doc = fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+
+    let required_sections = [
+        "# RGC Milestone Gatebook V1",
+        "## Purpose",
+        "## Gate Model",
+        "## Blocker Classes",
+        "## Milestone Stop/Go Matrix",
+        "## Rollback Trigger Contract",
+        "## CI/Release Automation Contract",
+        "## Operator Verification",
+    ];
+
+    for section in required_sections {
+        assert!(
+            doc.contains(section),
+            "missing required section in {}: {section}",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn rgc_012_gatebook_is_versioned_and_track_bound() {
+    let gatebook = parse_gatebook();
+
+    assert_eq!(gatebook.schema_version, GATEBOOK_SCHEMA_VERSION);
+    assert_eq!(gatebook.bead_id, "bd-1lsy.1.2");
+    assert_eq!(gatebook.generated_by, "bd-1lsy.1.2");
+    assert_eq!(gatebook.track.id, "RGC-012");
+    assert_eq!(gatebook.track.name, "Milestone Gatebook");
+    assert!(gatebook.generated_at_utc.ends_with('Z'));
+}
+
+#[test]
+fn rgc_012_automation_contract_has_required_fields_and_mode() {
+    let gatebook = parse_gatebook();
+
+    assert_eq!(
+        gatebook.automation.default_mode,
+        "report_only_then_fail_closed"
+    );
+
+    let required_log_fields: BTreeSet<&str> = [
+        "trace_id",
+        "decision_id",
+        "policy_id",
+        "component",
+        "event",
+        "outcome",
+        "error_code",
+    ]
+    .into_iter()
+    .collect();
+
+    let actual_log_fields: BTreeSet<&str> = gatebook
+        .automation
+        .required_structured_log_fields
+        .iter()
+        .map(|field| field.as_str())
+        .collect();
+
+    assert_eq!(actual_log_fields, required_log_fields);
+
+    let required_artifact_triad: BTreeSet<&str> =
+        ["run_manifest.json", "events.jsonl", "commands.txt"]
+            .into_iter()
+            .collect();
+    let actual_artifact_triad: BTreeSet<&str> = gatebook
+        .automation
+        .required_artifact_triad
+        .iter()
+        .map(|field| field.as_str())
+        .collect();
+
+    assert_eq!(actual_artifact_triad, required_artifact_triad);
+    assert_eq!(gatebook.automation.report_only_transition_rules.len(), 5);
+}
+
+#[test]
+fn rgc_012_blocker_classes_are_fail_closed_ready() {
+    let gatebook = parse_gatebook();
+    assert!(
+        !gatebook.blocker_classes.is_empty(),
+        "blocker classes must be non-empty"
+    );
+
+    let mut class_ids = BTreeSet::new();
+
+    for class in &gatebook.blocker_classes {
+        assert!(!class.class_id.trim().is_empty());
+        assert_eq!(class.severity, "blocker");
+        assert!(!class.predicate.trim().is_empty());
+        assert!(!class.required_evidence.is_empty());
+        assert!(class_ids.insert(class.class_id.clone()));
+    }
+}
+
+#[test]
+fn rgc_012_milestones_cover_m1_through_m5() {
+    let gatebook = parse_gatebook();
+
+    let expected: BTreeSet<&str> = ["M1", "M2", "M3", "M4", "M5"].into_iter().collect();
+    let actual: BTreeSet<&str> = gatebook
+        .milestones
+        .iter()
+        .map(|milestone| milestone.milestone.as_str())
+        .collect();
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn rgc_012_each_milestone_has_objective_predicates_and_ci_gate() {
+    let gatebook = parse_gatebook();
+    let comparators: BTreeSet<&str> = ["==", ">=", "<=", ">", "<"].into_iter().collect();
+
+    for milestone in &gatebook.milestones {
+        assert!(!milestone.objective.trim().is_empty());
+        assert!(!milestone.gate_owner.trim().is_empty());
+        assert!(
+            !milestone.pass_predicates.is_empty(),
+            "{} missing pass predicates",
+            milestone.milestone
+        );
+
+        for predicate in &milestone.pass_predicates {
+            assert!(!predicate.predicate_id.trim().is_empty());
+            assert!(!predicate.description.trim().is_empty());
+            assert!(!predicate.metric.trim().is_empty());
+            assert!(comparators.contains(predicate.comparator.as_str()));
+            assert!(
+                predicate.threshold.is_number(),
+                "{} threshold must be numeric",
+                predicate.predicate_id
+            );
+            assert!(!predicate.unit.trim().is_empty());
+            assert!(!predicate.source_beads.is_empty());
+            assert!(
+                predicate
+                    .source_beads
+                    .iter()
+                    .all(|bead_id| bead_id.starts_with("bd-1lsy."))
+            );
+            assert!(!predicate.evaluation_command.trim().is_empty());
+        }
+
+        assert!(!milestone.required_artifacts.is_empty());
+        for triad_name in ["run_manifest.json", "events.jsonl", "commands.txt"] {
+            assert!(
+                milestone
+                    .required_artifacts
+                    .iter()
+                    .any(|artifact| artifact.ends_with(triad_name)),
+                "{} missing artifact {}",
+                milestone.milestone,
+                triad_name
+            );
+        }
+
+        assert!(
+            !milestone.rollback_triggers.is_empty(),
+            "{} missing rollback triggers",
+            milestone.milestone
+        );
+
+        for trigger in &milestone.rollback_triggers {
+            assert!(!trigger.trigger_id.trim().is_empty());
+            assert!(!trigger.condition_expression.trim().is_empty());
+            assert!(!trigger.required_probe_command.trim().is_empty());
+            assert!(!trigger.rollback_action.trim().is_empty());
+        }
+
+        assert!(!milestone.decision_authority.primary_role.trim().is_empty());
+        assert!(
+            !milestone
+                .decision_authority
+                .secondary_role
+                .trim()
+                .is_empty()
+        );
+        assert!(!milestone.decision_authority.escalation_roles.is_empty());
+
+        assert!(!milestone.ci_gate.workflow_id.trim().is_empty());
+        assert!(!milestone.ci_gate.command.trim().is_empty());
+        assert!(milestone.ci_gate.report_only_until_utc.ends_with('Z'));
+        assert!(milestone.ci_gate.fail_closed_after_utc.ends_with('Z'));
+        assert!(
+            milestone.ci_gate.report_only_until_utc < milestone.ci_gate.fail_closed_after_utc,
+            "{} has invalid report-only/fail-closed chronology",
+            milestone.milestone
+        );
+    }
+}
+
+#[test]
+fn rgc_012_transition_rules_align_to_milestones() {
+    let gatebook = parse_gatebook();
+
+    let milestone_set: BTreeSet<&str> = gatebook
+        .milestones
+        .iter()
+        .map(|milestone| milestone.milestone.as_str())
+        .collect();
+
+    let transition_set: BTreeSet<&str> = gatebook
+        .automation
+        .report_only_transition_rules
+        .iter()
+        .map(|rule| rule.milestone.as_str())
+        .collect();
+
+    assert_eq!(milestone_set, transition_set);
+
+    for rule in &gatebook.automation.report_only_transition_rules {
+        assert!(rule.report_only_until_utc.ends_with('Z'));
+        assert!(rule.fail_closed_after_utc.ends_with('Z'));
+        assert!(rule.report_only_until_utc < rule.fail_closed_after_utc);
+        assert!(!rule.transition_predicate.trim().is_empty());
+    }
+}
+
+#[test]
+fn rgc_012_operator_verification_commands_are_present() {
+    let gatebook = parse_gatebook();
+    assert!(!gatebook.operator_verification.is_empty());
+
+    let joined = gatebook.operator_verification.join("\n");
+    assert!(joined.contains("jq empty docs/rgc_milestone_gatebook_v1.json"));
+    assert!(joined.contains("cargo test -p frankenengine-engine --test rgc_milestone_gatebook"));
+    assert!(joined.contains("run_phase_a_exit_gate.sh check"));
+}
