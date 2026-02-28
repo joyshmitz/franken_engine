@@ -489,8 +489,13 @@ impl IdempotencyStore {
     /// Evict expired entries for a given computation.
     fn evict_expired(&mut self, current_ticks: u64, computation_name: &str) {
         let ttl = self.retry_config(computation_name).entry_ttl_ticks;
-        self.entries
-            .retain(|_, entry| current_ticks.saturating_sub(entry.created_at_ticks) < ttl);
+        self.entries.retain(|_, entry| {
+            if entry.computation_name == computation_name {
+                current_ticks.saturating_sub(entry.created_at_ticks) < ttl
+            } else {
+                true
+            }
+        });
     }
 
     /// Evict all expired entries across all computations (uses default TTL).

@@ -1939,34 +1939,13 @@ fn minimize_source_segments(
     expected: &str,
     actual: &str,
 ) -> Vec<String> {
-    let mut best = if original.is_empty() {
+    let best = if original.is_empty() {
         vec!["void 0".to_string()]
     } else {
         original.to_vec()
     };
-    let mut improved = true;
-    while improved && best.len() > 1 {
-        improved = false;
-        for idx in 0..best.len() {
-            if best.len() <= 1 {
-                break;
-            }
-            let candidate: Vec<String> = best
-                .iter()
-                .enumerate()
-                .filter(|(pos, _)| *pos != idx)
-                .map(|(_, item)| item.clone())
-                .collect();
-            if candidate.is_empty() {
-                continue;
-            }
-            if preserves_failure_class(expected, actual, failure_class) {
-                best = candidate;
-                improved = true;
-                break;
-            }
-        }
-    }
+    // Cannot minimize source segments without re-evaluation engine
+    // to generate new expected/actual outputs. Returning unminimized.
     best
 }
 

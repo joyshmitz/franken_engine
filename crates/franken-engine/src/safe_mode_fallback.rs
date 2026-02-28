@@ -588,6 +588,8 @@ impl SafeModeManager {
     }
 
     fn recover(&mut self, failure_type: FailureType, trace_id: &str) {
+        self.status.insert(failure_type, SafeModeStatus::Recovering);
+        self.emit_event(trace_id, failure_type, "recover", "recovering", None);
         self.status.insert(failure_type, SafeModeStatus::Normal);
         *self.recovery_counts.entry(failure_type).or_insert(0) += 1;
         self.emit_event(trace_id, failure_type, "recover", "recovery_complete", None);
@@ -1301,7 +1303,7 @@ pub fn attestation_health_from_verdict(
     }
 
     if verdict.failure_class == Some(VerificationFailureClass::StaleData) {
-        return AttestationHealth::EvidenceUnavailable;
+        return AttestationHealth::EvidenceExpired;
     }
 
     AttestationHealth::VerificationFailed
@@ -3054,7 +3056,7 @@ mod tests {
         verdict.attestation.passed = false;
         assert_eq!(
             attestation_health_from_verdict(&verdict),
-            AttestationHealth::EvidenceUnavailable
+            AttestationHealth::EvidenceExpired
         );
     }
 

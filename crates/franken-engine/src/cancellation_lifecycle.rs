@@ -487,7 +487,7 @@ impl CancellationManager {
         let outcome = CancellationOutcome {
             cell_id,
             event,
-            success: finalize_result.success || timeout_escalated,
+            success: finalize_result.success && !timeout_escalated,
             finalize_result,
             timeout_escalated,
             children_cancelled: 0,
@@ -915,6 +915,7 @@ mod tests {
             .cancel_cell(&mut cell, &mut cx, LifecycleEvent::Quarantine)
             .expect("cancel");
 
+        assert!(!outcome.success);
         assert!(outcome.timeout_escalated);
         assert_eq!(outcome.finalize_result.obligations_aborted, 1);
         assert!(outcome.finalize_result.drain_timeout_escalated);

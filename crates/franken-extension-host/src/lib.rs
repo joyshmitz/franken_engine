@@ -1126,7 +1126,7 @@ impl ExtensionLifecycleManager {
             return self.apply_transition(LifecycleTransition::Finalize, timestamp_ns, context);
         }
 
-        if timestamp_ns <= pending.deadline_ns {
+        if timestamp_ns < pending.deadline_ns {
             let error = LifecycleError::TerminationPending {
                 extension_id: self.extension_id.clone(),
                 now_ns: timestamp_ns,
@@ -3192,7 +3192,7 @@ impl CapabilityEscrowGateway {
             replay_seed,
             context.decision_id,
             context.policy_id,
-            context.policy_id.to_string(),
+            trace_ref.to_string(),
             contract_chain,
             conditions,
             outcome,

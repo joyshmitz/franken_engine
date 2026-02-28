@@ -32,7 +32,7 @@ use crate::security_epoch::SecurityEpoch;
 // Schema constants
 // ---------------------------------------------------------------------------
 
-const CELL_SCHEMA_DEF: &[u8] = b"AttstedExecutionCell.v1";
+const CELL_SCHEMA_DEF: &[u8] = b"AttestedExecutionCell.v1";
 const MEASUREMENT_SCHEMA_DEF: &[u8] = b"MeasurementDigest.v1";
 
 fn cell_schema_id() -> SchemaId {

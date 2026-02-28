@@ -1592,8 +1592,8 @@ impl CutoverMigrationRunner {
             cutover_type: active.declaration.cutover_type,
             state: final_state,
             affected_objects: active.declaration.affected_objects,
-            phase_records: active.phase_records,
-            declared_at: DeterministicTimestamp(self.current_tick),
+            phase_records: active.phase_records.clone(),
+            declared_at: active.phase_records.first().map(|r| r.timestamp).unwrap_or(DeterministicTimestamp(self.current_tick)),
             committed_at: if final_state == CutoverState::Committed {
                 Some(DeterministicTimestamp(self.current_tick))
             } else {

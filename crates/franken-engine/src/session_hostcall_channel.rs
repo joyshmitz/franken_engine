@@ -1170,7 +1170,7 @@ fn ensure_session_active(
             state: session.state,
         });
     }
-    if now_ticks > session.expires_at_tick {
+    if now_ticks >= session.expires_at_tick {
         session.state = SessionState::Expired;
         return Err(SessionChannelError::SessionExpired {
             session_id: session.session_id.clone(),
@@ -1203,7 +1203,7 @@ fn register_replay_drop(session: &mut SessionRecord, now_ticks: u64) -> bool {
     }
 
     session.replay_drop_count_in_window = session.replay_drop_count_in_window.saturating_add(1);
-    session.replay_drop_count_in_window >= session.replay_drop_threshold
+    session.replay_drop_count_in_window > session.replay_drop_threshold
 }
 
 fn handshake_request_preimage(
@@ -1668,7 +1668,7 @@ mod tests {
             &mut channel,
             "sess-drop-limit",
             SessionConfig {
-                replay_drop_threshold: 2,
+                replay_drop_threshold: 1,
                 replay_drop_window_ticks: 100,
                 ..SessionConfig::default()
             },

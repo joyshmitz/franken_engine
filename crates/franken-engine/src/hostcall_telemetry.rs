@@ -268,8 +268,8 @@ pub struct RecordInput {
 /// A snapshot of the recorder state at a given point for replay alignment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TelemetrySnapshot {
-    /// Record ID at snapshot time.
-    pub record_id_at_snapshot: u64,
+    /// Record ID at snapshot time (None if empty).
+    pub record_id_at_snapshot: Option<u64>,
     /// Number of records in the log at snapshot time.
     pub record_count: u64,
     /// Content hash of all records up to this point (rolling hash).
@@ -398,7 +398,11 @@ impl TelemetryRecorder {
     /// Take a snapshot of current state for replay alignment.
     pub fn snapshot(&mut self) -> TelemetrySnapshot {
         let snap = TelemetrySnapshot {
-            record_id_at_snapshot: self.next_record_id.saturating_sub(1),
+            record_id_at_snapshot: if self.next_record_id > 0 {
+                Some(self.next_record_id - 1)
+            } else {
+                None
+            },
             record_count: self.records.len() as u64,
             rolling_hash: self.rolling_hash.clone(),
             epoch: self.current_epoch,
@@ -621,9 +625,9 @@ impl ExtensionSummary {
     }
 
     /// Denial rate in millionths (1_000_000 = 100%).
-    pub fn denial_rate_millionths(&self) -> i64 {
-        ((self.denied_count as i64) * 1_000_000)
-            .checked_div(self.total_calls as i64)
+    pub fn denial_rate_millionths(&self) -> u64 {
+        self.denied_count.saturating_mul(1_000_000)
+            .checked_div(self.total_calls)
             .unwrap_or(0)
     }
 }
@@ -995,7 +999,7 @@ mod tests {
             .unwrap();
         let snap = recorder.snapshot();
         assert_eq!(snap.record_count, 1);
-        assert_eq!(snap.record_id_at_snapshot, 0);
+        assert_eq!(snap.record_id_at_snapshot, Some(0));
         assert_eq!(snap.epoch, SecurityEpoch::GENESIS);
     }
 
@@ -1560,7 +1564,7 @@ mod tests {
             .unwrap();
         let snap = recorder.snapshot();
         assert_eq!(snap.record_count, 3);
-        assert_eq!(snap.record_id_at_snapshot, 2); // last record_id is 2 (0-indexed)
+        assert_eq!(snap.record_id_at_snapshot, Some(2)); // last record_id is 2 (0-indexed)
     }
 
     // ── Enrichment: extension summary zero calls ────────────────

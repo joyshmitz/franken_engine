@@ -888,7 +888,10 @@ impl PortfolioGovernor {
         if total_obligations == 0 {
             return 0;
         }
-        let completed = state.completed_artifacts.len() as u64;
+        let completed = state.completed_obligation_ids()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len() as u64;
         let completion_rate = completed * 1_000_000 / total_obligations;
         // Friction is inverse of completion: high completion = low friction.
         1_000_000u64.saturating_sub(completion_rate)

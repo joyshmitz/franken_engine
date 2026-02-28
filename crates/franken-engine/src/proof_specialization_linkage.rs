@@ -141,7 +141,7 @@ pub struct LinkageRecord {
 impl LinkageRecord {
     /// Check if all proof inputs are still valid at the given epoch.
     pub fn proofs_valid_at(&self, epoch: SecurityEpoch) -> bool {
-        self.proof_inputs.iter().all(|p| p.proof_epoch <= epoch)
+        self.proof_inputs.iter().all(|p| p.proof_epoch == epoch)
     }
 
     /// Convert to the IR3 `SpecializationLinkage` format.
@@ -839,8 +839,8 @@ mod tests {
     fn linkage_record_proofs_valid_at() {
         let record = make_linkage("link-1", 5, &["proof-a"]);
         assert!(record.proofs_valid_at(test_epoch(5)));
-        assert!(record.proofs_valid_at(test_epoch(10)));
-        // Proof was made at epoch 5, so epoch 3 should fail
+        // Proof was made at epoch 5, so epoch 10 and epoch 3 should fail
+        assert!(!record.proofs_valid_at(test_epoch(10)));
         assert!(!record.proofs_valid_at(test_epoch(3)));
     }
 
@@ -1614,7 +1614,7 @@ mod tests {
     fn linkage_record_proofs_valid_at_epoch() {
         let linkage = make_linkage("link-1", 5, &["proof-a"]);
         assert!(linkage.proofs_valid_at(test_epoch(5)));
-        assert!(linkage.proofs_valid_at(test_epoch(10)));
+        assert!(!linkage.proofs_valid_at(test_epoch(10)));
     }
 
     #[test]

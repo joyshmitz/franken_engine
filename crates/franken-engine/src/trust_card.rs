@@ -721,6 +721,15 @@ impl TrustCardGenerator {
                 // Within non-degraded tiers, moving up is improvement.
                 if tt.new_level > tt.old_level {
                     improvements += 1;
+                } else if tt.new_level < tt.old_level {
+                    degradations += 1;
+                }
+            } else if tt.new_level.is_degraded() && tt.old_level.is_degraded() {
+                // Within degraded tiers, moving up the enum is worse.
+                if tt.new_level > tt.old_level {
+                    degradations += 1;
+                } else if tt.new_level < tt.old_level {
+                    improvements += 1;
                 }
             }
         }

@@ -480,8 +480,8 @@ impl RevocationFreshnessController {
             return Ok(decision);
         }
 
-        // In fresh or recovering state, all operations proceed.
-        if self.state == FreshnessState::Fresh || self.state == FreshnessState::Recovering {
+        // In fresh state, all operations proceed.
+        if self.state == FreshnessState::Fresh {
             let decision = FreshnessDecision::Proceed;
             self.emit_decision(operation, "proceed", None, None, trace_id);
             return Ok(decision);
@@ -494,7 +494,7 @@ impl RevocationFreshnessController {
             return Ok(decision);
         }
 
-        // Degraded mode — deny revocation-dependent operations.
+        // Degraded or Recovering mode — deny revocation-dependent operations.
         let denial = DegradedDenial {
             operation_type: operation,
             local_head_seq: self.local_head_seq,
@@ -616,9 +616,7 @@ impl RevocationFreshnessController {
 
         let new_state = match self.state {
             FreshnessState::Fresh => {
-                if gap > self.config.staleness_threshold {
-                    FreshnessState::Degraded
-                } else if gap > 0 {
+                if gap > 0 {
                     FreshnessState::Stale
                 } else {
                     FreshnessState::Fresh
@@ -1118,11 +1116,11 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // Recovering state allows operations
+    // Recovering state denies operations
     // ---------------------------------------------------------------
 
     #[test]
-    fn recovering_state_allows_operations() {
+    fn recovering_state_denies_operations() {
         let mut ctrl = make_controller();
         ctrl.set_tick(100);
         ctrl.update_expected_head(10, "t-degrade");
@@ -1130,7 +1128,7 @@ mod tests {
         assert_eq!(ctrl.state(), FreshnessState::Recovering);
 
         let result = ctrl.evaluate(OperationType::TokenAcceptance, "t-recover-token");
-        assert!(result.is_ok());
+        assert!(matches!(result, Ok(FreshnessDecision::Deny(_))));
     }
 
     // ---------------------------------------------------------------

@@ -958,7 +958,7 @@ impl FallbackRateMonitor {
         if window_size == 0 {
             return 0;
         }
-        let fallback_count = self.outcomes.iter().filter(|&&b| b).count() as u32;
+        let fallback_count = self.outcomes[..window_size].iter().filter(|&&b| b).count() as u32;
         // Only count up to the window.
         let effective = fallback_count.min(window_size as u32);
         (effective * 100) / (window_size as u32)

@@ -29,6 +29,7 @@ const ERR_GATE_MISSING_RUNTIME_COVERAGE: &str = "FE-ADV-GATE-0002";
 const ERR_GATE_STATISTICAL_SIGNIFICANCE: &str = "FE-ADV-GATE-0003";
 const ERR_GATE_CONTINUITY: &str = "FE-ADV-GATE-0004";
 const ERR_GATE_ESCALATION_SLA: &str = "FE-ADV-GATE-0005";
+const ERR_GATE_POLICY_REGRESSION: &str = "FE-ADV-GATE-0006";
 
 fn clamp_millionths(value: u64) -> u64 {
     value.min(1_000_000)
@@ -407,6 +408,8 @@ impl AttackGrammar {
 
         let amplification = if score.evasion_score_millionths >= 700_000 {
             2
+        } else if score.evasion_score_millionths > 250_000 {
+            1
         } else {
             0
         };
@@ -616,7 +619,7 @@ impl ExploitObjectiveScore {
                 .saturating_mul(20_000))
             .min(1_000_000),
         );
-        let novel_bonus = if result.novel_technique { 150_000 } else { 0 };
+        let novel_bonus = if result.novel_technique { 1_000_000 } else { 0 };
 
         let composite = clamp_millionths(
             ((evasion_score as u128 * 35
@@ -1568,7 +1571,7 @@ impl RedBlueLoopIntegrator {
             if passed {
                 None
             } else {
-                Some(ERR_INVALID_CALIBRATION.to_string())
+                Some(ERR_GATE_POLICY_REGRESSION.to_string())
             },
             None,
         );
@@ -1599,7 +1602,7 @@ impl RedBlueLoopIntegrator {
             }
             let current_threshold = self.calibration_state.detection_threshold_millionths as i64;
             let score = outcome.score.composite_score_millionths as i64;
-            let threshold_adjustment_needed_millionths = (score - current_threshold).min(0);
+            let threshold_adjustment_needed_millionths = score - current_threshold;
             hints.push(CounterfactualHint {
                 campaign_id: outcome.campaign.campaign_id.clone(),
                 description: format!(
@@ -1684,6 +1687,9 @@ impl RedBlueLoopIntegrator {
         if result.objective_achieved_before_containment {
             return false;
         }
+        if result.undetected_steps >= result.total_steps {
+            return false;
+        }
         result.undetected_steps.saturating_add(1) >= result.total_steps
     }
 
@@ -1708,7 +1714,7 @@ impl RedBlueLoopIntegrator {
         let mut dominant = AttackDimension::HostcallSequence;
         let mut dominant_count = 0u64;
         for (dimension, count) in counts {
-            if count > dominant_count || (count == dominant_count && dimension < dominant) {
+            if count > dominant_count || (count == dominant_count && dimension > dominant) {
                 dominant = dimension;
                 dominant_count = count;
             }
@@ -2228,7 +2234,7 @@ pub fn evaluate_compromise_suppression_gate(
                 baseline_attempts,
             );
             let statistically_significant =
-                franken_rate < baseline_rate && p_value_millionths <= config.max_p_value_millionths;
+                franken_rate <= baseline_rate && p_value_millionths <= config.max_p_value_millionths;
             let franken_ci = wilson_interval_millionths(franken_successes, franken_attempts);
             let baseline_ci = wilson_interval_millionths(baseline_successes, baseline_attempts);
 

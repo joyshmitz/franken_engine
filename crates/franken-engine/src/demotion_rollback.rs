@@ -233,6 +233,8 @@ impl DemotionReceipt {
         canonical.extend_from_slice(b"demotion|");
         canonical.extend_from_slice(slot_id.as_str().as_bytes());
         canonical.push(b'|');
+        canonical.extend_from_slice(zone.as_bytes());
+        canonical.push(b'|');
         canonical.extend_from_slice(demoted_digest.as_bytes());
         canonical.push(b'|');
         canonical.extend_from_slice(restored_digest.as_bytes());
@@ -827,7 +829,7 @@ impl AutoDemotionMonitor {
             ContentHash::compute(&buf)
         };
 
-        if self.state.divergence_count > self.policy.max_divergence_count {
+        if self.state.divergence_count >= self.policy.max_divergence_count {
             let first_artifact = self
                 .state
                 .first_divergence_artifact
@@ -1458,7 +1460,7 @@ mod tests {
     fn semantic_divergence_respects_max_count() {
         let receipt = test_promotion_receipt();
         let mut policy = test_policy();
-        policy.max_divergence_count = 2; // Allow up to 2 divergences
+        policy.max_divergence_count = 3; // Trigger on 3rd divergence
 
         let mut monitor =
             AutoDemotionMonitor::new(&receipt, policy, 1_000_000_000).expect("create");
@@ -3495,7 +3497,7 @@ mod tests {
     fn waived_divergence_not_counted_toward_threshold() {
         let receipt = test_promotion_receipt();
         let mut policy = test_policy();
-        policy.max_divergence_count = 1; // Fire on 2nd unwaived divergence
+        policy.max_divergence_count = 2; // Fire on 2nd unwaived divergence
 
         let mut monitor =
             AutoDemotionMonitor::new(&receipt, policy, 1_000_000_000).expect("create");
@@ -3536,7 +3538,7 @@ mod tests {
         assert!(!monitor.process_observation(&waived2).trigger_fired);
         assert_eq!(monitor.divergence_count(), 1);
 
-        // Second unwaived — fires (count=2 > max=1)
+        // Second unwaived — fires (count=2 >= max=2)
         let unwaived2 = MonitoringObservation::OutputComparison {
             matched: false,
             input_hash: ContentHash::compute(b"in-2"),

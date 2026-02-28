@@ -502,12 +502,12 @@ impl DashboardRefreshPolicy {
         let evidence_stream_refresh_secs = if self.evidence_stream_refresh_secs == 0 {
             5
         } else {
-            self.evidence_stream_refresh_secs.min(5)
+            self.evidence_stream_refresh_secs.max(5)
         };
         let aggregate_refresh_secs = if self.aggregate_refresh_secs == 0 {
             60
         } else {
-            self.aggregate_refresh_secs.min(60)
+            self.aggregate_refresh_secs.max(60)
         };
         Self {
             evidence_stream_refresh_secs,

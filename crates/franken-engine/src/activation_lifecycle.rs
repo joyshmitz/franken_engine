@@ -752,7 +752,7 @@ impl ActivationLifecycleController {
 
         if let LifecycleState::Updating(current_phase) = entry.state {
             match current_phase.next() {
-                Some(next) if next != RolloutPhase::Default => {
+                Some(next) => {
                     entry.state = LifecycleState::Updating(next);
                     self.transition_count += 1;
                     self.push_transition(
@@ -764,9 +764,9 @@ impl ActivationLifecycleController {
                     );
                     Ok(next)
                 }
-                _ => {
-                    // Reaching Default or already at Default: finalize to Active.
-                    let final_phase = current_phase.next().unwrap_or(current_phase);
+                None => {
+                    // Reaching end of rollout: finalize to Active.
+                    let final_phase = current_phase;
                     entry.state = LifecycleState::Active;
                     entry.known_good = Some(KnownGoodPin {
                         component_id: component_id.to_string(),

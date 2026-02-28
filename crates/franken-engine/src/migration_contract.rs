@@ -245,7 +245,7 @@ impl MigrationState {
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
-            Self::Committed | Self::RolledBack | Self::DryRunFailed | Self::VerificationFailed
+            Self::Committed | Self::RolledBack | Self::DryRunFailed
         )
     }
 }
@@ -1541,7 +1541,7 @@ mod tests {
         assert!(MigrationState::Committed.is_terminal());
         assert!(MigrationState::RolledBack.is_terminal());
         assert!(MigrationState::DryRunFailed.is_terminal());
-        assert!(MigrationState::VerificationFailed.is_terminal());
+        assert!(!MigrationState::VerificationFailed.is_terminal());
         assert!(!MigrationState::Declared.is_terminal());
         assert!(!MigrationState::Executing.is_terminal());
     }
@@ -1852,11 +1852,8 @@ mod tests {
             runner.state("m-vf"),
             Some(MigrationState::VerificationFailed)
         );
-        // VerificationFailed is terminal — rollback should fail
-        let err = runner.rollback("m-vf", "t").unwrap_err();
-        assert!(matches!(
-            err,
-            MigrationContractError::InvalidTransition { .. }
-        ));
+        // VerificationFailed is not terminal — rollback should succeed
+        runner.rollback("m-vf", "t").unwrap();
+        assert_eq!(runner.state("m-vf"), Some(MigrationState::RollingBack));
     }
 }

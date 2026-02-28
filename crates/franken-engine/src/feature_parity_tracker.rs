@@ -415,13 +415,13 @@ impl ParityTrackerError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::FeatureNotFound { .. } => "FE-FPT-0001",
-            Self::WaiverNotFound { .. } => "FE-FPT-0008",
-            Self::WaiverAlreadyExists { .. } => "FE-FPT-0002",
-            Self::WaiverSealed { .. } => "FE-FPT-0003",
-            Self::InvalidWaiver { .. } => "FE-FPT-0004",
-            Self::InvalidMetrics { .. } => "FE-FPT-0005",
-            Self::DuplicateFeature { .. } => "FE-FPT-0006",
-            Self::GateEvaluationFailed { .. } => "FE-FPT-0007",
+            Self::WaiverNotFound { .. } => "FE-FPT-0002",
+            Self::WaiverAlreadyExists { .. } => "FE-FPT-0003",
+            Self::WaiverSealed { .. } => "FE-FPT-0004",
+            Self::InvalidWaiver { .. } => "FE-FPT-0005",
+            Self::InvalidMetrics { .. } => "FE-FPT-0006",
+            Self::DuplicateFeature { .. } => "FE-FPT-0007",
+            Self::GateEvaluationFailed { .. } => "FE-FPT-0008",
         }
     }
 }
@@ -1025,7 +1025,7 @@ mod tests {
         let entry = FeatureEntry::new(FeatureArea::BigInt, EsVersion::Es2020);
         tracker.register_feature(entry.clone()).unwrap();
         let err = tracker.register_feature(entry).unwrap_err();
-        assert_eq!(err.code(), "FE-FPT-0006");
+        assert_eq!(err.code(), "FE-FPT-0007");
     }
 
     // -------------------------------------------------------------------
@@ -1183,7 +1183,7 @@ mod tests {
             mismatches: vec![],
         };
         let err = tracker.ingest_lockstep(&bad, &ctx).unwrap_err();
-        assert_eq!(err.code(), "FE-FPT-0005");
+        assert_eq!(err.code(), "FE-FPT-0006");
     }
 
     // -------------------------------------------------------------------
@@ -1212,7 +1212,7 @@ mod tests {
 
         tracker.register_waiver(waiver.clone(), &ctx).unwrap();
         let err = tracker.register_waiver(waiver, &ctx).unwrap_err();
-        assert_eq!(err.code(), "FE-FPT-0002");
+        assert_eq!(err.code(), "FE-FPT-0003");
     }
 
     #[test]
@@ -1237,7 +1237,7 @@ mod tests {
             lockstep_exemptions: vec![],
             sealed: false,
         };
-        assert_eq!(bad.validate().unwrap_err().code(), "FE-FPT-0004");
+        assert_eq!(bad.validate().unwrap_err().code(), "FE-FPT-0005");
     }
 
     #[test]
@@ -1253,7 +1253,7 @@ mod tests {
             lockstep_exemptions: vec![],
             sealed: false,
         };
-        assert_eq!(bad.validate().unwrap_err().code(), "FE-FPT-0004");
+        assert_eq!(bad.validate().unwrap_err().code(), "FE-FPT-0005");
     }
 
     #[test]
@@ -1279,7 +1279,7 @@ mod tests {
         tracker.register_waiver(waiver, &ctx).unwrap();
         tracker.seal_waiver("w-1", &ctx).unwrap();
         let err = tracker.seal_waiver("w-1", &ctx).unwrap_err();
-        assert_eq!(err.code(), "FE-FPT-0003");
+        assert_eq!(err.code(), "FE-FPT-0004");
     }
 
     #[test]
@@ -1287,7 +1287,7 @@ mod tests {
         let mut tracker = FeatureParityTracker::new();
         let ctx = test_ctx();
         let err = tracker.seal_waiver("does-not-exist", &ctx).unwrap_err();
-        assert_eq!(err.code(), "FE-FPT-0008");
+        assert_eq!(err.code(), "FE-FPT-0002");
         assert!(matches!(err, ParityTrackerError::WaiverNotFound { .. }));
     }
 
@@ -1544,6 +1544,7 @@ mod tests {
                 "FE-FPT-0005",
                 "FE-FPT-0006",
                 "FE-FPT-0007",
+                "FE-FPT-0008",
             ]
         );
         for e in &errors {
