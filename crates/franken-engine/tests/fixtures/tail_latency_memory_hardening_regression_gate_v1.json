@@ -1,0 +1,195 @@
+{
+  "schema_version": "franken-engine.tail-latency-memory-hardening-regression-gate.v1",
+  "campaign_version": "1.0.0",
+  "metric_schema_version": "franken-engine.tail-memory-telemetry.v1",
+  "tail_memory_budgets": {
+    "max_p95_ns": 28000000,
+    "max_p99_ns": 42000000,
+    "max_p999_ns": 56000000,
+    "max_cvar_ns": 60000000,
+    "max_peak_heap_bytes": 262144000,
+    "max_live_allocations_tail": 9000
+  },
+  "required_log_keys": [
+    "schema_version",
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "campaign_runs": [
+    {
+      "campaign_id": "tlm-001",
+      "lever_id": "lever.queue_backpressure_token_bucket",
+      "lever_category": "queueing",
+      "commit": "tlm001",
+      "run_id": "run-tlm001",
+      "generated_at_utc": "2026-02-27T03:00:00Z",
+      "changed_paths": [
+        "crates/franken-engine/src/parser_queueing.rs"
+      ],
+      "decomposition_ledger_ns": {
+        "queueing": 6200000,
+        "service": 9600000,
+        "synchronization": 2200000,
+        "retries": 1100000,
+        "gc_allocator": 1700000,
+        "abi_boundary": 1200000
+      },
+      "baseline_metrics": {
+        "mean_latency_ns": 26000000,
+        "p95_ns": 30000000,
+        "p99_ns": 46000000,
+        "p999_ns": 62000000,
+        "cvar_ns": 68000000,
+        "peak_heap_bytes": 255852544,
+        "live_allocations_tail": 8800,
+        "throughput_ops_per_sec_millionths": 1000000
+      },
+      "candidate_metrics": {
+        "mean_latency_ns": 23600000,
+        "p95_ns": 27500000,
+        "p99_ns": 41000000,
+        "p999_ns": 54000000,
+        "cvar_ns": 58500000,
+        "peak_heap_bytes": 243269632,
+        "live_allocations_tail": 7600,
+        "throughput_ops_per_sec_millionths": 1110000
+      },
+      "compatibility_invariant_ok": true,
+      "ev_inputs": {
+        "impact": 5,
+        "confidence": 5,
+        "reuse": 4,
+        "effort": 3,
+        "friction": 2
+      },
+      "expected_ev_score_millionths": 16666666,
+      "expected_outcome": "promote",
+      "replay_command": "./scripts/run_tail_latency_memory_hardening_regression_gate.sh test",
+      "artifact_manifest": "artifacts/tail_latency_memory_hardening_regression_gate/<timestamp>/run_manifest.json",
+      "artifact_report": "artifacts/tail_latency_memory_hardening_regression_gate/<timestamp>/campaign_report_tlm001.json"
+    },
+    {
+      "campaign_id": "tlm-002",
+      "lever_id": "lever.abi_batching_window",
+      "lever_category": "abi_boundary",
+      "commit": "tlm002",
+      "run_id": "run-tlm002",
+      "generated_at_utc": "2026-02-27T03:10:00Z",
+      "changed_paths": [
+        "crates/franken-engine/src/parser_abi_bridge.rs"
+      ],
+      "decomposition_ledger_ns": {
+        "queueing": 5400000,
+        "service": 9200000,
+        "synchronization": 2700000,
+        "retries": 900000,
+        "gc_allocator": 1800000,
+        "abi_boundary": 2300000
+      },
+      "baseline_metrics": {
+        "mean_latency_ns": 25000000,
+        "p95_ns": 29000000,
+        "p99_ns": 43000000,
+        "p999_ns": 55000000,
+        "cvar_ns": 59000000,
+        "peak_heap_bytes": 248512512,
+        "live_allocations_tail": 8200,
+        "throughput_ops_per_sec_millionths": 1000000
+      },
+      "candidate_metrics": {
+        "mean_latency_ns": 22800000,
+        "p95_ns": 30100000,
+        "p99_ns": 44400000,
+        "p999_ns": 56800000,
+        "cvar_ns": 60500000,
+        "peak_heap_bytes": 251658240,
+        "live_allocations_tail": 8700,
+        "throughput_ops_per_sec_millionths": 1080000
+      },
+      "compatibility_invariant_ok": true,
+      "ev_inputs": {
+        "impact": 4,
+        "confidence": 5,
+        "reuse": 4,
+        "effort": 2,
+        "friction": 2
+      },
+      "expected_ev_score_millionths": 20000000,
+      "expected_outcome": "hold",
+      "replay_command": "./scripts/run_tail_latency_memory_hardening_regression_gate.sh test",
+      "artifact_manifest": "artifacts/tail_latency_memory_hardening_regression_gate/<timestamp>/run_manifest.json",
+      "artifact_report": "artifacts/tail_latency_memory_hardening_regression_gate/<timestamp>/campaign_report_tlm002.json"
+    },
+    {
+      "campaign_id": "tlm-003",
+      "lever_id": "lever.gc_allocator_pool_trim",
+      "lever_category": "gc_allocator",
+      "commit": "tlm003",
+      "run_id": "run-tlm003",
+      "generated_at_utc": "2026-02-27T03:20:00Z",
+      "changed_paths": [
+        "crates/franken-engine/src/parser_gc_allocator.rs"
+      ],
+      "decomposition_ledger_ns": {
+        "queueing": 5100000,
+        "service": 8900000,
+        "synchronization": 2000000,
+        "retries": 900000,
+        "gc_allocator": 1600000,
+        "abi_boundary": 1300000
+      },
+      "baseline_metrics": {
+        "mean_latency_ns": 25200000,
+        "p95_ns": 28800000,
+        "p99_ns": 40800000,
+        "p999_ns": 54800000,
+        "cvar_ns": 57500000,
+        "peak_heap_bytes": 245366784,
+        "live_allocations_tail": 7800,
+        "throughput_ops_per_sec_millionths": 1000000
+      },
+      "candidate_metrics": {
+        "mean_latency_ns": 23600000,
+        "p95_ns": 27400000,
+        "p99_ns": 39800000,
+        "p999_ns": 53600000,
+        "cvar_ns": 56200000,
+        "peak_heap_bytes": 232783872,
+        "live_allocations_tail": 6900,
+        "throughput_ops_per_sec_millionths": 1065000
+      },
+      "compatibility_invariant_ok": false,
+      "ev_inputs": {
+        "impact": 3,
+        "confidence": 4,
+        "reuse": 5,
+        "effort": 2,
+        "friction": 3
+      },
+      "expected_ev_score_millionths": 10000000,
+      "expected_outcome": "hold",
+      "replay_command": "./scripts/run_tail_latency_memory_hardening_regression_gate.sh test",
+      "artifact_manifest": "artifacts/tail_latency_memory_hardening_regression_gate/<timestamp>/run_manifest.json",
+      "artifact_report": "artifacts/tail_latency_memory_hardening_regression_gate/<timestamp>/campaign_report_tlm003.json"
+    }
+  ],
+  "expected_selected_campaign": "tlm-001",
+  "expected_fail_closed_campaigns": [
+    "tlm-002",
+    "tlm-003"
+  ],
+  "cross_subsystem_replay_scenarios": [
+    {
+      "scenario_id": "tail-memory-gate-ci-replay",
+      "scenario_kind": "deterministic-replay",
+      "replay_command": "./scripts/e2e/tail_latency_memory_hardening_regression_gate_replay.sh",
+      "expected_pass": true,
+      "expected_outcome": "pass"
+    }
+  ]
+}

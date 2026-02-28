@@ -1,0 +1,187 @@
+{
+  "schema_version": "franken-engine.parser-final-readiness-dossier.v1",
+  "dossier_version": "0.1.0",
+  "log_schema_version": "franken-engine.parser-log-event.v1",
+  "dossier_id": "parser-final-readiness-dossier-v1",
+  "bead_id": "bd-2mds.1.8.4",
+  "required_log_keys": [
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code",
+    "dossier_id",
+    "risk_register_hash",
+    "replay_command"
+  ],
+  "blocked_dependency_ids": [
+    "bd-2mds.1.8.2",
+    "bd-2mds.1.8.3",
+    "bd-2mds.1.7.4",
+    "bd-2mds.1.10.4"
+  ],
+  "gating_policy": {
+    "minimum_passed_verifiers": 2,
+    "max_open_risk_score_millionths": 250000,
+    "fail_on_evidence_statuses": [
+      "fail",
+      "missing"
+    ]
+  },
+  "evidence_artifacts": [
+    {
+      "evidence_id": "correctness_gate_psrp_08_2",
+      "status": "in_progress",
+      "required": true,
+      "manifest_path": "artifacts/parser_correctness_promotion_gate/pending/run_manifest.json",
+      "replay_command": "./scripts/run_parser_correctness_promotion_gate.sh ci"
+    },
+    {
+      "evidence_id": "performance_gate_psrp_08_3",
+      "status": "in_progress",
+      "required": true,
+      "manifest_path": "artifacts/parser_performance_promotion_gate/pending/run_manifest.json",
+      "replay_command": "./scripts/run_parser_performance_promotion_gate.sh ci"
+    },
+    {
+      "evidence_id": "cross_arch_validation_psrp_07_4",
+      "status": "in_progress",
+      "required": true,
+      "manifest_path": "artifacts/parser_cross_arch_repro_matrix/pending/run_manifest.json",
+      "replay_command": "./scripts/run_parser_cross_arch_repro_matrix.sh ci"
+    },
+    {
+      "evidence_id": "operator_runbook_psrp_10_4",
+      "status": "in_progress",
+      "required": true,
+      "manifest_path": "artifacts/parser_operator_developer_runbook/pending/run_manifest.json",
+      "replay_command": "./scripts/run_parser_operator_developer_runbook.sh ci"
+    },
+    {
+      "evidence_id": "supremacy_contract_psrp_08_1",
+      "status": "pass",
+      "required": true,
+      "manifest_path": "artifacts/parser_supremacy_criteria/20260225T094910Z/run_manifest.json",
+      "replay_command": "./scripts/run_parser_supremacy_criteria_gate.sh ci"
+    },
+    {
+      "evidence_id": "optional_adversarial_lane",
+      "status": "pass",
+      "required": false,
+      "manifest_path": "artifacts/parser_error_recovery_adversarial_e2e/20260225T224900Z/run_manifest.json",
+      "replay_command": "./scripts/run_parser_error_recovery_adversarial_e2e.sh ci"
+    }
+  ],
+  "residual_risks": [
+    {
+      "risk_id": "risk-unclosed-correctness-drift",
+      "severity": "high",
+      "likelihood_millionths": 220000,
+      "impact_millionths": 760000,
+      "owner": "parser-core",
+      "mitigation": "Close PSRP-08.2 with green drift-ledger artifacts.",
+      "trigger_threshold": "Any unresolved high-severity differential drift after readiness cut.",
+      "rollback_trigger_id": "trigger-correctness-drift",
+      "status": "open"
+    },
+    {
+      "risk_id": "risk-performance-confidence-gap",
+      "severity": "medium",
+      "likelihood_millionths": 180000,
+      "impact_millionths": 530000,
+      "owner": "parser-performance",
+      "mitigation": "Close PSRP-08.3 with quantile-confidence evidence and replay bundle.",
+      "trigger_threshold": "Any required quantile confidence floor <= 0 after promotion rehearsal.",
+      "rollback_trigger_id": "trigger-performance-regression",
+      "status": "open"
+    },
+    {
+      "risk_id": "risk-runbook-friction",
+      "severity": "low",
+      "likelihood_millionths": 90000,
+      "impact_millionths": 300000,
+      "owner": "operator-experience",
+      "mitigation": "Keep parser runbook drills in nightly mode with deterministic replay checks.",
+      "trigger_threshold": "Median operator replay latency exceeds SLO for two consecutive windows.",
+      "rollback_trigger_id": "trigger-runbook-friction",
+      "status": "mitigated"
+    }
+  ],
+  "rollback_triggers": [
+    {
+      "trigger_id": "trigger-correctness-drift",
+      "metric": "high_severity_drift_count",
+      "comparison": ">",
+      "threshold_millionths": 0,
+      "recovery_command": "./scripts/e2e/parser_correctness_promotion_gate_replay.sh test",
+      "blast_radius_assumption": "Supremacy declaration is blocked until drift count returns to zero."
+    },
+    {
+      "trigger_id": "trigger-performance-regression",
+      "metric": "required_quantile_confidence_low_delta_millionths",
+      "comparison": "<=",
+      "threshold_millionths": 0,
+      "recovery_command": "./scripts/e2e/parser_performance_promotion_gate_replay.sh test",
+      "blast_radius_assumption": "Performance claims are held and release note qualifiers are reinstated."
+    },
+    {
+      "trigger_id": "trigger-runbook-friction",
+      "metric": "operator_replay_latency_p95_ms",
+      "comparison": ">=",
+      "threshold_millionths": 120000,
+      "recovery_command": "./scripts/e2e/parser_operator_developer_runbook_replay.sh drill",
+      "blast_radius_assumption": "Operational risk only; parser core semantics remain unchanged."
+    }
+  ],
+  "independent_verification": [
+    {
+      "verifier_id": "external-rerun-001",
+      "outcome": "pass",
+      "manifest_path": "artifacts/parser_third_party_rerun_kit/20260226T084132Z/run_manifest.json",
+      "replay_command": "./scripts/e2e/parser_third_party_rerun_kit_replay.sh ci",
+      "signed_off": true
+    },
+    {
+      "verifier_id": "external-rerun-002",
+      "outcome": "hold",
+      "manifest_path": "artifacts/parser_third_party_rerun_kit/20260226T085901Z/run_manifest.json",
+      "replay_command": "./scripts/e2e/parser_third_party_rerun_kit_replay.sh ci",
+      "signed_off": false
+    }
+  ],
+  "claim_replay_commands": [
+    {
+      "claim_id": "claim-correctness-gate",
+      "replay_command": "./scripts/run_parser_correctness_promotion_gate.sh ci",
+      "expected_outcome": "promote"
+    },
+    {
+      "claim_id": "claim-performance-gate",
+      "replay_command": "./scripts/run_parser_performance_promotion_gate.sh ci",
+      "expected_outcome": "promote"
+    },
+    {
+      "claim_id": "claim-runbook-coverage",
+      "replay_command": "./scripts/run_parser_operator_developer_runbook.sh drill",
+      "expected_outcome": "pass"
+    },
+    {
+      "claim_id": "claim-third-party-rerun",
+      "replay_command": "./scripts/run_parser_third_party_rerun_kit.sh ci",
+      "expected_outcome": "pass"
+    }
+  ],
+  "expected_gate": {
+    "expected_outcome": "hold",
+    "expected_fail_reasons": [],
+    "expected_hold_reasons": [
+      "evidence_in_progress:correctness_gate_psrp_08_2",
+      "evidence_in_progress:cross_arch_validation_psrp_07_4",
+      "evidence_in_progress:operator_runbook_psrp_10_4",
+      "evidence_in_progress:performance_gate_psrp_08_3",
+      "independent_verifier_floor_not_met:1<2"
+    ]
+  }
+}
