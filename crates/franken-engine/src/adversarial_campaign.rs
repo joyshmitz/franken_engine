@@ -2233,8 +2233,8 @@ pub fn evaluate_compromise_suppression_gate(
                 baseline_successes,
                 baseline_attempts,
             );
-            let statistically_significant =
-                franken_rate <= baseline_rate && p_value_millionths <= config.max_p_value_millionths;
+            let statistically_significant = franken_rate <= baseline_rate
+                && p_value_millionths <= config.max_p_value_millionths;
             let franken_ci = wilson_interval_millionths(franken_successes, franken_attempts);
             let baseline_ci = wilson_interval_millionths(baseline_successes, baseline_attempts);
 
@@ -5395,12 +5395,22 @@ mod tests {
     #[test]
     fn campaign_error_serde_roundtrip_all_variants() {
         let variants = vec![
-            CampaignError::InvalidGrammar { detail: "bad grammar".into() },
-            CampaignError::InvalidCampaign { detail: "bad campaign".into() },
-            CampaignError::InvalidExecutionResult { detail: "bad result".into() },
-            CampaignError::InvalidMutation { detail: "bad mutation".into() },
+            CampaignError::InvalidGrammar {
+                detail: "bad grammar".into(),
+            },
+            CampaignError::InvalidCampaign {
+                detail: "bad campaign".into(),
+            },
+            CampaignError::InvalidExecutionResult {
+                detail: "bad result".into(),
+            },
+            CampaignError::InvalidMutation {
+                detail: "bad mutation".into(),
+            },
             CampaignError::InvalidSeed,
-            CampaignError::InvalidCalibration { detail: "bad cal".into() },
+            CampaignError::InvalidCalibration {
+                detail: "bad cal".into(),
+            },
         ];
         for v in &variants {
             let json = serde_json::to_string(v).unwrap();
@@ -5412,7 +5422,11 @@ mod tests {
 
     #[test]
     fn campaign_complexity_serde_roundtrip_all() {
-        let variants = [CampaignComplexity::Probe, CampaignComplexity::MultiStage, CampaignComplexity::Apt];
+        let variants = [
+            CampaignComplexity::Probe,
+            CampaignComplexity::MultiStage,
+            CampaignComplexity::Apt,
+        ];
         for v in &variants {
             let json = serde_json::to_string(v).unwrap();
             let back: CampaignComplexity = serde_json::from_str(&json).unwrap();
@@ -5448,11 +5462,26 @@ mod tests {
     #[test]
     fn attack_step_kind_serde_roundtrip_all() {
         let variants = vec![
-            AttackStepKind::HostcallSequence { motif: "m1".into(), hostcall_count: 5 },
-            AttackStepKind::TemporalPayload { stage: "s1".into(), delay_ms: 100 },
-            AttackStepKind::PrivilegeEscalation { probe: "p1".into(), escalation_depth: 3 },
-            AttackStepKind::PolicyEvasion { motif: "e1".into(), threshold_margin_millionths: 50_000 },
-            AttackStepKind::Exfiltration { strategy: "x1".into(), chunk_count: 10 },
+            AttackStepKind::HostcallSequence {
+                motif: "m1".into(),
+                hostcall_count: 5,
+            },
+            AttackStepKind::TemporalPayload {
+                stage: "s1".into(),
+                delay_ms: 100,
+            },
+            AttackStepKind::PrivilegeEscalation {
+                probe: "p1".into(),
+                escalation_depth: 3,
+            },
+            AttackStepKind::PolicyEvasion {
+                motif: "e1".into(),
+                threshold_margin_millionths: 50_000,
+            },
+            AttackStepKind::Exfiltration {
+                strategy: "x1".into(),
+                chunk_count: 10,
+            },
         ];
         for v in &variants {
             let json = serde_json::to_string(v).unwrap();
@@ -5475,7 +5504,10 @@ mod tests {
                 step_id: 0,
                 dimension: AttackDimension::HostcallSequence,
                 production_label: "credential_theft_chain".into(),
-                kind: AttackStepKind::HostcallSequence { motif: "credential_theft_chain".into(), hostcall_count: 3 },
+                kind: AttackStepKind::HostcallSequence {
+                    motif: "credential_theft_chain".into(),
+                    hostcall_count: 3,
+                },
             }],
         }
     }
@@ -5607,7 +5639,11 @@ mod tests {
             attack_sequence: vec![],
             expected_defense_response: "contained".into(),
             actual_defense_response: "contained".into(),
-            minimality_proof: MinimizationProof { rounds: 3, removed_steps: 2, is_fixed_point: true },
+            minimality_proof: MinimizationProof {
+                rounds: 3,
+                removed_steps: 2,
+                is_fixed_point: true,
+            },
         });
         let json = serde_json::to_string(&corpus).unwrap();
         let back: RegressionCorpus = serde_json::from_str(&json).unwrap();

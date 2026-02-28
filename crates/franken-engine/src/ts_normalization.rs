@@ -1,9 +1,15 @@
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::ast::ParseGoal;
+use crate::ir_contract::{EffectBoundary, Ir0Module};
+use crate::lowering_pipeline::{LoweringContext, LoweringPipelineOutput, lower_ir0_to_ir3};
+use crate::parser::{CanonicalEs2020Parser, ParseEventIr, ParserOptions};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TsCompilerOptions {
@@ -79,6 +85,142 @@ pub struct TsNormalizationOutput {
     pub witness: TsNormalizationWitness,
     pub events: Vec<NormalizationEvent>,
 }
+
+const TS_INGESTION_COMPONENT: &str = "ts_ingestion_lane";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TsIngestionEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TsIngestionArtifacts {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub source_label: String,
+    pub parse_goal: ParseGoal,
+    pub normalization_output: TsNormalizationOutput,
+    pub parse_event_ir: ParseEventIr,
+    pub ir0: Ir0Module,
+    pub lowering_output: LoweringPipelineOutput,
+    pub ingestion_events: Vec<TsIngestionEvent>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TsIngestionProvenance<'a> {
+    pub trace_id: &'a str,
+    pub decision_id: &'a str,
+    pub policy_id: &'a str,
+}
+
+impl<'a> TsIngestionProvenance<'a> {
+    pub const fn new(trace_id: &'a str, decision_id: &'a str, policy_id: &'a str) -> Self {
+        Self {
+            trace_id,
+            decision_id,
+            policy_id,
+        }
+    }
+}
+
+impl TsIngestionArtifacts {
+    pub fn parse_event_ir_hash(&self) -> String {
+        self.parse_event_ir.canonical_hash()
+    }
+
+    pub fn ir0_hash(&self) -> String {
+        to_sha256_prefixed_hash(self.ir0.content_hash())
+    }
+
+    pub fn ir1_hash(&self) -> String {
+        to_sha256_prefixed_hash(self.lowering_output.ir1.content_hash())
+    }
+
+    pub fn ir2_hash(&self) -> String {
+        to_sha256_prefixed_hash(self.lowering_output.ir2.content_hash())
+    }
+
+    pub fn ir3_hash(&self) -> String {
+        to_sha256_prefixed_hash(self.lowering_output.ir3.content_hash())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TsIngestionErrorCode {
+    NormalizationFailed,
+    ParseFailed,
+    LoweringFailed,
+    CapabilityContractFailed,
+}
+
+impl TsIngestionErrorCode {
+    pub const fn stable_code(self) -> &'static str {
+        match self {
+            Self::NormalizationFailed => "FE-TSINGEST-0001",
+            Self::ParseFailed => "FE-TSINGEST-0002",
+            Self::LoweringFailed => "FE-TSINGEST-0003",
+            Self::CapabilityContractFailed => "FE-TSINGEST-0004",
+        }
+    }
+
+    pub const fn stage(self) -> &'static str {
+        match self {
+            Self::NormalizationFailed => "normalize_typescript",
+            Self::ParseFailed => "parse_normalized_source",
+            Self::LoweringFailed => "lower_to_ir3",
+            Self::CapabilityContractFailed => "validate_capability_contracts",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TsIngestionError {
+    pub code: TsIngestionErrorCode,
+    pub stage: String,
+    pub message: String,
+    pub events: Vec<TsIngestionEvent>,
+}
+
+impl TsIngestionError {
+    fn new(
+        code: TsIngestionErrorCode,
+        message: impl Into<String>,
+        events: Vec<TsIngestionEvent>,
+    ) -> Self {
+        Self {
+            code,
+            stage: code.stage().to_string(),
+            message: message.into(),
+            events,
+        }
+    }
+
+    pub const fn stable_code(&self) -> &'static str {
+        self.code.stable_code()
+    }
+}
+
+impl fmt::Display for TsIngestionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ts ingestion error [{}] stage={} message={}",
+            self.stable_code(),
+            self.stage,
+            self.message
+        )
+    }
+}
+
+impl std::error::Error for TsIngestionError {}
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum TsNormalizationError {
@@ -326,6 +468,167 @@ pub fn normalize_typescript_to_es2020(
     })
 }
 
+pub fn ingest_typescript_to_pipeline_artifacts(
+    source: &str,
+    normalization_config: &TsNormalizationConfig,
+    source_label: &str,
+    parse_goal: ParseGoal,
+    parser_options: &ParserOptions,
+    provenance: TsIngestionProvenance<'_>,
+) -> Result<TsIngestionArtifacts, TsIngestionError> {
+    let trace_id = provenance.trace_id;
+    let decision_id = provenance.decision_id;
+    let policy_id = provenance.policy_id;
+
+    let mut ingestion_events = Vec::<TsIngestionEvent>::new();
+
+    let normalization_output = match normalize_typescript_to_es2020(
+        source,
+        normalization_config,
+        trace_id,
+        decision_id,
+        policy_id,
+    ) {
+        Ok(output) => {
+            ingestion_events.push(success_ingestion_event(
+                trace_id,
+                decision_id,
+                policy_id,
+                TsIngestionErrorCode::NormalizationFailed.stage(),
+            ));
+            output
+        }
+        Err(error) => {
+            ingestion_events.push(failure_ingestion_event(
+                trace_id,
+                decision_id,
+                policy_id,
+                TsIngestionErrorCode::NormalizationFailed,
+            ));
+            return Err(TsIngestionError::new(
+                TsIngestionErrorCode::NormalizationFailed,
+                error.to_string(),
+                ingestion_events,
+            ));
+        }
+    };
+
+    let parser = CanonicalEs2020Parser;
+    let (parse_result, parse_event_ir) = parser.parse_with_event_ir(
+        normalization_output.normalized_source.as_str(),
+        parse_goal,
+        parser_options,
+    );
+
+    let syntax_tree = match parse_result {
+        Ok(tree) => {
+            ingestion_events.push(success_ingestion_event(
+                trace_id,
+                decision_id,
+                policy_id,
+                TsIngestionErrorCode::ParseFailed.stage(),
+            ));
+            tree
+        }
+        Err(error) => {
+            ingestion_events.push(failure_ingestion_event(
+                trace_id,
+                decision_id,
+                policy_id,
+                TsIngestionErrorCode::ParseFailed,
+            ));
+            return Err(TsIngestionError::new(
+                TsIngestionErrorCode::ParseFailed,
+                format!(
+                    "{} (parse_error_code={})",
+                    error.message,
+                    error.code.as_str()
+                ),
+                ingestion_events,
+            ));
+        }
+    };
+
+    let ir0 = Ir0Module::from_syntax_tree(syntax_tree, source_label);
+    let lowering_context = LoweringContext::new(trace_id, decision_id, policy_id);
+    let lowering_output = match lower_ir0_to_ir3(&ir0, &lowering_context) {
+        Ok(output) => {
+            ingestion_events.push(success_ingestion_event(
+                trace_id,
+                decision_id,
+                policy_id,
+                TsIngestionErrorCode::LoweringFailed.stage(),
+            ));
+            output
+        }
+        Err(error) => {
+            ingestion_events.push(failure_ingestion_event(
+                trace_id,
+                decision_id,
+                policy_id,
+                TsIngestionErrorCode::LoweringFailed,
+            ));
+            return Err(TsIngestionError::new(
+                TsIngestionErrorCode::LoweringFailed,
+                error.to_string(),
+                ingestion_events,
+            ));
+        }
+    };
+
+    if let Err(message) = validate_capability_contracts(&normalization_output, &lowering_output) {
+        ingestion_events.push(failure_ingestion_event(
+            trace_id,
+            decision_id,
+            policy_id,
+            TsIngestionErrorCode::CapabilityContractFailed,
+        ));
+        return Err(TsIngestionError::new(
+            TsIngestionErrorCode::CapabilityContractFailed,
+            message,
+            ingestion_events,
+        ));
+    }
+    ingestion_events.push(success_ingestion_event(
+        trace_id,
+        decision_id,
+        policy_id,
+        TsIngestionErrorCode::CapabilityContractFailed.stage(),
+    ));
+
+    Ok(TsIngestionArtifacts {
+        trace_id: trace_id.to_string(),
+        decision_id: decision_id.to_string(),
+        policy_id: policy_id.to_string(),
+        source_label: source_label.to_string(),
+        parse_goal,
+        normalization_output,
+        parse_event_ir,
+        ir0,
+        lowering_output,
+        ingestion_events,
+    })
+}
+
+pub fn ingest_typescript_to_pipeline_artifacts_default(
+    source: &str,
+    normalization_config: &TsNormalizationConfig,
+    source_label: &str,
+    trace_id: &str,
+    decision_id: &str,
+    policy_id: &str,
+) -> Result<TsIngestionArtifacts, TsIngestionError> {
+    let parser_options = ParserOptions::default();
+    ingest_typescript_to_pipeline_artifacts(
+        source,
+        normalization_config,
+        source_label,
+        ParseGoal::Script,
+        &parser_options,
+        TsIngestionProvenance::new(trace_id, decision_id, policy_id),
+    )
+}
+
 fn normalize_newlines(source: &str) -> String {
     source.replace("\r\n", "\n").replace('\r', "\n")
 }
@@ -382,6 +685,120 @@ fn failure_event(
         outcome: "fail".to_string(),
         error_code: Some(error_code.to_string()),
     }
+}
+
+fn success_ingestion_event(
+    trace_id: &str,
+    decision_id: &str,
+    policy_id: &str,
+    event: &str,
+) -> TsIngestionEvent {
+    TsIngestionEvent {
+        trace_id: trace_id.to_string(),
+        decision_id: decision_id.to_string(),
+        policy_id: policy_id.to_string(),
+        component: TS_INGESTION_COMPONENT.to_string(),
+        event: event.to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+    }
+}
+
+fn failure_ingestion_event(
+    trace_id: &str,
+    decision_id: &str,
+    policy_id: &str,
+    code: TsIngestionErrorCode,
+) -> TsIngestionEvent {
+    TsIngestionEvent {
+        trace_id: trace_id.to_string(),
+        decision_id: decision_id.to_string(),
+        policy_id: policy_id.to_string(),
+        component: TS_INGESTION_COMPONENT.to_string(),
+        event: code.stage().to_string(),
+        outcome: "fail".to_string(),
+        error_code: Some(code.stable_code().to_string()),
+    }
+}
+
+fn to_sha256_prefixed_hash(hash: crate::hash_tiers::ContentHash) -> String {
+    format!("sha256:{}", hash.to_hex())
+}
+
+fn validate_capability_contracts(
+    normalization_output: &TsNormalizationOutput,
+    lowering_output: &LoweringPipelineOutput,
+) -> Result<(), String> {
+    let mut declared_capabilities = BTreeSet::<String>::new();
+    for intent in &normalization_output.capability_intents {
+        let capability = intent.capability.trim();
+        if capability.is_empty() {
+            return Err("capability annotation cannot be empty".to_string());
+        }
+        if !is_valid_capability_annotation(capability) {
+            return Err(format!(
+                "capability annotation `{capability}` is invalid; only [A-Za-z0-9._:-] are allowed"
+            ));
+        }
+        declared_capabilities.insert(capability.to_string());
+    }
+
+    let has_annotation_marker = normalization_output
+        .normalized_source
+        .contains("hostcall<\"");
+    let has_unannotated_hostcall = normalization_output.normalized_source.contains("hostcall(");
+
+    if has_annotation_marker && declared_capabilities.is_empty() {
+        return Err(
+            "hostcall capability annotation marker detected but no valid annotations extracted"
+                .to_string(),
+        );
+    }
+    if has_unannotated_hostcall && declared_capabilities.is_empty() {
+        return Err("hostcall invocation missing capability annotation".to_string());
+    }
+
+    if declared_capabilities.is_empty() {
+        return Ok(());
+    }
+
+    let mut hostcall_contract_capabilities = BTreeSet::<String>::new();
+    for op in &lowering_output.ir2.ops {
+        if !matches!(op.effect, EffectBoundary::HostcallEffect) {
+            continue;
+        }
+
+        let Some(capability) = op.required_capability.as_ref() else {
+            return Err("hostcall effect missing required capability tag".to_string());
+        };
+
+        // `hostcall.invoke` is the dynamic fallback for non-annotated generic calls.
+        // For TS-annotated hostcalls we validate against explicit capability tags.
+        if capability.0 == "hostcall.invoke" {
+            continue;
+        }
+
+        hostcall_contract_capabilities.insert(capability.0.clone());
+    }
+
+    let missing_in_contract = declared_capabilities
+        .difference(&hostcall_contract_capabilities)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing_in_contract.is_empty() {
+        return Err(format!(
+            "capability annotations missing in IR contract: {}",
+            missing_in_contract.join(", ")
+        ));
+    }
+
+    Ok(())
+}
+
+fn is_valid_capability_annotation(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b':' | b'_' | b'-'))
 }
 
 fn elide_type_only_imports(source: &str) -> String {

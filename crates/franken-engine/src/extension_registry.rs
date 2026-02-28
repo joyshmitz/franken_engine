@@ -2512,7 +2512,13 @@ mod tests {
         let vk = test_verification_key_from(&sk);
         let mut reg = ExtensionRegistry::new(DeterministicTimestamp(100));
         let pub_id = reg.register_publisher("TestOrg", vk.clone()).unwrap();
-        let manifest = build_manifest("testorg", "weather-ext", PackageVersion::new(1, 0, 0), &pub_id, &vk);
+        let manifest = build_manifest(
+            "testorg",
+            "weather-ext",
+            PackageVersion::new(1, 0, 0),
+            &pub_id,
+            &vk,
+        );
         let json = serde_json::to_string(&manifest).unwrap();
         let back: ExtensionManifest = serde_json::from_str(&json).unwrap();
         assert_eq!(manifest, back);
@@ -2599,7 +2605,10 @@ mod tests {
         let h_true = bd.content_hash();
         bd.reproducible = false;
         let h_false = bd.content_hash();
-        assert_ne!(h_true, h_false, "reproducible flag change must alter content hash");
+        assert_ne!(
+            h_true, h_false,
+            "reproducible flag change must alter content hash"
+        );
     }
 
     #[test]

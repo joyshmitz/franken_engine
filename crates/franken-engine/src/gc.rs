@@ -543,7 +543,11 @@ impl GcCollector {
     pub fn check_pressure(&self, extension_id: &str, budget_max_bytes: u64) -> Option<f64> {
         let heap = self.heaps.get(extension_id)?;
         if budget_max_bytes == 0 {
-            return Some(0.0);
+            return Some(if heap.total_bytes() > 0 {
+                f64::MAX
+            } else {
+                0.0
+            });
         }
         Some(heap.total_bytes() as f64 / budget_max_bytes as f64)
     }

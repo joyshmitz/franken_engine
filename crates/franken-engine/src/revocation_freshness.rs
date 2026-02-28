@@ -1128,7 +1128,7 @@ mod tests {
         assert_eq!(ctrl.state(), FreshnessState::Recovering);
 
         let result = ctrl.evaluate(OperationType::TokenAcceptance, "t-recover-token");
-        assert!(matches!(result, Ok(FreshnessDecision::Deny(_))));
+        assert!(matches!(result, Ok(FreshnessDecision::Denied(_))));
     }
 
     // ---------------------------------------------------------------

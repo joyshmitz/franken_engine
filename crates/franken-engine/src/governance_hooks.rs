@@ -3634,8 +3634,7 @@ mod tests {
             ..Default::default()
         });
         let arts = single_artifact();
-        let results =
-            run_governance_pipeline(&mut pipeline, &arts, vec![], ts(100)).unwrap();
+        let results = run_governance_pipeline(&mut pipeline, &arts, vec![], ts(100)).unwrap();
         assert!(results[0].passed);
         assert_eq!(
             results[0].details.get("artifact_count"),

@@ -637,12 +637,11 @@ fn case_key(suite_kind: &str, scenario_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        EpochBurdenPoint, FlakeClassification, FlakePolicy, FlakeRunRecord, FlakeSeverity,
-        FlakeWorkflowEvent, GateConfidenceReport, QuarantineAction, QuarantineRecord,
-        QuarantineStatus, ReproducerBundle, TrendDirection,
-        FLAKE_WORKFLOW_COMPONENT, FLAKE_WORKFLOW_EVENT_SCHEMA_VERSION,
-        build_quarantine_records, classify_flakes, evaluate_gate_confidence,
-        validate_quarantine_records,
+        EpochBurdenPoint, FLAKE_WORKFLOW_COMPONENT, FLAKE_WORKFLOW_EVENT_SCHEMA_VERSION,
+        FlakeClassification, FlakePolicy, FlakeRunRecord, FlakeSeverity, FlakeWorkflowEvent,
+        GateConfidenceReport, QuarantineAction, QuarantineRecord, QuarantineStatus,
+        ReproducerBundle, TrendDirection, build_quarantine_records, classify_flakes,
+        evaluate_gate_confidence, validate_quarantine_records,
     };
     use std::collections::BTreeMap;
 

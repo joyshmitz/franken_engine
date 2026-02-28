@@ -626,7 +626,8 @@ impl ExtensionSummary {
 
     /// Denial rate in millionths (1_000_000 = 100%).
     pub fn denial_rate_millionths(&self) -> u64 {
-        self.denied_count.saturating_mul(1_000_000)
+        self.denied_count
+            .saturating_mul(1_000_000)
             .checked_div(self.total_calls)
             .unwrap_or(0)
     }

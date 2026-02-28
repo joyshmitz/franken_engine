@@ -888,7 +888,8 @@ impl PortfolioGovernor {
         if total_obligations == 0 {
             return 0;
         }
-        let completed = state.completed_obligation_ids()
+        let completed = state
+            .completed_obligation_ids()
             .into_iter()
             .collect::<std::collections::BTreeSet<_>>()
             .len() as u64;

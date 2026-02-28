@@ -7619,7 +7619,9 @@ mod tests {
         let validator = WitnessValidator::new();
         let errors = validator.validate(&witness);
         assert!(
-            !errors.iter().any(|e| matches!(e, WitnessError::InvalidConfidence { .. })),
+            !errors
+                .iter()
+                .any(|e| matches!(e, WitnessError::InvalidConfidence { .. })),
             "zero-trial confidence must not trigger InvalidConfidence"
         );
     }

@@ -611,8 +611,10 @@ impl SafeModeManager {
             component: "safe_mode_fallback".to_string(),
             outcome: if phase == "activate" {
                 "safe_mode_active".to_string()
-            } else {
+            } else if phase == "recover" {
                 "recovery_complete".to_string()
+            } else {
+                "safe_mode_active".to_string()
             },
             error_code: error_code.map(|s| s.to_string()),
         });

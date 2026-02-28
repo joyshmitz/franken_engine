@@ -276,6 +276,8 @@ pub enum ReceiptError {
     EmptyProofInputs,
     /// Transformation witness description is empty.
     EmptyTransformationDescription,
+    /// Fallback path is empty.
+    EmptyFallbackPath,
     /// Before and after IR digests are identical (no transformation occurred).
     IdenticalIrDigests,
     /// No equivalence test results provided.
@@ -317,6 +319,7 @@ impl fmt::Display for ReceiptError {
             Self::EmptyTransformationDescription => {
                 f.write_str("transformation_witness description is empty")
             }
+            Self::EmptyFallbackPath => f.write_str("fallback path is empty"),
             Self::IdenticalIrDigests => f.write_str("before and after IR digests are identical"),
             Self::NoEquivalenceTests => {
                 f.write_str("equivalence_evidence has no differential test hashes")
@@ -487,7 +490,7 @@ impl SpecializationReceipt {
             return Err(ReceiptError::UnvalidatedRollback);
         }
         if self.fallback_path.is_empty() {
-            return Err(ReceiptError::EmptyTransformationDescription);
+            return Err(ReceiptError::EmptyFallbackPath);
         }
         Ok(())
     }
@@ -1372,6 +1375,7 @@ mod tests {
         let errors = [
             ReceiptError::EmptyProofInputs,
             ReceiptError::EmptyTransformationDescription,
+            ReceiptError::EmptyFallbackPath,
             ReceiptError::IdenticalIrDigests,
             ReceiptError::NoEquivalenceTests,
             ReceiptError::ZeroTestCount,
@@ -1538,6 +1542,7 @@ mod tests {
         let variants: Vec<Box<dyn std::error::Error>> = vec![
             Box::new(ReceiptError::EmptyProofInputs),
             Box::new(ReceiptError::EmptyTransformationDescription),
+            Box::new(ReceiptError::EmptyFallbackPath),
             Box::new(ReceiptError::IdenticalIrDigests),
             Box::new(ReceiptError::NoEquivalenceTests),
             Box::new(ReceiptError::ZeroTestCount),

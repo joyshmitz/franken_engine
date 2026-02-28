@@ -1749,4 +1749,521 @@ mod tests {
             assert_eq!(*dc, back);
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2 — PearlTower 2026-02-28
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn capability_incremental_requirement() {
+        let cap = BackendCapability::full();
+        let req = BackendRequirements {
+            needs_typescript: false,
+            needs_jsx: false,
+            needs_source_maps: false,
+            needs_incremental: true,
+        };
+        // full() has incremental: false, so should fail
+        assert!(!cap.satisfies(&req));
+    }
+
+    #[test]
+    fn capability_satisfies_empty_requirements() {
+        let cap = BackendCapability::minimal();
+        let req = BackendRequirements::default();
+        assert!(cap.satisfies(&req));
+    }
+
+    #[test]
+    fn diagnostics_with_fatal_has_errors() {
+        let diag = NormalizedDiagnostic {
+            code: "FE-FATAL-0001".into(),
+            category: DiagnosticCategory::Resource,
+            severity: DiagnosticSeverity::Fatal,
+            message_template: "Out of memory".into(),
+            span: None,
+            context: BTreeMap::new(),
+        };
+        let env = DiagnosticsEnvelope::from_diagnostics(vec![diag]);
+        assert!(env.has_errors());
+    }
+
+    #[test]
+    fn diagnostics_hint_only_no_errors() {
+        let diag = NormalizedDiagnostic {
+            code: "FE-HINT-0001".into(),
+            category: DiagnosticCategory::Syntax,
+            severity: DiagnosticSeverity::Hint,
+            message_template: "consider refactoring".into(),
+            span: None,
+            context: BTreeMap::new(),
+        };
+        let env = DiagnosticsEnvelope::from_diagnostics(vec![diag]);
+        assert!(!env.has_errors());
+    }
+
+    #[test]
+    fn diagnostics_mixed_severities() {
+        let entries = vec![
+            NormalizedDiagnostic {
+                code: "FE-H-1".into(),
+                category: DiagnosticCategory::Syntax,
+                severity: DiagnosticSeverity::Hint,
+                message_template: "hint".into(),
+                span: None,
+                context: BTreeMap::new(),
+            },
+            NormalizedDiagnostic {
+                code: "FE-W-1".into(),
+                category: DiagnosticCategory::Semantic,
+                severity: DiagnosticSeverity::Warning,
+                message_template: "warning".into(),
+                span: None,
+                context: BTreeMap::new(),
+            },
+            NormalizedDiagnostic {
+                code: "FE-E-1".into(),
+                category: DiagnosticCategory::Type,
+                severity: DiagnosticSeverity::Error,
+                message_template: "error".into(),
+                span: None,
+                context: BTreeMap::new(),
+            },
+        ];
+        let env = DiagnosticsEnvelope::from_diagnostics(entries);
+        assert_eq!(env.len(), 3);
+        assert!(env.has_errors());
+    }
+
+    #[test]
+    fn diagnostics_hash_differs_by_content() {
+        let diag1 = NormalizedDiagnostic {
+            code: "FE-1".into(),
+            category: DiagnosticCategory::Syntax,
+            severity: DiagnosticSeverity::Error,
+            message_template: "one".into(),
+            span: None,
+            context: BTreeMap::new(),
+        };
+        let diag2 = NormalizedDiagnostic {
+            code: "FE-2".into(),
+            category: DiagnosticCategory::Semantic,
+            severity: DiagnosticSeverity::Warning,
+            message_template: "two".into(),
+            span: None,
+            context: BTreeMap::new(),
+        };
+        let env1 = DiagnosticsEnvelope::from_diagnostics(vec![diag1]);
+        let env2 = DiagnosticsEnvelope::from_diagnostics(vec![diag2]);
+        assert_ne!(env1.envelope_hash, env2.envelope_hash);
+    }
+
+    #[test]
+    fn requirements_serde_roundtrip() {
+        let req = BackendRequirements {
+            needs_typescript: true,
+            needs_jsx: true,
+            needs_source_maps: false,
+            needs_incremental: true,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: BackendRequirements = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, back);
+    }
+
+    #[test]
+    fn parse_event_serde_roundtrip() {
+        let event = DualBackendParseEvent {
+            seq: 42,
+            kind: DualBackendEventKind::ParseCompleted {
+                latency_us: 5_000,
+                hash: "sha256:xyz".into(),
+            },
+            backend_id: Some(BackendId::oxc()),
+            source_label: "test.ts".into(),
+            epoch: epoch(7),
+            timestamp_ns: 42_000_000,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: DualBackendParseEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn backend_parse_result_serde_roundtrip() {
+        let result = BackendParseResult {
+            backend_id: BackendId::swc(),
+            canonical_hash: Some("sha256:abc".into()),
+            success: true,
+            error_code: None,
+            diagnostics_hash: "sha256:diag".into(),
+            latency_us: 2_000,
+            fidelity_score_millionths: 995_000,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: BackendParseResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    #[test]
+    fn backend_parse_result_failure() {
+        let result = BackendParseResult {
+            backend_id: BackendId::oxc(),
+            canonical_hash: None,
+            success: false,
+            error_code: Some("PARSE_FAILED".into()),
+            diagnostics_hash: "sha256:err".into(),
+            latency_us: 500,
+            fidelity_score_millionths: 0,
+        };
+        assert!(!result.success);
+        assert!(result.canonical_hash.is_none());
+        assert!(result.error_code.is_some());
+    }
+
+    #[test]
+    fn fidelity_report_serde_roundtrip() {
+        let mappings = vec![
+            SpanMappingEntry {
+                node_index: 0,
+                canonical_span: make_span(0, 5),
+                backend_span: make_span(0, 5),
+                deviation_bytes: 0,
+            },
+            SpanMappingEntry {
+                node_index: 1,
+                canonical_span: make_span(5, 10),
+                backend_span: make_span(5, 12),
+                deviation_bytes: 2,
+            },
+        ];
+        let report = FidelityReport::from_mappings(BackendId::swc(), &mappings, 990_000);
+        let json = serde_json::to_string(&report).unwrap();
+        let back: FidelityReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(report, back);
+    }
+
+    #[test]
+    fn error_display_normalization_verification_failed() {
+        let e = DualBackendParserError::NormalizationVerificationFailed {
+            backend_id: "swc".into(),
+            expected_hash: "sha256:aaa".into(),
+            actual_hash: "sha256:bbb".into(),
+        };
+        let s = e.to_string();
+        assert!(s.contains("swc"));
+        assert!(s.contains("sha256:aaa"));
+        assert!(s.contains("sha256:bbb"));
+    }
+
+    #[test]
+    fn error_display_fidelity_below_threshold() {
+        let e = DualBackendParserError::FidelityBelowThreshold {
+            backend_id: "oxc".into(),
+            fidelity_millionths: 500_000,
+            threshold_millionths: 990_000,
+        };
+        let s = e.to_string();
+        assert!(s.contains("oxc"));
+        assert!(s.contains("500000"));
+        assert!(s.contains("990000"));
+    }
+
+    #[test]
+    fn error_display_backend_unhealthy() {
+        let e = DualBackendParserError::BackendUnhealthy("swc".into());
+        assert!(e.to_string().contains("unhealthy"));
+        assert!(e.to_string().contains("swc"));
+    }
+
+    #[test]
+    fn error_display_invalid_config() {
+        let e = DualBackendParserError::InvalidConfig("missing field".into());
+        assert!(e.to_string().contains("missing field"));
+    }
+
+    #[test]
+    fn error_serde_roundtrip_all_variants() {
+        let variants = vec![
+            DualBackendParserError::NoBackendsRegistered,
+            DualBackendParserError::BackendNotFound("swc".into()),
+            DualBackendParserError::BackendUnhealthy("oxc".into()),
+            DualBackendParserError::AllBackendsFailed(vec!["a".into(), "b".into()]),
+            DualBackendParserError::NormalizationVerificationFailed {
+                backend_id: "swc".into(),
+                expected_hash: "h1".into(),
+                actual_hash: "h2".into(),
+            },
+            DualBackendParserError::FidelityBelowThreshold {
+                backend_id: "oxc".into(),
+                fidelity_millionths: 500_000,
+                threshold_millionths: 990_000,
+            },
+            DualBackendParserError::TooManyBackends { count: 9, max: 8 },
+            DualBackendParserError::InvalidConfig("bad".into()),
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: DualBackendParserError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn policy_differential_creation() {
+        let policy = BackendSelectionPolicy::differential();
+        assert_eq!(policy.policy_id, "differential-all");
+        assert!(policy.differential_mode);
+        assert!(policy.verify_normalization);
+        assert_eq!(policy.min_fidelity_millionths, MILLION);
+    }
+
+    #[test]
+    fn extension_override_unhealthy_falls_to_default() {
+        let mut policy = BackendSelectionPolicy::default_swc_primary();
+        policy
+            .extension_overrides
+            .insert("tsx".into(), BackendId::oxc());
+        let backends = vec![
+            make_registration(BackendId::swc(), 1, true),
+            make_registration(BackendId::oxc(), 2, false), // unhealthy
+        ];
+        let selected = policy.select_backend(ParseGoal::Module, Some("tsx"), &backends);
+        // OXC is unhealthy, should fall through to goal/default
+        assert_eq!(selected, BackendId::swc());
+    }
+
+    #[test]
+    fn goal_override_unhealthy_falls_to_default() {
+        let mut policy = BackendSelectionPolicy::default_swc_primary();
+        policy
+            .goal_overrides
+            .insert("module".into(), BackendId::oxc());
+        let backends = vec![
+            make_registration(BackendId::swc(), 1, true),
+            make_registration(BackendId::oxc(), 2, false), // unhealthy
+        ];
+        let selected = policy.select_backend(ParseGoal::Module, None, &backends);
+        assert_eq!(selected, BackendId::swc());
+    }
+
+    #[test]
+    fn parser_selects_any_healthy_when_default_and_fallback_unhealthy() {
+        let mut parser = DualBackendParser::new(
+            "test",
+            BackendSelectionPolicy::default_swc_primary(),
+            epoch(1),
+        );
+        parser
+            .register_backend(make_registration(BackendId::swc(), 1, false))
+            .unwrap();
+        parser
+            .register_backend(make_registration(BackendId::franken_canonical(), 2, false))
+            .unwrap();
+        parser
+            .register_backend(make_registration(BackendId::oxc(), 3, true))
+            .unwrap();
+        let selected = parser.select_backend(ParseGoal::Module, None).unwrap();
+        assert_eq!(selected, BackendId::oxc());
+    }
+
+    #[test]
+    fn span_mapping_serde_roundtrip() {
+        let entry = SpanMappingEntry {
+            node_index: 42,
+            canonical_span: make_span(10, 20),
+            backend_span: make_span(10, 21),
+            deviation_bytes: 1,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: SpanMappingEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn diagnostic_severity_serde_roundtrip() {
+        for sev in [
+            DiagnosticSeverity::Hint,
+            DiagnosticSeverity::Warning,
+            DiagnosticSeverity::Error,
+            DiagnosticSeverity::Fatal,
+        ] {
+            let json = serde_json::to_string(&sev).unwrap();
+            let back: DiagnosticSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(sev, back);
+        }
+    }
+
+    #[test]
+    fn diagnostic_category_serde_roundtrip() {
+        for cat in [
+            DiagnosticCategory::Syntax,
+            DiagnosticCategory::Semantic,
+            DiagnosticCategory::Type,
+            DiagnosticCategory::Resource,
+            DiagnosticCategory::Encoding,
+        ] {
+            let json = serde_json::to_string(&cat).unwrap();
+            let back: DiagnosticCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(cat, back);
+        }
+    }
+
+    #[test]
+    fn category_ordering() {
+        assert!(DiagnosticCategory::Syntax < DiagnosticCategory::Semantic);
+        assert!(DiagnosticCategory::Semantic < DiagnosticCategory::Type);
+        assert!(DiagnosticCategory::Type < DiagnosticCategory::Resource);
+        assert!(DiagnosticCategory::Resource < DiagnosticCategory::Encoding);
+    }
+
+    #[test]
+    fn divergence_class_ordering() {
+        assert!(DivergenceClass::AstDivergence < DivergenceClass::DiagnosticsDivergence);
+        assert!(DivergenceClass::DiagnosticsDivergence < DivergenceClass::SpanDivergence);
+        assert!(DivergenceClass::SpanDivergence < DivergenceClass::ErrorDivergence);
+    }
+
+    #[test]
+    fn event_kind_all_variants_serde() {
+        let kinds = vec![
+            DualBackendEventKind::BackendSelected,
+            DualBackendEventKind::ParseCompleted {
+                latency_us: 100,
+                hash: "h".into(),
+            },
+            DualBackendEventKind::ParseFailed {
+                error: "err".into(),
+            },
+            DualBackendEventKind::FallbackSelected,
+            DualBackendEventKind::NormalizationVerified,
+            DualBackendEventKind::FidelityReported {
+                score_millionths: 900_000,
+            },
+            DualBackendEventKind::DifferentialCompleted {
+                all_equivalent: true,
+            },
+            DualBackendEventKind::BackendRegistered,
+            DualBackendEventKind::HealthChanged { healthy: false },
+        ];
+        for kind in &kinds {
+            let json = serde_json::to_string(kind).unwrap();
+            let back: DualBackendEventKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*kind, back);
+        }
+    }
+
+    #[test]
+    fn fidelity_max_deviation_tracked() {
+        let mappings = vec![
+            SpanMappingEntry {
+                node_index: 0,
+                canonical_span: make_span(0, 5),
+                backend_span: make_span(0, 7),
+                deviation_bytes: 2,
+            },
+            SpanMappingEntry {
+                node_index: 1,
+                canonical_span: make_span(5, 10),
+                backend_span: make_span(5, 15),
+                deviation_bytes: 5,
+            },
+            SpanMappingEntry {
+                node_index: 2,
+                canonical_span: make_span(10, 15),
+                backend_span: make_span(10, 18),
+                deviation_bytes: 3,
+            },
+        ];
+        let report = FidelityReport::from_mappings(BackendId::swc(), &mappings, 0);
+        assert_eq!(report.max_deviation_bytes, 5);
+        assert_eq!(report.exact_spans, 0);
+        assert_eq!(report.total_spans, 3);
+        assert_eq!(report.deviations.len(), 3);
+    }
+
+    #[test]
+    fn parser_event_seq_increments() {
+        let mut parser = make_parser();
+        let initial_seq = parser.event_seq;
+        parser.record_parse(&BackendId::swc(), "a.js", "h1", 100);
+        parser.record_parse(&BackendId::swc(), "b.js", "h2", 200);
+        assert_eq!(parser.event_seq, initial_seq + 2);
+    }
+
+    #[test]
+    fn differential_result_with_divergence() {
+        let result = DifferentialComparisonResult {
+            source_label: "test.js".into(),
+            goal: "module".into(),
+            backend_results: vec![
+                BackendParseResult {
+                    backend_id: BackendId::swc(),
+                    canonical_hash: Some("sha256:aaa".into()),
+                    success: true,
+                    error_code: None,
+                    diagnostics_hash: "sha256:d1".into(),
+                    latency_us: 1_000,
+                    fidelity_score_millionths: MILLION,
+                },
+                BackendParseResult {
+                    backend_id: BackendId::oxc(),
+                    canonical_hash: Some("sha256:bbb".into()),
+                    success: true,
+                    error_code: None,
+                    diagnostics_hash: "sha256:d2".into(),
+                    latency_us: 800,
+                    fidelity_score_millionths: 995_000,
+                },
+            ],
+            all_equivalent: false,
+            distinct_hashes: vec!["sha256:aaa".into(), "sha256:bbb".into()],
+            divergence: Some(DivergenceClass::AstDivergence),
+        };
+        assert!(!result.all_equivalent);
+        assert_eq!(result.distinct_hashes.len(), 2);
+        assert_eq!(result.divergence, Some(DivergenceClass::AstDivergence));
+
+        let json = serde_json::to_string(&result).unwrap();
+        let back: DifferentialComparisonResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    #[test]
+    fn normalized_diagnostic_with_span_and_context() {
+        let mut ctx = BTreeMap::new();
+        ctx.insert("expected".into(), "identifier".into());
+        ctx.insert("found".into(), "number".into());
+        let diag = NormalizedDiagnostic {
+            code: "FE-PARSE-0042".into(),
+            category: DiagnosticCategory::Syntax,
+            severity: DiagnosticSeverity::Error,
+            message_template: "Expected {expected}, found {found}".into(),
+            span: Some(make_span(100, 105)),
+            context: ctx,
+        };
+        assert_eq!(diag.context.len(), 2);
+        assert!(diag.span.is_some());
+        let json = serde_json::to_string(&diag).unwrap();
+        let back: NormalizedDiagnostic = serde_json::from_str(&json).unwrap();
+        assert_eq!(diag, back);
+    }
+
+    #[test]
+    fn schema_version_correct() {
+        assert_eq!(
+            DUAL_BACKEND_SCHEMA_VERSION,
+            "franken-engine.dual-backend-parser.v1"
+        );
+    }
+
+    #[test]
+    fn parser_multiple_fallbacks_counted() {
+        let mut parser = make_parser();
+        parser.set_backend_health(&BackendId::swc(), false).unwrap();
+        // Each select_backend when primary is unhealthy increments fallback_count
+        parser.select_backend(ParseGoal::Module, None).unwrap();
+        parser.select_backend(ParseGoal::Script, None).unwrap();
+        assert_eq!(parser.fallback_count, 2);
+    }
 }

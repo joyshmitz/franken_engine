@@ -1754,4 +1754,639 @@ mod tests {
             "plain_language should mention the equation name"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2 — PearlTower 2026-02-28
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn compute_id_differs_by_epoch() {
+        let id1 = DecisionExplanation::compute_id(
+            "d-x",
+            &SecurityEpoch::from_raw(1),
+            &DecisionDomain::LaneRouting,
+        );
+        let id2 = DecisionExplanation::compute_id(
+            "d-x",
+            &SecurityEpoch::from_raw(2),
+            &DecisionDomain::LaneRouting,
+        );
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn compute_id_differs_by_decision_id() {
+        let id1 =
+            DecisionExplanation::compute_id("d-a", &test_epoch(), &DecisionDomain::LaneRouting);
+        let id2 =
+            DecisionExplanation::compute_id("d-b", &test_epoch(), &DecisionDomain::LaneRouting);
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn builder_serde_roundtrip() {
+        let builder = ExplanationBuilder::new(
+            "d-ser".to_string(),
+            test_epoch(),
+            DecisionDomain::Optimization,
+        )
+        .verbosity(VerbosityLevel::GalaxyBrain)
+        .regime(RegimeLabel::Degraded)
+        .confidence(750_000)
+        .posterior("factor_a".to_string(), 400_000);
+        let json = serde_json::to_string(&builder).unwrap();
+        let back: ExplanationBuilder = serde_json::from_str(&json).unwrap();
+        // Build both and compare: chosen_action not set so both return None.
+        assert!(back.build().is_none());
+    }
+
+    #[test]
+    fn index_serde_roundtrip() {
+        let mut idx = ExplanationIndex::new();
+        let expl = ExplanationBuilder::new(
+            "d-idx-ser".to_string(),
+            test_epoch(),
+            DecisionDomain::Governance,
+        )
+        .chosen(LaneAction::FallbackSafe, 0)
+        .rationale("serde test".to_string())
+        .build()
+        .unwrap();
+        idx.insert(expl);
+
+        let json = serde_json::to_string(&idx).unwrap();
+        let back: ExplanationIndex = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.len(), 1);
+        assert!(back.get_by_decision("d-idx-ser").is_some());
+    }
+
+    #[test]
+    fn report_verbosity_counts() {
+        let mut idx = ExplanationIndex::new();
+        for (i, v) in [
+            VerbosityLevel::Minimal,
+            VerbosityLevel::Standard,
+            VerbosityLevel::Standard,
+            VerbosityLevel::GalaxyBrain,
+        ]
+        .iter()
+        .enumerate()
+        {
+            let expl = ExplanationBuilder::new(
+                format!("d-vc-{i}"),
+                test_epoch(),
+                DecisionDomain::LaneRouting,
+            )
+            .verbosity(*v)
+            .chosen(LaneAction::FallbackSafe, 0)
+            .rationale("test".to_string())
+            .build()
+            .unwrap();
+            idx.insert(expl);
+        }
+        let report = generate_report(&idx, &test_epoch());
+        assert_eq!(report.verbosity_counts.get("minimal"), Some(&1));
+        assert_eq!(report.verbosity_counts.get("standard"), Some(&2));
+        assert_eq!(report.verbosity_counts.get("galaxy_brain"), Some(&1));
+    }
+
+    #[test]
+    fn counterfactual_with_guardrail_trigger() {
+        let cf = CounterfactualOutcome {
+            action: LaneAction::RouteTo(test_lane("risky")),
+            predicted_loss_millionths: 900_000,
+            loss_delta_millionths: 800_000,
+            would_trigger_guardrail: true,
+            narrative: "risky lane would violate guardrail".to_string(),
+        };
+        assert!(cf.would_trigger_guardrail);
+        let json = serde_json::to_string(&cf).unwrap();
+        let back: CounterfactualOutcome = serde_json::from_str(&json).unwrap();
+        assert!(back.would_trigger_guardrail);
+    }
+
+    #[test]
+    fn constraint_non_binding_with_positive_slack() {
+        let c = ConstraintInteraction {
+            constraint_id: "latency-cap".to_string(),
+            description: "latency must stay below 100ms".to_string(),
+            binding: false,
+            slack_millionths: 250_000,
+        };
+        assert!(!c.binding);
+        assert_eq!(c.slack_millionths, 250_000);
+        let json = serde_json::to_string(&c).unwrap();
+        let back: ConstraintInteraction = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+    }
+
+    #[test]
+    fn explain_lane_routing_with_equations() {
+        let eq = GoverningEquation {
+            name: "expected_loss".to_string(),
+            formula: "sum(w_i * l_i)".to_string(),
+            parameters: BTreeMap::from([
+                ("w_latency".to_string(), 300_000),
+                ("l_latency".to_string(), 200_000),
+            ]),
+            result_millionths: 60_000,
+            threshold_millionths: Some(500_000),
+            threshold_exceeded: false,
+        };
+        let expl = explain_lane_routing(LaneRoutingExplanationInput {
+            decision_id: "d-eq-test".to_string(),
+            epoch: test_epoch(),
+            regime: RegimeLabel::Normal,
+            chosen_lane: test_lane("native"),
+            chosen_loss_millionths: 60_000,
+            alternatives: vec![],
+            equations: vec![eq],
+            verbosity: VerbosityLevel::GalaxyBrain,
+        })
+        .unwrap();
+        assert_eq!(expl.equations.len(), 1);
+        assert_eq!(expl.equations[0].name, "expected_loss");
+        assert_eq!(expl.verbosity, VerbosityLevel::GalaxyBrain);
+    }
+
+    #[test]
+    fn explain_fallback_empty_constraints() {
+        let expl = explain_fallback(FallbackExplanationInput {
+            decision_id: "d-fb-empty".to_string(),
+            epoch: test_epoch(),
+            regime: RegimeLabel::Normal,
+            from_lane: test_lane("js"),
+            reason: DemotionReason::CvarExceeded,
+            equations: vec![],
+            constraints: vec![],
+            verbosity: VerbosityLevel::Minimal,
+        })
+        .unwrap();
+        assert!(!expl.has_binding_constraint());
+        assert!(expl.constraints.is_empty());
+    }
+
+    #[test]
+    fn index_overwrite_same_decision_id() {
+        let mut idx = ExplanationIndex::new();
+        let expl1 = ExplanationBuilder::new(
+            "d-ow".to_string(),
+            test_epoch(),
+            DecisionDomain::LaneRouting,
+        )
+        .chosen(LaneAction::RouteTo(test_lane("js")), 100_000)
+        .rationale("first".to_string())
+        .build()
+        .unwrap();
+        let expl2 = ExplanationBuilder::new(
+            "d-ow".to_string(),
+            test_epoch(),
+            DecisionDomain::LaneRouting,
+        )
+        .chosen(LaneAction::RouteTo(test_lane("wasm")), 200_000)
+        .rationale("second".to_string())
+        .build()
+        .unwrap();
+        idx.insert(expl1);
+        idx.insert(expl2);
+        // Same decision_id + epoch + domain → same explanation_id → overwrite.
+        assert_eq!(idx.len(), 1);
+        let retrieved = idx.get_by_decision("d-ow").unwrap();
+        assert_eq!(retrieved.rationale, "second");
+    }
+
+    #[test]
+    fn report_for_different_epoch_returns_zeros() {
+        let mut idx = ExplanationIndex::new();
+        let expl = ExplanationBuilder::new(
+            "d-diff-ep".to_string(),
+            SecurityEpoch::from_raw(10),
+            DecisionDomain::Security,
+        )
+        .chosen(LaneAction::FallbackSafe, 0)
+        .rationale("epoch 10".to_string())
+        .build()
+        .unwrap();
+        idx.insert(expl);
+
+        let report = generate_report(&idx, &SecurityEpoch::from_raw(99));
+        assert_eq!(report.total_explained, 0);
+        assert_eq!(report.average_confidence_millionths, 0);
+    }
+
+    #[test]
+    fn builder_all_fields_galaxy_brain() {
+        let eq = GoverningEquation {
+            name: "risk_model".to_string(),
+            formula: "R = sum(w * b)".to_string(),
+            parameters: BTreeMap::from([("w".to_string(), 500_000), ("b".to_string(), 600_000)]),
+            result_millionths: 300_000,
+            threshold_millionths: Some(400_000),
+            threshold_exceeded: false,
+        };
+        let alt = ExplainedAlternative {
+            action: LaneAction::RouteTo(test_lane("wasm")),
+            expected_loss_millionths: 500_000,
+            rejection_reason: RejectionReason::GuardrailViolation,
+            detail: "guardrail would be violated".to_string(),
+        };
+        let constraint = ConstraintInteraction {
+            constraint_id: "budget-cap".to_string(),
+            description: "budget limit".to_string(),
+            binding: true,
+            slack_millionths: 0,
+        };
+        let risk = RiskBreakdown {
+            factor: "throughput".to_string(),
+            weight_millionths: 400_000,
+            belief_millionths: 500_000,
+            contribution_millionths: 200_000,
+        };
+        let cf = CounterfactualOutcome {
+            action: LaneAction::SuspendAdaptive,
+            predicted_loss_millionths: 0,
+            loss_delta_millionths: -300_000,
+            would_trigger_guardrail: false,
+            narrative: "suspend would avoid all risk".to_string(),
+        };
+
+        let expl = ExplanationBuilder::new(
+            "d-full".to_string(),
+            test_epoch(),
+            DecisionDomain::Optimization,
+        )
+        .verbosity(VerbosityLevel::GalaxyBrain)
+        .regime(RegimeLabel::Degraded)
+        .equation(eq)
+        .chosen(LaneAction::RouteTo(test_lane("js")), 100_000)
+        .rationale("full galaxy-brain analysis".to_string())
+        .alternative(alt)
+        .constraint(constraint)
+        .risk(risk)
+        .counterfactual(cf)
+        .posterior("throughput".to_string(), 500_000)
+        .posterior("latency".to_string(), 300_000)
+        .confidence(850_000)
+        .build()
+        .unwrap();
+
+        assert_eq!(expl.verbosity, VerbosityLevel::GalaxyBrain);
+        assert_eq!(expl.regime, RegimeLabel::Degraded);
+        assert_eq!(expl.equations.len(), 1);
+        assert_eq!(expl.alternatives.len(), 1);
+        assert!(expl.has_binding_constraint());
+        assert_eq!(expl.total_risk_millionths(), 200_000);
+        assert_eq!(expl.counterfactuals.len(), 1);
+        assert_eq!(expl.posterior_millionths.len(), 2);
+        assert_eq!(expl.confidence_millionths, 850_000);
+        assert_eq!(expl.candidates_considered(), 2);
+    }
+
+    #[test]
+    fn multiple_counterfactuals_and_posteriors() {
+        let expl = ExplanationBuilder::new(
+            "d-multi-cf".to_string(),
+            test_epoch(),
+            DecisionDomain::LaneRouting,
+        )
+        .chosen(LaneAction::RouteTo(test_lane("js")), 100_000)
+        .rationale("multi test".to_string())
+        .counterfactual(CounterfactualOutcome {
+            action: LaneAction::FallbackSafe,
+            predicted_loss_millionths: 0,
+            loss_delta_millionths: -100_000,
+            would_trigger_guardrail: false,
+            narrative: "safe".to_string(),
+        })
+        .counterfactual(CounterfactualOutcome {
+            action: LaneAction::RouteTo(test_lane("wasm")),
+            predicted_loss_millionths: 200_000,
+            loss_delta_millionths: 100_000,
+            would_trigger_guardrail: true,
+            narrative: "wasm risky".to_string(),
+        })
+        .counterfactual(CounterfactualOutcome {
+            action: LaneAction::SuspendAdaptive,
+            predicted_loss_millionths: 50_000,
+            loss_delta_millionths: -50_000,
+            would_trigger_guardrail: false,
+            narrative: "suspend".to_string(),
+        })
+        .posterior("factor_a".to_string(), 600_000)
+        .posterior("factor_b".to_string(), 400_000)
+        .posterior("factor_c".to_string(), 200_000)
+        .build()
+        .unwrap();
+
+        assert_eq!(expl.counterfactuals.len(), 3);
+        assert_eq!(expl.posterior_millionths.len(), 3);
+    }
+
+    #[test]
+    fn multiple_risk_factors_sum() {
+        let expl = ExplanationBuilder::new(
+            "d-risk-sum".to_string(),
+            test_epoch(),
+            DecisionDomain::Security,
+        )
+        .chosen(LaneAction::FallbackSafe, 0)
+        .rationale("multi risk".to_string())
+        .risk(RiskBreakdown {
+            factor: "a".to_string(),
+            weight_millionths: 300_000,
+            belief_millionths: 500_000,
+            contribution_millionths: 150_000,
+        })
+        .risk(RiskBreakdown {
+            factor: "b".to_string(),
+            weight_millionths: 300_000,
+            belief_millionths: 300_000,
+            contribution_millionths: 90_000,
+        })
+        .risk(RiskBreakdown {
+            factor: "c".to_string(),
+            weight_millionths: 400_000,
+            belief_millionths: 200_000,
+            contribution_millionths: 80_000,
+        })
+        .build()
+        .unwrap();
+
+        assert_eq!(expl.total_risk_millionths(), 320_000);
+        assert_eq!(expl.risk_breakdown.len(), 3);
+    }
+
+    #[test]
+    fn zero_risk_when_no_breakdown() {
+        let expl = ExplanationBuilder::new(
+            "d-no-risk".to_string(),
+            test_epoch(),
+            DecisionDomain::Governance,
+        )
+        .chosen(LaneAction::FallbackSafe, 0)
+        .rationale("no risk".to_string())
+        .build()
+        .unwrap();
+        assert_eq!(expl.total_risk_millionths(), 0);
+    }
+
+    #[test]
+    fn report_multiple_binding_constraints() {
+        let mut idx = ExplanationIndex::new();
+        let expl =
+            ExplanationBuilder::new("d-mc".to_string(), test_epoch(), DecisionDomain::Security)
+                .chosen(LaneAction::FallbackSafe, 0)
+                .constraint(ConstraintInteraction {
+                    constraint_id: "c1".to_string(),
+                    description: "first".to_string(),
+                    binding: true,
+                    slack_millionths: 0,
+                })
+                .constraint(ConstraintInteraction {
+                    constraint_id: "c2".to_string(),
+                    description: "second".to_string(),
+                    binding: true,
+                    slack_millionths: 0,
+                })
+                .constraint(ConstraintInteraction {
+                    constraint_id: "c3".to_string(),
+                    description: "third non-binding".to_string(),
+                    binding: false,
+                    slack_millionths: 100_000,
+                })
+                .rationale("multiple constraints".to_string())
+                .build()
+                .unwrap();
+        idx.insert(expl);
+
+        let report = generate_report(&idx, &test_epoch());
+        assert_eq!(report.binding_constraint_count, 1);
+    }
+
+    #[test]
+    fn all_rejection_reasons_serde_and_ordering() {
+        let reasons = [
+            RejectionReason::HigherLoss,
+            RejectionReason::GuardrailViolation,
+            RejectionReason::BudgetInsufficient,
+            RejectionReason::CalibrationInsufficient,
+            RejectionReason::RegimeRestriction,
+            RejectionReason::PolicyForbidden,
+        ];
+        for r in &reasons {
+            let json = serde_json::to_string(r).unwrap();
+            let back: RejectionReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(*r, back);
+        }
+        // Ordering: HigherLoss < GuardrailViolation < ... < PolicyForbidden
+        for window in reasons.windows(2) {
+            assert!(window[0] < window[1]);
+        }
+    }
+
+    #[test]
+    fn explained_alternative_all_rejection_reasons() {
+        let reasons = [
+            RejectionReason::HigherLoss,
+            RejectionReason::GuardrailViolation,
+            RejectionReason::BudgetInsufficient,
+            RejectionReason::CalibrationInsufficient,
+            RejectionReason::RegimeRestriction,
+            RejectionReason::PolicyForbidden,
+        ];
+        for (i, reason) in reasons.iter().enumerate() {
+            let alt = ExplainedAlternative {
+                action: LaneAction::RouteTo(test_lane(&format!("lane-{i}"))),
+                expected_loss_millionths: (i as i64 + 1) * 100_000,
+                rejection_reason: *reason,
+                detail: format!("rejected for {reason}"),
+            };
+            let json = serde_json::to_string(&alt).unwrap();
+            let back: ExplainedAlternative = serde_json::from_str(&json).unwrap();
+            assert_eq!(alt, back);
+        }
+    }
+
+    #[test]
+    fn domain_ordering() {
+        assert!(DecisionDomain::LaneRouting < DecisionDomain::Fallback);
+        assert!(DecisionDomain::Fallback < DecisionDomain::Optimization);
+        assert!(DecisionDomain::Optimization < DecisionDomain::Security);
+        assert!(DecisionDomain::Security < DecisionDomain::Governance);
+    }
+
+    #[test]
+    fn index_by_epoch_empty_epoch() {
+        let mut idx = ExplanationIndex::new();
+        let expl = ExplanationBuilder::new(
+            "d-ep".to_string(),
+            SecurityEpoch::from_raw(5),
+            DecisionDomain::LaneRouting,
+        )
+        .chosen(LaneAction::FallbackSafe, 0)
+        .rationale("test".to_string())
+        .build()
+        .unwrap();
+        idx.insert(expl);
+
+        assert!(idx.by_epoch(&SecurityEpoch::from_raw(999)).is_empty());
+    }
+
+    #[test]
+    fn one_line_summary_contains_loss() {
+        let expl =
+            ExplanationBuilder::new("d-summ".to_string(), test_epoch(), DecisionDomain::Fallback)
+                .chosen(LaneAction::FallbackSafe, 42_000)
+                .rationale("for testing".to_string())
+                .build()
+                .unwrap();
+        let summary = expl.one_line_summary();
+        assert!(summary.contains("42000"));
+        assert!(summary.contains("fallback"));
+    }
+
+    #[test]
+    fn explanation_full_serde_with_all_fields() {
+        let expl = ExplanationBuilder::new(
+            "d-full-serde".to_string(),
+            test_epoch(),
+            DecisionDomain::Security,
+        )
+        .verbosity(VerbosityLevel::GalaxyBrain)
+        .regime(RegimeLabel::Attack)
+        .equation(GoverningEquation {
+            name: "threat".to_string(),
+            formula: "T > threshold".to_string(),
+            parameters: BTreeMap::from([("T".to_string(), 900_000)]),
+            result_millionths: 900_000,
+            threshold_millionths: Some(500_000),
+            threshold_exceeded: true,
+        })
+        .chosen(LaneAction::SuspendAdaptive, 0)
+        .rationale("full serde test".to_string())
+        .alternative(ExplainedAlternative {
+            action: LaneAction::RouteTo(test_lane("js")),
+            expected_loss_millionths: 800_000,
+            rejection_reason: RejectionReason::GuardrailViolation,
+            detail: "guardrail".to_string(),
+        })
+        .constraint(ConstraintInteraction {
+            constraint_id: "sec-1".to_string(),
+            description: "security constraint".to_string(),
+            binding: true,
+            slack_millionths: 0,
+        })
+        .risk(RiskBreakdown {
+            factor: "threat_level".to_string(),
+            weight_millionths: 600_000,
+            belief_millionths: 900_000,
+            contribution_millionths: 540_000,
+        })
+        .counterfactual(CounterfactualOutcome {
+            action: LaneAction::RouteTo(test_lane("js")),
+            predicted_loss_millionths: 800_000,
+            loss_delta_millionths: 800_000,
+            would_trigger_guardrail: true,
+            narrative: "would trigger guardrail".to_string(),
+        })
+        .posterior("threat_level".to_string(), 900_000)
+        .confidence(950_000)
+        .build()
+        .unwrap();
+
+        let json = serde_json::to_string_pretty(&expl).unwrap();
+        let back: DecisionExplanation = serde_json::from_str(&json).unwrap();
+        assert_eq!(expl, back);
+    }
+
+    #[test]
+    fn governing_equation_many_parameters() {
+        let mut params = BTreeMap::new();
+        for i in 0..10 {
+            params.insert(format!("param_{i}"), i * 100_000);
+        }
+        let eq = GoverningEquation {
+            name: "multi-param".to_string(),
+            formula: "sum(params)".to_string(),
+            parameters: params.clone(),
+            result_millionths: 4_500_000,
+            threshold_millionths: None,
+            threshold_exceeded: false,
+        };
+        assert_eq!(eq.parameters.len(), 10);
+        let json = serde_json::to_string(&eq).unwrap();
+        let back: GoverningEquation = serde_json::from_str(&json).unwrap();
+        assert_eq!(eq, back);
+    }
+
+    #[test]
+    fn schema_version_correct() {
+        assert_eq!(
+            SCHEMA_VERSION,
+            "franken-engine.galaxy-brain-explainability.v1"
+        );
+    }
+
+    #[test]
+    fn report_content_hash_differs_by_data() {
+        let mut idx1 = ExplanationIndex::new();
+        let expl1 = ExplanationBuilder::new(
+            "d-h1".to_string(),
+            test_epoch(),
+            DecisionDomain::LaneRouting,
+        )
+        .chosen(LaneAction::FallbackSafe, 0)
+        .rationale("one".to_string())
+        .build()
+        .unwrap();
+        idx1.insert(expl1);
+
+        let mut idx2 = ExplanationIndex::new();
+        let expl2 =
+            ExplanationBuilder::new("d-h2".to_string(), test_epoch(), DecisionDomain::Security)
+                .chosen(LaneAction::FallbackSafe, 0)
+                .rationale("two".to_string())
+                .build()
+                .unwrap();
+        idx2.insert(expl2);
+
+        let r1 = generate_report(&idx1, &test_epoch());
+        let r2 = generate_report(&idx2, &test_epoch());
+        assert_ne!(r1.content_hash, r2.content_hash);
+    }
+
+    #[test]
+    fn index_multiple_decisions_across_domains_and_epochs() {
+        let mut idx = ExplanationIndex::new();
+        let epoch1 = SecurityEpoch::from_raw(1);
+        let epoch2 = SecurityEpoch::from_raw(2);
+        let domains = [
+            DecisionDomain::LaneRouting,
+            DecisionDomain::Fallback,
+            DecisionDomain::Security,
+        ];
+
+        for (i, (ep, dom)) in [
+            (epoch1, domains[0]),
+            (epoch1, domains[1]),
+            (epoch2, domains[2]),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let expl = ExplanationBuilder::new(format!("d-cross-{i}"), *ep, *dom)
+                .chosen(LaneAction::FallbackSafe, 0)
+                .rationale("cross test".to_string())
+                .build()
+                .unwrap();
+            idx.insert(expl);
+        }
+
+        assert_eq!(idx.len(), 3);
+        assert_eq!(idx.by_epoch(&epoch1).len(), 2);
+        assert_eq!(idx.by_epoch(&epoch2).len(), 1);
+        assert_eq!(idx.by_domain(DecisionDomain::LaneRouting).len(), 1);
+        assert_eq!(idx.by_domain(DecisionDomain::Fallback).len(), 1);
+        assert_eq!(idx.by_domain(DecisionDomain::Security).len(), 1);
+    }
 }

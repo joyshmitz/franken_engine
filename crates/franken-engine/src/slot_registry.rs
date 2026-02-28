@@ -3846,9 +3846,18 @@ mod tests {
             permitted: vec![SlotCapability::ReadSource, SlotCapability::EmitIr],
         };
         let err = reg
-            .register_delegate(id, SlotKind::Parser, bad_authority, "sha256:d".into(), "t0".into())
+            .register_delegate(
+                id,
+                SlotKind::Parser,
+                bad_authority,
+                "sha256:d".into(),
+                "t0".into(),
+            )
             .unwrap_err();
-        assert!(matches!(err, SlotRegistryError::InconsistentAuthority { .. }));
+        assert!(matches!(
+            err,
+            SlotRegistryError::InconsistentAuthority { .. }
+        ));
     }
 
     #[test]

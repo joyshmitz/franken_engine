@@ -1643,4 +1643,281 @@ mod tests {
         assert_eq!(sorted_w[0], 100);
         assert_eq!(sorted_wi[2], 350);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2 — PearlTower 2026-02-28
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn operation_slo_threshold_serde_roundtrip() {
+        let slo = OperationSloThreshold {
+            p95_ns: 5_000_000,
+            p99_ns: 10_000_000,
+            max_regression_millionths: 150_000,
+            max_integration_overhead_millionths: 200_000,
+        };
+        let json = serde_json::to_string(&slo).unwrap();
+        let back: OperationSloThreshold = serde_json::from_str(&json).unwrap();
+        assert_eq!(slo, back);
+    }
+
+    #[test]
+    fn benchmark_gate_input_serde_roundtrip() {
+        let input = BenchmarkGateInput {
+            trace_id: "trace-serde".into(),
+            policy_id: "policy-serde".into(),
+            baseline: base_snapshot(),
+            candidate: candidate_snapshot_pass(),
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let back: BenchmarkGateInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, back);
+    }
+
+    #[test]
+    fn baseline_ledger_entry_serde_roundtrip() {
+        let snap = base_snapshot();
+        let hash = snap.snapshot_hash();
+        let entry = BaselineLedgerEntry {
+            epoch: 42,
+            snapshot_hash: hash,
+            snapshot: snap,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: BaselineLedgerEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn baseline_ledger_serde_roundtrip() {
+        let mut ledger = BaselineLedger::default();
+        ledger.record(1, base_snapshot()).unwrap();
+        ledger.record(2, candidate_snapshot_pass()).unwrap();
+        let json = serde_json::to_string(&ledger).unwrap();
+        let back: BaselineLedger = serde_json::from_str(&json).unwrap();
+        assert_eq!(ledger, back);
+    }
+
+    #[test]
+    fn ratio_millionths_equal_values() {
+        assert_eq!(ratio_millionths(100, 100), 1_000_000);
+    }
+
+    #[test]
+    fn overhead_millionths_equal_values() {
+        assert_eq!(overhead_millionths(100, 100), 0);
+    }
+
+    #[test]
+    fn percentile_two_elements() {
+        let sorted = [10, 20];
+        assert_eq!(percentile(&sorted, 50), 10);
+        assert_eq!(percentile(&sorted, 95), 20);
+        assert_eq!(percentile(&sorted, 99), 20);
+    }
+
+    #[test]
+    fn percentile_100_returns_max() {
+        let sorted = [10, 20, 30, 40, 50];
+        assert_eq!(percentile(&sorted, 100), 50);
+    }
+
+    #[test]
+    fn snapshot_hash_changes_with_run_id() {
+        let mut a = base_snapshot();
+        let mut b = base_snapshot();
+        b.benchmark_run_id = "different-run-id".to_string();
+        assert_ne!(a.snapshot_hash(), b.snapshot_hash());
+        // But same data produces same hash.
+        a.benchmark_run_id = "same".to_string();
+        b.benchmark_run_id = "same".to_string();
+        // Still differ because snapshot_id differs
+        a.snapshot_id = "snap-1".to_string();
+        b.snapshot_id = "snap-1".to_string();
+        assert_eq!(a.snapshot_hash(), b.snapshot_hash());
+    }
+
+    #[test]
+    fn baseline_ledger_error_implements_std_error() {
+        let errs: Vec<Box<dyn std::error::Error>> = vec![
+            Box::new(BaselineLedgerError::NonMonotonicEpoch {
+                previous_epoch: 5,
+                next_epoch: 3,
+            }),
+            Box::new(BaselineLedgerError::DuplicateSnapshotHash {
+                snapshot_hash: [0; 32],
+            }),
+        ];
+        for e in &errs {
+            assert!(!e.to_string().is_empty());
+        }
+    }
+
+    #[test]
+    fn multiple_failures_accumulate_in_gate() {
+        let mut candidate = candidate_snapshot_pass();
+        // Remove an integration AND set SLO-exceeding latency
+        candidate
+            .integrations
+            .remove(&SiblingIntegration::FastapiRust);
+        candidate.operation_samples.insert(
+            ControlPlaneOperation::PolicyQuery,
+            make_samples(
+                &[810_000, 820_000, 830_000, 840_000, 850_000],
+                &[3_200_000, 3_300_000, 3_400_000, 3_500_000, 3_600_000],
+            ),
+        );
+        let input = BenchmarkGateInput {
+            trace_id: "t".into(),
+            policy_id: "p".into(),
+            baseline: base_snapshot(),
+            candidate,
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        assert!(!d.pass);
+        // Should have at least two different failure codes.
+        let codes: BTreeSet<_> = d.findings.iter().map(|f| f.code).collect();
+        assert!(codes.contains(&BenchmarkGateFailureCode::MissingRequiredIntegration));
+        assert!(codes.contains(&BenchmarkGateFailureCode::SloThresholdExceeded));
+    }
+
+    #[test]
+    fn decision_id_has_correct_prefix() {
+        let input = BenchmarkGateInput {
+            trace_id: "t".into(),
+            policy_id: "p".into(),
+            baseline: base_snapshot(),
+            candidate: candidate_snapshot_pass(),
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        assert!(
+            d.decision_id.starts_with("sib-bench-gate-"),
+            "decision_id should start with 'sib-bench-gate-', got: {}",
+            d.decision_id,
+        );
+    }
+
+    #[test]
+    fn all_evaluations_pass_in_passing_decision() {
+        let input = BenchmarkGateInput {
+            trace_id: "t".into(),
+            policy_id: "p".into(),
+            baseline: base_snapshot(),
+            candidate: candidate_snapshot_pass(),
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        assert!(d.pass);
+        for eval in &d.evaluations {
+            assert!(eval.pass, "evaluation for {:?} should pass", eval.operation);
+        }
+    }
+
+    #[test]
+    fn evaluations_cover_all_four_operations() {
+        let input = BenchmarkGateInput {
+            trace_id: "t".into(),
+            policy_id: "p".into(),
+            baseline: base_snapshot(),
+            candidate: candidate_snapshot_pass(),
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        let ops: BTreeSet<_> = d.evaluations.iter().map(|e| e.operation).collect();
+        assert!(ops.contains(&ControlPlaneOperation::EvidenceWrite));
+        assert!(ops.contains(&ControlPlaneOperation::PolicyQuery));
+        assert!(ops.contains(&ControlPlaneOperation::TelemetryIngestion));
+        assert!(ops.contains(&ControlPlaneOperation::TuiDataUpdate));
+    }
+
+    #[test]
+    fn regression_millionths_in_evaluation_reasonable() {
+        let input = BenchmarkGateInput {
+            trace_id: "t".into(),
+            policy_id: "p".into(),
+            baseline: base_snapshot(),
+            candidate: candidate_snapshot_pass(),
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        for eval in &d.evaluations {
+            // Regression ratio should be around 1.0 (= 1_000_000 millionths) since
+            // candidate values are close to baseline.
+            assert!(
+                eval.regression_p95_millionths >= 900_000
+                    && eval.regression_p95_millionths <= 1_200_000,
+                "p95 regression ratio for {:?} = {} should be near 1.0",
+                eval.operation,
+                eval.regression_p95_millionths,
+            );
+        }
+    }
+
+    #[test]
+    fn finding_without_operation() {
+        let finding = BenchmarkGateFinding {
+            code: BenchmarkGateFailureCode::MissingRequiredIntegration,
+            operation: None,
+            detail: "no specific operation".into(),
+        };
+        let json = serde_json::to_string(&finding).unwrap();
+        let back: BenchmarkGateFinding = serde_json::from_str(&json).unwrap();
+        assert_eq!(finding, back);
+        assert!(back.operation.is_none());
+    }
+
+    #[test]
+    fn gate_both_baseline_and_candidate_missing_integration() {
+        let mut baseline = base_snapshot();
+        let mut candidate = candidate_snapshot_pass();
+        baseline
+            .integrations
+            .remove(&SiblingIntegration::SqlmodelRust);
+        candidate
+            .integrations
+            .remove(&SiblingIntegration::SqlmodelRust);
+        let input = BenchmarkGateInput {
+            trace_id: "t".into(),
+            policy_id: "p".into(),
+            baseline,
+            candidate,
+        };
+        let d = evaluate_sibling_integration_benchmark(&input, &BenchmarkGateThresholds::default());
+        assert!(!d.pass);
+        // Should have at least 2 findings for missing integration (one baseline, one candidate).
+        let missing_findings: Vec<_> = d
+            .findings
+            .iter()
+            .filter(|f| f.code == BenchmarkGateFailureCode::MissingRequiredIntegration)
+            .collect();
+        assert!(
+            missing_findings.len() >= 2,
+            "should report missing integration for both baseline and candidate"
+        );
+    }
+
+    #[test]
+    fn baseline_ledger_error_serde_roundtrip_duplicate() {
+        let err = BaselineLedgerError::DuplicateSnapshotHash {
+            snapshot_hash: [0x42; 32],
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let back: BaselineLedgerError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    #[test]
+    fn failure_code_display_uniqueness() {
+        let codes = [
+            BenchmarkGateFailureCode::MissingRequiredIntegration,
+            BenchmarkGateFailureCode::MissingOperationSamples,
+            BenchmarkGateFailureCode::EmptySamples,
+            BenchmarkGateFailureCode::SloThresholdExceeded,
+            BenchmarkGateFailureCode::RegressionThresholdExceeded,
+            BenchmarkGateFailureCode::IntegrationOverheadExceeded,
+        ];
+        let displays: BTreeSet<_> = codes.iter().map(|c| c.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            6,
+            "all 6 failure codes must have unique Display"
+        );
+    }
 }

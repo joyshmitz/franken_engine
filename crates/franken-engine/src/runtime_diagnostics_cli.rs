@@ -344,7 +344,7 @@ impl EvidenceExportFilter {
     }
 
     fn matches_severity(&self, severity: EvidenceSeverity) -> bool {
-        self.severity.is_none_or(|expected| expected == severity)
+        self.severity.is_none_or(|expected| severity >= expected)
     }
 
     fn matches_decision_type(&self, decision_type: Option<DecisionType>) -> bool {

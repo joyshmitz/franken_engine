@@ -1,6 +1,6 @@
 //! FRX-20.4 deterministic unit/e2e test logging schema + correlation policy.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -9,6 +9,11 @@ pub const TEST_LOGGING_CONTRACT_SCHEMA_VERSION: &str = "frx.test-logging-schema.
 pub const TEST_LOG_EVENT_SCHEMA_VERSION: &str = "frx.test-log-event.v1";
 pub const TEST_LOGGING_FAILURE_CODE: &str = "FE-FRX-20-4-LOG-SCHEMA-0001";
 pub const TEST_LOGGING_COMPONENT: &str = "frx_test_logging_schema";
+pub const RGC_STRUCTURED_LOGGING_BEAD_ID: &str = "bd-1lsy.11.16";
+pub const RGC_STRUCTURED_LOGGING_COMPONENT: &str = "rgc_structured_logging_contract";
+pub const RGC_STRUCTURED_LOGGING_CONTRACT_SCHEMA_VERSION: &str =
+    "rgc.structured-logging.contract.v1";
+pub const RGC_STRUCTURED_LOGGING_FAILURE_CODE: &str = "FE-RGC-054A-LOG-SCHEMA-0001";
 
 const REQUIRED_FIELDS: [&str; 13] = [
     "scenario_id",
@@ -179,6 +184,7 @@ pub enum ValidationErrorCode {
     SchemaVersionMismatch,
     CorrelationMismatch,
     RedactionPolicyViolation,
+    ContractValidationViolation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -233,6 +239,26 @@ impl ValidationFailure {
             outcome: "fail".to_string(),
             error_code: ValidationErrorCode::RedactionPolicyViolation,
             message: format!("sensitive field `{path}` is present without redaction"),
+        }
+    }
+
+    fn contract_violation(message: impl Into<String>) -> Self {
+        Self {
+            component: RGC_STRUCTURED_LOGGING_COMPONENT.to_string(),
+            event: "validate_logging_contract".to_string(),
+            outcome: "fail".to_string(),
+            error_code: ValidationErrorCode::ContractValidationViolation,
+            message: message.into(),
+        }
+    }
+
+    fn schema_evolution_violation(message: impl Into<String>) -> Self {
+        Self {
+            component: RGC_STRUCTURED_LOGGING_COMPONENT.to_string(),
+            event: "validate_schema_evolution".to_string(),
+            outcome: "fail".to_string(),
+            error_code: ValidationErrorCode::ContractValidationViolation,
+            message: message.into(),
         }
     }
 }
@@ -431,6 +457,222 @@ pub fn validate_events(events: &[TestLogEvent]) -> ValidationReport {
         valid: failures.is_empty(),
         failures,
     }
+}
+
+pub fn rgc_structured_logging_spec() -> TestLoggingSchemaSpec {
+    TestLoggingSchemaSpec {
+        schema_version: RGC_STRUCTURED_LOGGING_CONTRACT_SCHEMA_VERSION.to_string(),
+        event_schema_version: "rgc.structured-log-event.v1".to_string(),
+        ..TestLoggingSchemaSpec::default()
+    }
+}
+
+pub fn validate_logging_contract(spec: &TestLoggingSchemaSpec) -> Vec<ValidationFailure> {
+    let mut failures = Vec::new();
+
+    if spec.schema_version.trim().is_empty() {
+        failures.push(ValidationFailure::contract_violation(
+            "schema_version must not be empty",
+        ));
+    }
+    if spec.event_schema_version.trim().is_empty() {
+        failures.push(ValidationFailure::contract_violation(
+            "event_schema_version must not be empty",
+        ));
+    }
+
+    let mut required_fields = BTreeSet::new();
+    for field in &spec.required_fields {
+        if field.trim().is_empty() {
+            failures.push(ValidationFailure::contract_violation(
+                "required_fields contains empty field name",
+            ));
+            continue;
+        }
+        if !required_fields.insert(field.clone()) {
+            failures.push(ValidationFailure::contract_violation(format!(
+                "duplicate required field `{field}`"
+            )));
+        }
+    }
+
+    let mut correlation_ids = BTreeSet::new();
+    for field in &spec.required_correlation_ids {
+        if field.trim().is_empty() {
+            failures.push(ValidationFailure::contract_violation(
+                "required_correlation_ids contains empty field name",
+            ));
+            continue;
+        }
+        if !correlation_ids.insert(field.clone()) {
+            failures.push(ValidationFailure::contract_violation(format!(
+                "duplicate correlation field `{field}`"
+            )));
+        }
+    }
+
+    let mut correlation_key_fields = BTreeSet::new();
+    for field in &spec.correlation_key_fields {
+        if field.trim().is_empty() {
+            failures.push(ValidationFailure::contract_violation(
+                "correlation_key_fields contains empty field name",
+            ));
+            continue;
+        }
+        if !correlation_key_fields.insert(field.clone()) {
+            failures.push(ValidationFailure::contract_violation(format!(
+                "duplicate correlation key field `{field}`"
+            )));
+        }
+    }
+
+    for field in &correlation_ids {
+        if !required_fields.contains(field) {
+            failures.push(ValidationFailure::contract_violation(format!(
+                "correlation field `{field}` missing from required fields"
+            )));
+        }
+        if !correlation_key_fields.contains(field) {
+            failures.push(ValidationFailure::contract_violation(format!(
+                "correlation field `{field}` missing from correlation key fields"
+            )));
+        }
+    }
+
+    for field in &correlation_key_fields {
+        if !correlation_ids.contains(field) {
+            failures.push(ValidationFailure::contract_violation(format!(
+                "correlation key field `{field}` not declared as required correlation field"
+            )));
+        }
+    }
+
+    if !spec.retention_policy.require_redaction_for_sensitive {
+        failures.push(ValidationFailure::contract_violation(
+            "require_redaction_for_sensitive must remain true",
+        ));
+    }
+    if spec.retention_policy.permit_raw_seed_storage {
+        failures.push(ValidationFailure::contract_violation(
+            "permit_raw_seed_storage must remain false",
+        ));
+    }
+
+    for rule in &spec.redaction_rules {
+        if rule.field_path.trim().is_empty() {
+            failures.push(ValidationFailure::contract_violation(
+                "redaction rule field_path must not be empty",
+            ));
+        }
+        if matches!(rule.sensitivity, DataSensitivity::Secret)
+            && !matches!(rule.action, RedactionAction::Drop)
+        {
+            failures.push(ValidationFailure::contract_violation(format!(
+                "secret field `{}` must use drop redaction",
+                rule.field_path
+            )));
+        }
+    }
+
+    failures
+}
+
+pub fn validate_schema_evolution(
+    baseline: &TestLoggingSchemaSpec,
+    candidate: &TestLoggingSchemaSpec,
+) -> Vec<ValidationFailure> {
+    let mut failures = Vec::new();
+
+    let baseline_required: BTreeSet<&str> = baseline
+        .required_fields
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let candidate_required: BTreeSet<&str> = candidate
+        .required_fields
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let baseline_corr: BTreeSet<&str> = baseline
+        .required_correlation_ids
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let candidate_corr: BTreeSet<&str> = candidate
+        .required_correlation_ids
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let baseline_key: BTreeSet<&str> = baseline
+        .correlation_key_fields
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let candidate_key: BTreeSet<&str> = candidate
+        .correlation_key_fields
+        .iter()
+        .map(String::as_str)
+        .collect();
+
+    for removed in baseline_required.difference(&candidate_required) {
+        failures.push(ValidationFailure::schema_evolution_violation(format!(
+            "removed required field `{removed}`"
+        )));
+    }
+    for removed in baseline_corr.difference(&candidate_corr) {
+        failures.push(ValidationFailure::schema_evolution_violation(format!(
+            "removed correlation field `{removed}`"
+        )));
+    }
+    for removed in baseline_key.difference(&candidate_key) {
+        failures.push(ValidationFailure::schema_evolution_violation(format!(
+            "removed correlation key field `{removed}`"
+        )));
+    }
+
+    if baseline.retention_policy.require_redaction_for_sensitive
+        && !candidate.retention_policy.require_redaction_for_sensitive
+    {
+        failures.push(ValidationFailure::schema_evolution_violation(
+            "candidate relaxes require_redaction_for_sensitive",
+        ));
+    }
+    if !baseline.retention_policy.permit_raw_seed_storage
+        && candidate.retention_policy.permit_raw_seed_storage
+    {
+        failures.push(ValidationFailure::schema_evolution_violation(
+            "candidate enables raw seed storage",
+        ));
+    }
+
+    let baseline_secret_drop_paths: BTreeSet<&str> = baseline
+        .redaction_rules
+        .iter()
+        .filter(|rule| {
+            matches!(rule.sensitivity, DataSensitivity::Secret)
+                && matches!(rule.action, RedactionAction::Drop)
+        })
+        .map(|rule| rule.field_path.as_str())
+        .collect();
+
+    for path in baseline_secret_drop_paths {
+        let candidate_rule = candidate
+            .redaction_rules
+            .iter()
+            .find(|rule| rule.field_path == path);
+        match candidate_rule {
+            Some(rule) if matches!(rule.action, RedactionAction::Drop) => {}
+            Some(_) => failures.push(ValidationFailure::schema_evolution_violation(format!(
+                "secret redaction rule for `{path}` changed from drop"
+            ))),
+            None => failures.push(ValidationFailure::schema_evolution_violation(format!(
+                "secret redaction rule for `{path}` removed"
+            ))),
+        }
+    }
+
+    failures.extend(validate_logging_contract(candidate));
+    failures
 }
 
 #[cfg(test)]

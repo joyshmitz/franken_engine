@@ -3620,7 +3620,10 @@ mod tests {
             let b = ResolvedBinding {
                 name: format!("binding_{i}"),
                 binding_id: i as u32,
-                scope: ScopeId { depth: 0, index: i as u32 },
+                scope: ScopeId {
+                    depth: 0,
+                    index: i as u32,
+                },
                 kind: *kind,
             };
             let json = serde_json::to_string(&b).unwrap();
@@ -3634,10 +3637,7 @@ mod tests {
 
     #[test]
     fn scope_id_canonical_value_content() {
-        let sid = ScopeId {
-            depth: 3,
-            index: 7,
-        };
+        let sid = ScopeId { depth: 3, index: 7 };
         let cv = sid.canonical_value();
         if let CanonicalValue::Map(m) = cv {
             assert_eq!(m.get("depth"), Some(&CanonicalValue::U64(3)));

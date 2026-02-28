@@ -1044,7 +1044,10 @@ impl ExecutionOrchestrator {
         epoch: SecurityEpoch,
     ) -> Evidence {
         let hostcall_count = exec.hostcall_decisions.len() as u64;
-        let hostcall_rate_millionths = hostcall_count.saturating_mul(1_000_000);
+        let hostcall_rate_millionths = hostcall_count
+            .saturating_mul(1_000_000)
+            .checked_div(exec.instructions_executed)
+            .unwrap_or(0);
 
         let distinct_capabilities = package.capabilities.len() as u32;
 

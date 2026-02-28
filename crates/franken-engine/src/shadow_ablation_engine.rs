@@ -3581,7 +3581,11 @@ mod tests {
             "pair phase should stop after max_pair_trials=1, but got {}",
             pair_count.get()
         );
-        assert_eq!(result.minimal_capabilities.len(), 3, "no caps should be removed");
+        assert_eq!(
+            result.minimal_capabilities.len(),
+            3,
+            "no caps should be removed"
+        );
     }
 
     #[test]
@@ -3630,11 +3634,9 @@ mod tests {
             fallback: None,
             budget_utilization: BTreeMap::from([(BudgetDimension::Compute, 42)]),
         };
-        let transcript = SignedShadowAblationTranscript::create_signed(
-            original_input.clone(),
-            &signing_key,
-        )
-        .unwrap();
+        let transcript =
+            SignedShadowAblationTranscript::create_signed(original_input.clone(), &signing_key)
+                .unwrap();
         let recovered = transcript.as_unsigned_input();
         assert_eq!(recovered, original_input);
     }
@@ -3649,10 +3651,7 @@ mod tests {
         config.max_block_trials = 10;
         let engine =
             ShadowAblationEngine::new(config.clone(), SynthesisBudgetContract::default()).unwrap();
-        let report = test_static_report(
-            &config.extension_id,
-            BTreeSet::from([cap("x"), cap("y")]),
-        );
+        let report = test_static_report(&config.extension_id, BTreeSet::from([cap("x"), cap("y")]));
         let signing_key = SigningKey::from_bytes([0x0B; 32]);
         let result = engine
             .run(&report, &signing_key, |_| {
@@ -3696,10 +3695,7 @@ mod tests {
         if let CanonicalValue::Map(map) = &val {
             if let Some(CanonicalValue::Array(failures)) = map.get("invariant_failures") {
                 assert_eq!(failures.len(), 2);
-                assert_eq!(
-                    failures[0],
-                    CanonicalValue::String("no_exfil".to_string())
-                );
+                assert_eq!(failures[0], CanonicalValue::String("no_exfil".to_string()));
             } else {
                 panic!("invariant_failures should be an Array");
             }
@@ -3739,13 +3735,15 @@ mod tests {
                 })
             })
             .unwrap();
-        assert_eq!(result.minimal_capabilities.len(), 1, "cap should be retained");
+        assert_eq!(
+            result.minimal_capabilities.len(),
+            1,
+            "cap should be retained"
+        );
         assert!(
-            result
-                .evaluations
-                .iter()
-                .any(|e| e.failure_class == Some(AblationFailureClass::InvariantViolation)
-                    && e.invariant_failures.contains(&"missing_inv".to_string())),
+            result.evaluations.iter().any(|e| e.failure_class
+                == Some(AblationFailureClass::InvariantViolation)
+                && e.invariant_failures.contains(&"missing_inv".to_string())),
             "missing required invariant should cause InvariantViolation with failure listed"
         );
     }

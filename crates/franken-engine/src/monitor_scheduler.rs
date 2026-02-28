@@ -1222,4 +1222,410 @@ mod tests {
         let result = sched.schedule(Regime::Attack);
         assert_eq!(result.budget_total, 10_000_000); // from test_config attack budget
     }
+
+    // -- Enrichment: invariant assertions --
+
+    #[test]
+    fn budget_used_plus_remaining_equals_total() {
+        let mut sched = test_scheduler();
+        let result = sched.schedule(Regime::Normal);
+        let budget_remaining = result.budget_total - result.budget_used;
+        assert!(budget_remaining >= 0);
+        assert_eq!(result.budget_used + budget_remaining, result.budget_total);
+    }
+
+    #[test]
+    fn scheduled_plus_deferred_equals_total_decisions() {
+        let mut sched = test_scheduler();
+        let result = sched.schedule(Regime::Normal);
+        assert_eq!(
+            result.probes_scheduled + result.probes_deferred,
+            result.decisions.len()
+        );
+    }
+
+    #[test]
+    fn scheduled_count_matches_decisions_flagged_true() {
+        let mut sched = test_scheduler();
+        let result = sched.schedule(Regime::Normal);
+        let flagged_scheduled = result.decisions.iter().filter(|d| d.scheduled).count();
+        assert_eq!(result.probes_scheduled, flagged_scheduled);
+    }
+
+    // -- Enrichment: VOI tie-breaking by probe_id --
+
+    #[test]
+    fn voi_tie_breaks_by_probe_id_alphabetically() {
+        // Two identical probes differ only in name
+        let config = SchedulerConfig {
+            scheduler_id: "s".to_string(),
+            base_budget_millionths: 100_000, // fits exactly one health probe (cost=100_000)
+            regime_budgets: BTreeMap::new(),
+            relevance_overrides: BTreeMap::new(),
+        };
+        let mut sched = MonitorScheduler::new(config);
+        // Same cost, same info gain, same relevance => same VOI
+        sched.register_probe(health_probe("beta")).unwrap();
+        sched.register_probe(health_probe("alpha")).unwrap();
+
+        let result = sched.schedule(Regime::Normal);
+        // Tie-break: alphabetical => "alpha" wins
+        let scheduled: Vec<&str> = result
+            .decisions
+            .iter()
+            .filter(|d| d.scheduled)
+            .map(|d| d.probe_id.as_str())
+            .collect();
+        assert_eq!(scheduled, vec!["alpha"]);
+    }
+
+    // -- Enrichment: skip reason message content --
+
+    #[test]
+    fn skip_reason_non_positive_voi() {
+        let config = SchedulerConfig {
+            scheduler_id: "s".to_string(),
+            base_budget_millionths: 10_000_000,
+            regime_budgets: BTreeMap::new(),
+            relevance_overrides: BTreeMap::new(),
+        };
+        let mut sched = MonitorScheduler::new(config);
+        let zero_info = ProbeConfig {
+            probe_id: "zero-info".to_string(),
+            kind: ProbeKind::HealthCheck,
+            cost_millionths: 100_000,
+            information_gain_millionths: 0,
+            base_relevance_millionths: 1_000_000,
+        };
+        sched.register_probe(zero_info).unwrap();
+        let result = sched.schedule(Regime::Normal);
+        let dec = &result.decisions[0];
+        assert!(!dec.scheduled);
+        assert_eq!(dec.skip_reason.as_deref(), Some("non-positive VOI"));
+    }
+
+    #[test]
+    fn skip_reason_budget_exhausted_contains_cost_info() {
+        let config = SchedulerConfig {
+            scheduler_id: "s".to_string(),
+            base_budget_millionths: 50_000, // too small for any probe
+            regime_budgets: BTreeMap::new(),
+            relevance_overrides: BTreeMap::new(),
+        };
+        let mut sched = MonitorScheduler::new(config);
+        sched.register_probe(health_probe("h1")).unwrap(); // cost 100_000
+        let result = sched.schedule(Regime::Normal);
+        let dec = &result.decisions[0];
+        assert!(!dec.scheduled);
+        let reason = dec.skip_reason.as_ref().unwrap();
+        assert!(reason.contains("budget exhausted"));
+        assert!(reason.contains("remaining:"));
+        assert!(reason.contains("cost:"));
+    }
+
+    // -- Enrichment: config accessor --
+
+    #[test]
+    fn config_accessor_returns_correct_config() {
+        let config = test_config();
+        let sched = MonitorScheduler::new(config.clone());
+        assert_eq!(sched.config().scheduler_id, config.scheduler_id);
+        assert_eq!(
+            sched.config().base_budget_millionths,
+            config.base_budget_millionths
+        );
+    }
+
+    // -- Enrichment: scheduler_id propagation --
+
+    #[test]
+    fn schedule_result_scheduler_id_matches_config() {
+        let mut sched = test_scheduler();
+        let result = sched.schedule(Regime::Normal);
+        assert_eq!(result.scheduler_id, "sched-1");
+    }
+
+    // -- Enrichment: combined staleness in same interval --
+
+    #[test]
+    fn same_interval_scheduled_resets_deferred_accumulates() {
+        let config = SchedulerConfig {
+            scheduler_id: "s".to_string(),
+            base_budget_millionths: 200_000, // fits health (0.1) but not deep (2.0)
+            regime_budgets: BTreeMap::new(),
+            relevance_overrides: BTreeMap::new(),
+        };
+        let mut sched = MonitorScheduler::new(config);
+        sched.register_probe(health_probe("cheap")).unwrap();
+        sched.register_probe(deep_probe("expensive")).unwrap();
+
+        sched.schedule(Regime::Normal);
+        // cheap scheduled => staleness reset to 0
+        assert_eq!(sched.probe("cheap").unwrap().staleness, 0);
+        // expensive deferred => staleness = 1 (ticked but not reset)
+        assert_eq!(sched.probe("expensive").unwrap().staleness, 1);
+
+        sched.schedule(Regime::Normal);
+        assert_eq!(sched.probe("cheap").unwrap().staleness, 0);
+        assert_eq!(sched.probe("expensive").unwrap().staleness, 2);
+    }
+
+    // -- Enrichment: record_execution resets staleness --
+
+    #[test]
+    fn record_execution_resets_staleness() {
+        let mut sched = MonitorScheduler::new(test_config());
+        sched.register_probe(deep_probe("d1")).unwrap();
+        // Manually tick staleness by scheduling with tiny budget won't help,
+        // so directly schedule to accumulate staleness
+        let config = SchedulerConfig {
+            scheduler_id: "s".to_string(),
+            base_budget_millionths: 50_000,
+            regime_budgets: BTreeMap::new(),
+            relevance_overrides: BTreeMap::new(),
+        };
+        let mut sched2 = MonitorScheduler::new(config);
+        sched2.register_probe(deep_probe("d1")).unwrap();
+        sched2.schedule(Regime::Normal); // staleness = 1 (deferred)
+        sched2.schedule(Regime::Normal); // staleness = 2
+        assert_eq!(sched2.probe("d1").unwrap().staleness, 2);
+
+        sched2.record_execution("d1", true).unwrap();
+        assert_eq!(sched2.probe("d1").unwrap().staleness, 0);
+    }
+
+    // -- Enrichment: multi-regime sequence --
+
+    #[test]
+    fn schedule_across_all_regimes_in_sequence() {
+        let mut sched = test_scheduler();
+        let regimes = [
+            Regime::Normal,
+            Regime::Elevated,
+            Regime::Attack,
+            Regime::Recovery,
+        ];
+        for (i, &regime) in regimes.iter().enumerate() {
+            let result = sched.schedule(regime);
+            assert_eq!(result.regime, regime);
+            assert_eq!(result.interval, (i + 1) as u64);
+        }
+        assert_eq!(sched.history().len(), 4);
+    }
+
+    // -- Enrichment: ProbeState new preserves config --
+
+    #[test]
+    fn probe_state_new_preserves_config_fields() {
+        let config = ProbeConfig {
+            probe_id: "custom-probe".to_string(),
+            kind: ProbeKind::CalibrationProbe,
+            cost_millionths: 750_000,
+            information_gain_millionths: 2_500_000,
+            base_relevance_millionths: 1_200_000,
+        };
+        let state = ProbeState::new(config.clone());
+        assert_eq!(state.config, config);
+    }
+
+    // -- Enrichment: CalibrationProbe usage --
+
+    #[test]
+    fn calibration_probe_registers_and_schedules() {
+        let mut sched = MonitorScheduler::new(test_config());
+        let cal = ProbeConfig {
+            probe_id: "cal-1".to_string(),
+            kind: ProbeKind::CalibrationProbe,
+            cost_millionths: 500_000,
+            information_gain_millionths: 1_000_000,
+            base_relevance_millionths: 1_000_000,
+        };
+        sched.register_probe(cal).unwrap();
+        let result = sched.schedule(Regime::Normal);
+        assert_eq!(result.decisions.len(), 1);
+        assert_eq!(result.decisions[0].kind, ProbeKind::CalibrationProbe);
+    }
+
+    // -- Enrichment: relevance_overrides serde with populated overrides --
+
+    #[test]
+    fn scheduler_config_with_relevance_overrides_serde() {
+        let mut config = test_config();
+        config
+            .relevance_overrides
+            .insert("attack:integrity_audit".to_string(), 5_000_000);
+        config
+            .relevance_overrides
+            .insert("elevated:health_check".to_string(), 2_000_000);
+        let json = serde_json::to_string(&config).expect("serialize");
+        let restored: SchedulerConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(config, restored);
+        assert_eq!(restored.relevance_overrides.len(), 2);
+    }
+
+    // -- Enrichment: ScheduleDecision with skip_reason serde --
+
+    #[test]
+    fn schedule_decision_with_skip_reason_serde() {
+        let dec = ScheduleDecision {
+            probe_id: "p-skip".to_string(),
+            kind: ProbeKind::DeepDiagnostic,
+            voi_score: 1_500_000,
+            cost: 3_000_000,
+            scheduled: false,
+            skip_reason: Some("budget exhausted (remaining: 500000, cost: 3000000)".to_string()),
+        };
+        let json = serde_json::to_string(&dec).expect("serialize");
+        let restored: ScheduleDecision = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(dec, restored);
+    }
+
+    // -- Enrichment: VOI score determinism --
+
+    #[test]
+    fn voi_score_is_deterministic() {
+        let state = ProbeState {
+            config: health_probe("h"),
+            staleness: 5,
+            execution_count: 3,
+            last_success: true,
+        };
+        let voi1 = state.voi_score(1_500_000);
+        let voi2 = state.voi_score(1_500_000);
+        assert_eq!(voi1, voi2);
+    }
+
+    // -- Enrichment: multiple probes compete for limited budget --
+
+    #[test]
+    fn three_probes_compete_for_limited_budget() {
+        let config = SchedulerConfig {
+            scheduler_id: "s".to_string(),
+            base_budget_millionths: 1_700_000, // fits health(0.1) + integrity(1.5) but not deep(2.0)
+            regime_budgets: BTreeMap::new(),
+            relevance_overrides: BTreeMap::new(),
+        };
+        let mut sched = MonitorScheduler::new(config);
+        sched.register_probe(health_probe("h1")).unwrap();
+        sched.register_probe(deep_probe("d1")).unwrap();
+        sched.register_probe(integrity_probe("i1")).unwrap();
+
+        let result = sched.schedule(Regime::Normal);
+        assert_eq!(result.probes_scheduled + result.probes_deferred, 3);
+        // Budget allows at most 1.7, so deep(2.0) won't fit by itself,
+        // but health(0.1)+integrity(1.5) = 1.6 fits
+        assert!(result.budget_used <= result.budget_total);
+    }
+
+    // -- Enrichment: probe_count after register/unregister cycles --
+
+    #[test]
+    fn probe_count_after_multiple_register_unregister_cycles() {
+        let mut sched = MonitorScheduler::new(test_config());
+        for i in 0..5 {
+            sched
+                .register_probe(health_probe(&format!("h-{i}")))
+                .unwrap();
+        }
+        assert_eq!(sched.probe_count(), 5);
+
+        sched.unregister_probe("h-0").unwrap();
+        sched.unregister_probe("h-2").unwrap();
+        sched.unregister_probe("h-4").unwrap();
+        assert_eq!(sched.probe_count(), 2);
+
+        sched.register_probe(deep_probe("d-new")).unwrap();
+        assert_eq!(sched.probe_count(), 3);
+    }
+
+    // -- Enrichment: elevated regime budget used --
+
+    #[test]
+    fn elevated_regime_can_use_higher_budget() {
+        let mut sched = test_scheduler();
+        let result = sched.schedule(Regime::Elevated);
+        // Elevated budget is 6.0, can fit all: health(0.1) + deep(2.0) + integrity(1.5) = 3.6
+        assert_eq!(result.budget_total, 6_000_000);
+        assert!(result.budget_used <= result.budget_total);
+    }
+
+    // -- Enrichment: history preserves full schedule detail --
+
+    #[test]
+    fn history_preserves_decisions_and_budget_details() {
+        let mut sched = test_scheduler();
+        let r1 = sched.schedule(Regime::Normal);
+        let r2 = sched.schedule(Regime::Attack);
+        let history = sched.history();
+
+        assert_eq!(history[0], r1);
+        assert_eq!(history[1], r2);
+        assert_ne!(history[0].budget_total, history[1].budget_total);
+    }
+
+    // -- Enrichment: execution count accumulates across record_execution calls --
+
+    #[test]
+    fn execution_count_accumulates_across_mixed_sources() {
+        let mut sched = MonitorScheduler::new(test_config());
+        sched.register_probe(health_probe("h1")).unwrap();
+
+        // Schedule (auto-executes)
+        sched.schedule(Regime::Normal);
+        assert_eq!(sched.probe("h1").unwrap().execution_count, 1);
+
+        // External record
+        sched.record_execution("h1", true).unwrap();
+        assert_eq!(sched.probe("h1").unwrap().execution_count, 2);
+
+        // Schedule again
+        sched.schedule(Regime::Normal);
+        assert_eq!(sched.probe("h1").unwrap().execution_count, 3);
+    }
+
+    // -- Enrichment: VOI increases with relevance multiplier --
+
+    #[test]
+    fn relevance_override_boosts_voi_score() {
+        let state = ProbeState {
+            config: health_probe("h"),
+            staleness: 3,
+            execution_count: 0,
+            last_success: true,
+        };
+        let voi_base = state.voi_score(1_000_000); // 1.0x
+        let voi_boosted = state.voi_score(3_000_000); // 3.0x
+        assert!(voi_boosted > voi_base);
+        // The ratio should be approximately 3x
+        assert!(voi_boosted >= voi_base * 2); // at least 2x due to integer truncation
+    }
+
+    // -- Enrichment: all decisions have correct probe kinds --
+
+    #[test]
+    fn schedule_decisions_reflect_correct_probe_kinds() {
+        let mut sched = test_scheduler();
+        let result = sched.schedule(Regime::Normal);
+
+        let health_dec = result
+            .decisions
+            .iter()
+            .find(|d| d.probe_id == "health-1")
+            .unwrap();
+        assert_eq!(health_dec.kind, ProbeKind::HealthCheck);
+
+        let deep_dec = result
+            .decisions
+            .iter()
+            .find(|d| d.probe_id == "deep-1")
+            .unwrap();
+        assert_eq!(deep_dec.kind, ProbeKind::DeepDiagnostic);
+
+        let integrity_dec = result
+            .decisions
+            .iter()
+            .find(|d| d.probe_id == "integrity-1")
+            .unwrap();
+        assert_eq!(integrity_dec.kind, ProbeKind::IntegrityAudit);
+    }
 }

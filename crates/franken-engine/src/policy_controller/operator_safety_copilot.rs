@@ -2624,7 +2624,10 @@ mod tests {
                 reversible: true,
                 rollback_window_ms_remaining: None,
             },
-            selected_by: OperatorIdentity { operator_id: "op-1".into(), role: OperatorRole::Administrator },
+            selected_by: OperatorIdentity {
+                operator_id: "op-1".into(),
+                role: OperatorRole::Administrator,
+            },
             selected_at_ns: 2_000_000,
             audit_event: make_audit_event(),
         };
@@ -2791,15 +2794,39 @@ mod tests {
     fn copilot_error_serde_roundtrip_all_variants() {
         let variants: Vec<CopilotError> = vec![
             CopilotError::MissingRecommendations,
-            CopilotError::InvalidProbability { field: "conf".into(), value: -1 },
-            CopilotError::InvalidField { field: "name".into() },
-            CopilotError::InvalidConfidenceBand { metric: "loss".into() },
-            CopilotError::InvalidDecisionBoundaryHint { metric: "threshold".into() },
-            CopilotError::MissingSnapshotForRollback { action_type: "quarantine".into(), target_extension: "ext".into() },
-            CopilotError::InvalidRollbackWindow { action_type: "quarantine".into(), target_extension: "ext".into() },
-            CopilotError::UnauthorizedRole { role: OperatorRole::Viewer, action: "execute".into() },
-            CopilotError::RecommendationRankOutOfRange { requested_rank: 5, available: 3 },
-            CopilotError::OperatorMismatch { selected_by: "a".into(), confirmed_by: "b".into() },
+            CopilotError::InvalidProbability {
+                field: "conf".into(),
+                value: -1,
+            },
+            CopilotError::InvalidField {
+                field: "name".into(),
+            },
+            CopilotError::InvalidConfidenceBand {
+                metric: "loss".into(),
+            },
+            CopilotError::InvalidDecisionBoundaryHint {
+                metric: "threshold".into(),
+            },
+            CopilotError::MissingSnapshotForRollback {
+                action_type: "quarantine".into(),
+                target_extension: "ext".into(),
+            },
+            CopilotError::InvalidRollbackWindow {
+                action_type: "quarantine".into(),
+                target_extension: "ext".into(),
+            },
+            CopilotError::UnauthorizedRole {
+                role: OperatorRole::Viewer,
+                action: "execute".into(),
+            },
+            CopilotError::RecommendationRankOutOfRange {
+                requested_rank: 5,
+                available: 3,
+            },
+            CopilotError::OperatorMismatch {
+                selected_by: "a".into(),
+                confirmed_by: "b".into(),
+            },
             CopilotError::MissingConfirmationToken,
         ];
         for v in &variants {
@@ -2814,18 +2841,37 @@ mod tests {
     fn copilot_error_display_all_unique() {
         let variants: Vec<CopilotError> = vec![
             CopilotError::MissingRecommendations,
-            CopilotError::InvalidProbability { field: "a".into(), value: 0 },
+            CopilotError::InvalidProbability {
+                field: "a".into(),
+                value: 0,
+            },
             CopilotError::InvalidField { field: "a".into() },
             CopilotError::InvalidConfidenceBand { metric: "a".into() },
             CopilotError::InvalidDecisionBoundaryHint { metric: "a".into() },
-            CopilotError::MissingSnapshotForRollback { action_type: "a".into(), target_extension: "b".into() },
-            CopilotError::InvalidRollbackWindow { action_type: "a".into(), target_extension: "b".into() },
-            CopilotError::UnauthorizedRole { role: OperatorRole::Viewer, action: "a".into() },
-            CopilotError::RecommendationRankOutOfRange { requested_rank: 1, available: 1 },
-            CopilotError::OperatorMismatch { selected_by: "a".into(), confirmed_by: "b".into() },
+            CopilotError::MissingSnapshotForRollback {
+                action_type: "a".into(),
+                target_extension: "b".into(),
+            },
+            CopilotError::InvalidRollbackWindow {
+                action_type: "a".into(),
+                target_extension: "b".into(),
+            },
+            CopilotError::UnauthorizedRole {
+                role: OperatorRole::Viewer,
+                action: "a".into(),
+            },
+            CopilotError::RecommendationRankOutOfRange {
+                requested_rank: 1,
+                available: 1,
+            },
+            CopilotError::OperatorMismatch {
+                selected_by: "a".into(),
+                confirmed_by: "b".into(),
+            },
             CopilotError::MissingConfirmationToken,
         ];
-        let displays: std::collections::BTreeSet<String> = variants.iter().map(|e| e.to_string()).collect();
+        let displays: std::collections::BTreeSet<String> =
+            variants.iter().map(|e| e.to_string()).collect();
         assert_eq!(displays.len(), 11);
     }
 }
