@@ -1181,7 +1181,7 @@ fn sink_clearance_from_capability(capability: &str) -> Label {
         return Label::Secret;
     }
     if normalized.contains("fs.read") {
-        return Label::Secret;
+        return Label::Internal;
     }
     if normalized.contains("fs.write")
         || normalized.contains("module.import")
@@ -1950,7 +1950,7 @@ mod tests {
 
     #[test]
     fn sink_clearance_fs_capabilities() {
-        assert_eq!(sink_clearance_from_capability("fs.read"), Label::Secret);
+        assert_eq!(sink_clearance_from_capability("fs.read"), Label::Internal);
         assert_eq!(sink_clearance_from_capability("fs.write"), Label::Internal);
     }
 

@@ -526,6 +526,7 @@ impl TeeAttestationPolicy {
             });
         }
 
+        let mut any_good = false;
         for source in &self.revocation_sources {
             let observation = quote
                 .revocation_observations
@@ -533,7 +534,7 @@ impl TeeAttestationPolicy {
                 .copied()
                 .unwrap_or(RevocationProbeStatus::Unavailable);
             match observation {
-                RevocationProbeStatus::Good => return Ok(()),
+                RevocationProbeStatus::Good => any_good = true,
                 RevocationProbeStatus::Revoked => {
                     return Err(TeeAttestationPolicyError::RevokedBySource {
                         source_id: source.source_id.clone(),
@@ -549,7 +550,11 @@ impl TeeAttestationPolicy {
             }
         }
 
-        Err(TeeAttestationPolicyError::RevocationEvidenceUnavailable)
+        if any_good || self.revocation_sources.is_empty() {
+            Ok(())
+        } else {
+            Err(TeeAttestationPolicyError::RevocationEvidenceUnavailable)
+        }
     }
 
     fn canonicalize_in_place(&mut self) {

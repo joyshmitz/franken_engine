@@ -354,7 +354,7 @@ impl fmt::Display for ReleaseSlotClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Core => f.write_str("core"),
-            Self::NonCore => f.write_str("non_core"),
+            Self::NonCore => f.write_str("non-core"),
         }
     }
 }
@@ -723,6 +723,7 @@ pub struct ReplacementPriorityCandidate {
     pub throughput_uplift_millionths: i64,
     pub security_risk_reduction_millionths: i64,
     pub expected_value_score_millionths: i64,
+    pub weighted_expected_value_score_millionths: i64,
 }
 
 /// Structured event for replacement-progress snapshots.
@@ -1000,14 +1001,15 @@ impl SlotRegistry {
                 invocation_weight_millionths: signal.invocation_weight_millionths,
                 throughput_uplift_millionths: signal.throughput_uplift_millionths,
                 security_risk_reduction_millionths: signal.security_risk_reduction_millionths,
-                expected_value_score_millionths: saturating_i128_to_i64(weighted_ev),
+                expected_value_score_millionths: signal.expected_value_score_millionths(),
+                weighted_expected_value_score_millionths: saturating_i128_to_i64(weighted_ev),
             });
         }
 
         recommended_replacement_order.sort_by(|left, right| {
             right
-                .expected_value_score_millionths
-                .cmp(&left.expected_value_score_millionths)
+                .weighted_expected_value_score_millionths
+                .cmp(&left.weighted_expected_value_score_millionths)
                 .then_with(|| left.slot_id.cmp(&right.slot_id))
         });
 
@@ -1040,7 +1042,8 @@ impl SlotRegistry {
                 error_code: None,
                 slot_id: Some(candidate.slot_id.as_str().to_string()),
                 detail: format!(
-                    "expected_value_score_millionths={}, invocation_weight_millionths={}",
+                    "weighted_expected_value_score_millionths={}, expected_value_score_millionths={}, invocation_weight_millionths={}",
+                    candidate.weighted_expected_value_score_millionths,
                     candidate.expected_value_score_millionths,
                     candidate.invocation_weight_millionths
                 ),
@@ -1536,7 +1539,7 @@ impl SlotRegistry {
     /// Check whether all slots are native (GA readiness gate per
     /// Section 8.8 rule 5).
     pub fn is_ga_ready(&self) -> bool {
-        !self.slots.is_empty() && self.delegate_count() == 0
+        !self.slots.is_empty() && self.native_count() == self.slots.len()
     }
 }
 
@@ -2080,7 +2083,7 @@ mod tests {
             interpreter
         );
         assert_eq!(
-            snapshot.recommended_replacement_order[0].expected_value_score_millionths,
+            snapshot.recommended_replacement_order[0].weighted_expected_value_score_millionths,
             360_000
         );
         assert_eq!(
@@ -2088,7 +2091,7 @@ mod tests {
             object_model
         );
         assert_eq!(
-            snapshot.recommended_replacement_order[1].expected_value_score_millionths,
+            snapshot.recommended_replacement_order[1].weighted_expected_value_score_millionths,
             80_000
         );
 
@@ -2650,7 +2653,7 @@ mod tests {
     #[test]
     fn release_slot_class_display() {
         assert_eq!(ReleaseSlotClass::Core.to_string(), "core");
-        assert_eq!(ReleaseSlotClass::NonCore.to_string(), "non_core");
+        assert_eq!(ReleaseSlotClass::NonCore.to_string(), "non-core");
     }
 
     // -- GaReleaseGuardVerdict Display --
@@ -3187,6 +3190,7 @@ mod tests {
             throughput_uplift_millionths: 200_000,
             security_risk_reduction_millionths: 100_000,
             expected_value_score_millionths: 300_000,
+            weighted_expected_value_score_millionths: 150_000,
         };
         let json = serde_json::to_string(&c).unwrap();
         let restored: ReplacementPriorityCandidate = serde_json::from_str(&json).unwrap();

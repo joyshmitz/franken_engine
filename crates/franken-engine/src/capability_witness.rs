@@ -1323,7 +1323,7 @@ impl WitnessBuilder {
         };
 
         // Compute content hash from unsigned bytes.
-        let unsigned = witness.unsigned_bytes();
+        let unsigned = witness.synthesis_unsigned_bytes();
         witness.content_hash = ContentHash::compute(&unsigned);
 
         // Derive deterministic witness ID.

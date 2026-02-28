@@ -880,12 +880,7 @@ impl ExtensionLifecycleManager {
         // Check grace period.
         if elapsed_ns <= grace {
             // Cooperative shutdown succeeded within grace period.
-            let final_transition = if quarantine_on_timeout {
-                LifecycleTransition::Quarantine
-            } else {
-                LifecycleTransition::Finalize
-            };
-            return self.transition(extension_id, final_transition, trace_id, None);
+            return self.transition(extension_id, LifecycleTransition::Finalize, trace_id, None);
         }
 
         // Grace period expired.
@@ -1554,8 +1549,18 @@ mod tests {
         let mut mgr = make_manager();
         register_ext(&mut mgr, "ext-a");
         advance_to_running(&mut mgr, "ext-a");
+        // Succeeds within grace period -> Terminated, ignores quarantine_on_timeout
         let state = mgr
             .cooperative_shutdown("ext-a", "t-shutdown", 1_000_000_000, true)
+            .unwrap();
+        assert_eq!(state, ExtensionState::Terminated);
+
+        // Fails to succeed within grace period -> Quarantined
+        let mut mgr = make_manager();
+        register_ext(&mut mgr, "ext-b");
+        advance_to_running(&mut mgr, "ext-b");
+        let state = mgr
+            .cooperative_shutdown("ext-b", "t-shutdown", 6_000_000_000, true)
             .unwrap();
         assert_eq!(state, ExtensionState::Quarantined);
     }

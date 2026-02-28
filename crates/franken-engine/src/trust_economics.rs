@@ -294,7 +294,7 @@ impl DecomposedLossMatrix {
         for &action in &ContainmentAction::ALL {
             let benign_loss = self.total_loss(TrueState::Benign, action);
             let malicious_loss = self.total_loss(TrueState::Malicious, action);
-            if action == ContainmentAction::Allow && malicious_loss < benign_loss {
+            if malicious_loss < benign_loss {
                 // For "allow", malicious should cost more than benign
                 violations.push((action, benign_loss, malicious_loss));
             }
