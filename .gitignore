@@ -33,3 +33,37 @@ storage.sqlite3
 
 # Stray single-character junk files (editor/tool artifacts)
 /=
+
+# Additional build target directories (alternate targets, remote compilation helper)
+/target2/
+/target_rch_*/
+.rch_cargo_home_*/
+.rch_*/
+
+# Timestamped test/CI artifacts
+/artifacts/
+
+# Test-generated benchmark and gate artifacts (PID/timestamp-named)
+crates/franken-engine/tests/artifacts/benchmark_e2e/
+crates/franken-engine/tests/artifacts/test262_release_gate/
+
+# UBS (Ultimate Bug Scanner) output
+ubs_*.txt
+ubs_*.jsonl
+ubs_*.sarif
+ubs_output.*
+
+# Beads issue scratch files at root
+/bd-*
+
+# Stray directories and files from agent/test runs
+/false/
+/out_epic.json
+/unimplemented
+
+# Agent coordination config
+.agent-mail.yaml
+
+# Python bytecode
+__pycache__/
+*.pyc
