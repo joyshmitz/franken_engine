@@ -51,8 +51,32 @@ run_rch() {
 
 rch_reject_local_fallback() {
   local log_path="$1"
-  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|\[RCH\] local \(' "$log_path"; then
+  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|\[RCH\] local \(|Remote execution failed.*running locally|running locally|Dependency preflight blocked remote execution|RCH-E326' "$log_path"; then
     echo "rch reported local fallback; refusing local execution for heavy command" >&2
+    return 1
+  fi
+}
+
+rch_last_remote_exit_code() {
+  local log_path="$1"
+  local exit_line
+  exit_line="$(grep -Eo 'Remote command finished: exit=[0-9]+' "$log_path" | tail -n 1 || true)"
+  if [[ -z "$exit_line" ]]; then
+    echo ""
+    return
+  fi
+  echo "${exit_line##*=}"
+}
+
+rch_has_recoverable_artifact_timeout() {
+  local log_path="$1"
+  grep -Eiq 'artifact retrieval timed out|artifact transfer timed out|timed out waiting for artifacts|failed to retrieve artifacts|failed to download artifacts' "$log_path"
+}
+
+rch_reject_artifact_retrieval_failure() {
+  local log_path="$1"
+  if grep -Eiq 'Artifact retrieval failed|Failed to retrieve artifacts:|rsync artifact retrieval failed|rsync error: .*code 23' "$log_path"; then
+    echo "rch artifact retrieval failed; refusing to mark heavy command as successful" >&2
     return 1
   fi
 }
@@ -79,7 +103,9 @@ run_step() {
   log_path="$(mktemp)"
 
   if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
-    if rg -q "Remote command finished: exit=0" "$log_path"; then
+    local remote_exit_code
+    remote_exit_code="$(rch_last_remote_exit_code "$log_path")"
+    if [[ "$remote_exit_code" == "0" ]] && rch_has_recoverable_artifact_timeout "$log_path"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
     else
       rm -f "$log_path"
@@ -94,6 +120,12 @@ run_step() {
     return 1
   fi
 
+  if ! rch_reject_artifact_retrieval_failure "$log_path"; then
+    rm -f "$log_path"
+    failed_command="${command_text} (rch-artifact-retrieval-failed)"
+    return 1
+  fi
+
   rm -f "$log_path"
 }
 
@@ -102,33 +134,33 @@ run_mode() {
     check)
       run_step \
         "cargo check -p frankenengine-engine --test parser_cross_arch_repro_matrix" \
-        cargo check -p frankenengine-engine --test parser_cross_arch_repro_matrix
+        cargo check -p frankenengine-engine --test parser_cross_arch_repro_matrix || return 1
       ;;
     test)
       run_step \
         "cargo test -p frankenengine-engine --test parser_cross_arch_repro_matrix" \
-        cargo test -p frankenengine-engine --test parser_cross_arch_repro_matrix
+        cargo test -p frankenengine-engine --test parser_cross_arch_repro_matrix || return 1
       ;;
     clippy)
       run_step \
         "cargo clippy -p frankenengine-engine --test parser_cross_arch_repro_matrix -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test parser_cross_arch_repro_matrix -- -D warnings
+        cargo clippy -p frankenengine-engine --test parser_cross_arch_repro_matrix -- -D warnings || return 1
       ;;
     ci)
       run_step \
         "cargo check -p frankenengine-engine --test parser_cross_arch_repro_matrix" \
-        cargo check -p frankenengine-engine --test parser_cross_arch_repro_matrix
+        cargo check -p frankenengine-engine --test parser_cross_arch_repro_matrix || return 1
       run_step \
         "cargo test -p frankenengine-engine --test parser_cross_arch_repro_matrix" \
-        cargo test -p frankenengine-engine --test parser_cross_arch_repro_matrix
+        cargo test -p frankenengine-engine --test parser_cross_arch_repro_matrix || return 1
       run_step \
         "cargo clippy -p frankenengine-engine --test parser_cross_arch_repro_matrix -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test parser_cross_arch_repro_matrix -- -D warnings
+        cargo clippy -p frankenengine-engine --test parser_cross_arch_repro_matrix -- -D warnings || return 1
       ;;
     matrix)
       run_step \
         "cargo test -p frankenengine-engine --test parser_cross_arch_repro_matrix -- --exact parser_cross_arch_matrix_delta_classifier_assigns_expected_classes" \
-        cargo test -p frankenengine-engine --test parser_cross_arch_repro_matrix -- --exact parser_cross_arch_matrix_delta_classifier_assigns_expected_classes
+        cargo test -p frankenengine-engine --test parser_cross_arch_repro_matrix -- --exact parser_cross_arch_matrix_delta_classifier_assigns_expected_classes || return 1
       ;;
     *)
       echo "usage: $0 [check|test|clippy|ci|matrix]" >&2

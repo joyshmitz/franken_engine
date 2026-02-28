@@ -6,7 +6,7 @@ cd "$root_dir"
 
 mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
-target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_metamorphic}"
+target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_metamorphic_uid$(id -u)}"
 pairs="${METAMORPHIC_PAIRS:-1000}"
 seed="${METAMORPHIC_SEED:-1}"
 relation_filter_csv="${METAMORPHIC_RELATIONS:-}"
@@ -30,6 +30,7 @@ declare -a relation_filters=()
 declare -a relation_args=()
 relation_command_suffix=""
 relation_filters_manifest_json="[]"
+replay_command="./scripts/e2e/metamorphic_suite_replay.sh ${mode}"
 
 mkdir -p "$run_dir" "$failures_dir"
 
@@ -191,7 +192,7 @@ write_manifest() {
   {
     echo "{"
     echo '  "component": "metamorphic_suite",'
-    echo '  "bead_id": "bd-mjh3.5.2.3",'
+    echo '  "bead_id": "bd-mjh3.5.2",'
     echo "  \"mode\": \"${mode}\"," 
     echo "  \"toolchain\": \"${toolchain}\"," 
     echo "  \"cargo_target_dir\": \"${target_dir}\"," 
@@ -206,6 +207,7 @@ write_manifest() {
     echo "  \"trace_id\": \"${trace_id}\"," 
     echo "  \"decision_id\": \"${decision_id}\"," 
     echo "  \"policy_id\": \"${policy_id}\"," 
+    echo "  \"replay_command\": \"$(json_escape "${replay_command}")\"," 
     echo "  \"generated_at_utc\": \"${timestamp}\"," 
     echo "  \"git_commit\": \"${git_commit}\"," 
     echo "  \"dirty_worktree\": ${dirty_worktree},"
@@ -230,7 +232,15 @@ write_manifest() {
     echo "    \"seed_transcript\": \"${seed_transcript_path}\"," 
     echo "    \"failures_dir\": \"${failures_dir}\"," 
     echo "    \"command_log\": \"${run_dir}/commands.txt\""
-    echo '  }'
+    echo '  },'
+    echo '  "operator_verification": ['
+    echo "    \"cat ${manifest_path}\"," 
+    echo "    \"cat ${events_path}\"," 
+    echo "    \"cat ${relation_events_path}\"," 
+    echo "    \"cat ${evidence_path}\"," 
+    echo "    \"cat ${seed_transcript_path}\"," 
+    echo "    \"${replay_command}\""
+    echo '  ]'
     echo "}"
   } >"$manifest_path"
 

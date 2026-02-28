@@ -6,6 +6,7 @@ cd "$root_dir"
 
 mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
+rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
 target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_parser_oracle_gate}"
 artifact_root="${PARSER_ORACLE_ARTIFACT_ROOT:-artifacts/parser_oracle}"
 partition="${PARSER_ORACLE_PARTITION:-smoke}"
@@ -34,12 +35,44 @@ policy_id="policy-parser-oracle-v1"
 
 mkdir -p "$run_dir" "$failures_dir"
 
+if ! command -v rch >/dev/null 2>&1; then
+  echo "rch is required for parser oracle gate heavy commands" >&2
+  exit 2
+fi
+
 run_rch() {
-  if command -v rch >/dev/null 2>&1; then
+  timeout "${rch_timeout_seconds}" \
     rch exec -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
-  else
-    echo "warning: rch not found; running locally" >&2
-    env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
+}
+
+rch_strip_ansi() {
+  perl -pe 's/\e\[[0-9;?]*[ -\/]*[@-~]//g' "$1"
+}
+
+rch_remote_exit_code() {
+  local log_path="$1"
+  local remote_exit_line remote_exit_code
+
+  remote_exit_line="$(
+    rch_strip_ansi "$log_path" | rg -o 'Remote command finished: exit=[0-9]+' | tail -n 1 || true
+  )"
+  if [[ -z "$remote_exit_line" ]]; then
+    return 1
+  fi
+
+  remote_exit_code="${remote_exit_line##*=}"
+  if [[ -z "$remote_exit_code" ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "$remote_exit_code"
+}
+
+rch_reject_local_fallback() {
+  local log_path="$1"
+  if rch_strip_ansi "$log_path" | grep -Eiq 'Remote execution failed: Project sync failed|running locally|Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|\[RCH\] local \('; then
+    echo "rch reported local fallback; refusing local execution for heavy command" >&2
+    return 1
   fi
 }
 
@@ -61,13 +94,37 @@ manifest_written=false
 
 run_step() {
   local command_text="$1"
+  local log_path remote_exit_code
   shift
   commands_run+=("$command_text")
   echo "==> $command_text"
-  if ! run_rch "$@"; then
-    failed_command="$command_text"
+
+  log_path="$(mktemp)"
+  if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
+    if rch_strip_ansi "$log_path" | rg -q "Remote command finished: exit=0"; then
+      echo "==> recovered: remote execution succeeded; artifact retrieval timed out" \
+        | tee -a "$log_path"
+    else
+      rm -f "$log_path"
+      failed_command="$command_text"
+      return 1
+    fi
+  fi
+
+  if ! rch_reject_local_fallback "$log_path"; then
+    rm -f "$log_path"
+    failed_command="${command_text} (rch-local-fallback-detected)"
     return 1
   fi
+
+  remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
+  if [[ -n "$remote_exit_code" && "$remote_exit_code" != "0" ]]; then
+    rm -f "$log_path"
+    failed_command="${command_text} (remote-exit=${remote_exit_code})"
+    return 1
+  fi
+
+  rm -f "$log_path"
 }
 
 write_placeholders() {

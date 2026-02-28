@@ -860,6 +860,8 @@ pub fn environment_fingerprint() -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
     use std::time::Duration;
 
     use crate::catalog::RelationCatalog;
@@ -869,9 +871,9 @@ mod tests {
     use crate::{build_enabled_relations, build_relation};
 
     use super::{
-        evidence_entries_for_suite, minimize_failure_pair, relation_log_events_for_suite,
-        run_relation_with_budget, run_suite, seed_transcript_entries_for_suite, MinimizerConfig,
-        RelationEvidenceEntry, RunContext,
+        MinimizerConfig, RelationEvidenceEntry, RunContext, evidence_entries_for_suite,
+        minimize_failure_pair, relation_log_events_for_suite, run_relation_with_budget, run_suite,
+        seed_transcript_entries_for_suite,
     };
 
     struct AlwaysPassRelation {
@@ -947,6 +949,17 @@ mod tests {
             "sha256:test",
             7,
         )
+    }
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be monotonic")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "franken_metamorphic_{label}_{nanos}_{}",
+            std::process::id()
+        ))
     }
 
     #[test]
@@ -1089,6 +1102,98 @@ mod tests {
     }
 
     #[test]
+    fn violation_runs_emit_failure_artifact_payloads() {
+        let relation = SyntheticViolationRelation {
+            spec: RelationSpec {
+                id: "synthetic_violation".to_string(),
+                subsystem: Subsystem::Parser,
+                description: "synthetic".to_string(),
+                oracle: OracleKind::AstEquality,
+                budget_pairs: 1,
+                enabled: true,
+            },
+        };
+        let output_dir = temp_dir("failure_artifacts");
+        fs::create_dir_all(&output_dir).expect("temp output dir should be creatable");
+
+        let execution = run_relation_with_budget(
+            &relation,
+            &test_context(),
+            1,
+            Some(&output_dir),
+            MinimizerConfig {
+                max_iterations: 512,
+                max_duration: Duration::from_secs(60),
+                target_ast_nodes: 20,
+            },
+        )
+        .expect("synthetic relation should execute");
+
+        assert_eq!(execution.violations_found, 1);
+        assert_eq!(execution.failure_files.len(), 1);
+
+        let failure_path = PathBuf::from(&execution.failure_files[0]);
+        assert!(failure_path.exists(), "failure artifact path must exist");
+        let file_name = failure_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("failure artifact file name should be valid UTF-8");
+        assert!(file_name.starts_with("metamorphic_failure_synthetic_violation_"));
+        assert!(file_name.ends_with(".json"));
+
+        let raw = fs::read_to_string(&failure_path).expect("failure artifact should be readable");
+        let artifact: super::FailureArtifact =
+            serde_json::from_str(&raw).expect("failure artifact JSON should parse");
+        assert_eq!(artifact.relation_id, "synthetic_violation");
+        assert_eq!(artifact.seed, 7);
+        assert!(artifact.minimized, "divergence payload should be minimized");
+        assert_eq!(artifact.expected_equivalence, "equivalent");
+        assert_eq!(artifact.actual_divergence, "synthetic divergence");
+        assert!(artifact.variant_source.contains("bad"));
+
+        fs::remove_dir_all(&output_dir).expect("temp output dir should be removable");
+    }
+
+    #[test]
+    fn failure_artifact_path_is_stable_for_identical_violation_inputs() {
+        let relation = SyntheticViolationRelation {
+            spec: RelationSpec {
+                id: "synthetic_violation".to_string(),
+                subsystem: Subsystem::Parser,
+                description: "synthetic".to_string(),
+                oracle: OracleKind::AstEquality,
+                budget_pairs: 1,
+                enabled: true,
+            },
+        };
+        let output_dir = temp_dir("stable_failure_artifact");
+        fs::create_dir_all(&output_dir).expect("temp output dir should be creatable");
+
+        let first = run_relation_with_budget(
+            &relation,
+            &test_context(),
+            1,
+            Some(&output_dir),
+            MinimizerConfig::default(),
+        )
+        .expect("first run should succeed");
+        let second = run_relation_with_budget(
+            &relation,
+            &test_context(),
+            1,
+            Some(&output_dir),
+            MinimizerConfig::default(),
+        )
+        .expect("second run should succeed");
+
+        assert_eq!(first.failure_files.len(), 1);
+        assert_eq!(second.failure_files.len(), 1);
+        assert_eq!(first.failure_files[0], second.failure_files[0]);
+
+        fs::remove_dir_all(&output_dir).expect("temp output dir should be removable");
+    }
+
+    #[test]
     fn determinism_meta_test_for_same_seed() {
         let catalog = RelationCatalog::load_default().expect("catalog should load");
         let relation =
@@ -1158,10 +1263,12 @@ mod tests {
 
         let entries = evidence_entries_for_suite(&suite);
         assert!(entries.iter().any(|entry| entry.event == "suite_summary"));
-        assert!(entries
-            .iter()
-            .filter(|entry| entry.event == "suite_summary")
-            .all(|entry| entry.total_violations.is_some()));
+        assert!(
+            entries
+                .iter()
+                .filter(|entry| entry.event == "suite_summary")
+                .all(|entry| entry.total_violations.is_some())
+        );
     }
 
     #[test]
@@ -1223,9 +1330,11 @@ mod tests {
         );
         assert_eq!(seed_order, vec![7, 8, 7, 8]);
         assert_eq!(pair_indexes, vec![0, 1, 0, 1]);
-        assert!(transcript
-            .iter()
-            .all(|entry| entry.event == "pair_seed_evaluated"));
+        assert!(
+            transcript
+                .iter()
+                .all(|entry| entry.event == "pair_seed_evaluated")
+        );
     }
 
     #[test]
@@ -1309,8 +1418,10 @@ mod tests {
         let lines = payload.lines().collect::<Vec<_>>();
         assert_eq!(lines.len(), transcript.len());
         assert_eq!(lines.len(), 2);
-        assert!(lines
-            .iter()
-            .all(|line| line.contains("\"event\":\"pair_seed_evaluated\"")));
+        assert!(
+            lines
+                .iter()
+                .all(|line| line.contains("\"event\":\"pair_seed_evaluated\""))
+        );
     }
 }

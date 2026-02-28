@@ -391,7 +391,9 @@ pub fn validate_engine_version(min_engine_version: &str) -> Result<(), ManifestV
     let (supported_major, supported_minor, supported_patch) = supported;
     if requested_major > supported_major
         || (requested_major == supported_major && requested_minor > supported_minor)
-        || (requested_major == supported_major && requested_minor == supported_minor && requested_patch > supported_patch)
+        || (requested_major == supported_major
+            && requested_minor == supported_minor
+            && requested_patch > supported_patch)
     {
         return Err(ManifestValidationError::UnsupportedEngineVersion {
             min_engine_version: min_engine_version.to_string(),

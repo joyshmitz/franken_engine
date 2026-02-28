@@ -8,9 +8,9 @@ use frankenengine_metamorphic::catalog::RelationCatalog;
 use frankenengine_metamorphic::relation::MetamorphicRelation;
 use frankenengine_metamorphic::relations::CatalogBackedRelation;
 use frankenengine_metamorphic::runner::{
-    evidence_entries_for_suite, relation_log_events_for_suite, run_suite,
-    seed_transcript_entries_for_suite, write_evidence_jsonl, write_seed_transcript_jsonl,
-    MinimizerConfig, RunContext,
+    MinimizerConfig, RunContext, evidence_entries_for_suite, relation_log_events_for_suite,
+    run_suite, seed_transcript_entries_for_suite, write_evidence_jsonl,
+    write_seed_transcript_jsonl,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
