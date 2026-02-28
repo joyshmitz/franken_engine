@@ -1,0 +1,117 @@
+{
+  "schema_version": "franken-engine.rgc-ci-quality-gates.v1",
+  "gate_version": "1.0.0",
+  "required_modes": [
+    "check",
+    "clippy",
+    "unit",
+    "integration",
+    "e2e",
+    "replay",
+    "regression",
+    "ci"
+  ],
+  "required_structured_log_fields": [
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "lane_command_contract": [
+    {
+      "lane": "check",
+      "command": "cargo check --all-targets",
+      "requires_rch": true
+    },
+    {
+      "lane": "clippy",
+      "command": "cargo clippy --all-targets -- -D warnings",
+      "requires_rch": true
+    },
+    {
+      "lane": "unit",
+      "command": "cargo test -p frankenengine-engine --lib",
+      "requires_rch": true
+    },
+    {
+      "lane": "integration",
+      "command": "cargo test -p frankenengine-engine --test rgc_test_harness_integration --test rgc_verification_coverage_matrix --test rgc_execution_waves_integration --test rgc_execution_waves_enrichment_integration",
+      "requires_rch": true
+    },
+    {
+      "lane": "e2e",
+      "command": "./scripts/run_rgc_test_harness_suite.sh ci",
+      "requires_rch": false
+    },
+    {
+      "lane": "replay",
+      "command": "./scripts/e2e/rgc_test_harness_replay.sh ci",
+      "requires_rch": false
+    }
+  ],
+  "regression_verdict_samples": [
+    {
+      "sample_id": "clear-low-only",
+      "verdict": {
+        "highest_severity": "low",
+        "blocking": false,
+        "regressions": [
+          {
+            "id": "reg-01",
+            "severity": "medium",
+            "status": "active"
+          }
+        ]
+      },
+      "expected_blocking": false
+    },
+    {
+      "sample_id": "blocking-flag-true",
+      "verdict": {
+        "highest_severity": "low",
+        "blocking": true,
+        "regressions": []
+      },
+      "expected_blocking": true
+    },
+    {
+      "sample_id": "high-severity-active",
+      "verdict": {
+        "highest_severity": "high",
+        "blocking": false,
+        "regressions": [
+          {
+            "id": "reg-02",
+            "severity": "high",
+            "status": "active"
+          }
+        ]
+      },
+      "expected_blocking": true
+    },
+    {
+      "sample_id": "critical-waived",
+      "verdict": {
+        "highest_severity": "low",
+        "blocking": false,
+        "regressions": [
+          {
+            "id": "reg-03",
+            "severity": "critical",
+            "status": "waived"
+          }
+        ]
+      },
+      "expected_blocking": false
+    }
+  ],
+  "required_artifacts": [
+    "run_manifest.json",
+    "events.jsonl",
+    "commands.txt",
+    "failure_summary.json"
+  ]
+}
