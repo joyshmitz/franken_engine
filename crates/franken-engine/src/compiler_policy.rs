@@ -254,9 +254,10 @@ pub struct CompilerPolicyEvent {
 // ---------------------------------------------------------------------------
 
 /// In-memory proof store, keyed by proof ID for fast lookup during compilation.
+/// Uses `Vec` backing to avoid JSON serde issues with `BTreeMap<EngineObjectId, _>`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProofStore {
-    proofs: BTreeMap<EngineObjectId, SecurityProof>,
+    proofs: Vec<SecurityProof>,
 }
 
 impl ProofStore {
@@ -265,15 +266,24 @@ impl ProofStore {
     }
 
     pub fn insert(&mut self, proof: SecurityProof) {
-        self.proofs.insert(proof.proof_id().clone(), proof);
+        let id = proof.proof_id().clone();
+        if let Some(pos) = self.proofs.iter().position(|p| *p.proof_id() == id) {
+            self.proofs[pos] = proof;
+        } else {
+            self.proofs.push(proof);
+        }
     }
 
     pub fn get(&self, id: &EngineObjectId) -> Option<&SecurityProof> {
-        self.proofs.get(id)
+        self.proofs.iter().find(|p| p.proof_id() == id)
     }
 
     pub fn remove(&mut self, id: &EngineObjectId) -> Option<SecurityProof> {
-        self.proofs.remove(id)
+        if let Some(pos) = self.proofs.iter().position(|p| p.proof_id() == id) {
+            Some(self.proofs.remove(pos))
+        } else {
+            None
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -286,21 +296,23 @@ impl ProofStore {
 
     /// Remove all proofs from a given epoch.
     pub fn invalidate_epoch(&mut self, epoch: SecurityEpoch) -> Vec<EngineObjectId> {
-        let to_remove: Vec<EngineObjectId> = self
-            .proofs
-            .iter()
-            .filter(|(_, p)| p.epoch() == epoch)
-            .map(|(id, _)| id.clone())
-            .collect();
-        for id in &to_remove {
-            self.proofs.remove(id);
-        }
-        to_remove
+        let mut removed = Vec::new();
+        self.proofs.retain(|p| {
+            if p.epoch() == epoch {
+                removed.push(p.proof_id().clone());
+                false
+            } else {
+                true
+            }
+        });
+        removed
     }
 
     /// Return all proofs matching the given IDs.
     pub fn resolve(&self, ids: &[EngineObjectId]) -> Vec<&SecurityProof> {
-        ids.iter().filter_map(|id| self.proofs.get(id)).collect()
+        ids.iter()
+            .filter_map(|id| self.proofs.iter().find(|p| p.proof_id() == id))
+            .collect()
     }
 }
 
@@ -2160,7 +2172,11 @@ mod tests {
             let j = serde_json::to_string(o).unwrap();
             jsons.insert(j);
         }
-        assert_eq!(jsons.len(), outcomes.len(), "all variants must serialize distinctly");
+        assert_eq!(
+            jsons.len(),
+            outcomes.len(),
+            "all variants must serialize distinctly"
+        );
     }
 
     #[test]
@@ -2277,9 +2293,18 @@ mod tests {
         let epoch = SecurityEpoch::from_raw(1);
         let config = CompilerPolicyConfig::new("field-test", epoch);
         let json = serde_json::to_string(&config).unwrap();
-        assert!(json.contains("\"current_epoch\""), "missing current_epoch field");
-        assert!(json.contains("\"class_policies\""), "missing class_policies field");
-        assert!(json.contains("\"global_disable\""), "missing global_disable field");
+        assert!(
+            json.contains("\"current_epoch\""),
+            "missing current_epoch field"
+        );
+        assert!(
+            json.contains("\"class_policies\""),
+            "missing class_policies field"
+        );
+        assert!(
+            json.contains("\"global_disable\""),
+            "missing global_disable field"
+        );
         assert!(json.contains("\"policy_id\""), "missing policy_id field");
     }
 
@@ -2293,7 +2318,10 @@ mod tests {
         };
         let json = serde_json::to_string(&region).unwrap();
         assert!(json.contains("\"region_id\""), "missing region_id field");
-        assert!(json.contains("\"optimization_class\""), "missing optimization_class field");
+        assert!(
+            json.contains("\"optimization_class\""),
+            "missing optimization_class field"
+        );
         assert!(json.contains("\"proof_refs\""), "missing proof_refs field");
         assert!(
             json.contains("\"elided_check_description\""),
@@ -2365,7 +2393,11 @@ mod tests {
             assert!(!s.is_empty(), "Display must be non-empty");
             displays.insert(s);
         }
-        assert_eq!(displays.len(), classes.len(), "Display values must be distinct");
+        assert_eq!(
+            displays.len(),
+            classes.len(),
+            "Display values must be distinct"
+        );
     }
 
     #[test]
@@ -2406,7 +2438,10 @@ mod tests {
 
     #[test]
     fn proof_type_display_exact_values() {
-        assert_eq!(format!("{}", ProofType::CapabilityWitness), "capability_witness");
+        assert_eq!(
+            format!("{}", ProofType::CapabilityWitness),
+            "capability_witness"
+        );
         assert_eq!(format!("{}", ProofType::FlowProof), "flow_proof");
         assert_eq!(format!("{}", ProofType::ReplayMotif), "replay_motif");
     }
@@ -2439,7 +2474,11 @@ mod tests {
             epoch,
             validity_window_ticks: 0,
         });
-        let region2 = make_region("r-rm", OptimizationClass::SuperinstructionFusion, vec![rm_id]);
+        let region2 = make_region(
+            "r-rm",
+            OptimizationClass::SuperinstructionFusion,
+            vec![rm_id],
+        );
         let d2 = engine.evaluate(&region2, "t-rm", 0);
         assert_eq!(d2.outcome, SpecializationOutcome::RejectedProofExpired);
     }
@@ -2452,7 +2491,11 @@ mod tests {
         let pid = proof.proof_id().clone();
         engine.register_proof(proof);
 
-        let region = make_region("", OptimizationClass::HostcallDispatchSpecialization, vec![pid]);
+        let region = make_region(
+            "",
+            OptimizationClass::HostcallDispatchSpecialization,
+            vec![pid],
+        );
         let d = engine.evaluate(&region, "trace-empty", 0);
         assert!(d.outcome.is_applied());
         assert_eq!(d.region_id, "");
@@ -2591,11 +2634,7 @@ mod tests {
         let mut engine = default_engine(epoch);
 
         // First: rejected (no proofs)
-        let region_bad = make_region(
-            "r-bad",
-            OptimizationClass::PathElimination,
-            vec![],
-        );
+        let region_bad = make_region("r-bad", OptimizationClass::PathElimination, vec![]);
         engine.evaluate(&region_bad, "t1", 0);
         // No applied decision yet
         assert!(engine.last_applied_proof_inputs().is_none());
@@ -2747,7 +2786,10 @@ mod tests {
         // No proofs
         let region = make_region("r", OptimizationClass::PathElimination, vec![]);
         let d = engine.evaluate(&region, "t", 0);
-        assert!(!d.detail.is_empty(), "detail must be non-empty on rejection");
+        assert!(
+            !d.detail.is_empty(),
+            "detail must be non-empty on rejection"
+        );
     }
 
     #[test]
