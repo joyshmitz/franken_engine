@@ -1,17 +1,24 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::path::{Path, PathBuf};
 
 use frankenengine_engine::causal_replay::CounterfactualConfig;
 use frankenengine_engine::receipt_verifier_pipeline::{
     ReceiptVerifierCliInput, render_verdict_summary, verify_receipt_by_id,
 };
 use frankenengine_engine::third_party_verifier::{
-    BenchmarkClaimBundle, ContainmentClaimBundle, ReplayClaimBundle, VerificationAttestation,
-    VerificationAttestationInput, generate_attestation, render_attestation_summary,
-    render_report_summary, verify_attestation, verify_benchmark_claim, verify_containment_claim,
-    verify_replay_claim,
+    BenchmarkClaimBundle, ContainmentClaimBundle, ReplayClaimBundle,
+    THIRD_PARTY_VERIFIER_COMPONENT, VerificationAttestation, VerificationAttestationInput,
+    VerificationCheckResult, VerificationVerdict, VerifierEvent, generate_attestation,
+    render_attestation_summary, render_report_summary, verify_attestation, verify_benchmark_claim,
+    verify_containment_claim, verify_replay_claim,
 };
 use serde::{Deserialize, de::DeserializeOwned};
+
+const CODE_BUNDLE_MISSING_FILE: &str = "FE-TPV-BUNDLE-0001";
+const CODE_BUNDLE_PARSE_ERROR: &str = "FE-TPV-BUNDLE-0002";
+const CODE_BUNDLE_CONTEXT_MISMATCH: &str = "FE-TPV-BUNDLE-0003";
+const CODE_BUNDLE_REMOTE_EXEC: &str = "FE-TPV-BUNDLE-0004";
 
 fn main() {
     let exit_code = match run(std::env::args().skip(1).collect()) {
@@ -48,6 +55,7 @@ fn usage() -> String {
         "franken-verify usage:",
         "  franken-verify receipt <receipt_id> --input <path> [--summary]",
         "  franken-verify benchmark --input <path> [--summary]",
+        "  franken-verify benchmark verify --bundle <dir> [--summary] [--output <path>]",
         "  franken-verify replay --input <path> [--summary]",
         "      [--signature-key-hex <hex> | --signature-key-file <path>]",
         "      [--receipt-key <signer_hex>=<verification_key_hex>]...",
@@ -113,11 +121,384 @@ fn run_receipt(args: &[String]) -> Result<i32, String> {
 }
 
 fn run_benchmark(args: &[String]) -> Result<i32, String> {
+    if let Some(mode) = args.first()
+        && mode == "verify"
+    {
+        return run_benchmark_verify_bundle(&args[1..]);
+    }
     let (input_path, summary) = parse_input_flags(args, "benchmark")?;
     let input = load_json::<BenchmarkClaimBundle>(input_path, "benchmark bundle")?;
     let report = verify_benchmark_claim(&input);
     print_report(&report, summary)?;
     Ok(report.exit_code())
+}
+
+#[derive(Debug, Deserialize)]
+struct BenchmarkBundleManifest {
+    schema_version: String,
+    trace_id: String,
+    decision_id: String,
+    policy_id: String,
+}
+
+fn run_benchmark_verify_bundle(args: &[String]) -> Result<i32, String> {
+    let mut bundle_dir: Option<PathBuf> = None;
+    let mut output_path: Option<PathBuf> = None;
+    let mut summary = false;
+
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--bundle" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--bundle requires a path".to_string())?;
+                bundle_dir = Some(PathBuf::from(value));
+            }
+            "--output" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--output requires a path".to_string())?;
+                output_path = Some(PathBuf::from(value));
+            }
+            "--summary" => summary = true,
+            flag => return Err(format!("unknown flag for benchmark verify: {flag}")),
+        }
+        index += 1;
+    }
+
+    let bundle_dir = bundle_dir.ok_or_else(|| {
+        "benchmark verify requires --bundle <dir> containing env.json, manifest.json, repro.lock, commands.txt, and results.json".to_string()
+    })?;
+    let results_path = bundle_dir.join("results.json");
+    if !results_path.is_file() {
+        return Err(format!(
+            "benchmark bundle missing required file: {}",
+            results_path.display()
+        ));
+    }
+
+    let results_str = results_path
+        .to_str()
+        .ok_or_else(|| format!("bundle path is not valid utf-8: {}", results_path.display()))?;
+    let input = load_json::<BenchmarkClaimBundle>(results_str, "benchmark bundle results")?;
+    let mut report = verify_benchmark_claim(&input);
+
+    validate_bundle_contract(&bundle_dir, &input, &mut report);
+
+    if let Some(path) = output_path {
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "failed to create output directory '{}': {error}",
+                    parent.display()
+                )
+            })?;
+        }
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&report)
+                .map_err(|error| format!("failed to encode verifier output: {error}"))?,
+        )
+        .map_err(|error| format!("failed to write report '{}': {error}", path.display()))?;
+    }
+
+    print_report(&report, summary)?;
+    Ok(report.exit_code())
+}
+
+fn validate_bundle_contract(
+    bundle_dir: &Path,
+    input: &BenchmarkClaimBundle,
+    report: &mut frankenengine_engine::third_party_verifier::ThirdPartyVerificationReport,
+) {
+    let required_files = [
+        "env.json",
+        "manifest.json",
+        "repro.lock",
+        "commands.txt",
+        "results.json",
+    ];
+
+    let mut bundle_violations = false;
+    for file in required_files {
+        let path = bundle_dir.join(file);
+        let present = path.is_file();
+        append_bundle_check(
+            report,
+            format!("bundle_file_{file}_present"),
+            present,
+            CODE_BUNDLE_MISSING_FILE,
+            if present {
+                format!("required bundle file present: {}", path.display())
+            } else {
+                format!("required bundle file missing: {}", path.display())
+            },
+        );
+        if !present {
+            bundle_violations = true;
+        }
+    }
+
+    let manifest_path = bundle_dir.join("manifest.json");
+    let manifest = if manifest_path.is_file() {
+        match load_json_path::<BenchmarkBundleManifest>(&manifest_path, "benchmark bundle manifest")
+        {
+            Ok(manifest) => {
+                let schema_ok = !manifest.schema_version.trim().is_empty();
+                append_bundle_check(
+                    report,
+                    "bundle_manifest_schema_version_present".to_string(),
+                    schema_ok,
+                    CODE_BUNDLE_PARSE_ERROR,
+                    if schema_ok {
+                        format!(
+                            "bundle manifest schema_version present: {}",
+                            manifest.schema_version
+                        )
+                    } else {
+                        "bundle manifest schema_version must be non-empty".to_string()
+                    },
+                );
+                if !schema_ok {
+                    bundle_violations = true;
+                }
+
+                let context_matches = manifest.trace_id == input.trace_id
+                    && manifest.decision_id == input.decision_id
+                    && manifest.policy_id == input.policy_id;
+                append_bundle_check(
+                    report,
+                    "bundle_manifest_context_matches_claim".to_string(),
+                    context_matches,
+                    CODE_BUNDLE_CONTEXT_MISMATCH,
+                    if context_matches {
+                        "bundle manifest trace/decision/policy context matches results.json claim"
+                            .to_string()
+                    } else {
+                        format!(
+                            "bundle manifest context mismatch: manifest=({}, {}, {}), results=({}, {}, {})",
+                            manifest.trace_id,
+                            manifest.decision_id,
+                            manifest.policy_id,
+                            input.trace_id,
+                            input.decision_id,
+                            input.policy_id
+                        )
+                    },
+                );
+                if !context_matches {
+                    bundle_violations = true;
+                }
+
+                Some(manifest)
+            }
+            Err(error) => {
+                append_bundle_check(
+                    report,
+                    "bundle_manifest_parses".to_string(),
+                    false,
+                    CODE_BUNDLE_PARSE_ERROR,
+                    error,
+                );
+                bundle_violations = true;
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let env_path = bundle_dir.join("env.json");
+    if env_path.is_file() {
+        match load_json_path::<serde_json::Value>(&env_path, "benchmark bundle env.json") {
+            Ok(value) => {
+                let env_obj = value.as_object().cloned().unwrap_or_default();
+                let env_ok = !env_obj.is_empty()
+                    && env_obj.contains_key("toolchain")
+                    && env_obj.contains_key("os")
+                    && env_obj.contains_key("arch");
+                append_bundle_check(
+                    report,
+                    "bundle_env_has_core_fields".to_string(),
+                    env_ok,
+                    CODE_BUNDLE_PARSE_ERROR,
+                    if env_ok {
+                        "env.json includes required fields: toolchain, os, arch".to_string()
+                    } else {
+                        "env.json must be a non-empty object containing toolchain, os, and arch"
+                            .to_string()
+                    },
+                );
+                if !env_ok {
+                    bundle_violations = true;
+                }
+            }
+            Err(error) => {
+                append_bundle_check(
+                    report,
+                    "bundle_env_parses".to_string(),
+                    false,
+                    CODE_BUNDLE_PARSE_ERROR,
+                    error,
+                );
+                bundle_violations = true;
+            }
+        }
+    }
+
+    let repro_path = bundle_dir.join("repro.lock");
+    if repro_path.is_file() {
+        let repro_ok = fs::read_to_string(&repro_path)
+            .map(|content| {
+                let trimmed = content.trim();
+                if trimmed.is_empty() {
+                    return false;
+                }
+                if trimmed.starts_with('{') || trimmed.starts_with('[') {
+                    serde_json::from_str::<serde_json::Value>(trimmed)
+                        .map(|value| value.is_object() || value.is_array())
+                        .unwrap_or(false)
+                } else {
+                    true
+                }
+            })
+            .unwrap_or(false);
+        append_bundle_check(
+            report,
+            "bundle_repro_lock_present_and_non_empty".to_string(),
+            repro_ok,
+            CODE_BUNDLE_PARSE_ERROR,
+            if repro_ok {
+                format!(
+                    "repro.lock is present and parseable: {}",
+                    repro_path.display()
+                )
+            } else {
+                format!("repro.lock is missing or invalid: {}", repro_path.display())
+            },
+        );
+        if !repro_ok {
+            bundle_violations = true;
+        }
+    }
+
+    let commands_path = bundle_dir.join("commands.txt");
+    if commands_path.is_file() {
+        match fs::read_to_string(&commands_path) {
+            Ok(content) => {
+                let non_empty = !content.trim().is_empty();
+                append_bundle_check(
+                    report,
+                    "bundle_commands_non_empty".to_string(),
+                    non_empty,
+                    CODE_BUNDLE_PARSE_ERROR,
+                    if non_empty {
+                        format!(
+                            "commands.txt contains command transcript: {}",
+                            commands_path.display()
+                        )
+                    } else {
+                        format!("commands.txt is empty: {}", commands_path.display())
+                    },
+                );
+                if !non_empty {
+                    bundle_violations = true;
+                }
+
+                let remote_only = content.lines().any(|line| line.contains("rch exec --"));
+                append_bundle_check(
+                    report,
+                    "bundle_commands_include_rch_exec".to_string(),
+                    remote_only,
+                    CODE_BUNDLE_REMOTE_EXEC,
+                    if remote_only {
+                        "commands.txt includes rch-wrapped execution evidence".to_string()
+                    } else {
+                        "commands.txt must include at least one `rch exec --` command to satisfy remote-heavy execution policy".to_string()
+                    },
+                );
+                if !remote_only {
+                    bundle_violations = true;
+                }
+            }
+            Err(error) => {
+                append_bundle_check(
+                    report,
+                    "bundle_commands_readable".to_string(),
+                    false,
+                    CODE_BUNDLE_PARSE_ERROR,
+                    format!(
+                        "failed to read commands.txt '{}': {error}",
+                        commands_path.display()
+                    ),
+                );
+                bundle_violations = true;
+            }
+        }
+    }
+
+    let scope = if let Some(manifest) = manifest {
+        format!(
+            "bundle={} schema={} trace={} decision={} policy={}",
+            bundle_dir.display(),
+            manifest.schema_version,
+            manifest.trace_id,
+            manifest.decision_id,
+            manifest.policy_id
+        )
+    } else {
+        format!("bundle={}", bundle_dir.display())
+    };
+    report.events.push(VerifierEvent {
+        trace_id: report.trace_id.clone(),
+        decision_id: report.decision_id.clone(),
+        policy_id: report.policy_id.clone(),
+        component: THIRD_PARTY_VERIFIER_COMPONENT.to_string(),
+        event: "benchmark_bundle_contract_checked".to_string(),
+        outcome: if bundle_violations {
+            "fail".to_string()
+        } else {
+            "pass".to_string()
+        },
+        error_code: if bundle_violations {
+            Some(CODE_BUNDLE_PARSE_ERROR.to_string())
+        } else {
+            None
+        },
+    });
+    if bundle_violations {
+        report.verdict = VerificationVerdict::Failed;
+        report.confidence_statement =
+            "verification failed: benchmark bundle contract violations detected".to_string();
+        report.scope_limitations.push(scope);
+    } else if report.confidence_statement.trim().is_empty() {
+        report.confidence_statement =
+            "bundle contract checks passed alongside benchmark claim recomputation".to_string();
+    }
+}
+
+fn append_bundle_check(
+    report: &mut frankenengine_engine::third_party_verifier::ThirdPartyVerificationReport,
+    name: String,
+    passed: bool,
+    error_code: &'static str,
+    detail: String,
+) {
+    report.checks.push(VerificationCheckResult {
+        name,
+        passed,
+        error_code: if passed {
+            None
+        } else {
+            Some(error_code.to_string())
+        },
+        detail,
+    });
 }
 
 fn run_replay(args: &[String]) -> Result<i32, String> {
@@ -427,6 +808,13 @@ fn print_report(
 
 fn load_input(path: &str) -> Result<ReceiptVerifierCliInput, String> {
     load_json::<ReceiptVerifierCliInput>(path, "verifier JSON input")
+}
+
+fn load_json_path<T: DeserializeOwned>(path: &Path, label: &str) -> Result<T, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read '{}': {error}", path.display()))?;
+    serde_json::from_str::<T>(&content)
+        .map_err(|error| format!("failed to parse '{}' as {label}: {error}", path.display()))
 }
 
 fn load_json<T: DeserializeOwned>(path: &str, label: &str) -> Result<T, String> {

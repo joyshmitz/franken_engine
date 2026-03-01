@@ -52,6 +52,71 @@ fn write_text(prefix: &str, value: &str) -> PathBuf {
     path
 }
 
+fn temp_bundle_dir(prefix: &str) -> PathBuf {
+    let mut path = std::env::temp_dir();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    path.push(format!("{prefix}_{}_bundle_{}", std::process::id(), nonce));
+    path
+}
+
+fn write_benchmark_verifier_bundle(prefix: &str, claim: &BenchmarkClaimBundle) -> PathBuf {
+    let dir = temp_bundle_dir(prefix);
+    fs::create_dir_all(&dir).expect("bundle directory should be creatable");
+
+    let manifest = serde_json::json!({
+        "schema_version": "franken-engine.benchmark.bundle.v1",
+        "trace_id": claim.trace_id,
+        "decision_id": claim.decision_id,
+        "policy_id": claim.policy_id,
+        "submission_id": "submission-test-001",
+        "benchmark_version": "extension-heavy.v1",
+    });
+    fs::write(
+        dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest write should succeed");
+
+    let env = serde_json::json!({
+        "toolchain": "nightly-x86_64-unknown-linux-gnu",
+        "os": "linux",
+        "arch": "x86_64",
+    });
+    fs::write(
+        dir.join("env.json"),
+        serde_json::to_vec_pretty(&env).expect("env should serialize"),
+    )
+    .expect("env write should succeed");
+
+    let repro_lock = serde_json::json!({
+        "schema_version": "franken-engine.benchmark.repro-lock.v1",
+        "seed": 42,
+        "run_id": "run-test-001",
+    });
+    fs::write(
+        dir.join("repro.lock"),
+        serde_json::to_vec_pretty(&repro_lock).expect("repro lock should serialize"),
+    )
+    .expect("repro lock write should succeed");
+
+    fs::write(
+        dir.join("commands.txt"),
+        "rch exec -- cargo test -p frankenengine-engine --test benchmark_denominator\n",
+    )
+    .expect("commands log write should succeed");
+
+    fs::write(
+        dir.join("results.json"),
+        serde_json::to_vec_pretty(claim).expect("results should serialize"),
+    )
+    .expect("results write should succeed");
+
+    dir
+}
+
 fn make_signing_key(seed: u8) -> SigningKey {
     let mut key = [0u8; 32];
     for (index, byte) in key.iter_mut().enumerate() {
@@ -359,6 +424,97 @@ fn franken_verify_benchmark_command_exits_successfully() {
     assert!(stdout.contains("verdict=Verified"));
 
     let _ = fs::remove_file(input_path);
+}
+
+#[test]
+fn franken_verify_benchmark_verify_bundle_command_exits_successfully() {
+    let input = make_benchmark_claim_bundle();
+    let bundle_dir = write_benchmark_verifier_bundle("tpv_benchmark_bundle_ok", &input);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken-verify"))
+        .args([
+            "benchmark",
+            "verify",
+            "--bundle",
+            bundle_dir.to_str().expect("utf8 bundle path"),
+            "--summary",
+        ])
+        .output()
+        .expect("benchmark verify bundle command should execute");
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("claim_type=benchmark"));
+    assert!(stdout.contains("verdict=Verified"));
+
+    let _ = fs::remove_dir_all(bundle_dir);
+}
+
+#[test]
+fn franken_verify_benchmark_verify_bundle_fails_when_commands_missing() {
+    let input = make_benchmark_claim_bundle();
+    let bundle_dir = write_benchmark_verifier_bundle("tpv_benchmark_bundle_missing_cmds", &input);
+    fs::remove_file(bundle_dir.join("commands.txt")).expect("remove commands.txt");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken-verify"))
+        .args([
+            "benchmark",
+            "verify",
+            "--bundle",
+            bundle_dir.to_str().expect("utf8 bundle path"),
+        ])
+        .output()
+        .expect("benchmark verify bundle command should execute");
+
+    assert_eq!(output.status.code(), Some(25));
+    let report: ThirdPartyVerificationReport =
+        serde_json::from_slice(&output.stdout).expect("report json");
+    assert_eq!(report.verdict, VerificationVerdict::Failed);
+    assert!(report.checks.iter().any(|check| {
+        check.name == "bundle_file_commands.txt_present"
+            && !check.passed
+            && check.error_code.as_deref() == Some("FE-TPV-BUNDLE-0001")
+    }));
+
+    let _ = fs::remove_dir_all(bundle_dir);
+}
+
+#[test]
+fn franken_verify_benchmark_verify_bundle_fails_when_manifest_context_mismatches_results() {
+    let input = make_benchmark_claim_bundle();
+    let bundle_dir = write_benchmark_verifier_bundle("tpv_benchmark_bundle_ctx_mismatch", &input);
+    let mut manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(bundle_dir.join("manifest.json")).expect("manifest should be readable"),
+    )
+    .expect("manifest should parse");
+    manifest["policy_id"] = serde_json::Value::String("policy-mismatch".to_string());
+    fs::write(
+        bundle_dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).expect("manifest serialize"),
+    )
+    .expect("manifest rewrite should succeed");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken-verify"))
+        .args([
+            "benchmark",
+            "verify",
+            "--bundle",
+            bundle_dir.to_str().expect("utf8 bundle path"),
+        ])
+        .output()
+        .expect("benchmark verify bundle command should execute");
+
+    assert_eq!(output.status.code(), Some(25));
+    let report: ThirdPartyVerificationReport =
+        serde_json::from_slice(&output.stdout).expect("report json");
+    assert_eq!(report.verdict, VerificationVerdict::Failed);
+    assert!(report.checks.iter().any(|check| {
+        check.name == "bundle_manifest_context_matches_claim"
+            && !check.passed
+            && check.error_code.as_deref() == Some("FE-TPV-BUNDLE-0003")
+    }));
+
+    let _ = fs::remove_dir_all(bundle_dir);
 }
 
 #[test]
