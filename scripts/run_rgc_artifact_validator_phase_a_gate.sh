@@ -72,6 +72,55 @@ rch_reject_local_fallback() {
   fi
 }
 
+run_rch_strict_logged() {
+  local log_path="$1"
+  shift
+
+  local fifo_path fallback_flag_path reader_pid rch_pid rch_status=0
+  local line
+
+  fifo_path="$(mktemp -u "${run_dir}/rch-stream.XXXXXX")"
+  fallback_flag_path="$(mktemp "${run_dir}/rch-fallback.XXXXXX")"
+  rm -f "$fallback_flag_path"
+  mkfifo "$fifo_path"
+  : >"$log_path"
+
+  {
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      printf '%s\n' "$line" | tee -a "$log_path"
+      if [[ "$line" == *"Remote toolchain failure, falling back to local"* ||
+        "$line" == *"falling back to local"* ||
+        "$line" == *"fallback to local"* ||
+        "$line" == *"local fallback"* ||
+        "$line" == *"running locally"* ||
+        "$line" == *"[RCH] local ("* ]]; then
+        : >"$fallback_flag_path"
+        if [[ -n "${rch_pid:-}" ]]; then
+          kill "$rch_pid" 2>/dev/null || true
+        fi
+        pkill -f "CARGO_TARGET_DIR=${target_dir}" 2>/dev/null || true
+        pkill -f "${target_dir}" 2>/dev/null || true
+      fi
+    done <"$fifo_path"
+  } &
+  reader_pid=$!
+
+  run_rch "$@" >"$fifo_path" 2>&1 &
+  rch_pid=$!
+  wait "$rch_pid" || rch_status=$?
+  wait "$reader_pid" || true
+  rm -f "$fifo_path"
+
+  if [[ -f "$fallback_flag_path" ]]; then
+    rm -f "$fallback_flag_path"
+    pkill -f "CARGO_TARGET_DIR=${target_dir}" 2>/dev/null || true
+    return 125
+  fi
+
+  rm -f "$fallback_flag_path"
+  return "$rch_status"
+}
+
 declare -a commands_run=()
 declare -a step_logs=()
 failed_command=""
@@ -93,7 +142,7 @@ ensure_rch_ready() {
 run_step_expect_exit() {
   local command_text="$1"
   local expected_exit="$2"
-  local log_path remote_exit_code
+  local log_path remote_exit_code run_status
   shift 2
 
   commands_run+=("$command_text")
@@ -106,7 +155,14 @@ run_step_expect_exit() {
       | tee -a "$log_path"
   fi
 
-  if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
+  run_rch_strict_logged "$log_path" "$@"
+  run_status=$?
+  if [[ "$run_status" -ne 0 ]]; then
+    if [[ "$run_status" -eq 125 ]]; then
+      failed_command="${command_text} (rch-local-fallback-detected)"
+      return 1
+    fi
+
     if ! rch_reject_local_fallback "$log_path"; then
       failed_command="${command_text} (rch-local-fallback-detected)"
       return 1

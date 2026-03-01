@@ -17,27 +17,42 @@ events_path="$run_dir/events.jsonl"
 
 mkdir -p "$run_dir"
 
+if ! command -v rch >/dev/null 2>&1; then
+  echo "error: rch is required for fuzz adversarial target commands" >&2
+  exit 1
+fi
+
 run_rch() {
-  if command -v rch >/dev/null 2>&1; then
-    rch exec -- env "RUSTUP_TOOLCHAIN=$toolchain" "CARGO_TARGET_DIR=$target_dir" "$@"
-  else
-    echo "warning: rch not found; running locally" >&2
-    env "RUSTUP_TOOLCHAIN=$toolchain" "CARGO_TARGET_DIR=$target_dir" "$@"
+  rch exec -- env "RUSTUP_TOOLCHAIN=$toolchain" "CARGO_TARGET_DIR=$target_dir" "$@"
+}
+
+rch_reject_local_fallback() {
+  local log_path="$1"
+  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|running locally|\[RCH\] local \(|Failed to query daemon:.*running locally|Dependency preflight blocked remote execution|RCH-E326' "$log_path"; then
+    echo "error: rch reported local fallback; refusing local execution for heavy command" >&2
+    return 1
   fi
 }
 
 declare -a commands_run=()
 failed_command=""
 manifest_written=false
+step_log_index=0
 
 run_step() {
   local command_text="$1"
   shift
+  local step_log_path="${run_dir}/step_$(printf '%03d' "$step_log_index").log"
+  step_log_index=$((step_log_index + 1))
   commands_run+=("$command_text")
   echo "==> $command_text"
-  if ! run_rch "$@"; then
+  if ! run_rch "$@" > >(tee "$step_log_path") 2>&1; then
     failed_command="$command_text"
     return 1
+  fi
+  if ! rch_reject_local_fallback "$step_log_path"; then
+    failed_command="${command_text} (rch-local-fallback-detected)"
+    return 86
   fi
 }
 

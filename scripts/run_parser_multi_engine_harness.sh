@@ -29,16 +29,24 @@ component="parser_multi_engine_harness"
 
 mkdir -p "$run_dir"
 
+if ! command -v rch >/dev/null 2>&1; then
+  echo "error: rch is required for parser multi-engine harness commands" >&2
+  exit 1
+fi
+
 run_rch() {
-  if command -v rch >/dev/null 2>&1; then
-    if [[ "${PARSER_MULTI_ENGINE_RCH_VERBOSE:-0}" == "1" ]]; then
-      rch exec -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
-    else
-      rch exec -q -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
-    fi
+  if [[ "${PARSER_MULTI_ENGINE_RCH_VERBOSE:-0}" == "1" ]]; then
+    rch exec -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
   else
-    echo "warning: rch not found; running locally" >&2
-    env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
+    rch exec -q -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
+  fi
+}
+
+rch_reject_local_fallback() {
+  local log_path="$1"
+  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|running locally|\[RCH\] local \(|Failed to query daemon:.*running locally|Dependency preflight blocked remote execution|RCH-E326' "$log_path"; then
+    echo "error: rch reported local fallback; refusing local execution for heavy command" >&2
+    return 1
   fi
 }
 
@@ -111,19 +119,26 @@ manifest_written=false
 divergent_fixtures=0
 nondeterministic_fixtures=0
 repro_pack_fixtures=0
+step_log_index=0
 
 run_step() {
   local command_text="$1"
   shift
+  local step_log_path="${run_dir}/step_$(printf '%03d' "$step_log_index").log"
+  step_log_index=$((step_log_index + 1))
   commands_run+=("$command_text")
   echo "==> $command_text"
   set +e
-  run_rch "$@"
+  run_rch "$@" > >(tee "$step_log_path") 2>&1
   local rc=$?
   set -e
   if [[ "$rc" -ne 0 ]]; then
     failed_command="$command_text"
     return "$rc"
+  fi
+  if ! rch_reject_local_fallback "$step_log_path"; then
+    failed_command="${command_text} (rch-local-fallback-detected)"
+    return 86
   fi
 }
 
@@ -160,6 +175,11 @@ run_report_step() {
   run_rch "${command[@]}" 2>&1 | tee "$report_stdout_path"
   local rc=$?
   set -e
+
+  if ! rch_reject_local_fallback "$report_stdout_path"; then
+    failed_command="${command_text} (rch-local-fallback-detected)"
+    return 86
+  fi
 
   # Normalize ANSI/control sequences so JSON extraction works with colored rch output.
   sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' "$report_stdout_path" >"$report_stdout_clean_path"

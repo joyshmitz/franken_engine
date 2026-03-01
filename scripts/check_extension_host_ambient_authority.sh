@@ -30,12 +30,16 @@ mkdir -p "$artifact_dir"
 
 errors=0
 
-# ── rch helper (best-effort remote, auto-fallback to local) ──────────────
+# ── rch helper (fail-closed: remote execution required) ───────────────────
 run_rch() {
-  if command -v rch &>/dev/null; then
-    rch exec -- "$@" 2>/dev/null || "$@"
-  else
-    "$@"
+  rch exec -- "$@"
+}
+
+rch_reject_local_fallback() {
+  local log_path="$1"
+  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|running locally|\[RCH\] local \(|Failed to query daemon:.*running locally|Dependency preflight blocked remote execution|RCH-E326' "$log_path"; then
+    echo "ERROR: rch reported local fallback; refusing local execution for heavy command" >&2
+    return 1
   fi
 }
 
@@ -127,8 +131,19 @@ fi
 if [[ "$mode" == "ci" || "$mode" == "test" ]]; then
   echo ""
   echo "=== Check 4: extension_host_authority_guard unit tests ==="
-  run_rch cargo test --package frankenengine-engine --lib extension_host_authority_guard 2>&1 \
-    | tee "$artifact_dir/test_output.txt"
+  test_log_path="$artifact_dir/test_output.txt"
+  if ! command -v rch >/dev/null 2>&1; then
+    echo "ERROR: rch is required for extension_host_authority_guard unit tests" >&2
+    errors=1
+  else
+    if ! run_rch cargo test --package frankenengine-engine --lib extension_host_authority_guard 2>&1 \
+      | tee "$test_log_path"; then
+      errors=1
+    fi
+    if ! rch_reject_local_fallback "$test_log_path"; then
+      errors=1
+    fi
+  fi
 fi
 
 # ── Produce run manifest ─────────────────────────────────────────────────
