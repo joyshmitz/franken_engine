@@ -10,6 +10,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::containment_executor::{ContainmentReceipt, ContainmentState};
 use crate::evidence_ledger::{DecisionType, EvidenceEntry};
@@ -18,6 +19,8 @@ use crate::hostcall_telemetry::{HostcallResult, HostcallTelemetryRecord};
 use crate::security_epoch::SecurityEpoch;
 
 const COMPONENT: &str = "runtime_diagnostics_cli";
+const SUPPORT_BUNDLE_SCHEMA_VERSION: &str = "franken-engine.runtime-diagnostics.support-bundle.v1";
+const DEFAULT_SUPPORT_BUNDLE_REDACTION_MARKER: &str = "sha256:REDACTED";
 
 /// Stable log envelope required by plan acceptance criteria.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -410,6 +413,106 @@ pub struct EvidenceExportOutput {
     pub logs: Vec<StructuredLogEvent>,
 }
 
+/// Redaction policy for support-bundle payload sanitization.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupportBundleRedactionPolicy {
+    pub key_fragments: Vec<String>,
+    pub replacement: String,
+}
+
+impl Default for SupportBundleRedactionPolicy {
+    fn default() -> Self {
+        let mut key_fragments = vec![
+            "secret".to_string(),
+            "token".to_string(),
+            "password".to_string(),
+            "credential".to_string(),
+            "private_key".to_string(),
+            "signature".to_string(),
+        ];
+        key_fragments.sort();
+        key_fragments.dedup();
+        Self {
+            key_fragments,
+            replacement: DEFAULT_SUPPORT_BUNDLE_REDACTION_MARKER.to_string(),
+        }
+    }
+}
+
+impl SupportBundleRedactionPolicy {
+    pub fn with_additional_fragments<I>(additional: I) -> Self
+    where
+        I: IntoIterator<Item = String>,
+    {
+        let mut policy = Self::default();
+        policy.extend_fragments(additional);
+        policy
+    }
+
+    pub fn extend_fragments<I>(&mut self, additional: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.key_fragments.extend(additional);
+        self.key_fragments = self
+            .key_fragments
+            .iter()
+            .map(|fragment| fragment.trim().to_ascii_lowercase())
+            .filter(|fragment| !fragment.is_empty())
+            .collect::<Vec<_>>();
+        self.key_fragments.sort();
+        self.key_fragments.dedup();
+    }
+
+    fn should_redact_key(&self, key: &str) -> bool {
+        let normalized = key.trim().to_ascii_lowercase();
+        self.key_fragments
+            .iter()
+            .any(|fragment| normalized.contains(fragment))
+    }
+}
+
+/// Indexed file entry included in a support-bundle index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupportBundleFileIndexEntry {
+    pub path: String,
+    pub sha256: String,
+    pub bytes: u64,
+}
+
+/// Machine-readable support-bundle index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupportBundleIndex {
+    pub schema_version: String,
+    pub bundle_id: String,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub total_records: usize,
+    pub total_redacted_fields: u64,
+    pub files: Vec<SupportBundleFileIndexEntry>,
+    pub reproducible_commands: Vec<String>,
+}
+
+/// Materialized support-bundle file payload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupportBundleFile {
+    pub path: String,
+    pub content: String,
+    pub sha256: String,
+    pub bytes: u64,
+}
+
+/// Deterministic support-bundle export output.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SupportBundleOutput {
+    pub filter: EvidenceExportFilter,
+    pub redaction_policy: SupportBundleRedactionPolicy,
+    pub index: SupportBundleIndex,
+    pub files: Vec<SupportBundleFile>,
+    pub logs: Vec<StructuredLogEvent>,
+}
+
 /// Export deterministic evidence records from all supported sources.
 pub fn export_evidence_bundle(
     input: &RuntimeDiagnosticsCliInput,
@@ -559,6 +662,265 @@ pub fn render_evidence_summary(output: &EvidenceExportOutput) -> String {
         lines.push(format!("  - {}={}", severity, count));
     }
     lines.join("\n")
+}
+
+/// Export a deterministic, sanitized support bundle from runtime diagnostics input.
+pub fn export_support_bundle(
+    input: &RuntimeDiagnosticsCliInput,
+    filter: EvidenceExportFilter,
+    redaction_policy: SupportBundleRedactionPolicy,
+) -> SupportBundleOutput {
+    let diagnostics = collect_runtime_diagnostics(
+        &input.runtime_state,
+        &input.trace_id,
+        &input.decision_id,
+        &input.policy_id,
+    );
+
+    let mut evidence_output = export_evidence_bundle(input, filter.clone());
+    let mut total_redacted_fields = 0_u64;
+    for record in &mut evidence_output.records {
+        let (redacted_payload, redacted_count) =
+            redact_sensitive_fields(record.payload.clone(), &redaction_policy);
+        record.payload = redacted_payload;
+        total_redacted_fields = total_redacted_fields.saturating_add(redacted_count);
+    }
+
+    let reproducible_commands = vec![
+        "runtime_diagnostics diagnostics --input <path> --summary".to_string(),
+        "runtime_diagnostics export-evidence --input <path> --summary".to_string(),
+        "runtime_diagnostics support-bundle --input <path> --summary".to_string(),
+    ];
+
+    let run_manifest = serde_json::json!({
+        "schema_version": SUPPORT_BUNDLE_SCHEMA_VERSION,
+        "trace_id": input.trace_id,
+        "decision_id": input.decision_id,
+        "policy_id": input.policy_id,
+        "total_records": evidence_output.summary.total_records,
+        "total_redacted_fields": total_redacted_fields,
+        "filter": filter,
+    });
+
+    let mut logs = evidence_output.logs.clone();
+    logs.push(StructuredLogEvent {
+        trace_id: input.trace_id.clone(),
+        decision_id: input.decision_id.clone(),
+        policy_id: input.policy_id.clone(),
+        component: COMPONENT.to_string(),
+        event: "support_bundle_export".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+    });
+    logs.sort_by(|left, right| {
+        left.event
+            .cmp(&right.event)
+            .then(left.trace_id.cmp(&right.trace_id))
+            .then(left.decision_id.cmp(&right.decision_id))
+            .then(left.policy_id.cmp(&right.policy_id))
+    });
+
+    let summary_md = {
+        let mut lines = Vec::new();
+        lines.push("# Runtime Support Bundle Summary".to_string());
+        lines.push(String::new());
+        lines.push(format!("- trace_id: `{}`", input.trace_id));
+        lines.push(format!("- decision_id: `{}`", input.decision_id));
+        lines.push(format!("- policy_id: `{}`", input.policy_id));
+        lines.push(format!(
+            "- total_records: `{}`",
+            evidence_output.summary.total_records
+        ));
+        lines.push(format!(
+            "- total_redacted_fields: `{}`",
+            total_redacted_fields
+        ));
+        lines.push(String::new());
+        lines.push("## Repro Commands".to_string());
+        lines.push(String::new());
+        for command in &reproducible_commands {
+            lines.push(format!("- `{command}`"));
+        }
+        lines.join("\n")
+    };
+
+    let mut files = vec![
+        make_support_bundle_file(
+            "support_bundle/run_manifest.json",
+            serde_json::to_string_pretty(&run_manifest).expect("run manifest must serialize"),
+        ),
+        make_support_bundle_file(
+            "support_bundle/events.jsonl",
+            render_support_bundle_events_jsonl(&logs),
+        ),
+        make_support_bundle_file(
+            "support_bundle/commands.txt",
+            reproducible_commands.join("\n"),
+        ),
+        make_support_bundle_file(
+            "support_bundle/runtime_diagnostics.json",
+            serde_json::to_string_pretty(&diagnostics)
+                .expect("runtime diagnostics output must serialize"),
+        ),
+        make_support_bundle_file(
+            "support_bundle/evidence_records.jsonl",
+            render_evidence_records_jsonl(&evidence_output.records),
+        ),
+        make_support_bundle_file("support_bundle/summary.md", summary_md),
+    ];
+
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    let file_index_entries = files
+        .iter()
+        .map(|file| SupportBundleFileIndexEntry {
+            path: file.path.clone(),
+            sha256: file.sha256.clone(),
+            bytes: file.bytes,
+        })
+        .collect::<Vec<_>>();
+
+    let bundle_id = compute_support_bundle_id(&file_index_entries, total_redacted_fields);
+    let index = SupportBundleIndex {
+        schema_version: SUPPORT_BUNDLE_SCHEMA_VERSION.to_string(),
+        bundle_id,
+        trace_id: input.trace_id.clone(),
+        decision_id: input.decision_id.clone(),
+        policy_id: input.policy_id.clone(),
+        total_records: evidence_output.summary.total_records,
+        total_redacted_fields,
+        files: file_index_entries,
+        reproducible_commands,
+    };
+
+    files.push(make_support_bundle_file(
+        "support_bundle/index.json",
+        serde_json::to_string_pretty(&index).expect("support bundle index must serialize"),
+    ));
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+
+    SupportBundleOutput {
+        filter,
+        redaction_policy,
+        index,
+        files,
+        logs,
+    }
+}
+
+/// Render support-bundle output in deterministic human-readable form.
+pub fn render_support_bundle_summary(output: &SupportBundleOutput) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!("bundle_id: {}", output.index.bundle_id));
+    lines.push(format!("schema_version: {}", output.index.schema_version));
+    lines.push(format!("trace_id: {}", output.index.trace_id));
+    lines.push(format!("decision_id: {}", output.index.decision_id));
+    lines.push(format!("policy_id: {}", output.index.policy_id));
+    lines.push(format!("total_records: {}", output.index.total_records));
+    lines.push(format!(
+        "total_redacted_fields: {}",
+        output.index.total_redacted_fields
+    ));
+    lines.push("files:".to_string());
+    for file in &output.index.files {
+        lines.push(format!(
+            "  - {} (bytes={}, sha256={})",
+            file.path, file.bytes, file.sha256
+        ));
+    }
+    lines.push("reproducible_commands:".to_string());
+    for command in &output.index.reproducible_commands {
+        lines.push(format!("  - {command}"));
+    }
+    lines.join("\n")
+}
+
+fn render_evidence_records_jsonl(records: &[EvidenceExportRecord]) -> String {
+    let mut lines = Vec::new();
+    for record in records {
+        lines.push(
+            serde_json::to_string(record).expect("support bundle evidence record must serialize"),
+        );
+    }
+    lines.join("\n")
+}
+
+fn render_support_bundle_events_jsonl(events: &[StructuredLogEvent]) -> String {
+    let mut lines = Vec::new();
+    for event in events {
+        lines.push(serde_json::to_string(event).expect("support bundle event must serialize"));
+    }
+    lines.join("\n")
+}
+
+fn make_support_bundle_file(path: &str, content: String) -> SupportBundleFile {
+    let sha256 = compute_sha256_hex(content.as_bytes());
+    SupportBundleFile {
+        path: path.to_string(),
+        bytes: u64::try_from(content.len()).unwrap_or(u64::MAX),
+        content,
+        sha256,
+    }
+}
+
+fn compute_sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
+}
+
+fn compute_support_bundle_id(
+    files: &[SupportBundleFileIndexEntry],
+    total_redacted_fields: u64,
+) -> String {
+    let mut material = String::new();
+    for file in files {
+        material.push_str(file.path.as_str());
+        material.push(':');
+        material.push_str(file.sha256.as_str());
+        material.push(':');
+        material.push_str(&file.bytes.to_string());
+        material.push('\n');
+    }
+    material.push_str("redacted=");
+    material.push_str(&total_redacted_fields.to_string());
+    format!("bundle-{}", &compute_sha256_hex(material.as_bytes())[..16])
+}
+
+fn redact_sensitive_fields(
+    value: Value,
+    redaction_policy: &SupportBundleRedactionPolicy,
+) -> (Value, u64) {
+    match value {
+        Value::Object(map) => {
+            let mut items = map.into_iter().collect::<Vec<_>>();
+            items.sort_by(|left, right| left.0.cmp(&right.0));
+            let mut out = serde_json::Map::new();
+            let mut redacted = 0_u64;
+            for (key, nested_value) in items {
+                if redaction_policy.should_redact_key(key.as_str()) {
+                    out.insert(key, Value::String(redaction_policy.replacement.clone()));
+                    redacted = redacted.saturating_add(1);
+                    continue;
+                }
+                let (nested, nested_redacted) =
+                    redact_sensitive_fields(nested_value, redaction_policy);
+                out.insert(key, nested);
+                redacted = redacted.saturating_add(nested_redacted);
+            }
+            (Value::Object(out), redacted)
+        }
+        Value::Array(values) => {
+            let mut out = Vec::with_capacity(values.len());
+            let mut redacted = 0_u64;
+            for value in values {
+                let (nested, nested_redacted) = redact_sensitive_fields(value, redaction_policy);
+                out.push(nested);
+                redacted = redacted.saturating_add(nested_redacted);
+            }
+            (Value::Array(out), redacted)
+        }
+        other => (other, 0),
+    }
 }
 
 fn compute_pressure_millionths(used: u64, budget: u64) -> u64 {
@@ -2213,5 +2575,62 @@ mod tests {
         };
         let cloned = d.clone();
         assert_eq!(d, cloned);
+    }
+
+    #[test]
+    fn support_bundle_redacts_sensitive_fields_and_is_deterministic() {
+        let mut input = sample_input();
+        let first = input
+            .evidence_entries
+            .first_mut()
+            .expect("sample input must have at least one evidence entry");
+        first
+            .metadata
+            .insert("api_token".to_string(), "secret-token-value".to_string());
+
+        let policy = SupportBundleRedactionPolicy::default();
+        let first_export = export_support_bundle(&input, EvidenceExportFilter::default(), policy);
+        let second_export = export_support_bundle(
+            &input,
+            EvidenceExportFilter::default(),
+            SupportBundleRedactionPolicy::default(),
+        );
+
+        assert_eq!(first_export, second_export);
+        assert!(first_export.index.total_redacted_fields >= 1);
+        assert!(
+            first_export
+                .index
+                .files
+                .iter()
+                .any(|file| file.path == "support_bundle/evidence_records.jsonl")
+        );
+
+        let evidence_file = first_export
+            .files
+            .iter()
+            .find(|file| file.path == "support_bundle/evidence_records.jsonl")
+            .expect("evidence records file must be present");
+        assert!(!evidence_file.content.contains("secret-token-value"));
+        assert!(
+            evidence_file
+                .content
+                .contains(DEFAULT_SUPPORT_BUNDLE_REDACTION_MARKER)
+        );
+    }
+
+    #[test]
+    fn support_bundle_summary_lists_repro_commands() {
+        let output = export_support_bundle(
+            &sample_input(),
+            EvidenceExportFilter::default(),
+            SupportBundleRedactionPolicy::default(),
+        );
+        let rendered = render_support_bundle_summary(&output);
+
+        assert!(rendered.contains("bundle_id: bundle-"));
+        assert!(rendered.contains("total_records:"));
+        assert!(rendered.contains("reproducible_commands:"));
+        assert!(rendered.contains("runtime_diagnostics support-bundle --input <path> --summary"));
     }
 }

@@ -364,3 +364,75 @@ fn export_output_contains_all_required_evidence_categories() {
 
     let _ = fs::remove_file(input_path);
 }
+
+#[test]
+fn support_bundle_command_redacts_sensitive_values_and_writes_files() {
+    let mut input = build_sample_input();
+    input.evidence_entries[0]
+        .metadata
+        .insert("api_token".to_string(), "secret-token-value".to_string());
+    let input_path = write_input_file(&input);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args(["support-bundle", "--input"])
+        .arg(&input_path)
+        .output()
+        .expect("support-bundle command should execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("valid json output");
+    assert_eq!(
+        json["index"]["schema_version"],
+        "franken-engine.runtime-diagnostics.support-bundle.v1"
+    );
+    assert!(
+        json["index"]["total_redacted_fields"]
+            .as_u64()
+            .expect("total_redacted_fields should be u64")
+            >= 1
+    );
+
+    let files = json["files"].as_array().expect("files should be an array");
+    let evidence_file = files
+        .iter()
+        .find(|file| file["path"] == "support_bundle/evidence_records.jsonl")
+        .expect("evidence file should be present");
+    let evidence_content = evidence_file["content"]
+        .as_str()
+        .expect("evidence file content should be a string");
+    assert!(!evidence_content.contains("secret-token-value"));
+    assert!(evidence_content.contains("sha256:REDACTED"));
+
+    let mut out_dir = std::env::temp_dir();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    out_dir.push(format!(
+        "runtime_diagnostics_support_bundle_out_{}_{}",
+        std::process::id(),
+        nonce
+    ));
+
+    let write_output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "support-bundle",
+            "--input",
+            input_path.to_str().expect("path should be utf8"),
+            "--summary",
+            "--out-dir",
+            out_dir.to_str().expect("dir should be utf8"),
+        ])
+        .output()
+        .expect("support-bundle write command should execute");
+    assert!(write_output.status.success());
+
+    let written_index = out_dir.join("support_bundle/index.json");
+    let written_summary = out_dir.join("support_bundle/summary.md");
+    assert!(written_index.exists(), "index file should be written");
+    assert!(written_summary.exists(), "summary file should be written");
+
+    let _ = fs::remove_file(input_path);
+    let _ = fs::remove_dir_all(out_dir);
+}
