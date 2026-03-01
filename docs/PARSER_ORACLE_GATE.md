@@ -16,6 +16,9 @@
   - `./scripts/e2e/parser_oracle_full.sh`
   - `./scripts/e2e/parser_oracle_nightly.sh`
   - `./scripts/e2e/parser_oracle_replay_failure.sh`
+  - `./scripts/e2e/parser_oracle_ci_matrix.sh`
+  - `./scripts/e2e/parser_oracle_flake_probe.sh`
+  - shared deterministic bootstrap: `./scripts/e2e/parser_oracle_env_bootstrap.sh`
 
 ## Modes
 
@@ -48,6 +51,9 @@ Override with environment variables:
 - `PARSER_ORACLE_SEED` = deterministic run seed
 - `PARSER_ORACLE_FIXTURE_CATALOG` = fixture catalog path
 - `PARSER_ORACLE_ARTIFACT_ROOT` = artifact root directory
+- `PARSER_ORACLE_REPORT_SCHEMA_VERSION` = expected relation report schema version
+- `PARSER_ORACLE_TAXONOMY_VERSION` = expected drift taxonomy version
+- `PARSER_ORACLE_REMEDIATION_MAP_VERSION` = remediation mapping version string
 - `RUSTUP_TOOLCHAIN`, `CARGO_TARGET_DIR` as usual
 
 All heavy cargo operations in the gate script route through `rch` when available.
@@ -63,6 +69,7 @@ Each run writes to `artifacts/parser_oracle/<timestamp>/`:
 - `minimized_failures/`
 - `golden_checksums.txt`
 - `proof_note.md`
+- `drift_digest.md`
 - `env.json`
 - `repro.lock`
 - `manifest.json`
@@ -94,6 +101,18 @@ Comparator decisions are normalized to:
 - `equivalent`
 - `drift_minor`
 - `drift_critical`
+
+`run_parser_oracle_gate.sh` enforces a schema/taxonomy compatibility contract
+for `relation_report.json` and fails closed when:
+
+- `schema_version` mismatches expected report schema
+- `taxonomy_version` mismatches expected taxonomy contract
+
+The gate also emits `drift_digest.md` with:
+
+- ranked drift-class inventory
+- deterministic drift clusters (`cluster:<family_id>`)
+- owner hints and remediation mapping per cluster
 
 ## Replay
 

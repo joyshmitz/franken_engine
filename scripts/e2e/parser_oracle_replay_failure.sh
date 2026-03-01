@@ -4,6 +4,11 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$root_dir"
 
+bootstrap_script="${root_dir}/scripts/e2e/parser_oracle_env_bootstrap.sh"
+# shellcheck source=/dev/null
+source "$bootstrap_script"
+parser_oracle_apply_deterministic_env
+
 tmp_catalog="$(mktemp)"
 trap 'rm -f "$tmp_catalog"' EXIT
 
@@ -26,4 +31,3 @@ if [[ "$exit_code" -eq 0 ]]; then
 fi
 
 echo "parser oracle failure replay succeeded (run failed as expected with exit=${exit_code})"
-
