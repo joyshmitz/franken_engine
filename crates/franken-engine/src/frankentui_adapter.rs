@@ -3,6 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::capability_witness::{CapabilityEscrowReceiptRecord, ProofKind, WitnessReplayJoinRow};
+use crate::slot_registry::{
+    PromotionStatus, PromotionTransition, ReplacementProgressEvent, ReplacementProgressSnapshot,
+    SlotEntry, SlotRegistry,
+};
 
 pub const FRANKENTUI_ADAPTER_SCHEMA_VERSION: u32 = 1;
 const UNKNOWN_LABEL: &str = "unknown";
@@ -1399,6 +1403,109 @@ impl ReplacementProgressDashboardView {
             rollback_events,
             next_best_replacements,
         }
+    }
+
+    pub fn from_slot_registry_snapshot(
+        registry: &SlotRegistry,
+        snapshot: &ReplacementProgressSnapshot,
+        cluster: impl Into<String>,
+        zone: impl Into<String>,
+        security_epoch: u64,
+        generated_at_unix_ms: u64,
+    ) -> Self {
+        let slot_status_overview = registry
+            .iter()
+            .map(|(slot_id, entry)| {
+                let slot_id_str = slot_id.as_str();
+                SlotStatusOverviewRow {
+                    slot_id: slot_id_str.to_string(),
+                    slot_kind: entry.kind.to_string(),
+                    implementation_kind: if entry.status.is_native() {
+                        "native".to_string()
+                    } else {
+                        "delegate".to_string()
+                    },
+                    promotion_status: replacement_promotion_status_label(&entry.status).to_string(),
+                    risk_level: replacement_risk_level(&entry.status),
+                    last_transition_unix_ms: replacement_last_transition_unix_ms(
+                        entry,
+                        generated_at_unix_ms,
+                    ),
+                    health: replacement_health_label(&entry.status).to_string(),
+                    lineage_ref: replacement_lineage_ref(slot_id_str),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let blocked_promotions = snapshot
+            .events
+            .iter()
+            .filter_map(replacement_blocked_promotion_from_event)
+            .collect::<Vec<_>>();
+        let rollback_events =
+            replacement_rollback_events_from_registry(registry, snapshot, generated_at_unix_ms);
+        let next_best_replacements = snapshot
+            .recommended_replacement_order
+            .iter()
+            .map(|candidate| ReplacementOpportunityView {
+                slot_id: candidate.slot_id.as_str().to_string(),
+                slot_kind: candidate.slot_kind.to_string(),
+                expected_value_score_millionths: candidate.weighted_expected_value_score_millionths,
+                performance_uplift_millionths: clamp_non_negative_i64_to_u64(
+                    candidate.throughput_uplift_millionths,
+                ),
+                invocation_frequency_per_minute: candidate.invocation_weight_millionths,
+                risk_reduction_millionths: clamp_non_negative_i64_to_u64(
+                    candidate.security_risk_reduction_millionths,
+                ),
+                rationale: format!(
+                    "promotion_status={} delegate_backed={} expected_value={} weighted_expected_value={}",
+                    candidate.promotion_status,
+                    candidate.delegate_backed,
+                    candidate.expected_value_score_millionths,
+                    candidate.weighted_expected_value_score_millionths
+                ),
+            })
+            .collect::<Vec<_>>();
+        let native_coverage = NativeCoverageMeter {
+            native_slots: snapshot.native_slots,
+            delegate_slots: snapshot.delegate_slots,
+            native_coverage_millionths: snapshot.native_coverage_millionths,
+            trend: vec![CoverageTrendPoint {
+                timestamp_unix_ms: generated_at_unix_ms,
+                native_coverage_millionths: snapshot.native_coverage_millionths,
+            }],
+        };
+
+        Self::from_partial(ReplacementProgressPartial {
+            cluster: cluster.into(),
+            zone: zone.into(),
+            security_epoch: Some(security_epoch),
+            generated_at_unix_ms: Some(generated_at_unix_ms),
+            slot_status_overview,
+            native_coverage_history: Vec::new(),
+            native_coverage: Some(native_coverage),
+            blocked_promotions,
+            rollback_events,
+            replacement_inputs: Vec::new(),
+            next_best_replacements,
+        })
+    }
+
+    pub fn refreshed_from_slot_registry_snapshot(
+        &self,
+        registry: &SlotRegistry,
+        snapshot: &ReplacementProgressSnapshot,
+        generated_at_unix_ms: u64,
+    ) -> Self {
+        Self::from_slot_registry_snapshot(
+            registry,
+            snapshot,
+            self.cluster.clone(),
+            self.zone.clone(),
+            self.security_epoch,
+            generated_at_unix_ms,
+        )
     }
 
     pub fn filtered(&self, filter: &ReplacementDashboardFilter) -> Self {
@@ -3580,6 +3687,178 @@ fn implementation_is_native(kind: &str) -> bool {
     kind.eq_ignore_ascii_case("native")
 }
 
+fn replacement_promotion_status_label(status: &PromotionStatus) -> &'static str {
+    match status {
+        PromotionStatus::Delegate => "delegate",
+        PromotionStatus::PromotionCandidate { .. } => "promotion_candidate",
+        PromotionStatus::Promoted { .. } => "promoted",
+        PromotionStatus::Demoted { .. } => "demoted",
+    }
+}
+
+fn replacement_health_label(status: &PromotionStatus) -> &'static str {
+    match status {
+        PromotionStatus::Delegate => "pending_replacement",
+        PromotionStatus::PromotionCandidate { .. } => "candidate",
+        PromotionStatus::Promoted { .. } => "healthy",
+        PromotionStatus::Demoted { .. } => "degraded",
+    }
+}
+
+fn replacement_risk_level(status: &PromotionStatus) -> ReplacementRiskLevel {
+    match status {
+        PromotionStatus::Promoted { .. } => ReplacementRiskLevel::Low,
+        PromotionStatus::Delegate => ReplacementRiskLevel::Medium,
+        PromotionStatus::PromotionCandidate { .. } | PromotionStatus::Demoted { .. } => {
+            ReplacementRiskLevel::High
+        }
+    }
+}
+
+fn replacement_last_transition_unix_ms(entry: &SlotEntry, fallback_unix_ms: u64) -> u64 {
+    entry
+        .promotion_lineage
+        .last()
+        .and_then(|event| parse_timestamp_unix_ms(&event.timestamp))
+        .unwrap_or(fallback_unix_ms)
+}
+
+fn replacement_lineage_ref(slot_id: &str) -> String {
+    format!(
+        "frankentui://replacement-lineage/{}",
+        normalize_non_empty(slot_id.to_string())
+    )
+}
+
+fn replacement_evidence_ref(
+    slot_id: &str,
+    trace_id: &str,
+    decision_id: &str,
+    policy_id: &str,
+) -> String {
+    format!(
+        "frankentui://replacement-evidence/{}?trace_id={}&decision_id={}&policy_id={}",
+        normalize_non_empty(slot_id.to_string()),
+        normalize_non_empty(trace_id.to_string()),
+        normalize_non_empty(decision_id.to_string()),
+        normalize_non_empty(policy_id.to_string())
+    )
+}
+
+fn replacement_blocked_promotion_from_event(
+    event: &ReplacementProgressEvent,
+) -> Option<BlockedPromotionView> {
+    let slot_id = event.slot_id.as_deref().map(|value| value.trim())?;
+    if slot_id.is_empty() {
+        return None;
+    }
+    let event_name = event.event.to_ascii_lowercase();
+    let outcome = event.outcome.to_ascii_lowercase();
+    let is_promotion_event = event_name.contains("promotion") || event_name.contains("candidate");
+    let is_blocking_outcome = matches!(
+        outcome.as_str(),
+        "blocked" | "failed" | "denied" | "rejected"
+    );
+    if !is_promotion_event || !(is_blocking_outcome || event.error_code.is_some()) {
+        return None;
+    }
+
+    let lineage_ref = replacement_lineage_ref(slot_id);
+    let evidence_ref = replacement_evidence_ref(
+        slot_id,
+        &event.trace_id,
+        &event.decision_id,
+        &event.policy_id,
+    );
+    Some(BlockedPromotionView {
+        slot_id: slot_id.to_string(),
+        gate_failure_code: normalize_non_empty(
+            event
+                .error_code
+                .clone()
+                .unwrap_or_else(|| "promotion_blocked".to_string()),
+        ),
+        failure_detail: normalize_non_empty(event.detail.clone()),
+        recommended_remediation: format!(
+            "inspect {} and replay lineage via {}",
+            evidence_ref, lineage_ref
+        ),
+        lineage_ref,
+        evidence_ref,
+    })
+}
+
+fn replacement_rollback_events_from_registry(
+    registry: &SlotRegistry,
+    snapshot: &ReplacementProgressSnapshot,
+    fallback_unix_ms: u64,
+) -> Vec<RollbackEventView> {
+    let mut events = Vec::new();
+    for (slot_id, entry) in registry.iter() {
+        for (lineage_index, lineage_event) in entry.promotion_lineage.iter().enumerate() {
+            if !matches!(
+                lineage_event.transition,
+                PromotionTransition::DemotedToDelegate | PromotionTransition::RolledBack
+            ) {
+                continue;
+            }
+            let slot_id_str = slot_id.as_str();
+            let reason = match (&entry.status, lineage_event.transition) {
+                (PromotionStatus::Demoted { reason, .. }, _) => normalize_non_empty(reason.clone()),
+                (_, PromotionTransition::DemotedToDelegate) => "demoted".to_string(),
+                (_, PromotionTransition::RolledBack) => "rollback".to_string(),
+                _ => "rollback".to_string(),
+            };
+            let status = if matches!(entry.status, PromotionStatus::Demoted { .. }) {
+                RollbackStatus::Investigating
+            } else {
+                RollbackStatus::Resolved
+            };
+            events.push(RollbackEventView {
+                slot_id: slot_id_str.to_string(),
+                receipt_id: lineage_event
+                    .receipt_id
+                    .clone()
+                    .unwrap_or_else(|| format!("lineage-{}-{}", slot_id_str, lineage_index)),
+                reason,
+                status,
+                occurred_at_unix_ms: parse_timestamp_unix_ms(&lineage_event.timestamp)
+                    .unwrap_or_else(|| {
+                        fallback_unix_ms.saturating_sub(
+                            entry.promotion_lineage.len().saturating_sub(lineage_index) as u64,
+                        )
+                    }),
+                lineage_ref: replacement_lineage_ref(slot_id_str),
+                evidence_ref: replacement_evidence_ref(
+                    slot_id_str,
+                    &snapshot.trace_id,
+                    &snapshot.decision_id,
+                    &snapshot.policy_id,
+                ),
+            });
+        }
+    }
+    events.sort_by(|left, right| {
+        left.occurred_at_unix_ms
+            .cmp(&right.occurred_at_unix_ms)
+            .then(left.slot_id.cmp(&right.slot_id))
+            .then(left.receipt_id.cmp(&right.receipt_id))
+    });
+    events
+}
+
+fn parse_timestamp_unix_ms(timestamp: &str) -> Option<u64> {
+    let trimmed = timestamp.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    trimmed.parse::<u64>().ok()
+}
+
+fn clamp_non_negative_i64_to_u64(value: i64) -> u64 {
+    u64::try_from(value).unwrap_or_default()
+}
+
 fn compute_expected_value_score_millionths(input: &ReplacementOpportunityInput) -> i64 {
     let perf_component = i128::from(input.performance_uplift_millionths)
         .saturating_mul(i128::from(input.invocation_frequency_per_minute).saturating_add(1))
@@ -3593,6 +3872,10 @@ fn compute_expected_value_score_millionths(input: &ReplacementOpportunityInput) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::slot_registry::{
+        AuthorityEnvelope, ReplacementProgressEvent, SlotCapability, SlotId, SlotKind,
+        SlotRegistry, SlotReplacementSignal,
+    };
 
     #[test]
     fn replay_snapshot_marks_empty_event_set() {
@@ -4787,6 +5070,244 @@ mod tests {
         assert_eq!(filtered.next_best_replacements.len(), 1);
         assert_eq!(filtered.native_coverage.native_slots, 0);
         assert_eq!(filtered.native_coverage.delegate_slots, 1);
+    }
+
+    fn replacement_test_authority() -> AuthorityEnvelope {
+        AuthorityEnvelope {
+            required: vec![SlotCapability::EmitEvidence],
+            permitted: vec![SlotCapability::EmitEvidence, SlotCapability::ReadSource],
+        }
+    }
+
+    fn replacement_register_slot(registry: &mut SlotRegistry, id: &str, kind: SlotKind) -> SlotId {
+        let slot_id = SlotId::new(id).expect("valid slot id");
+        registry
+            .register_delegate(
+                slot_id.clone(),
+                kind,
+                replacement_test_authority(),
+                format!("delegate-{id}"),
+                "1000".to_string(),
+            )
+            .expect("register delegate");
+        slot_id
+    }
+
+    #[test]
+    fn replacement_progress_from_slot_registry_snapshot_builds_drilldown_refs() {
+        let mut registry = SlotRegistry::new();
+        let parser_id = replacement_register_slot(&mut registry, "parser", SlotKind::Parser);
+        let gc_id = replacement_register_slot(&mut registry, "gc", SlotKind::GarbageCollector);
+
+        registry
+            .begin_candidacy(&gc_id, "candidate-gc".to_string(), "2000".to_string())
+            .expect("gc candidacy");
+        registry
+            .promote(
+                &gc_id,
+                "native-gc".to_string(),
+                &replacement_test_authority(),
+                "receipt-gc".to_string(),
+                "3000".to_string(),
+            )
+            .expect("gc promote");
+        registry
+            .demote(&gc_id, "canary regression".to_string(), "4000".to_string())
+            .expect("gc demote");
+
+        let mut signals = BTreeMap::new();
+        signals.insert(
+            parser_id,
+            SlotReplacementSignal {
+                invocation_weight_millionths: 900_000,
+                throughput_uplift_millionths: 500_000,
+                security_risk_reduction_millionths: 300_000,
+            },
+        );
+        signals.insert(
+            gc_id,
+            SlotReplacementSignal {
+                invocation_weight_millionths: 100_000,
+                throughput_uplift_millionths: 100_000,
+                security_risk_reduction_millionths: 20_000,
+            },
+        );
+        let snapshot = registry
+            .snapshot_replacement_progress(
+                "trace-slot-1",
+                "decision-slot-1",
+                "policy-slot-1",
+                &signals,
+            )
+            .expect("snapshot");
+
+        let dashboard = ReplacementProgressDashboardView::from_slot_registry_snapshot(
+            &registry,
+            &snapshot,
+            "prod",
+            "us-east-1",
+            42,
+            5_000,
+        );
+
+        assert_eq!(dashboard.cluster, "prod");
+        assert_eq!(dashboard.zone, "us-east-1");
+        assert_eq!(dashboard.security_epoch, 42);
+        assert!(
+            dashboard
+                .slot_status_overview
+                .iter()
+                .any(|row| row.slot_id == "parser"
+                    && row.lineage_ref == "frankentui://replacement-lineage/parser")
+        );
+        assert_eq!(dashboard.next_best_replacements[0].slot_id, "parser");
+        assert!(
+            dashboard
+                .rollback_events
+                .iter()
+                .any(|row| row.slot_id == "gc" && row.evidence_ref.contains("trace-slot-1"))
+        );
+    }
+
+    #[test]
+    fn replacement_progress_from_slot_registry_snapshot_surfaces_blocked_promotions() {
+        let mut registry = SlotRegistry::new();
+        let parser_id = replacement_register_slot(&mut registry, "parser", SlotKind::Parser);
+        let mut signals = BTreeMap::new();
+        signals.insert(
+            parser_id,
+            SlotReplacementSignal {
+                invocation_weight_millionths: 1_000_000,
+                throughput_uplift_millionths: 300_000,
+                security_risk_reduction_millionths: 120_000,
+            },
+        );
+        let mut snapshot = registry
+            .snapshot_replacement_progress(
+                "trace-slot-2",
+                "decision-slot-2",
+                "policy-slot-2",
+                &signals,
+            )
+            .expect("snapshot");
+        snapshot.events.push(ReplacementProgressEvent {
+            trace_id: "trace-slot-2".to_string(),
+            decision_id: "decision-slot-2".to_string(),
+            policy_id: "policy-slot-2".to_string(),
+            component: "self_replacement_progress".to_string(),
+            event: "promotion_gate_failed".to_string(),
+            outcome: "blocked".to_string(),
+            error_code: Some("FE-GATE-007".to_string()),
+            slot_id: Some("parser".to_string()),
+            detail: "differential mismatch".to_string(),
+        });
+
+        let dashboard = ReplacementProgressDashboardView::from_slot_registry_snapshot(
+            &registry,
+            &snapshot,
+            "prod",
+            "us-east-2",
+            7,
+            6_000,
+        );
+
+        assert_eq!(dashboard.blocked_promotions.len(), 1);
+        assert_eq!(
+            dashboard.blocked_promotions[0].gate_failure_code,
+            "FE-GATE-007"
+        );
+        assert_eq!(
+            dashboard.blocked_promotions[0].lineage_ref,
+            "frankentui://replacement-lineage/parser"
+        );
+        assert!(
+            dashboard.blocked_promotions[0]
+                .evidence_ref
+                .contains("decision-slot-2")
+        );
+    }
+
+    #[test]
+    fn replacement_progress_refresh_from_slot_registry_snapshot_updates_on_demotion() {
+        let mut registry = SlotRegistry::new();
+        let parser_id = replacement_register_slot(&mut registry, "parser", SlotKind::Parser);
+
+        let mut signals = BTreeMap::new();
+        signals.insert(
+            parser_id.clone(),
+            SlotReplacementSignal {
+                invocation_weight_millionths: 1_000_000,
+                throughput_uplift_millionths: 450_000,
+                security_risk_reduction_millionths: 200_000,
+            },
+        );
+        let snapshot_before = registry
+            .snapshot_replacement_progress(
+                "trace-slot-3",
+                "decision-slot-3",
+                "policy-slot-3",
+                &signals,
+            )
+            .expect("snapshot before");
+        let view_before = ReplacementProgressDashboardView::from_slot_registry_snapshot(
+            &registry,
+            &snapshot_before,
+            "prod",
+            "us-central-1",
+            21,
+            7_000,
+        );
+
+        registry
+            .begin_candidacy(
+                &parser_id,
+                "candidate-parser".to_string(),
+                "8000".to_string(),
+            )
+            .expect("parser candidacy");
+        registry
+            .promote(
+                &parser_id,
+                "native-parser".to_string(),
+                &replacement_test_authority(),
+                "receipt-parser".to_string(),
+                "9000".to_string(),
+            )
+            .expect("parser promote");
+        registry
+            .demote(
+                &parser_id,
+                "post-promotion drift".to_string(),
+                "10000".to_string(),
+            )
+            .expect("parser demote");
+        let snapshot_after = registry
+            .snapshot_replacement_progress(
+                "trace-slot-3",
+                "decision-slot-3",
+                "policy-slot-3",
+                &signals,
+            )
+            .expect("snapshot after");
+        let refreshed =
+            view_before.refreshed_from_slot_registry_snapshot(&registry, &snapshot_after, 10_500);
+
+        assert_eq!(refreshed.cluster, "prod");
+        assert_eq!(refreshed.zone, "us-central-1");
+        assert_eq!(refreshed.security_epoch, 21);
+        assert_eq!(refreshed.generated_at_unix_ms, 10_500);
+        assert!(
+            refreshed
+                .slot_status_overview
+                .iter()
+                .any(|row| row.slot_id == "parser" && row.promotion_status == "demoted")
+        );
+        assert!(
+            refreshed
+                .rollback_events
+                .iter()
+                .any(|event| event.slot_id == "parser")
+        );
     }
 
     // -----------------------------------------------------------------------

@@ -35,6 +35,10 @@ use frankenengine_engine::frankentui_adapter::{
     build_native_coverage_meter, build_specialization_performance_impact,
     rank_replacement_opportunities,
 };
+use frankenengine_engine::slot_registry::{
+    AuthorityEnvelope, ReplacementProgressEvent, SlotCapability, SlotId, SlotKind, SlotRegistry,
+    SlotReplacementSignal,
+};
 
 // ===========================================================================
 // 1. Schema version constant
@@ -750,6 +754,201 @@ fn replacement_progress_filtering_by_slot_kind() {
     let filtered = view.filtered(&filter);
     assert_eq!(filtered.slot_status_overview.len(), 1);
     assert_eq!(filtered.slot_status_overview[0].slot_kind, "parser");
+}
+
+fn replacement_test_authority() -> AuthorityEnvelope {
+    AuthorityEnvelope {
+        required: vec![SlotCapability::EmitEvidence],
+        permitted: vec![SlotCapability::EmitEvidence, SlotCapability::ReadSource],
+    }
+}
+
+fn replacement_register_slot(registry: &mut SlotRegistry, id: &str, kind: SlotKind) -> SlotId {
+    let slot_id = SlotId::new(id).expect("valid slot id");
+    registry
+        .register_delegate(
+            slot_id.clone(),
+            kind,
+            replacement_test_authority(),
+            format!("delegate-{id}"),
+            "1000".to_string(),
+        )
+        .expect("register delegate");
+    slot_id
+}
+
+#[test]
+fn replacement_progress_from_slot_registry_snapshot_emits_drilldown_refs() {
+    let mut registry = SlotRegistry::new();
+    let parser_id = replacement_register_slot(&mut registry, "parser", SlotKind::Parser);
+    let gc_id = replacement_register_slot(&mut registry, "gc", SlotKind::GarbageCollector);
+
+    registry
+        .begin_candidacy(&gc_id, "candidate-gc".to_string(), "2000".to_string())
+        .expect("gc candidacy");
+    registry
+        .promote(
+            &gc_id,
+            "native-gc".to_string(),
+            &replacement_test_authority(),
+            "receipt-gc".to_string(),
+            "3000".to_string(),
+        )
+        .expect("gc promote");
+    registry
+        .demote(&gc_id, "canary regression".to_string(), "4000".to_string())
+        .expect("gc demote");
+
+    let mut signals = BTreeMap::new();
+    signals.insert(
+        parser_id,
+        SlotReplacementSignal {
+            invocation_weight_millionths: 900_000,
+            throughput_uplift_millionths: 450_000,
+            security_risk_reduction_millionths: 300_000,
+        },
+    );
+    signals.insert(
+        gc_id,
+        SlotReplacementSignal {
+            invocation_weight_millionths: 100_000,
+            throughput_uplift_millionths: 100_000,
+            security_risk_reduction_millionths: 25_000,
+        },
+    );
+    let mut snapshot = registry
+        .snapshot_replacement_progress(
+            "trace-bridge-1",
+            "decision-bridge-1",
+            "policy-bridge-1",
+            &signals,
+        )
+        .expect("snapshot");
+    snapshot.events.push(ReplacementProgressEvent {
+        trace_id: "trace-bridge-1".to_string(),
+        decision_id: "decision-bridge-1".to_string(),
+        policy_id: "policy-bridge-1".to_string(),
+        component: "self_replacement_progress".to_string(),
+        event: "promotion_gate_failed".to_string(),
+        outcome: "blocked".to_string(),
+        error_code: Some("FE-GATE-REPLAY".to_string()),
+        slot_id: Some("parser".to_string()),
+        detail: "differential mismatch".to_string(),
+    });
+
+    let dashboard = ReplacementProgressDashboardView::from_slot_registry_snapshot(
+        &registry,
+        &snapshot,
+        "prod",
+        "us-east-1",
+        9,
+        5_000,
+    );
+
+    assert_eq!(dashboard.cluster, "prod");
+    assert_eq!(dashboard.zone, "us-east-1");
+    assert!(
+        dashboard
+            .slot_status_overview
+            .iter()
+            .any(|row| row.slot_id == "parser"
+                && row.lineage_ref == "frankentui://replacement-lineage/parser")
+    );
+    assert!(
+        dashboard
+            .rollback_events
+            .iter()
+            .any(|event| event.slot_id == "gc" && event.evidence_ref.contains("trace-bridge-1"))
+    );
+    assert_eq!(dashboard.blocked_promotions.len(), 1);
+    assert_eq!(
+        dashboard.blocked_promotions[0].gate_failure_code,
+        "FE-GATE-REPLAY"
+    );
+}
+
+#[test]
+fn replacement_progress_refresh_from_slot_registry_snapshot_updates_after_demotion() {
+    let mut registry = SlotRegistry::new();
+    let parser_id = replacement_register_slot(&mut registry, "parser", SlotKind::Parser);
+
+    let mut signals = BTreeMap::new();
+    signals.insert(
+        parser_id.clone(),
+        SlotReplacementSignal {
+            invocation_weight_millionths: 1_000_000,
+            throughput_uplift_millionths: 500_000,
+            security_risk_reduction_millionths: 200_000,
+        },
+    );
+
+    let snapshot_before = registry
+        .snapshot_replacement_progress(
+            "trace-bridge-2",
+            "decision-bridge-2",
+            "policy-bridge-2",
+            &signals,
+        )
+        .expect("snapshot before");
+    let before = ReplacementProgressDashboardView::from_slot_registry_snapshot(
+        &registry,
+        &snapshot_before,
+        "prod",
+        "us-west-2",
+        13,
+        6_000,
+    );
+
+    registry
+        .begin_candidacy(
+            &parser_id,
+            "candidate-parser".to_string(),
+            "7000".to_string(),
+        )
+        .expect("candidacy");
+    registry
+        .promote(
+            &parser_id,
+            "native-parser".to_string(),
+            &replacement_test_authority(),
+            "receipt-parser".to_string(),
+            "8000".to_string(),
+        )
+        .expect("promote");
+    registry
+        .demote(
+            &parser_id,
+            "post-promotion regression".to_string(),
+            "9000".to_string(),
+        )
+        .expect("demote");
+
+    let snapshot_after = registry
+        .snapshot_replacement_progress(
+            "trace-bridge-2",
+            "decision-bridge-2",
+            "policy-bridge-2",
+            &signals,
+        )
+        .expect("snapshot after");
+    let refreshed = before.refreshed_from_slot_registry_snapshot(&registry, &snapshot_after, 9_500);
+
+    assert_eq!(refreshed.cluster, "prod");
+    assert_eq!(refreshed.zone, "us-west-2");
+    assert_eq!(refreshed.security_epoch, 13);
+    assert_eq!(refreshed.generated_at_unix_ms, 9_500);
+    assert!(
+        refreshed
+            .slot_status_overview
+            .iter()
+            .any(|row| row.slot_id == "parser" && row.promotion_status == "demoted")
+    );
+    assert!(
+        refreshed
+            .rollback_events
+            .iter()
+            .any(|event| event.slot_id == "parser")
+    );
 }
 
 // ===========================================================================
