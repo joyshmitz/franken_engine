@@ -1158,6 +1158,9 @@ mod tests {
         let eval_error = EvalError {
             code: EvalErrorCode::EmptySource,
             message: "source is empty".to_string(),
+            correlation_ids: None,
+            location: None,
+            stack_frames: Vec::new(),
         };
         assert_eq!(eval_error.error_code(), FrankenErrorCode::EvalRuntimeError);
 
@@ -1707,6 +1710,9 @@ mod tests {
             let err = EvalError {
                 code,
                 message: "test".to_string(),
+                correlation_ids: None,
+                location: None,
+                stack_frames: Vec::new(),
             };
             assert_eq!(err.error_code(), FrankenErrorCode::EvalRuntimeError);
         }

@@ -9,8 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use e2e_harness::{
     ArtifactCollector, DeterministicRunner, FixtureStore, GoldenStore, GoldenVerificationError,
     LogExpectation, ReplayInputErrorCode, ScenarioClass, ScenarioMatrixEntry, ScenarioStep,
-    TestFixture, assert_structured_logs, audit_collected_artifacts, run_scenario_matrix,
-    validate_replay_input, verify_replay,
+    TestFixture, assert_structured_logs, audit_collected_artifacts,
+    rgc_advanced_scenario_matrix_registry, run_scenario_matrix,
+    select_rgc_advanced_scenario_matrix, validate_replay_input, verify_replay,
 };
 
 fn test_temp_dir(suffix: &str) -> PathBuf {
@@ -297,73 +298,7 @@ fn scenario_matrix_emits_evidence_packs_for_baseline_differential_chaos_and_cros
     let root = test_temp_dir("scenario-matrix");
     let collector = ArtifactCollector::new(root.join("artifacts")).expect("collector");
 
-    let scenarios = vec![
-        ScenarioMatrixEntry {
-            scenario_id: "baseline-01".to_string(),
-            scenario_class: ScenarioClass::Baseline,
-            fixture: non_error_fixture("baseline-fixture", 77, 6),
-            baseline_scenario_id: None,
-            chaos_profile: None,
-            unit_anchor_ids: vec![
-                "unit.e2e_harness.baseline_lane_replay_contract".to_string(),
-                "unit.e2e_harness.baseline_lane_log_schema".to_string(),
-            ],
-            target_arch: None,
-            worker_pool: Some("pool-baseline".to_string()),
-        },
-        ScenarioMatrixEntry {
-            scenario_id: "differential-01".to_string(),
-            scenario_class: ScenarioClass::Differential,
-            fixture: non_error_fixture("differential-fixture", 78, 7),
-            baseline_scenario_id: Some("baseline-01".to_string()),
-            chaos_profile: None,
-            unit_anchor_ids: vec!["unit.e2e_harness.diff_lane_baseline_alignment".to_string()],
-            target_arch: None,
-            worker_pool: Some("pool-diff".to_string()),
-        },
-        ScenarioMatrixEntry {
-            scenario_id: "chaos-01".to_string(),
-            scenario_class: ScenarioClass::Chaos,
-            fixture: non_error_fixture("chaos-fixture", 79, 9),
-            baseline_scenario_id: None,
-            chaos_profile: Some("latency_spike_partial_failure".to_string()),
-            unit_anchor_ids: vec![
-                "unit.e2e_harness.chaos_lane_deterministic_seed_contract".to_string(),
-            ],
-            target_arch: None,
-            worker_pool: Some("pool-chaos".to_string()),
-        },
-        ScenarioMatrixEntry {
-            scenario_id: "stress-01".to_string(),
-            scenario_class: ScenarioClass::Stress,
-            fixture: non_error_fixture("stress-fixture", 123, 24),
-            baseline_scenario_id: None,
-            chaos_profile: None,
-            unit_anchor_ids: vec!["unit.e2e_harness.stress_lane_budget_guard".to_string()],
-            target_arch: None,
-            worker_pool: Some("pool-a".to_string()),
-        },
-        ScenarioMatrixEntry {
-            scenario_id: "fault-01".to_string(),
-            scenario_class: ScenarioClass::FaultInjection,
-            fixture: sample_fixture(),
-            baseline_scenario_id: None,
-            chaos_profile: None,
-            unit_anchor_ids: vec!["unit.e2e_harness.fault_lane_error_contract".to_string()],
-            target_arch: None,
-            worker_pool: Some("pool-b".to_string()),
-        },
-        ScenarioMatrixEntry {
-            scenario_id: "cross-arch-01".to_string(),
-            scenario_class: ScenarioClass::CrossArch,
-            fixture: non_error_fixture("cross-arch-fixture", 321, 8),
-            baseline_scenario_id: None,
-            chaos_profile: None,
-            unit_anchor_ids: vec!["unit.e2e_harness.cross_arch_repro_contract".to_string()],
-            target_arch: Some("aarch64-unknown-linux-gnu".to_string()),
-            worker_pool: Some("pool-cross".to_string()),
-        },
-    ];
+    let scenarios = rgc_advanced_scenario_matrix_registry();
 
     let execution = run_scenario_matrix(&runner, &collector, &scenarios).expect("matrix run");
     assert_eq!(execution.report.total_scenarios, 6);
@@ -425,7 +360,7 @@ fn scenario_matrix_emits_evidence_packs_for_baseline_differential_chaos_and_cros
         .expect("differential scenario");
     assert_eq!(
         differential.baseline_scenario_id.as_deref(),
-        Some("baseline-01")
+        Some("rgc-053-runtime-baseline-01")
     );
     let chaos = execution
         .report
@@ -440,12 +375,12 @@ fn scenario_matrix_emits_evidence_packs_for_baseline_differential_chaos_and_cros
 
     let summary_json =
         fs::read_to_string(&execution.summary_json_path).expect("matrix summary json");
-    assert!(summary_json.contains("baseline-01"));
-    assert!(summary_json.contains("differential-01"));
-    assert!(summary_json.contains("chaos-01"));
-    assert!(summary_json.contains("stress-01"));
-    assert!(summary_json.contains("fault-01"));
-    assert!(summary_json.contains("cross-arch-01"));
+    assert!(summary_json.contains("rgc-053-runtime-baseline-01"));
+    assert!(summary_json.contains("rgc-053-module-differential-01"));
+    assert!(summary_json.contains("rgc-053-security-chaos-01"));
+    assert!(summary_json.contains("rgc-053-runtime-stress-01"));
+    assert!(summary_json.contains("rgc-053-security-fault-01"));
+    assert!(summary_json.contains("rgc-053-runtime-cross-arch-01"));
     assert!(summary_json.contains("franken-engine.e2e-scenario-matrix.report.v2"));
 }
 
@@ -532,5 +467,27 @@ fn scenario_matrix_rejects_chaos_without_profile() {
     assert!(
         err.to_string().contains("(chaos) requires chaos_profile"),
         "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn advanced_scenario_matrix_selector_filters_classes_and_faults() {
+    let all = select_rgc_advanced_scenario_matrix(&[], true);
+    assert_eq!(all.len(), 6);
+
+    let no_faults = select_rgc_advanced_scenario_matrix(&[], false);
+    assert_eq!(no_faults.len(), 5);
+    assert!(
+        no_faults
+            .iter()
+            .all(|scenario| scenario.scenario_class != ScenarioClass::FaultInjection)
+    );
+
+    let chaos_only = select_rgc_advanced_scenario_matrix(&[ScenarioClass::Chaos], true);
+    assert_eq!(chaos_only.len(), 1);
+    assert_eq!(chaos_only[0].scenario_class, ScenarioClass::Chaos);
+    assert_eq!(
+        chaos_only[0].chaos_profile.as_deref(),
+        Some("latency_spike_partial_failure")
     );
 }

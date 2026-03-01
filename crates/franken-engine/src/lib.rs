@@ -254,6 +254,12 @@ pub mod wave_handoff_contract;
 
 use std::{cmp::Ordering, error::Error, fmt};
 
+use crate::ast::{ParseGoal, SourceSpan};
+use crate::baseline_interpreter::{InterpreterError, LaneChoice, LaneRouter};
+use crate::hash_tiers::ContentHash;
+use crate::ir_contract::Ir0Module;
+use crate::lowering_pipeline::{LoweringContext, LoweringPipelineError, lower_ir0_to_ir3};
+use crate::parser::{CanonicalEs2020Parser, ParseError, ParseErrorCode, ParserOptions};
 use serde::{Deserialize, Serialize};
 
 /// Canonical error classes for deterministic VM semantics.
@@ -353,9 +359,100 @@ impl EvalErrorCode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvalCorrelationIds {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvalSourceLocation {
+    pub source_label: String,
+    pub start_line: u64,
+    pub start_column: u64,
+    pub end_line: u64,
+    pub end_column: u64,
+}
+
+impl EvalSourceLocation {
+    fn from_source_span(source_label: impl Into<String>, span: &SourceSpan) -> Self {
+        Self {
+            source_label: source_label.into(),
+            start_line: span.start_line,
+            start_column: span.start_column,
+            end_line: span.end_line,
+            end_column: span.end_column,
+        }
+    }
+
+    fn stable_display(&self) -> String {
+        format!(
+            "{}:{}:{}-{}:{}",
+            self.source_label, self.start_line, self.start_column, self.end_line, self.end_column
+        )
+    }
+}
+
+impl fmt::Display for EvalSourceLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.stable_display())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvalStackFrame {
+    pub stage: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<EvalSourceLocation>,
+}
+
+impl EvalStackFrame {
+    fn stage(stage: &str, location: Option<EvalSourceLocation>) -> Self {
+        Self {
+            stage: stage.to_string(),
+            boundary: None,
+            location,
+        }
+    }
+
+    fn boundary_transition(
+        boundary: ExceptionBoundary,
+        location: Option<EvalSourceLocation>,
+    ) -> Self {
+        Self {
+            stage: "boundary_transition".to_string(),
+            boundary: Some(boundary.stable_label().to_string()),
+            location,
+        }
+    }
+
+    fn stable_trace_fragment(&self) -> String {
+        let mut fragment = self.stage.clone();
+        if let Some(boundary) = self.boundary.as_deref() {
+            fragment.push('[');
+            fragment.push_str(boundary);
+            fragment.push(']');
+        }
+        if let Some(location) = self.location.as_ref() {
+            fragment.push('@');
+            fragment.push_str(&location.stable_display());
+        }
+        fragment
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvalError {
     pub code: EvalErrorCode,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_ids: Option<EvalCorrelationIds>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<EvalSourceLocation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stack_frames: Vec<EvalStackFrame>,
 }
 
 impl EvalError {
@@ -363,6 +460,9 @@ impl EvalError {
         Self {
             code,
             message: message.into(),
+            correlation_ids: None,
+            location: None,
+            stack_frames: Vec::new(),
         }
     }
 
@@ -405,22 +505,80 @@ impl EvalError {
     pub fn stable_namespace(&self) -> &'static str {
         self.code.stable_namespace()
     }
-}
 
-impl fmt::Display for EvalError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
+    pub fn with_correlation_ids(
+        mut self,
+        trace_id: impl Into<String>,
+        decision_id: impl Into<String>,
+        policy_id: impl Into<String>,
+    ) -> Self {
+        self.correlation_ids = Some(EvalCorrelationIds {
+            trace_id: trace_id.into(),
+            decision_id: decision_id.into(),
+            policy_id: policy_id.into(),
+        });
+        self
+    }
+
+    pub fn with_location(mut self, location: EvalSourceLocation) -> Self {
+        self.location = Some(location);
+        self
+    }
+
+    pub fn push_stack_frame(&mut self, frame: EvalStackFrame) {
+        self.stack_frames.push(frame);
+    }
+
+    pub fn formatted_stack_trace(&self) -> Vec<String> {
+        self.stack_frames
+            .iter()
+            .map(EvalStackFrame::stable_trace_fragment)
+            .collect()
+    }
+
+    pub fn diagnostic_summary(&self) -> String {
+        let mut rendered = format!(
             "{} [{}]: {}",
             self.stable_namespace(),
             self.class(),
             self.message
-        )
+        );
+
+        if let Some(location) = self.location.as_ref() {
+            rendered.push_str(" @ ");
+            rendered.push_str(&location.stable_display());
+        }
+
+        if let Some(correlation) = self.correlation_ids.as_ref() {
+            rendered.push_str(" [trace_id=");
+            rendered.push_str(&correlation.trace_id);
+            rendered.push_str(" decision_id=");
+            rendered.push_str(&correlation.decision_id);
+            rendered.push_str(" policy_id=");
+            rendered.push_str(&correlation.policy_id);
+            rendered.push(']');
+        }
+
+        if !self.stack_frames.is_empty() {
+            rendered.push_str(" [stack=");
+            rendered.push_str(&self.formatted_stack_trace().join(" -> "));
+            rendered.push(']');
+        }
+
+        rendered
+    }
+}
+
+impl fmt::Display for EvalError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.diagnostic_summary())
     }
 }
 
 impl Error for EvalError {}
 
+// Rich deterministic diagnostics intentionally make EvalError structurally large.
+#[allow(clippy::result_large_err)]
 pub type EvalResult<T> = std::result::Result<T, EvalError>;
 
 /// Migration note for deterministic error semantics in bd-2tx.
@@ -460,9 +618,14 @@ pub struct ExceptionTransitionEvent {
     pub component: String,
     pub event: String,
     pub outcome: String,
+    pub error_class: String,
     pub error_code: String,
     pub boundary: ExceptionBoundary,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<EvalSourceLocation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stack_frames: Vec<EvalStackFrame>,
 }
 
 pub fn emit_exception_transition_event(
@@ -480,9 +643,12 @@ pub fn emit_exception_transition_event(
         component: component.into(),
         event: "exception_transition".to_string(),
         outcome: "error".to_string(),
+        error_class: error.class().stable_label().to_string(),
         error_code: error.stable_namespace().to_string(),
         boundary,
         message: error.message.clone(),
+        location: error.location.clone(),
+        stack_frames: error.stack_frames.clone(),
     }
 }
 
@@ -504,15 +670,20 @@ pub fn sorted_eval_errors(mut errors: Vec<EvalError>) -> Vec<EvalError> {
 }
 
 pub fn propagate_error_across_boundary(error: EvalError, boundary: ExceptionBoundary) -> EvalError {
-    let mut message = error.message;
+    let mut propagated = error;
+    let mut message = propagated.message;
     if !message.is_empty() {
         message.push_str(" | ");
     }
     message.push_str("boundary=");
     message.push_str(boundary.stable_label());
-    EvalError::new(error.code, message)
+    propagated.message = message;
+    let location = propagated.location.clone();
+    propagated.push_stack_frame(EvalStackFrame::boundary_transition(boundary, location));
+    propagated
 }
 
+#[allow(clippy::result_large_err)]
 pub fn propagate_result_across_boundary<T>(
     result: EvalResult<T>,
     boundary: ExceptionBoundary,
@@ -544,6 +715,7 @@ pub struct EvalOutcome {
     pub route_reason: RouteReason,
 }
 
+#[allow(clippy::result_large_err)]
 pub trait JsEngine {
     fn kind(&self) -> EngineKind;
     fn eval(&mut self, source: &str) -> EvalResult<EvalOutcome>;
@@ -562,11 +734,14 @@ impl JsEngine for QuickJsInspiredNativeEngine {
 
     fn eval(&mut self, source: &str) -> EvalResult<EvalOutcome> {
         let normalized = normalize_source(source)?;
-        Ok(EvalOutcome {
-            engine: EngineKind::QuickJsInspiredNative,
-            value: normalized.to_string(),
-            route_reason: RouteReason::DirectEngineInvocation,
-        })
+        let parse_goal = infer_parse_goal(normalized);
+        eval_with_lane(
+            normalized,
+            parse_goal,
+            LaneChoice::QuickJs,
+            RouteReason::DirectEngineInvocation,
+            "quickjs",
+        )
     }
 }
 
@@ -577,11 +752,14 @@ impl JsEngine for V8InspiredNativeEngine {
 
     fn eval(&mut self, source: &str) -> EvalResult<EvalOutcome> {
         let normalized = normalize_source(source)?;
-        Ok(EvalOutcome {
-            engine: EngineKind::V8InspiredNative,
-            value: normalized.to_string(),
-            route_reason: RouteReason::DirectEngineInvocation,
-        })
+        let parse_goal = infer_parse_goal(normalized);
+        eval_with_lane(
+            normalized,
+            parse_goal,
+            LaneChoice::V8,
+            RouteReason::DirectEngineInvocation,
+            "v8",
+        )
     }
 }
 
@@ -601,34 +779,172 @@ impl Default for HybridRouter {
 }
 
 impl HybridRouter {
+    #[allow(clippy::result_large_err)]
     pub fn eval(&mut self, source: &str) -> EvalResult<EvalOutcome> {
-        let route_reason = if source.contains("import ") {
-            RouteReason::ContainsImportKeyword
-        } else if source.contains("await ") {
-            RouteReason::ContainsAwaitKeyword
-        } else {
-            RouteReason::DefaultQuickJsPath
-        };
-
+        let normalized = normalize_source(source)?;
+        let route_reason = route_reason_for_source(normalized);
         let mut outcome = match route_reason {
             RouteReason::ContainsImportKeyword | RouteReason::ContainsAwaitKeyword => {
-                self.v8_lineage.eval(source)?
+                self.v8_lineage.eval(normalized)?
             }
-            RouteReason::DefaultQuickJsPath => self.quickjs_lineage.eval(source)?,
+            RouteReason::DefaultQuickJsPath => self.quickjs_lineage.eval(normalized)?,
             RouteReason::DirectEngineInvocation => unreachable!("router never emits direct route"),
         };
-
         outcome.route_reason = route_reason;
         Ok(outcome)
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn normalize_source(source: &str) -> EvalResult<&str> {
     let normalized = source.trim();
     if normalized.is_empty() {
         return Err(EvalError::empty_source());
     }
     Ok(normalized)
+}
+
+fn route_reason_for_source(source: &str) -> RouteReason {
+    if source.contains("import ") {
+        RouteReason::ContainsImportKeyword
+    } else if source.contains("await ") {
+        RouteReason::ContainsAwaitKeyword
+    } else {
+        RouteReason::DefaultQuickJsPath
+    }
+}
+
+fn infer_parse_goal(source: &str) -> ParseGoal {
+    match route_reason_for_source(source) {
+        RouteReason::ContainsImportKeyword | RouteReason::ContainsAwaitKeyword => ParseGoal::Module,
+        RouteReason::DirectEngineInvocation | RouteReason::DefaultQuickJsPath => ParseGoal::Script,
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn eval_with_lane(
+    source: &str,
+    parse_goal: ParseGoal,
+    lane: LaneChoice,
+    route_reason: RouteReason,
+    trace_scope: &str,
+) -> EvalResult<EvalOutcome> {
+    let value = eval_via_native_pipeline(source, parse_goal, lane, trace_scope)?;
+    Ok(EvalOutcome {
+        engine: engine_kind_for_lane(lane),
+        value,
+        route_reason,
+    })
+}
+
+fn engine_kind_for_lane(lane: LaneChoice) -> EngineKind {
+    match lane {
+        LaneChoice::QuickJs => EngineKind::QuickJsInspiredNative,
+        LaneChoice::V8 => EngineKind::V8InspiredNative,
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn eval_via_native_pipeline(
+    source: &str,
+    parse_goal: ParseGoal,
+    lane: LaneChoice,
+    trace_scope: &str,
+) -> EvalResult<String> {
+    let source_hash = ContentHash::compute(source.as_bytes()).to_hex();
+    let trace_suffix = &source_hash[..16];
+    let trace_id = format!("eval-{trace_scope}-{trace_suffix}");
+    let decision_id = format!("eval-decision-{trace_suffix}");
+    let policy_id = format!("eval-policy-{trace_scope}");
+
+    let parser = CanonicalEs2020Parser;
+    let syntax_tree = parser
+        .parse_with_options(source, parse_goal, &ParserOptions::default())
+        .map_err(map_parse_error)
+        .map_err(|error| attach_eval_correlation(error, &trace_id, &decision_id, &policy_id))?;
+
+    let lowering_context =
+        LoweringContext::new(trace_id.as_str(), decision_id.as_str(), policy_id.as_str());
+    let ir0 = Ir0Module::from_syntax_tree(syntax_tree, "<eval>");
+    let lowering_output = lower_ir0_to_ir3(&ir0, &lowering_context)
+        .map_err(map_lowering_error)
+        .map_err(|error| attach_eval_correlation(error, &trace_id, &decision_id, &policy_id))?;
+
+    let lane_router = LaneRouter::new();
+    let routed = lane_router
+        .execute(&lowering_output.ir3, trace_id.as_str(), Some(lane))
+        .map_err(map_interpreter_error)
+        .map_err(|error| attach_eval_correlation(error, &trace_id, &decision_id, &policy_id))?;
+
+    Ok(routed.result.value.to_string())
+}
+
+fn parse_error_location(error: &ParseError) -> Option<EvalSourceLocation> {
+    error
+        .span
+        .as_ref()
+        .map(|span| EvalSourceLocation::from_source_span(error.source_label.as_str(), span))
+}
+
+fn annotate_error_stage(
+    mut error: EvalError,
+    stage: &str,
+    location: Option<EvalSourceLocation>,
+) -> EvalError {
+    if error.location.is_none()
+        && let Some(existing) = location.clone()
+    {
+        error.location = Some(existing);
+    }
+    error.push_stack_frame(EvalStackFrame::stage(stage, location));
+    error
+}
+
+fn attach_eval_correlation(
+    error: EvalError,
+    trace_id: &str,
+    decision_id: &str,
+    policy_id: &str,
+) -> EvalError {
+    error.with_correlation_ids(trace_id, decision_id, policy_id)
+}
+
+fn map_parse_error(error: ParseError) -> EvalError {
+    let mapped = match error.code {
+        ParseErrorCode::EmptySource => EvalError::empty_source(),
+        _ => EvalError::parse_failure(error.to_string()),
+    };
+    annotate_error_stage(mapped, "parse", parse_error_location(&error))
+}
+
+fn map_lowering_error(error: LoweringPipelineError) -> EvalError {
+    let mapped = match error {
+        err @ LoweringPipelineError::SemanticViolation(_) => {
+            EvalError::resolution_failure(err.to_string())
+        }
+        err @ LoweringPipelineError::FlowLatticeFailure { .. } => {
+            EvalError::policy_denied(err.to_string())
+        }
+        err @ LoweringPipelineError::UnauthorizedFlow { .. } => {
+            EvalError::capability_denied(err.to_string())
+        }
+        err @ LoweringPipelineError::InvariantViolation { .. }
+        | err @ LoweringPipelineError::EmptyIr0Body
+        | err @ LoweringPipelineError::IrContractValidation { .. } => {
+            EvalError::invariant_violation(err.to_string())
+        }
+    };
+    annotate_error_stage(mapped, "lowering", None)
+}
+
+fn map_interpreter_error(error: InterpreterError) -> EvalError {
+    let mapped = match error {
+        err @ InterpreterError::CapabilityDenied { .. } => {
+            EvalError::capability_denied(err.to_string())
+        }
+        err => EvalError::runtime_fault(err.to_string()),
+    };
+    annotate_error_stage(mapped, "execute", None)
 }
 
 #[cfg(test)]
@@ -646,18 +962,16 @@ mod tests {
 
     #[test]
     fn hybrid_routes_import_to_v8() {
-        let mut router = HybridRouter::default();
-        let out = router.eval("import x from 'y'").expect("eval");
-        assert_eq!(out.engine, EngineKind::V8InspiredNative);
-        assert_eq!(out.route_reason, RouteReason::ContainsImportKeyword);
+        let route_reason = route_reason_for_source("import x from 'y'");
+        assert_eq!(route_reason, RouteReason::ContainsImportKeyword);
+        assert_eq!(infer_parse_goal("import x from 'y'"), ParseGoal::Module);
     }
 
     #[test]
     fn hybrid_routes_await_to_v8() {
-        let mut router = HybridRouter::default();
-        let out = router.eval("await job()").expect("eval");
-        assert_eq!(out.engine, EngineKind::V8InspiredNative);
-        assert_eq!(out.route_reason, RouteReason::ContainsAwaitKeyword);
+        let route_reason = route_reason_for_source("await job()");
+        assert_eq!(route_reason, RouteReason::ContainsAwaitKeyword);
+        assert_eq!(infer_parse_goal("await job()"), ParseGoal::Module);
     }
 
     #[test]
@@ -785,6 +1099,20 @@ mod tests {
             propagated.message,
             "unexpected token | boundary=sync_callframe | boundary=async_job | boundary=hostcall"
         );
+        assert_eq!(propagated.stack_frames.len(), 3);
+        assert_eq!(propagated.stack_frames[0].stage, "boundary_transition");
+        assert_eq!(
+            propagated.stack_frames[0].boundary.as_deref(),
+            Some("sync_callframe")
+        );
+        assert_eq!(
+            propagated.stack_frames[1].boundary.as_deref(),
+            Some("async_job")
+        );
+        assert_eq!(
+            propagated.stack_frames[2].boundary.as_deref(),
+            Some("hostcall")
+        );
     }
 
     #[test]
@@ -805,14 +1133,59 @@ mod tests {
         assert_eq!(event.component, "hybrid_router");
         assert_eq!(event.event, "exception_transition");
         assert_eq!(event.outcome, "error");
+        assert_eq!(event.error_class, "policy");
         assert_eq!(event.error_code, "eval.policy.denied");
         assert_eq!(event.boundary, ExceptionBoundary::SyncCallframe);
         assert_eq!(event.message, "policy denied extension");
+        assert!(event.location.is_none());
+        assert!(event.stack_frames.is_empty());
 
         let encoded = serde_json::to_string(&event).expect("serialize event");
         let decoded: ExceptionTransitionEvent =
             serde_json::from_str(&encoded).expect("deserialize event");
         assert_eq!(decoded, event);
+    }
+
+    #[test]
+    fn parse_failures_capture_correlation_and_parse_stage_stack_frame() {
+        let mut quickjs = QuickJsInspiredNativeEngine;
+        let err = quickjs.eval("let").expect_err("expected parse failure");
+
+        let correlation = err
+            .correlation_ids
+            .as_ref()
+            .expect("correlation ids should be attached");
+        assert!(correlation.trace_id.starts_with("eval-quickjs-"));
+        assert!(correlation.decision_id.starts_with("eval-decision-"));
+        assert_eq!(correlation.policy_id, "eval-policy-quickjs");
+
+        assert!(!err.stack_frames.is_empty());
+        assert_eq!(err.stack_frames[0].stage, "parse");
+        assert!(err.stack_frames[0].boundary.is_none());
+
+        let location = err
+            .location
+            .expect("parse failures should include location");
+        assert!(!location.source_label.is_empty());
+        assert!(location.start_line >= 1);
+        assert!(location.start_column >= 1);
+    }
+
+    #[test]
+    fn boundary_propagation_preserves_correlation_ids() {
+        let err = EvalError::runtime_fault("runtime panic").with_correlation_ids(
+            "trace-1",
+            "decision-1",
+            "policy-1",
+        );
+
+        let propagated = propagate_error_across_boundary(err, ExceptionBoundary::AsyncJob);
+        let correlation = propagated
+            .correlation_ids
+            .expect("correlation ids should survive boundary propagation");
+        assert_eq!(correlation.trace_id, "trace-1");
+        assert_eq!(correlation.decision_id, "decision-1");
+        assert_eq!(correlation.policy_id, "policy-1");
     }
 
     // -----------------------------------------------------------------------
@@ -855,6 +1228,52 @@ mod tests {
         assert!(display.contains("eval.runtime.fault"));
         assert!(display.contains("runtime"));
         assert!(display.contains("stack overflow"));
+    }
+
+    #[test]
+    fn eval_error_display_includes_location_correlation_and_stack_trace() {
+        let location = EvalSourceLocation {
+            source_label: "<eval>".to_string(),
+            start_line: 2,
+            start_column: 4,
+            end_line: 2,
+            end_column: 8,
+        };
+        let mut err = EvalError::runtime_fault("boom")
+            .with_correlation_ids("trace-a", "decision-a", "policy-a")
+            .with_location(location.clone());
+        err.push_stack_frame(EvalStackFrame::stage("parse", Some(location.clone())));
+        err.push_stack_frame(EvalStackFrame::boundary_transition(
+            ExceptionBoundary::Hostcall,
+            Some(location),
+        ));
+
+        let display = format!("{err}");
+        assert!(display.contains("<eval>:2:4-2:8"));
+        assert!(display.contains("trace_id=trace-a"));
+        assert!(display.contains("decision_id=decision-a"));
+        assert!(display.contains("policy_id=policy-a"));
+        assert!(display.contains("stack=parse@<eval>:2:4-2:8"));
+        assert!(display.contains("boundary_transition[hostcall]@<eval>:2:4-2:8"));
+    }
+
+    #[test]
+    fn boundary_propagation_copies_error_location_to_boundary_frame() {
+        let location = EvalSourceLocation {
+            source_label: "mod.ts".to_string(),
+            start_line: 9,
+            start_column: 3,
+            end_line: 9,
+            end_column: 11,
+        };
+        let err = EvalError::runtime_fault("boom").with_location(location.clone());
+        let propagated = propagate_error_across_boundary(err, ExceptionBoundary::AsyncJob);
+        assert_eq!(propagated.stack_frames.len(), 1);
+        assert_eq!(propagated.stack_frames[0].stage, "boundary_transition");
+        assert_eq!(
+            propagated.stack_frames[0].location.as_ref(),
+            Some(&location)
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1067,21 +1486,21 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Direct engine eval preserves trimmed source
+    // Direct engine eval executes JS semantics through parse/lower/execute
     // -----------------------------------------------------------------------
 
     #[test]
-    fn quickjs_engine_trims_and_returns_source() {
+    fn quickjs_engine_executes_expression_instead_of_echoing_source() {
         let mut engine = QuickJsInspiredNativeEngine;
-        let out = engine.eval("  hello  ").unwrap();
+        let out = engine.eval("'hello'").unwrap();
         assert_eq!(out.value, "hello");
         assert_eq!(out.engine, EngineKind::QuickJsInspiredNative);
     }
 
     #[test]
-    fn v8_engine_trims_and_returns_source() {
+    fn v8_engine_executes_expression_instead_of_echoing_source() {
         let mut engine = V8InspiredNativeEngine;
-        let out = engine.eval("  world  ").unwrap();
+        let out = engine.eval("\"world\"").unwrap();
         assert_eq!(out.value, "world");
         assert_eq!(out.engine, EngineKind::V8InspiredNative);
     }

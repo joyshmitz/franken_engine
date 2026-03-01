@@ -508,6 +508,9 @@ fn has_error_code_eval_error_all_codes_map_to_eval_runtime() {
         let err = EvalError {
             code,
             message: "test".into(),
+            correlation_ids: None,
+            location: None,
+            stack_frames: Vec::new(),
         };
         assert_eq!(err.error_code(), FrankenErrorCode::EvalRuntimeError);
     }

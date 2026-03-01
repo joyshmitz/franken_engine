@@ -20,8 +20,9 @@ use frankenengine_engine::baseline_interpreter::{LaneChoice, LaneRouter};
 use frankenengine_engine::ir_contract::Ir0Module;
 use frankenengine_engine::lowering_pipeline::{LoweringContext, lower_ir0_to_ir3};
 use frankenengine_engine::{
-    EngineKind, EvalError, EvalErrorCode, HybridRouter, JsEngine, QuickJsInspiredNativeEngine,
-    RouteReason, V8InspiredNativeEngine,
+    EngineKind, EvalError, EvalErrorCode, ExceptionBoundary, HybridRouter, JsEngine,
+    QuickJsInspiredNativeEngine, RouteReason, V8InspiredNativeEngine,
+    propagate_error_across_boundary,
 };
 
 // ---------------------------------------------------------------------------
@@ -82,6 +83,65 @@ fn hybrid_router_default_is_constructible() {
     // Verify it can evaluate a trivial program.
     let outcome = router.eval("42").expect("should eval literal");
     assert_eq!(outcome.engine, EngineKind::QuickJsInspiredNative);
+    assert_eq!(outcome.value, "42");
+}
+
+#[test]
+fn quickjs_eval_executes_expression_instead_of_echoing_source() {
+    let mut engine = QuickJsInspiredNativeEngine;
+    let outcome = engine
+        .eval("'alpha'")
+        .expect("quickjs should execute expression");
+    assert_eq!(outcome.engine, EngineKind::QuickJsInspiredNative);
+    assert_eq!(outcome.value, "alpha");
+}
+
+#[test]
+fn v8_eval_executes_expression_instead_of_echoing_source() {
+    let mut engine = V8InspiredNativeEngine;
+    let outcome = engine
+        .eval("\"beta\"")
+        .expect("v8 should execute expression");
+    assert_eq!(outcome.engine, EngineKind::V8InspiredNative);
+    assert_eq!(outcome.value, "beta");
+}
+
+#[test]
+fn invalid_syntax_maps_to_parse_failure_for_direct_lanes() {
+    let mut quickjs = QuickJsInspiredNativeEngine;
+    let mut v8 = V8InspiredNativeEngine;
+
+    let quickjs_err = quickjs.eval("var").expect_err("expected parse failure");
+    let v8_err = v8.eval("let").expect_err("expected parse failure");
+
+    assert_eq!(quickjs_err.code, EvalErrorCode::ParseFailure);
+    assert_eq!(v8_err.code, EvalErrorCode::ParseFailure);
+    assert!(quickjs_err.correlation_ids.is_some());
+    assert!(v8_err.correlation_ids.is_some());
+    assert_eq!(quickjs_err.stack_frames[0].stage, "parse");
+    assert_eq!(v8_err.stack_frames[0].stage, "parse");
+    assert!(quickjs_err.location.is_some());
+    assert!(v8_err.location.is_some());
+}
+
+#[test]
+fn parse_failure_display_includes_location_correlation_and_stack_trace() {
+    let mut quickjs = QuickJsInspiredNativeEngine;
+    let err = quickjs.eval("let").expect_err("expected parse failure");
+    let display = format!("{err}");
+
+    let location = err
+        .location
+        .as_ref()
+        .expect("parse failure should carry source location");
+    let location_text = format!("{location}");
+
+    assert!(display.contains("eval.parse.failure"));
+    assert!(display.contains(&location_text));
+    assert!(display.contains("trace_id=eval-quickjs-"));
+    assert!(display.contains("decision_id=eval-decision-"));
+    assert!(display.contains("policy_id=eval-policy-quickjs"));
+    assert!(display.contains("stack=parse@"));
 }
 
 // =========================================================================
@@ -129,6 +189,40 @@ fn v8_rejects_whitespace_only() {
     assert_eq!(err.code, EvalErrorCode::EmptySource);
 }
 
+#[test]
+fn boundary_propagation_appends_boundary_stack_frame() {
+    let err =
+        EvalError::runtime_fault("boom").with_correlation_ids("trace-a", "decision-a", "policy-a");
+    let propagated = propagate_error_across_boundary(err, ExceptionBoundary::Hostcall);
+    assert!(propagated.message.contains("boundary=hostcall"));
+    assert_eq!(propagated.stack_frames.len(), 1);
+    assert_eq!(propagated.stack_frames[0].stage, "boundary_transition");
+    assert_eq!(
+        propagated.stack_frames[0].boundary.as_deref(),
+        Some("hostcall")
+    );
+}
+
+#[test]
+fn boundary_propagation_copies_location_into_boundary_stack_frame() {
+    let mut quickjs = QuickJsInspiredNativeEngine;
+    let err = quickjs.eval("let").expect_err("expected parse failure");
+    let location = err.location.clone().expect("expected parse location");
+    let propagated = propagate_error_across_boundary(err, ExceptionBoundary::Hostcall);
+
+    assert_eq!(propagated.stack_frames.len(), 2);
+    assert_eq!(propagated.stack_frames[0].stage, "parse");
+    assert_eq!(propagated.stack_frames[1].stage, "boundary_transition");
+    assert_eq!(
+        propagated.stack_frames[1].boundary.as_deref(),
+        Some("hostcall")
+    );
+    assert_eq!(
+        propagated.stack_frames[1].location.as_ref(),
+        Some(&location)
+    );
+}
+
 // =========================================================================
 // Section 3: Route selection
 // =========================================================================
@@ -157,14 +251,11 @@ fn hybrid_routes_await_keyword_to_v8() {
 
 #[test]
 fn hybrid_routes_simple_source_to_quickjs() {
-    let route = if "var x = 1".contains("import ") {
-        RouteReason::ContainsImportKeyword
-    } else if "var x = 1".contains("await ") {
-        RouteReason::ContainsAwaitKeyword
-    } else {
-        RouteReason::DefaultQuickJsPath
-    };
-    assert_eq!(route, RouteReason::DefaultQuickJsPath);
+    let mut router = HybridRouter::default();
+    let outcome = router.eval("'route'").expect("expected eval success");
+    assert_eq!(outcome.route_reason, RouteReason::DefaultQuickJsPath);
+    assert_eq!(outcome.engine, EngineKind::QuickJsInspiredNative);
+    assert_eq!(outcome.value, "route");
 }
 
 // =========================================================================
