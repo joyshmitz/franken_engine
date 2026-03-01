@@ -92,6 +92,10 @@ fn smoke_partition_selects_four_sorted_fixtures() {
     config.policy_id = "policy-test-smoke".to_string();
 
     let report = run_parser_oracle(&config).expect("run parser oracle");
+    assert_eq!(
+        report.taxonomy_version,
+        "franken-engine.parser-oracle.taxonomy.v1"
+    );
     assert_eq!(report.summary.total_fixtures, 4);
     let ids: Vec<&str> = report
         .fixture_results
@@ -133,6 +137,10 @@ fn artifact_hash_mismatch_is_critical_in_fail_closed_mode() {
     config.policy_id = "policy-test-fail-closed".to_string();
 
     let report = run_parser_oracle(&config).expect("run parser oracle");
+    assert_eq!(
+        report.taxonomy_version,
+        "franken-engine.parser-oracle.taxonomy.v1"
+    );
     assert_eq!(report.summary.critical_drift_count, 1);
     assert!(report.decision.promotion_blocked);
     assert_eq!(
@@ -168,6 +176,10 @@ fn report_only_mode_does_not_block_even_when_critical_drift_exists() {
     config.policy_id = "policy-test-report-only".to_string();
 
     let report = run_parser_oracle(&config).expect("run parser oracle");
+    assert_eq!(
+        report.taxonomy_version,
+        "franken-engine.parser-oracle.taxonomy.v1"
+    );
     assert_eq!(report.summary.critical_drift_count, 1);
     assert!(!report.decision.promotion_blocked);
     assert!(report.decision.fallback_triggered);

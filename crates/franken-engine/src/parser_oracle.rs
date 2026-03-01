@@ -13,6 +13,8 @@ use crate::parser::{CanonicalEs2020Parser, ParseErrorCode, ParserMode, ParserOpt
 
 pub const DEFAULT_FIXTURE_CATALOG_PATH: &str =
     "crates/franken-engine/tests/fixtures/parser_phase0_semantic_fixtures.json";
+pub const PARSER_ORACLE_REPORT_SCHEMA_VERSION: &str = "franken-engine.parser-oracle.report.v1";
+pub const PARSER_ORACLE_TAXONOMY_VERSION: &str = "franken-engine.parser-oracle.taxonomy.v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -203,6 +205,7 @@ pub struct OracleDecision {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ParserOracleReport {
     pub schema_version: String,
+    pub taxonomy_version: String,
     pub generated_at_utc: String,
     pub trace_id: String,
     pub decision_id: String,
@@ -420,7 +423,8 @@ pub fn run_parser_oracle(
     let decision = decide(config.gate_mode, &summary, expected_loss.recommended_action);
 
     Ok(ParserOracleReport {
-        schema_version: "franken-engine.parser-oracle.report.v1".to_string(),
+        schema_version: PARSER_ORACLE_REPORT_SCHEMA_VERSION.to_string(),
+        taxonomy_version: PARSER_ORACLE_TAXONOMY_VERSION.to_string(),
         generated_at_utc: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
         trace_id: config.trace_id.clone(),
         decision_id: config.decision_id.clone(),

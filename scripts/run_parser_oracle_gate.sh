@@ -13,6 +13,9 @@ partition="${PARSER_ORACLE_PARTITION:-smoke}"
 gate_mode="${PARSER_ORACLE_GATE_MODE:-report_only}"
 seed="${PARSER_ORACLE_SEED:-1}"
 fixture_catalog="${PARSER_ORACLE_FIXTURE_CATALOG:-crates/franken-engine/tests/fixtures/parser_phase0_semantic_fixtures.json}"
+report_schema_version="${PARSER_ORACLE_REPORT_SCHEMA_VERSION:-franken-engine.parser-oracle.report.v1}"
+taxonomy_version="${PARSER_ORACLE_TAXONOMY_VERSION:-franken-engine.parser-oracle.taxonomy.v1}"
+remediation_map_version="${PARSER_ORACLE_REMEDIATION_MAP_VERSION:-franken-engine.parser-oracle.remediation-map.v1}"
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_dir="${artifact_root}/${timestamp}"
@@ -26,6 +29,7 @@ evidence_path="${run_dir}/metamorphic_evidence.jsonl"
 failures_dir="${run_dir}/minimized_failures"
 golden_checksums_path="${run_dir}/golden_checksums.txt"
 proof_note_path="${run_dir}/proof_note.md"
+drift_digest_path="${run_dir}/drift_digest.md"
 env_path="${run_dir}/env.json"
 repro_lock_path="${run_dir}/repro.lock"
 
@@ -34,6 +38,15 @@ decision_id="decision-parser-oracle-${timestamp}"
 policy_id="policy-parser-oracle-v1"
 
 mkdir -p "$run_dir" "$failures_dir"
+
+bootstrap_script="${root_dir}/scripts/e2e/parser_oracle_env_bootstrap.sh"
+if [[ -f "$bootstrap_script" ]]; then
+  # shellcheck source=/dev/null
+  source "$bootstrap_script"
+  if declare -F parser_oracle_apply_deterministic_env >/dev/null 2>&1; then
+    parser_oracle_apply_deterministic_env
+  fi
+fi
 
 if ! command -v rch >/dev/null 2>&1; then
   echo "rch is required for parser oracle gate heavy commands" >&2
@@ -88,6 +101,123 @@ pairs_for_partition() {
   esac
 }
 
+remediation_for_class() {
+  case "$1" in
+    equivalent) echo "none" ;;
+    diagnostics_drift)
+      echo "inspect normalized diagnostics envelope and taxonomy mapping"
+      ;;
+    semantic_drift)
+      echo "replay fixture and compare canonical AST/hash materialization"
+      ;;
+    harness_nondeterminism)
+      echo "rerun with fixed seed/order and verify deterministic environment bootstrap"
+      ;;
+    artifact_integrity_failure)
+      echo "verify expected fixture hash and artifact checksum provenance"
+      ;;
+    *) echo "triage parser-oracle drift and classify before promotion" ;;
+  esac
+}
+
+owner_hint_for_family() {
+  case "$1" in
+    statement.* | expression.* | declaration.*) echo "parser-core" ;;
+    module.* | import.* | export.*) echo "module-system" ;;
+    diagnostics.* | error.*) echo "diagnostics" ;;
+    *) echo "parser-frontier" ;;
+  esac
+}
+
+validate_relation_report_contract() {
+  local actual_schema actual_taxonomy
+  actual_schema="$(jq -r '.schema_version // empty' "$relation_report_path")"
+  actual_taxonomy="$(jq -r '.taxonomy_version // empty' "$relation_report_path")"
+
+  if [[ "$actual_schema" != "$report_schema_version" ]]; then
+    echo "parser oracle relation report schema mismatch: expected=${report_schema_version} actual=${actual_schema}" >&2
+    return 1
+  fi
+
+  if [[ "$actual_taxonomy" != "$taxonomy_version" ]]; then
+    echo "parser oracle relation report taxonomy mismatch: expected=${taxonomy_version} actual=${actual_taxonomy}" >&2
+    return 1
+  fi
+}
+
+generate_drift_digest() {
+  local actual_schema actual_taxonomy generated_at
+  actual_schema="$(jq -r '.schema_version // "unknown"' "$relation_report_path")"
+  actual_taxonomy="$(jq -r '.taxonomy_version // "unknown"' "$relation_report_path")"
+  generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  {
+    echo "# Parser Oracle Drift Digest"
+    echo
+    echo "- generated_at_utc: ${generated_at}"
+    echo "- report_schema_version: ${actual_schema}"
+    echo "- taxonomy_version: ${actual_taxonomy}"
+    echo "- remediation_map_version: ${remediation_map_version}"
+    echo "- trace_id: ${trace_id}"
+    echo "- decision_id: ${decision_id}"
+    echo "- policy_id: ${policy_id}"
+    echo
+    echo "## Ranked Drift Classes"
+    echo
+    echo "| rank | drift_class | count | remediation |"
+    echo "| --- | --- | ---: | --- |"
+    local class_rows class_rank
+    class_rows="$(jq -r '
+      .fixture_results
+      | group_by(.drift_class)
+      | map({drift_class: .[0].drift_class, count: length})
+      | sort_by(-.count, .drift_class)
+      | .[]
+      | "\(.drift_class)\t\(.count)"
+    ' "$relation_report_path")"
+    if [[ -z "$class_rows" ]]; then
+      echo "| 1 | equivalent | 0 | none |"
+    else
+      class_rank=1
+      while IFS=$'\t' read -r drift_class drift_count; do
+        [[ -n "$drift_class" ]] || continue
+        echo "| ${class_rank} | ${drift_class} | ${drift_count} | $(remediation_for_class "$drift_class") |"
+        class_rank=$((class_rank + 1))
+      done <<<"$class_rows"
+    fi
+    echo
+    echo "## Divergence Clusters"
+    echo
+    echo "| rank | drift_cluster_id | family_id | owner_hint | drift_count | drift_classes | replay_command |"
+    echo "| --- | --- | --- | --- | ---: | --- | --- |"
+    local family_rows family_rank
+    family_rows="$(jq -r '
+      .fixture_results
+      | map(select(.drift_class != "equivalent"))
+      | group_by(.family_id)
+      | map({
+          family_id: .[0].family_id,
+          drift_count: length,
+          drift_classes: (map(.drift_class) | unique | join(",")),
+          replay_command: (.[0].replay_command // "n/a")
+        })
+      | sort_by(-.drift_count, .family_id)
+      | .[]
+      | "\(.family_id)\t\(.drift_count)\t\(.drift_classes)\t\(.replay_command)"
+    ' "$relation_report_path")"
+    if [[ -z "$family_rows" ]]; then
+      echo "| 1 | cluster:none | none | parser-frontier | 0 | equivalent | n/a |"
+    else
+      family_rank=1
+      while IFS=$'\t' read -r family_id drift_count drift_classes replay_command; do
+        [[ -n "$family_id" ]] || continue
+        echo "| ${family_rank} | cluster:${family_id} | ${family_id} | $(owner_hint_for_family "$family_id") | ${drift_count} | ${drift_classes} | \`${replay_command}\` |"
+        family_rank=$((family_rank + 1))
+      done <<<"$family_rows"
+    fi
+  } >"$drift_digest_path"
+}
+
 declare -a commands_run=()
 failed_command=""
 manifest_written=false
@@ -132,21 +262,27 @@ write_placeholders() {
   [[ -f "$relation_report_path" ]] || echo "{\"status\":\"not_run\"}" >"$relation_report_path"
   [[ -f "$relation_events_path" ]] || : >"$relation_events_path"
   [[ -f "$evidence_path" ]] || : >"$evidence_path"
+  [[ -f "$drift_digest_path" ]] || : >"$drift_digest_path"
 }
 
 write_supporting_artifacts() {
-  local git_commit kernel os_name arch cpu_model cores mem_kb mem_bytes rustc_version cargo_version
+  local git_commit kernel os_name arch cpu_model cpu_feature_profile cores mem_kb mem_bytes
+  local rustc_version cargo_version deterministic_env_version toolchain_fingerprint
   git_commit="$(git rev-parse HEAD 2>/dev/null || echo "unknown")"
   kernel="$(uname -r)"
   os_name="$(uname -s | tr '[:upper:]' '[:lower:]')"
   arch="$(uname -m)"
   cpu_model="$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | sed 's/.*: //')"
   [[ -n "$cpu_model" ]] || cpu_model="unknown"
+  cpu_feature_profile="$(grep -m1 '^flags' /proc/cpuinfo 2>/dev/null | sed 's/^[^:]*:[[:space:]]*//')"
+  [[ -n "$cpu_feature_profile" ]] || cpu_feature_profile="unknown"
   cores="$(nproc 2>/dev/null || echo 0)"
   mem_kb="$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
   mem_bytes="$((mem_kb * 1024))"
   rustc_version="$(rustc --version | sed 's/^rustc //')"
   cargo_version="$(cargo --version | sed 's/^cargo //')"
+  deterministic_env_version="${PARSER_ORACLE_ENV_BOOTSTRAP_VERSION:-franken-engine.parser-oracle.env-bootstrap.v1}"
+  toolchain_fingerprint="${toolchain}|rustc:${rustc_version}|cargo:${cargo_version}"
 
   jq -n \
     --arg captured_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -155,10 +291,16 @@ write_supporting_artifacts() {
     --arg kernel "$kernel" \
     --arg arch "$arch" \
     --arg cpu_model "$cpu_model" \
+    --arg cpu_feature_profile "$cpu_feature_profile" \
     --argjson cores "$cores" \
     --argjson memory_bytes "$mem_bytes" \
     --arg rustc "$rustc_version" \
     --arg cargo "$cargo_version" \
+    --arg report_schema_version "$report_schema_version" \
+    --arg taxonomy_version "$taxonomy_version" \
+    --arg remediation_map_version "$remediation_map_version" \
+    --arg deterministic_env_version "$deterministic_env_version" \
+    --arg toolchain_fingerprint "$toolchain_fingerprint" \
     '{
       schema_version: "franken-engine.env.v1",
       captured_at_utc: $captured_at,
@@ -168,14 +310,24 @@ write_supporting_artifacts() {
         kernel: $kernel,
         arch: $arch,
         cpu_model: $cpu_model,
+        cpu_feature_profile: $cpu_feature_profile,
         cpu_cores_logical: $cores,
         memory_bytes: $memory_bytes
       },
-      toolchain: { rustc: $rustc, cargo: $cargo, target_dir: env.CARGO_TARGET_DIR },
+      toolchain: {
+        rustc: $rustc,
+        cargo: $cargo,
+        target_dir: env.CARGO_TARGET_DIR,
+        fingerprint: $toolchain_fingerprint
+      },
       parser_oracle: {
         partition: env.PARSER_ORACLE_PARTITION,
         gate_mode: env.PARSER_ORACLE_GATE_MODE,
-        fixture_catalog: env.PARSER_ORACLE_FIXTURE_CATALOG
+        fixture_catalog: env.PARSER_ORACLE_FIXTURE_CATALOG,
+        report_schema_version: $report_schema_version,
+        taxonomy_version: $taxonomy_version,
+        remediation_map_version: $remediation_map_version,
+        deterministic_env_schema_version: $deterministic_env_version
       }
     }' >"$env_path"
 
@@ -195,6 +347,10 @@ write_supporting_artifacts() {
 - partition: ${partition}
 - gate_mode: ${gate_mode}
 - fixture_catalog: ${fixture_catalog}
+- report_schema_version: ${report_schema_version}
+- taxonomy_version: ${taxonomy_version}
+- remediation_map_version: ${remediation_map_version}
+- toolchain_fingerprint: ${toolchain_fingerprint}
 
 ## Drift Summary
 
@@ -219,10 +375,12 @@ cargo run -p frankenengine-engine --bin franken_parser_oracle_report -- \
 EOF_NOTE
 
   local baseline_sha relation_sha relation_events_sha evidence_sha env_sha proof_sha
+  local drift_digest_sha
   baseline_sha="$(sha256sum "$baseline_path" | awk '{print $1}')"
   relation_sha="$(sha256sum "$relation_report_path" | awk '{print $1}')"
   relation_events_sha="$(sha256sum "$relation_events_path" | awk '{print $1}')"
   evidence_sha="$(sha256sum "$evidence_path" | awk '{print $1}')"
+  drift_digest_sha="$(sha256sum "$drift_digest_path" | awk '{print $1}')"
   env_sha="$(sha256sum "$env_path" | awk '{print $1}')"
   proof_sha="$(sha256sum "$proof_note_path" | awk '{print $1}')"
 
@@ -243,7 +401,8 @@ EOF_NOTE
     { "path": "${baseline_path}", "sha256": "sha256:${baseline_sha}" },
     { "path": "${relation_report_path}", "sha256": "sha256:${relation_sha}" },
     { "path": "${relation_events_path}", "sha256": "sha256:${relation_events_sha}" },
-    { "path": "${evidence_path}", "sha256": "sha256:${evidence_sha}" }
+    { "path": "${evidence_path}", "sha256": "sha256:${evidence_sha}" },
+    { "path": "${drift_digest_path}", "sha256": "sha256:${drift_digest_sha}" }
   ]
 }
 EOF_REPRO
@@ -253,6 +412,7 @@ ${baseline_sha}  ${baseline_path}
 ${relation_sha}  ${relation_report_path}
 ${relation_events_sha}  ${relation_events_path}
 ${evidence_sha}  ${evidence_path}
+${drift_digest_sha}  ${drift_digest_path}
 ${env_sha}  ${env_path}
 ${proof_sha}  ${proof_note_path}
 $(sha256sum "$repro_lock_path" | awk '{print $1}')  ${repro_lock_path}
@@ -288,12 +448,16 @@ write_manifest() {
 
   printf '%s\n' "${commands_run[@]}" >"$commands_path"
   {
-    echo "{\"schema_version\":\"franken-engine.parser-log-event.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"parser_oracle_gate\",\"event\":\"gate_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
+    echo "{\"schema_version\":\"franken-engine.parser-log-event.v1\",\"taxonomy_version\":\"${taxonomy_version}\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"parser_oracle_gate\",\"event\":\"gate_completed\",\"replay_command\":\"./scripts/run_parser_oracle_gate.sh ${mode}\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
   } >"$events_path"
 
   {
     echo "{"
     echo '  "schema_version": "franken-engine.parser-oracle-gate.run-manifest.v1",'
+    echo "  \"report_schema_version\": \"${report_schema_version}\","
+    echo "  \"taxonomy_version\": \"${taxonomy_version}\","
+    echo "  \"remediation_map_version\": \"${remediation_map_version}\","
+    echo "  \"deterministic_env_schema_version\": \"${PARSER_ORACLE_ENV_BOOTSTRAP_VERSION:-franken-engine.parser-oracle.env-bootstrap.v1}\","
     echo '  "bead_id": "bd-1b70",'
     echo '  "component": "parser_oracle_gate",'
     echo "  \"mode\": \"${mode}\","
@@ -330,6 +494,7 @@ write_manifest() {
     echo "    \"relation_report\": \"${relation_report_path}\","
     echo "    \"relation_events\": \"${relation_events_path}\","
     echo "    \"metamorphic_evidence\": \"${evidence_path}\","
+    echo "    \"drift_digest\": \"${drift_digest_path}\","
     echo "    \"minimized_failures_dir\": \"${failures_dir}\","
     echo "    \"golden_checksums\": \"${golden_checksums_path}\","
     echo "    \"proof_note\": \"${proof_note_path}\","
@@ -346,19 +511,19 @@ run_mode() {
   case "$mode" in
     check)
       run_step "cargo check -p frankenengine-engine --lib --bin franken_parser_oracle_report" \
-        cargo check -p frankenengine-engine --lib --bin franken_parser_oracle_report
+        cargo check -p frankenengine-engine --lib --bin franken_parser_oracle_report || return 1
       ;;
     test)
       run_step "cargo test -p frankenengine-engine --test parser_oracle_gate" \
-        cargo test -p frankenengine-engine --test parser_oracle_gate
+        cargo test -p frankenengine-engine --test parser_oracle_gate || return 1
       run_step "cargo test -p frankenengine-engine --test parser_phase0_semantic_fixtures --test parser_phase0_metamorphic" \
-        cargo test -p frankenengine-engine --test parser_phase0_semantic_fixtures --test parser_phase0_metamorphic
+        cargo test -p frankenengine-engine --test parser_phase0_semantic_fixtures --test parser_phase0_metamorphic || return 1
       ;;
     ci)
       run_step "cargo check -p frankenengine-engine --lib --bin franken_parser_oracle_report" \
-        cargo check -p frankenengine-engine --lib --bin franken_parser_oracle_report
+        cargo check -p frankenengine-engine --lib --bin franken_parser_oracle_report || return 1
       run_step "cargo test -p frankenengine-engine --test parser_oracle_gate --test parser_phase0_semantic_fixtures --test parser_phase0_metamorphic" \
-        cargo test -p frankenengine-engine --test parser_oracle_gate --test parser_phase0_semantic_fixtures --test parser_phase0_metamorphic
+        cargo test -p frankenengine-engine --test parser_oracle_gate --test parser_phase0_semantic_fixtures --test parser_phase0_metamorphic || return 1
 
       run_step "cargo run -p frankenengine-engine --bin franken_parser_oracle_report -- --partition ${partition} --gate-mode ${gate_mode} --seed ${seed} --trace-id ${trace_id} --decision-id ${decision_id} --policy-id ${policy_id} --fixture-catalog ${fixture_catalog} --out ${relation_report_path}" \
         cargo run -p frankenengine-engine --bin franken_parser_oracle_report -- \
@@ -369,10 +534,16 @@ run_mode() {
           --decision-id "$decision_id" \
           --policy-id "$policy_id" \
           --fixture-catalog "$fixture_catalog" \
-          --out "$relation_report_path"
+          --out "$relation_report_path" || return 1
+
+      if ! validate_relation_report_contract; then
+        failed_command="validate parser oracle relation report schema/taxonomy contract"
+        return 1
+      fi
 
       jq '{
           schema_version: "franken-engine.parser-oracle.baseline.v1",
+          taxonomy_version: .taxonomy_version,
           generated_at_utc,
           parser_mode,
           fixture_catalog_path,
@@ -401,7 +572,8 @@ run_mode() {
           --relation parser_parenthesization_invariance \
           --relation parser_asi_equivalence \
           --relation parser_unicode_escape_equivalence \
-          --relation parser_source_position_independence
+          --relation parser_source_position_independence || return 1
+      generate_drift_digest
       ;;
     *)
       echo "usage: $0 [check|test|ci]" >&2

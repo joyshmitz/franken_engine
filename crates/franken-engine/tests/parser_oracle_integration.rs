@@ -1322,6 +1322,7 @@ fn expected_loss_model_clone() {
 fn parser_oracle_report_serialize_minimal() {
     let report = frankenengine_engine::parser_oracle::ParserOracleReport {
         schema_version: "franken-engine.parser-oracle.report.v1".to_string(),
+        taxonomy_version: "franken-engine.parser-oracle.taxonomy.v1".to_string(),
         generated_at_utc: "2026-01-01T00:00:00Z".to_string(),
         trace_id: "trace-1".to_string(),
         decision_id: "decision-1".to_string(),
@@ -1528,6 +1529,7 @@ fn oracle_fixture_catalog_multiple_fixtures() {
 fn parser_oracle_report_clone() {
     let report = frankenengine_engine::parser_oracle::ParserOracleReport {
         schema_version: "franken-engine.parser-oracle.report.v1".to_string(),
+        taxonomy_version: "franken-engine.parser-oracle.taxonomy.v1".to_string(),
         generated_at_utc: "2026-01-01T00:00:00Z".to_string(),
         trace_id: "t".to_string(),
         decision_id: "d".to_string(),
