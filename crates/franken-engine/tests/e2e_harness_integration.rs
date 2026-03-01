@@ -6,17 +6,20 @@
 //! evidence linkage, cross-machine replay diagnosis, and fixture migration.
 
 use std::collections::BTreeMap;
+use std::fs;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenengine_engine::e2e_harness::{
-    CounterfactualDelta, CounterfactualDivergenceKind, CrossMachineReplayDiagnosis,
-    DeterministicRng, DeterministicRunner, DeterministicRunnerConfig, EvidenceLinkageRecord,
-    ExpectedEvent, FixtureMigrationError, FixtureValidationError, GoldenBaseline, HarnessEvent,
-    LogAssertionError, LogExpectation, ReplayEnvironmentFingerprint, ReplayInputError,
-    ReplayInputErrorCode, ReplayMismatchKind, ReplayPerformance, ReplayVerification, RunManifest,
-    RunReport, RunResult, ScenarioStep, SignedGoldenUpdate, TestFixture, VirtualClock,
-    assert_structured_logs, build_evidence_linkage, compare_counterfactual,
-    diagnose_cross_machine_replay, evaluate_replay_performance, parse_fixture_with_migration,
-    validate_replay_input, verify_replay,
+    ArtifactCollector, CounterfactualDelta, DeterministicRng, DeterministicRunner,
+    DeterministicRunnerConfig, EvidenceLinkageRecord, ExpectedEvent, FixtureMigrationError,
+    FixtureValidationError, GoldenBaseline, LogExpectation, ReplayEnvironmentFingerprint,
+    ReplayInputError, ReplayInputErrorCode, ReplayMismatchKind, ReplayVerification, ScenarioClass,
+    ScenarioStep, SignedGoldenUpdate, TestFixture, VirtualClock, assert_structured_logs,
+    build_evidence_linkage, compare_counterfactual, diagnose_cross_machine_replay,
+    evaluate_replay_performance, parse_fixture_with_migration,
+    rgc_advanced_scenario_matrix_registry, run_scenario_matrix,
+    select_rgc_advanced_scenario_matrix, validate_replay_input, verify_replay,
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -51,6 +54,16 @@ fn make_runner() -> DeterministicRunner {
     DeterministicRunner {
         config: DeterministicRunnerConfig::default(),
     }
+}
+
+fn temp_artifact_dir(suffix: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("franken-engine-e2e-int-{suffix}-{nanos}"));
+    fs::create_dir_all(&path).expect("temp artifact dir");
+    path
 }
 
 // ── VirtualClock ────────────────────────────────────────────────────────
@@ -787,4 +800,60 @@ fn full_lifecycle_run_validate_replay_compare() {
     let delta = compare_counterfactual(&result, &alt_result);
     assert!(delta.transcript_changed);
     assert!(delta.digest_changed);
+}
+
+#[test]
+fn public_advanced_scenario_registry_runs_and_emits_artifact_packs() {
+    let runner = make_runner();
+    let root = temp_artifact_dir("advanced-scenario-registry");
+    let collector = ArtifactCollector::new(root.join("artifacts")).expect("collector");
+
+    let scenarios = rgc_advanced_scenario_matrix_registry();
+    let execution = run_scenario_matrix(&runner, &collector, &scenarios).expect("matrix run");
+
+    assert_eq!(execution.report.total_scenarios, 6);
+    assert_eq!(execution.report.pass_scenarios, 5);
+    assert_eq!(execution.report.fail_scenarios, 1);
+    assert!(execution.summary_json_path.exists());
+    assert!(execution.summary_markdown_path.exists());
+
+    for pack in &execution.report.scenario_packs {
+        assert!(!pack.unit_anchor_ids.is_empty());
+        assert!(
+            collector
+                .root()
+                .join(&pack.artifact_paths.manifest)
+                .exists()
+        );
+        assert!(collector.root().join(&pack.artifact_paths.events).exists());
+        assert!(
+            collector
+                .root()
+                .join(&pack.artifact_paths.evidence_linkage)
+                .exists()
+        );
+    }
+}
+
+#[test]
+fn public_advanced_scenario_selector_can_filter_fault_injection() {
+    let no_fault = select_rgc_advanced_scenario_matrix(&[], false);
+    assert_eq!(no_fault.len(), 5);
+    assert!(
+        no_fault
+            .iter()
+            .all(|scenario| scenario.scenario_class != ScenarioClass::FaultInjection)
+    );
+
+    let differential_only =
+        select_rgc_advanced_scenario_matrix(&[ScenarioClass::Differential], true);
+    assert_eq!(differential_only.len(), 1);
+    assert_eq!(
+        differential_only[0].scenario_class,
+        ScenarioClass::Differential
+    );
+    assert_eq!(
+        differential_only[0].baseline_scenario_id.as_deref(),
+        Some("rgc-053-runtime-baseline-01")
+    );
 }

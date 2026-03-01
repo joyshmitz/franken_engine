@@ -1458,6 +1458,343 @@ pub enum ScenarioClass {
     CrossArch,
 }
 
+impl ScenarioClass {
+    pub const ALL: [Self; 6] = [
+        Self::Baseline,
+        Self::Differential,
+        Self::Chaos,
+        Self::Stress,
+        Self::FaultInjection,
+        Self::CrossArch,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Baseline => "baseline",
+            Self::Differential => "differential",
+            Self::Chaos => "chaos",
+            Self::Stress => "stress",
+            Self::FaultInjection => "fault_injection",
+            Self::CrossArch => "cross_arch",
+        }
+    }
+}
+
+/// Schema version for the advanced RGC E2E scenario-matrix registry.
+pub const RGC_ADVANCED_E2E_SCENARIO_SCHEMA_VERSION: &str =
+    "franken-engine.rgc-advanced-e2e-scenario-matrix.v1";
+
+const RGC_ADVANCED_BASELINE_SCENARIO_ID: &str = "rgc-053-runtime-baseline-01";
+
+fn rgc_advanced_step(
+    component: &str,
+    event: &str,
+    advance_micros: u64,
+    domain: &str,
+    journey: &str,
+    error_code: Option<&str>,
+) -> ScenarioStep {
+    let mut metadata = BTreeMap::new();
+    metadata.insert("domain".to_string(), domain.to_string());
+    metadata.insert("journey".to_string(), journey.to_string());
+    metadata.insert(
+        "scenario_schema_version".to_string(),
+        RGC_ADVANCED_E2E_SCENARIO_SCHEMA_VERSION.to_string(),
+    );
+    metadata.insert("scenario_class_hint".to_string(), journey.to_string());
+    if let Some(error_code) = error_code {
+        metadata.insert("error_code".to_string(), error_code.to_string());
+    }
+    ScenarioStep {
+        component: component.to_string(),
+        event: event.to_string(),
+        advance_micros,
+        metadata,
+    }
+}
+
+fn rgc_advanced_fixture(
+    fixture_id: &str,
+    seed: u64,
+    policy_id: &str,
+    steps: Vec<ScenarioStep>,
+) -> TestFixture {
+    TestFixture {
+        fixture_id: fixture_id.to_string(),
+        fixture_version: TestFixture::CURRENT_VERSION,
+        seed,
+        virtual_time_start_micros: 2_000_000,
+        policy_id: policy_id.to_string(),
+        steps,
+        expected_events: Vec::new(),
+        determinism_check: true,
+    }
+}
+
+fn rgc_advanced_stress_fixture() -> TestFixture {
+    let mut steps = Vec::with_capacity(20);
+    for idx in 0..20_u64 {
+        steps.push(rgc_advanced_step(
+            "scheduler",
+            &format!("stress_tick_{idx}"),
+            8 + idx,
+            "runtime",
+            "stress",
+            None,
+        ));
+    }
+    rgc_advanced_fixture(
+        "rgc-053-runtime-stress-fixture",
+        431,
+        "policy-rgc-053-stress",
+        steps,
+    )
+}
+
+/// Canonical advanced scenario matrix for RGC-053 user-journey validation.
+///
+/// Coverage includes baseline, differential, chaos, stress, fault-injection,
+/// and cross-arch classes with deterministic fixture seeds and unit anchors.
+pub fn rgc_advanced_scenario_matrix_registry() -> Vec<ScenarioMatrixEntry> {
+    let mut scenarios = vec![
+        ScenarioMatrixEntry {
+            scenario_id: RGC_ADVANCED_BASELINE_SCENARIO_ID.to_string(),
+            scenario_class: ScenarioClass::Baseline,
+            fixture: rgc_advanced_fixture(
+                "rgc-053-runtime-baseline-fixture",
+                401,
+                "policy-rgc-053-runtime",
+                vec![
+                    rgc_advanced_step(
+                        "router",
+                        "ingest_runtime_request",
+                        20,
+                        "runtime",
+                        "baseline",
+                        None,
+                    ),
+                    rgc_advanced_step(
+                        "scheduler",
+                        "dispatch_runtime_lane",
+                        30,
+                        "runtime",
+                        "baseline",
+                        None,
+                    ),
+                    rgc_advanced_step(
+                        "runtime_lane",
+                        "execute_runtime_bundle",
+                        40,
+                        "runtime",
+                        "baseline",
+                        None,
+                    ),
+                ],
+            ),
+            baseline_scenario_id: None,
+            chaos_profile: None,
+            unit_anchor_ids: vec![
+                "unit.e2e_harness.rgc_advanced_runtime_baseline".to_string(),
+                "unit.e2e_harness.rgc_advanced_trace_contract".to_string(),
+            ],
+            target_arch: None,
+            worker_pool: Some("pool-rgc-053-baseline".to_string()),
+        },
+        ScenarioMatrixEntry {
+            scenario_id: "rgc-053-module-differential-01".to_string(),
+            scenario_class: ScenarioClass::Differential,
+            fixture: rgc_advanced_fixture(
+                "rgc-053-module-differential-fixture",
+                411,
+                "policy-rgc-053-module",
+                vec![
+                    rgc_advanced_step(
+                        "module_loader",
+                        "resolve_entrypoint",
+                        18,
+                        "module",
+                        "differential",
+                        None,
+                    ),
+                    rgc_advanced_step(
+                        "module_loader",
+                        "link_dependency_graph",
+                        27,
+                        "module",
+                        "differential",
+                        None,
+                    ),
+                    rgc_advanced_step(
+                        "runtime_lane",
+                        "execute_linked_module",
+                        33,
+                        "module",
+                        "differential",
+                        None,
+                    ),
+                ],
+            ),
+            baseline_scenario_id: Some(RGC_ADVANCED_BASELINE_SCENARIO_ID.to_string()),
+            chaos_profile: None,
+            unit_anchor_ids: vec![
+                "unit.e2e_harness.rgc_advanced_module_diff_alignment".to_string(),
+            ],
+            target_arch: None,
+            worker_pool: Some("pool-rgc-053-differential".to_string()),
+        },
+        ScenarioMatrixEntry {
+            scenario_id: "rgc-053-security-chaos-01".to_string(),
+            scenario_class: ScenarioClass::Chaos,
+            fixture: rgc_advanced_fixture(
+                "rgc-053-security-chaos-fixture",
+                421,
+                "policy-rgc-053-security",
+                vec![
+                    rgc_advanced_step(
+                        "security_guardplane",
+                        "detect_risk_spike",
+                        14,
+                        "security",
+                        "chaos",
+                        None,
+                    ),
+                    rgc_advanced_step(
+                        "security_guardplane",
+                        "issue_challenge",
+                        19,
+                        "security",
+                        "chaos",
+                        None,
+                    ),
+                    rgc_advanced_step(
+                        "containment_executor",
+                        "sandbox_enforced",
+                        26,
+                        "security",
+                        "chaos",
+                        None,
+                    ),
+                ],
+            ),
+            baseline_scenario_id: None,
+            chaos_profile: Some("latency_spike_partial_failure".to_string()),
+            unit_anchor_ids: vec![
+                "unit.e2e_harness.rgc_advanced_security_chaos_profile".to_string(),
+            ],
+            target_arch: None,
+            worker_pool: Some("pool-rgc-053-chaos".to_string()),
+        },
+        ScenarioMatrixEntry {
+            scenario_id: "rgc-053-runtime-stress-01".to_string(),
+            scenario_class: ScenarioClass::Stress,
+            fixture: rgc_advanced_stress_fixture(),
+            baseline_scenario_id: None,
+            chaos_profile: None,
+            unit_anchor_ids: vec![
+                "unit.e2e_harness.rgc_advanced_runtime_stress_budget".to_string(),
+            ],
+            target_arch: None,
+            worker_pool: Some("pool-rgc-053-stress".to_string()),
+        },
+        ScenarioMatrixEntry {
+            scenario_id: "rgc-053-security-fault-01".to_string(),
+            scenario_class: ScenarioClass::FaultInjection,
+            fixture: rgc_advanced_fixture(
+                "rgc-053-security-fault-fixture",
+                429,
+                "policy-rgc-053-security-fault",
+                vec![
+                    rgc_advanced_step(
+                        "security_guardplane",
+                        "risk_threshold_exceeded",
+                        15,
+                        "security",
+                        "fault_injection",
+                        Some("FE-RGC-053-SECURITY-FAULT-0001"),
+                    ),
+                    rgc_advanced_step(
+                        "containment_executor",
+                        "quarantine_applied",
+                        24,
+                        "security",
+                        "fault_injection",
+                        None,
+                    ),
+                ],
+            ),
+            baseline_scenario_id: None,
+            chaos_profile: None,
+            unit_anchor_ids: vec![
+                "unit.e2e_harness.rgc_advanced_security_fault_contract".to_string(),
+            ],
+            target_arch: None,
+            worker_pool: Some("pool-rgc-053-fault".to_string()),
+        },
+        ScenarioMatrixEntry {
+            scenario_id: "rgc-053-runtime-cross-arch-01".to_string(),
+            scenario_class: ScenarioClass::CrossArch,
+            fixture: rgc_advanced_fixture(
+                "rgc-053-cross-arch-fixture",
+                433,
+                "policy-rgc-053-cross-arch",
+                vec![
+                    rgc_advanced_step(
+                        "parser_frontend",
+                        "parse_program",
+                        16,
+                        "runtime",
+                        "cross_arch",
+                        None,
+                    ),
+                    rgc_advanced_step(
+                        "lowering_pipeline",
+                        "lower_ir0_to_ir3",
+                        21,
+                        "runtime",
+                        "cross_arch",
+                        None,
+                    ),
+                    rgc_advanced_step(
+                        "runtime_lane",
+                        "execute_cross_arch_bundle",
+                        25,
+                        "runtime",
+                        "cross_arch",
+                        None,
+                    ),
+                ],
+            ),
+            baseline_scenario_id: None,
+            chaos_profile: None,
+            unit_anchor_ids: vec![
+                "unit.e2e_harness.rgc_advanced_cross_arch_replay_contract".to_string(),
+            ],
+            target_arch: Some("aarch64-unknown-linux-gnu".to_string()),
+            worker_pool: Some("pool-rgc-053-cross-arch".to_string()),
+        },
+    ];
+
+    scenarios.sort_by(|left, right| left.scenario_id.cmp(&right.scenario_id));
+    scenarios
+}
+
+/// Selects scenarios from [`rgc_advanced_scenario_matrix_registry`] with
+/// deterministic ordering and optional fault-injection filtering.
+pub fn select_rgc_advanced_scenario_matrix(
+    classes: &[ScenarioClass],
+    include_fault_injection: bool,
+) -> Vec<ScenarioMatrixEntry> {
+    let mut selected: Vec<_> = rgc_advanced_scenario_matrix_registry()
+        .into_iter()
+        .filter(|scenario| classes.is_empty() || classes.contains(&scenario.scenario_class))
+        .filter(|scenario| {
+            include_fault_injection || scenario.scenario_class != ScenarioClass::FaultInjection
+        })
+        .collect();
+    selected.sort_by(|left, right| left.scenario_id.cmp(&right.scenario_id));
+    selected
+}
+
 /// One matrix scenario entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScenarioMatrixEntry {
