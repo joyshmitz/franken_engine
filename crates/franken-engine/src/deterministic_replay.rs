@@ -2334,8 +2334,7 @@ mod tests {
 
     #[test]
     fn serde_roundtrip_incident_artifact() {
-        let art =
-            IncidentArtifact::new("perf", ArtifactKind::PerformanceMetrics, vec![9, 8, 7]);
+        let art = IncidentArtifact::new("perf", ArtifactKind::PerformanceMetrics, vec![9, 8, 7]);
         let json = serde_json::to_string(&art).unwrap();
         let back: IncidentArtifact = serde_json::from_str(&json).unwrap();
         assert_eq!(art, back);
@@ -2343,17 +2342,12 @@ mod tests {
 
     #[test]
     fn serde_roundtrip_incident_bundle_builder() {
-        let bb = IncidentBundleBuilder::new(
-            "INC-BB",
-            IncidentSeverity::Warning,
-            "test",
-            "comp",
-            999,
-        )
-        .with_trace(false)
-        .with_decisions(true)
-        .with_failovers(false)
-        .with_divergences(true);
+        let bb =
+            IncidentBundleBuilder::new("INC-BB", IncidentSeverity::Warning, "test", "comp", 999)
+                .with_trace(false)
+                .with_decisions(true)
+                .with_failovers(false)
+                .with_divergences(true);
         let json = serde_json::to_string(&bb).unwrap();
         let back: IncidentBundleBuilder = serde_json::from_str(&json).unwrap();
         assert_eq!(bb, back);
@@ -2436,10 +2430,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(
             err,
-            FailoverError::MaxFailoversExceeded {
-                count: 0,
-                limit: 0
-            }
+            FailoverError::MaxFailoversExceeded { count: 0, limit: 0 }
         ));
     }
 
@@ -2615,8 +2606,7 @@ mod tests {
             .unwrap();
         assert_eq!(eng.divergence_count(), 0);
 
-        let bb =
-            IncidentBundleBuilder::new("INC-NODIV", IncidentSeverity::Info, "s", "c", 0);
+        let bb = IncidentBundleBuilder::new("INC-NODIV", IncidentSeverity::Info, "s", "c", 0);
         let bundle = bb.build(Some(&trace), Some(&eng), None);
         let has_div = bundle
             .artifacts
@@ -2627,8 +2617,7 @@ mod tests {
 
     #[test]
     fn builder_none_sources_produces_no_artifacts() {
-        let bb =
-            IncidentBundleBuilder::new("INC-NONE", IncidentSeverity::Info, "s", "c", 0);
+        let bb = IncidentBundleBuilder::new("INC-NONE", IncidentSeverity::Info, "s", "c", 0);
         let bundle = bb.build(None, None, None);
         assert_eq!(bundle.artifact_count(), 0);
         assert!(bundle.is_finalised());
@@ -2694,8 +2683,7 @@ mod tests {
 
     #[test]
     fn classify_divergence_external_api_is_critical() {
-        let s =
-            classify_divergence(&NondeterminismSource::ExternalApiResponse, &[1], &[2]);
+        let s = classify_divergence(&NondeterminismSource::ExternalApiResponse, &[1], &[2]);
         assert_eq!(s, DivergenceSeverity::Critical);
     }
 
@@ -2755,10 +2743,7 @@ mod tests {
         fc.set_override("comp", FailoverStrategy::Halt);
         assert_eq!(fc.strategy_for("comp"), FailoverStrategy::Halt);
         fc.set_override("comp", FailoverStrategy::ImmediateBaseline);
-        assert_eq!(
-            fc.strategy_for("comp"),
-            FailoverStrategy::ImmediateBaseline
-        );
+        assert_eq!(fc.strategy_for("comp"), FailoverStrategy::ImmediateBaseline);
     }
 
     // ── ArtifactKind as_str stability ───────────────────────────

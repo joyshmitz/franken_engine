@@ -1588,17 +1588,19 @@ mod tests {
         let orig = CanonicalViolation::DuplicateKey {
             key: "alpha".to_string(),
         };
-        let mut cloned = orig.clone();
-        // Mutate the clone by replacing with a different variant.
-        cloned = CanonicalViolation::TrailingBytes { count: 99 };
-        // Original unchanged.
+        let cloned = orig.clone();
+        // Verify the clone is equal but can be compared independently.
+        assert_eq!(orig, cloned);
+        // Verify original is unchanged after clone.
         assert_eq!(
             orig,
             CanonicalViolation::DuplicateKey {
                 key: "alpha".to_string()
             }
         );
-        assert_ne!(orig, cloned);
+        // Verify a separately constructed distinct value differs.
+        let other = CanonicalViolation::TrailingBytes { count: 99 };
+        assert_ne!(orig, other);
     }
 
     #[test]
@@ -1662,7 +1664,10 @@ mod tests {
             CanonicalViolation::DeserializationFailed {
                 detail: "boom".to_string(),
             },
-            CanonicalViolation::InvalidTag { tag: 0x99, offset: 4 },
+            CanonicalViolation::InvalidTag {
+                tag: 0x99,
+                offset: 4,
+            },
             CanonicalViolation::SchemaViolation {
                 detail: "bad schema".to_string(),
             },
@@ -1735,7 +1740,10 @@ mod tests {
             CanonicalViolation::DeserializationFailed {
                 detail: "e".to_string(),
             },
-            CanonicalViolation::InvalidTag { tag: 0x01, offset: 0 },
+            CanonicalViolation::InvalidTag {
+                tag: 0x01,
+                offset: 0,
+            },
             CanonicalViolation::SchemaViolation {
                 detail: "s".to_string(),
             },
@@ -1745,7 +1753,11 @@ mod tests {
             let s = serde_json::to_string(v).unwrap();
             serialized.insert(s);
         }
-        assert_eq!(serialized.len(), violations.len(), "each variant serializes distinctly");
+        assert_eq!(
+            serialized.len(),
+            violations.len(),
+            "each variant serializes distinctly"
+        );
     }
 
     #[test]
@@ -1770,7 +1782,10 @@ mod tests {
     fn canonical_violation_trailing_bytes_field_names() {
         let v = CanonicalViolation::TrailingBytes { count: 7 };
         let json = serde_json::to_string(&v).unwrap();
-        assert!(json.contains("TrailingBytes"), "variant key must be present");
+        assert!(
+            json.contains("TrailingBytes"),
+            "variant key must be present"
+        );
         assert!(json.contains("count"), "field 'count' must be present");
     }
 
@@ -1810,7 +1825,10 @@ mod tests {
 
     #[test]
     fn canonical_violation_invalid_tag_field_names() {
-        let v = CanonicalViolation::InvalidTag { tag: 0xFF, offset: 5 };
+        let v = CanonicalViolation::InvalidTag {
+            tag: 0xFF,
+            offset: 5,
+        };
         let json = serde_json::to_string(&v).unwrap();
         assert!(json.contains("InvalidTag"));
         assert!(json.contains("tag"));
@@ -1886,7 +1904,10 @@ mod tests {
 
     #[test]
     fn violation_display_invalid_tag_shows_tag_and_offset() {
-        let v = CanonicalViolation::InvalidTag { tag: 0xBE, offset: 7 };
+        let v = CanonicalViolation::InvalidTag {
+            tag: 0xBE,
+            offset: 7,
+        };
         let s = v.to_string();
         assert!(s.contains("be") || s.contains("BE"), "hex tag must appear");
         assert!(s.contains("7"), "offset must appear");
@@ -1981,7 +2002,10 @@ mod tests {
 
     #[test]
     fn violation_invalid_tag_zero_offset_max_tag_serde_roundtrip() {
-        let v = CanonicalViolation::InvalidTag { tag: 0xFF, offset: 0 };
+        let v = CanonicalViolation::InvalidTag {
+            tag: 0xFF,
+            offset: 0,
+        };
         let json = serde_json::to_string(&v).unwrap();
         let restored: CanonicalViolation = serde_json::from_str(&json).unwrap();
         assert_eq!(v, restored);
@@ -2029,7 +2053,11 @@ mod tests {
         guard.register_class(ObjectDomain::PolicyObject, "P", 1, b"ps");
         // 31 bytes — just below the 32-byte schema-prefix threshold.
         let too_short = vec![0u8; 31];
-        assert!(guard.validate_from_registry(&too_short, "t-tshort").is_err());
+        assert!(
+            guard
+                .validate_from_registry(&too_short, "t-tshort")
+                .is_err()
+        );
     }
 
     #[test]
@@ -2046,7 +2074,9 @@ mod tests {
         // Build bytes using a different schema not registered.
         let other_schema = SchemaHash::from_definition(b"schema-B");
         let bytes = make_canonical_payload(&other_schema, &CanonicalValue::Null);
-        let err = guard.validate_from_registry(&bytes, "t-notfound").unwrap_err();
+        let err = guard
+            .validate_from_registry(&bytes, "t-notfound")
+            .unwrap_err();
         assert!(matches!(
             err.violation,
             CanonicalViolation::SchemaViolation { .. }
@@ -2155,7 +2185,10 @@ mod tests {
     #[test]
     fn guard_event_type_equality() {
         assert_eq!(GuardEventType::Accepted, GuardEventType::Accepted);
-        assert_eq!(GuardEventType::UnregisteredClass, GuardEventType::UnregisteredClass);
+        assert_eq!(
+            GuardEventType::UnregisteredClass,
+            GuardEventType::UnregisteredClass
+        );
         assert_ne!(GuardEventType::Accepted, GuardEventType::UnregisteredClass);
     }
 
@@ -2270,9 +2303,10 @@ mod tests {
     #[test]
     fn canonical_value_deeply_nested_array_round_trip() {
         let (mut guard, schema) = setup_guard();
-        let value = CanonicalValue::Array(vec![CanonicalValue::Array(vec![
-            CanonicalValue::Array(vec![CanonicalValue::U64(1)]),
-        ])]);
+        let value =
+            CanonicalValue::Array(vec![CanonicalValue::Array(vec![CanonicalValue::Array(
+                vec![CanonicalValue::U64(1)],
+            )])]);
         let bytes = make_canonical_payload(&schema, &value);
         assert_eq!(
             guard

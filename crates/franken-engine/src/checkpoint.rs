@@ -1293,7 +1293,11 @@ mod tests {
             format!("{:?}", CheckpointReason::Explicit),
         ];
         let set: std::collections::BTreeSet<_> = variants.iter().collect();
-        assert_eq!(set.len(), 4, "all CheckpointReason variants must have distinct Debug strings");
+        assert_eq!(
+            set.len(),
+            4,
+            "all CheckpointReason variants must have distinct Debug strings"
+        );
     }
 
     #[test]
@@ -1304,7 +1308,11 @@ mod tests {
             format!("{:?}", CheckpointAction::Abort),
         ];
         let set: std::collections::BTreeSet<_> = variants.iter().collect();
-        assert_eq!(set.len(), 3, "all CheckpointAction variants must have distinct Debug strings");
+        assert_eq!(
+            set.len(),
+            3,
+            "all CheckpointAction variants must have distinct Debug strings"
+        );
     }
 
     #[test]
@@ -1323,7 +1331,11 @@ mod tests {
             format!("{:?}", LoopSite::Custom("z".to_string())),
         ];
         let set: std::collections::BTreeSet<_> = variants.iter().collect();
-        assert_eq!(set.len(), 11, "all LoopSite variants must have distinct Debug strings");
+        assert_eq!(
+            set.len(),
+            11,
+            "all LoopSite variants must have distinct Debug strings"
+        );
     }
 
     // 3. Serde variant distinctness — all enum variants serialize to distinct JSON
@@ -1336,7 +1348,11 @@ mod tests {
             serde_json::to_string(&CheckpointReason::Explicit).unwrap(),
         ];
         let set: std::collections::BTreeSet<_> = variants.iter().collect();
-        assert_eq!(set.len(), 4, "all CheckpointReason variants must serialize to distinct JSON");
+        assert_eq!(
+            set.len(),
+            4,
+            "all CheckpointReason variants must serialize to distinct JSON"
+        );
     }
 
     #[test]
@@ -1347,7 +1363,11 @@ mod tests {
             serde_json::to_string(&CheckpointAction::Abort).unwrap(),
         ];
         let set: std::collections::BTreeSet<_> = variants.iter().collect();
-        assert_eq!(set.len(), 3, "all CheckpointAction variants must serialize to distinct JSON");
+        assert_eq!(
+            set.len(),
+            3,
+            "all CheckpointAction variants must serialize to distinct JSON"
+        );
     }
 
     #[test]
@@ -1366,7 +1386,11 @@ mod tests {
             serde_json::to_string(&LoopSite::Custom("unique_name".to_string())).unwrap(),
         ];
         let set: std::collections::BTreeSet<_> = variants.iter().collect();
-        assert_eq!(set.len(), 11, "all LoopSite variants must serialize to distinct JSON");
+        assert_eq!(
+            set.len(),
+            11,
+            "all LoopSite variants must serialize to distinct JSON"
+        );
     }
 
     // 4. Clone independence — mutating a clone does not affect the original
@@ -1431,14 +1455,32 @@ mod tests {
             timestamp_virtual: 3,
         };
         let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("\"trace_id\""), "field trace_id must be present");
-        assert!(json.contains("\"component\""), "field component must be present");
-        assert!(json.contains("\"loop_site\""), "field loop_site must be present");
-        assert!(json.contains("\"iteration_count\""), "field iteration_count must be present");
-        assert!(json.contains("\"total_iterations\""), "field total_iterations must be present");
+        assert!(
+            json.contains("\"trace_id\""),
+            "field trace_id must be present"
+        );
+        assert!(
+            json.contains("\"component\""),
+            "field component must be present"
+        );
+        assert!(
+            json.contains("\"loop_site\""),
+            "field loop_site must be present"
+        );
+        assert!(
+            json.contains("\"iteration_count\""),
+            "field iteration_count must be present"
+        );
+        assert!(
+            json.contains("\"total_iterations\""),
+            "field total_iterations must be present"
+        );
         assert!(json.contains("\"reason\""), "field reason must be present");
         assert!(json.contains("\"action\""), "field action must be present");
-        assert!(json.contains("\"timestamp_virtual\""), "field timestamp_virtual must be present");
+        assert!(
+            json.contains("\"timestamp_virtual\""),
+            "field timestamp_virtual must be present"
+        );
     }
 
     #[test]
@@ -1448,8 +1490,14 @@ mod tests {
             max_total_iterations: 2,
         };
         let json = serde_json::to_string(&cfg).unwrap();
-        assert!(json.contains("\"max_iterations\""), "field max_iterations must be present");
-        assert!(json.contains("\"max_total_iterations\""), "field max_total_iterations must be present");
+        assert!(
+            json.contains("\"max_iterations\""),
+            "field max_iterations must be present"
+        );
+        assert!(
+            json.contains("\"max_total_iterations\""),
+            "field max_total_iterations must be present"
+        );
     }
 
     // 6. Display format checks — exact string assertions for Display impls
@@ -1465,7 +1513,10 @@ mod tests {
 
     #[test]
     fn loop_site_display_contract_evaluation() {
-        assert_eq!(LoopSite::ContractEvaluation.to_string(), "contract_evaluation");
+        assert_eq!(
+            LoopSite::ContractEvaluation.to_string(),
+            "contract_evaluation"
+        );
     }
 
     #[test]
@@ -1783,7 +1834,10 @@ mod tests {
         // In the implementation, cancel is checked first
         assert_eq!(action, CheckpointAction::Drain);
         let events = guard.drain_events();
-        assert_eq!(events.last().unwrap().reason, CheckpointReason::CancelPending);
+        assert_eq!(
+            events.last().unwrap().reason,
+            CheckpointReason::CancelPending
+        );
     }
 
     #[test]
@@ -1857,7 +1911,11 @@ mod tests {
             hash_it(CheckpointReason::Explicit),
         ];
         let set: std::collections::BTreeSet<_> = hashes.iter().collect();
-        assert_eq!(set.len(), 4, "all CheckpointReason variants must hash to distinct values");
+        assert_eq!(
+            set.len(),
+            4,
+            "all CheckpointReason variants must hash to distinct values"
+        );
     }
 
     #[test]

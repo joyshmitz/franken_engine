@@ -1352,9 +1352,18 @@ mod tests {
 
     #[test]
     fn control_plane_adapter_error_debug_distinct_variants() {
-        let e1 = format!("{:?}", ControlPlaneAdapterError::BudgetExhausted { requested_ms: 1 });
-        let e2 = format!("{:?}", ControlPlaneAdapterError::DecisionGateway { code: "a" });
-        let e3 = format!("{:?}", ControlPlaneAdapterError::EvidenceEmission { code: "b" });
+        let e1 = format!(
+            "{:?}",
+            ControlPlaneAdapterError::BudgetExhausted { requested_ms: 1 }
+        );
+        let e2 = format!(
+            "{:?}",
+            ControlPlaneAdapterError::DecisionGateway { code: "a" }
+        );
+        let e3 = format!(
+            "{:?}",
+            ControlPlaneAdapterError::EvidenceEmission { code: "b" }
+        );
         let mut set = std::collections::BTreeSet::new();
         set.insert(e1);
         set.insert(e2);
@@ -1387,7 +1396,11 @@ mod tests {
         .map(|v| serde_json::to_string(v).unwrap())
         .collect();
         let set: std::collections::BTreeSet<&str> = jsons.iter().map(|s| s.as_str()).collect();
-        assert_eq!(set.len(), 3, "all 3 verdict JSON serializations must differ");
+        assert_eq!(
+            set.len(),
+            3,
+            "all 3 verdict JSON serializations must differ"
+        );
     }
 
     #[test]
@@ -1514,7 +1527,9 @@ mod tests {
 
     #[test]
     fn error_display_budget_exhausted_contains_ms_value() {
-        let err = ControlPlaneAdapterError::BudgetExhausted { requested_ms: 12345 };
+        let err = ControlPlaneAdapterError::BudgetExhausted {
+            requested_ms: 12345,
+        };
         let msg = err.to_string();
         assert!(msg.contains("12345"), "display must include requested_ms");
     }
@@ -1605,7 +1620,8 @@ mod tests {
     #[test]
     fn mock_budget_consume_exactly_zero_on_nonempty() {
         let mut b = MockBudget::new(50);
-        b.consume(0).expect("zero consume on non-zero budget must succeed");
+        b.consume(0)
+            .expect("zero consume on non-zero budget must succeed");
         assert_eq!(b.remaining_ms(), 50);
         assert_eq!(b.consumed_ms(), 0);
     }
@@ -1724,10 +1740,8 @@ mod tests {
     #[test]
     fn mock_decision_contract_fail_always_records_error_event() {
         let req = request(960);
-        let mut contract =
-            MockDecisionContract::new([]).with_failure_mode(MockFailureMode::FailAlways {
-                code: "fa_code",
-            });
+        let mut contract = MockDecisionContract::new([])
+            .with_failure_mode(MockFailureMode::FailAlways { code: "fa_code" });
         let _ = contract.evaluate(&req);
         assert_eq!(contract.events().len(), 1);
         assert_eq!(contract.events()[0].outcome, "error");

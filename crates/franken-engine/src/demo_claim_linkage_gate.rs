@@ -1734,10 +1734,7 @@ mod tests {
     fn serde_distinct_all_error_variants() {
         let variants = [
             LinkageGateError::NoClaims,
-            LinkageGateError::TooManyClaims {
-                count: 1,
-                max: 1,
-            },
+            LinkageGateError::TooManyClaims { count: 1, max: 1 },
             LinkageGateError::DuplicateClaim {
                 claim_id: "x".into(),
             },
@@ -1758,9 +1755,7 @@ mod tests {
                 claim_id: "x".into(),
                 demo_id: "x".into(),
             },
-            LinkageGateError::InvalidConfig {
-                detail: "x".into(),
-            },
+            LinkageGateError::InvalidConfig { detail: "x".into() },
         ];
         let jsons: BTreeSet<String> = variants
             .iter()
@@ -2071,10 +2066,7 @@ mod tests {
             count: 80,
             max: 64,
         };
-        assert_eq!(
-            format!("{}", err),
-            "claim c5 has 80 evidence links, max 64"
-        );
+        assert_eq!(format!("{}", err), "claim c5 has 80 evidence links, max 64");
     }
 
     #[test]
@@ -2622,12 +2614,7 @@ mod tests {
     #[test]
     fn missing_reasons_fully_incomplete() {
         let mut gate = default_gate();
-        let claims = vec![make_claim(
-            "c1",
-            ClaimCategory::Performance,
-            vec![],
-            vec![],
-        )];
+        let claims = vec![make_claim("c1", ClaimCategory::Performance, vec![], vec![])];
         let decision = gate.evaluate("m1", &claims, &[]).unwrap();
         let r = &decision.claim_results[0];
         assert!(!r.linked);

@@ -1597,7 +1597,11 @@ mod tests {
             let j = serde_json::to_string(gate).expect("serialize");
             jsons.insert(j);
         }
-        assert_eq!(jsons.len(), 4, "all GateKind variants serialize to distinct JSON");
+        assert_eq!(
+            jsons.len(),
+            4,
+            "all GateKind variants serialize to distinct JSON"
+        );
     }
 
     // ===================================================================
@@ -1693,7 +1697,9 @@ mod tests {
     fn candidate_capability_request_clone_independence() {
         let original = passing_capability_request();
         let mut cloned = original.clone();
-        cloned.requested_capabilities.push(SlotCapability::InvokeHostcall);
+        cloned
+            .requested_capabilities
+            .push(SlotCapability::InvokeHostcall);
         assert_eq!(original.requested_capabilities.len(), 2);
         assert!(original.within_envelope());
     }
@@ -2000,7 +2006,11 @@ mod tests {
             gate.hash(&mut h);
             hashes.insert(h.finish());
         }
-        assert_eq!(hashes.len(), 4, "all GateKind variants have distinct hashes");
+        assert_eq!(
+            hashes.len(),
+            4,
+            "all GateKind variants have distinct hashes"
+        );
     }
 
     // ===================================================================
@@ -2077,15 +2087,18 @@ mod tests {
         }];
         let strictness = GateStrictness::standard(GateKind::PerformanceThreshold);
         let eval = evaluate_performance_threshold(&measurements, &strictness);
-        assert!(!eval.passed, "zero throughput should fail standard threshold");
+        assert!(
+            !eval.passed,
+            "zero throughput should fail standard threshold"
+        );
     }
 
     #[test]
     fn performance_exactly_at_threshold() {
         let measurements = vec![PerformanceMeasurement {
             benchmark_id: "exact-bench".to_string(),
-            throughput_millionths: 500_000,      // exactly at minimum
-            latency_ns: 100_000_000,             // exactly at maximum
+            throughput_millionths: 500_000, // exactly at minimum
+            latency_ns: 100_000_000,        // exactly at maximum
             iterations: 1,
             seed: 0,
         }];
@@ -2099,7 +2112,7 @@ mod tests {
         let measurements = vec![PerformanceMeasurement {
             benchmark_id: "over-bench".to_string(),
             throughput_millionths: 1_000_000,
-            latency_ns: 100_000_001,  // 1ns over threshold
+            latency_ns: 100_000_001, // 1ns over threshold
             iterations: 1,
             seed: 0,
         }];
@@ -2492,9 +2505,18 @@ mod tests {
         let config = GateRunnerConfig::standard(test_slot_id(), "c".to_string(), 42);
         let expected_codes = [
             (GateKind::Equivalence, "FE-GATE-EQUIVALENCE"),
-            (GateKind::CapabilityPreservation, "FE-GATE-CAPABILITY_PRESERVATION"),
-            (GateKind::PerformanceThreshold, "FE-GATE-PERFORMANCE_THRESHOLD"),
-            (GateKind::AdversarialSurvival, "FE-GATE-ADVERSARIAL_SURVIVAL"),
+            (
+                GateKind::CapabilityPreservation,
+                "FE-GATE-CAPABILITY_PRESERVATION",
+            ),
+            (
+                GateKind::PerformanceThreshold,
+                "FE-GATE-PERFORMANCE_THRESHOLD",
+            ),
+            (
+                GateKind::AdversarialSurvival,
+                "FE-GATE-ADVERSARIAL_SURVIVAL",
+            ),
         ];
         for (gate, expected_code) in &expected_codes {
             let eval = GateEvaluation {
@@ -2575,11 +2597,7 @@ mod tests {
 
     #[test]
     fn gate_evaluation_to_gate_result_preserves_evidence() {
-        let evidence = vec![
-            "ev-1".to_string(),
-            "ev-2".to_string(),
-            "ev-3".to_string(),
-        ];
+        let evidence = vec!["ev-1".to_string(), "ev-2".to_string(), "ev-3".to_string()];
         let eval = GateEvaluation {
             gate: GateKind::PerformanceThreshold,
             passed: true,
@@ -2655,7 +2673,10 @@ mod tests {
         let bundle = &output.evidence_bundle;
         // total_cases = 3 eq + 1 cap + 2 perf + 5 adv = 11
         assert_eq!(bundle.total_test_cases, 11);
-        assert_eq!(bundle.total_passed + bundle.total_failed, bundle.total_test_cases);
+        assert_eq!(
+            bundle.total_passed + bundle.total_failed,
+            bundle.total_test_cases
+        );
         // 3 eq failed, cap passed, perf passed, adv passed
         assert_eq!(bundle.total_failed, 3);
         assert_eq!(bundle.total_passed, 8);

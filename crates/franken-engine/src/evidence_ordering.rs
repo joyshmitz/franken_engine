@@ -1487,7 +1487,11 @@ mod tests {
             assert!(!d.is_empty());
             debugs.insert(d);
         }
-        assert_eq!(debugs.len(), 7, "all 7 variants produce distinct Debug output");
+        assert_eq!(
+            debugs.len(),
+            7,
+            "all 7 variants produce distinct Debug output"
+        );
     }
 
     #[test]
@@ -1670,10 +1674,7 @@ mod tests {
 
     #[test]
     fn ordering_violation_display_constraints_exceed() {
-        let v = OrderingViolation::ConstraintsExceedBound {
-            count: 50,
-            max: 32,
-        };
+        let v = OrderingViolation::ConstraintsExceedBound { count: 50, max: 32 };
         assert_eq!(v.to_string(), "constraints exceed bound: 50 > 32");
     }
 
@@ -1988,10 +1989,7 @@ mod tests {
     #[test]
     fn ordering_violation_serde_roundtrip_exceed_bound_equal_count_max() {
         // count == max technically not a violation, but the struct allows it
-        let v = OrderingViolation::ConstraintsExceedBound {
-            count: 32,
-            max: 32,
-        };
+        let v = OrderingViolation::ConstraintsExceedBound { count: 32, max: 32 };
         let json = serde_json::to_string(&v).unwrap();
         let restored: OrderingViolation = serde_json::from_str(&json).unwrap();
         assert_eq!(v, restored);
@@ -2243,10 +2241,7 @@ mod tests {
     #[test]
     fn validate_bound_one_less_than_count_fails() {
         let entry = make_entry_with(
-            vec![
-                CandidateAction::new("a", 1),
-                CandidateAction::new("b", 2),
-            ],
+            vec![CandidateAction::new("a", 1), CandidateAction::new("b", 2)],
             vec![],
             vec![],
         );

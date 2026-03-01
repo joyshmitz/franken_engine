@@ -1580,7 +1580,11 @@ mod tests {
         for dim in DisruptionDimension::all() {
             debugs.insert(format!("{:?}", dim));
         }
-        assert_eq!(debugs.len(), 3, "all DisruptionDimension variants have distinct Debug");
+        assert_eq!(
+            debugs.len(),
+            3,
+            "all DisruptionDimension variants have distinct Debug"
+        );
     }
 
     #[test]
@@ -1593,9 +1597,16 @@ mod tests {
     #[test]
     fn scorecard_error_debug_all_distinct() {
         let errors: Vec<ScorecardError> = vec![
-            ScorecardError::MissingDimension { dimension: "x".into() },
-            ScorecardError::InvalidThreshold { dimension: "x".into(), detail: "y".into() },
-            ScorecardError::MissingEvidence { dimension: "x".into() },
+            ScorecardError::MissingDimension {
+                dimension: "x".into(),
+            },
+            ScorecardError::InvalidThreshold {
+                dimension: "x".into(),
+                detail: "y".into(),
+            },
+            ScorecardError::MissingEvidence {
+                dimension: "x".into(),
+            },
             ScorecardError::EmptyEvidenceBundle,
             ScorecardError::SchemaValidationFailed { detail: "z".into() },
         ];
@@ -1603,7 +1614,11 @@ mod tests {
         for e in &errors {
             debugs.insert(format!("{:?}", e));
         }
-        assert_eq!(debugs.len(), 5, "all ScorecardError variants have distinct Debug");
+        assert_eq!(
+            debugs.len(),
+            5,
+            "all ScorecardError variants have distinct Debug"
+        );
     }
 
     // ===================================================================
@@ -1616,7 +1631,11 @@ mod tests {
         for dim in DisruptionDimension::all() {
             jsons.insert(serde_json::to_string(dim).unwrap());
         }
-        assert_eq!(jsons.len(), 3, "all DisruptionDimension variants serialize to distinct JSON");
+        assert_eq!(
+            jsons.len(),
+            3,
+            "all DisruptionDimension variants serialize to distinct JSON"
+        );
     }
 
     #[test]
@@ -1629,9 +1648,16 @@ mod tests {
     #[test]
     fn scorecard_error_serde_all_distinct_json() {
         let errors: Vec<ScorecardError> = vec![
-            ScorecardError::MissingDimension { dimension: "dim".into() },
-            ScorecardError::InvalidThreshold { dimension: "dim".into(), detail: "d".into() },
-            ScorecardError::MissingEvidence { dimension: "dim".into() },
+            ScorecardError::MissingDimension {
+                dimension: "dim".into(),
+            },
+            ScorecardError::InvalidThreshold {
+                dimension: "dim".into(),
+                detail: "d".into(),
+            },
+            ScorecardError::MissingEvidence {
+                dimension: "dim".into(),
+            },
             ScorecardError::EmptyEvidenceBundle,
             ScorecardError::SchemaValidationFailed { detail: "d".into() },
         ];
@@ -1639,7 +1665,11 @@ mod tests {
         for e in &errors {
             jsons.insert(serde_json::to_string(e).unwrap());
         }
-        assert_eq!(jsons.len(), 5, "all ScorecardError variants serialize to distinct JSON");
+        assert_eq!(
+            jsons.len(),
+            5,
+            "all ScorecardError variants serialize to distinct JSON"
+        );
     }
 
     // ===================================================================
@@ -1907,9 +1937,18 @@ mod tests {
 
     #[test]
     fn dimension_display_format_exact() {
-        assert_eq!(format!("{}", DisruptionDimension::PerformanceDelta), "performance_delta");
-        assert_eq!(format!("{}", DisruptionDimension::SecurityDelta), "security_delta");
-        assert_eq!(format!("{}", DisruptionDimension::AutonomyDelta), "autonomy_delta");
+        assert_eq!(
+            format!("{}", DisruptionDimension::PerformanceDelta),
+            "performance_delta"
+        );
+        assert_eq!(
+            format!("{}", DisruptionDimension::SecurityDelta),
+            "security_delta"
+        );
+        assert_eq!(
+            format!("{}", DisruptionDimension::AutonomyDelta),
+            "autonomy_delta"
+        );
     }
 
     #[test]
@@ -1953,7 +1992,11 @@ mod tests {
             let mut h2 = DefaultHasher::new();
             dim.hash(&mut h1);
             dim.hash(&mut h2);
-            assert_eq!(h1.finish(), h2.finish(), "same dimension hashes consistently");
+            assert_eq!(
+                h1.finish(),
+                h2.finish(),
+                "same dimension hashes consistently"
+            );
         }
     }
 
@@ -2039,7 +2082,11 @@ mod tests {
         let schema = default_schema();
         for i in 0..5 {
             let evidence = vec![
-                make_evidence(DisruptionDimension::PerformanceDelta, 100_000 + i * 10_000, &[]),
+                make_evidence(
+                    DisruptionDimension::PerformanceDelta,
+                    100_000 + i * 10_000,
+                    &[],
+                ),
                 make_evidence(DisruptionDimension::SecurityDelta, 600_000, &[]),
                 make_evidence(DisruptionDimension::AutonomyDelta, 700_000, &[]),
             ];
@@ -2162,8 +2209,16 @@ mod tests {
                     100_000 + i * 50_000,
                     &[],
                 ),
-                make_evidence(DisruptionDimension::SecurityDelta, 600_000 + i * 100_000, &[]),
-                make_evidence(DisruptionDimension::AutonomyDelta, 700_000 + i * 50_000, &[]),
+                make_evidence(
+                    DisruptionDimension::SecurityDelta,
+                    600_000 + i * 100_000,
+                    &[],
+                ),
+                make_evidence(
+                    DisruptionDimension::AutonomyDelta,
+                    700_000 + i * 50_000,
+                    &[],
+                ),
             ];
             let result = compute_scorecard(
                 &schema,
@@ -2187,14 +2242,20 @@ mod tests {
     #[test]
     fn serde_scorecard_error_all_variants_roundtrip() {
         let errors: Vec<ScorecardError> = vec![
-            ScorecardError::MissingDimension { dimension: "perf".into() },
+            ScorecardError::MissingDimension {
+                dimension: "perf".into(),
+            },
             ScorecardError::InvalidThreshold {
                 dimension: "sec".into(),
                 detail: "floor > target".into(),
             },
-            ScorecardError::MissingEvidence { dimension: "auto".into() },
+            ScorecardError::MissingEvidence {
+                dimension: "auto".into(),
+            },
             ScorecardError::EmptyEvidenceBundle,
-            ScorecardError::SchemaValidationFailed { detail: "bad".into() },
+            ScorecardError::SchemaValidationFailed {
+                detail: "bad".into(),
+            },
         ];
         for e in &errors {
             let json = serde_json::to_string(e).unwrap();
@@ -2333,7 +2394,10 @@ mod tests {
             .unwrap();
             h.append(format!("rc-{}", i), format!("t{}", i), result);
         }
-        assert!(!h.has_regression(), "identical scores should not show regression");
+        assert!(
+            !h.has_regression(),
+            "identical scores should not show regression"
+        );
     }
 
     #[test]

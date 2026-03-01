@@ -1713,9 +1713,7 @@ mod tests {
                 window_ticks: 1,
             },
             ReceiptError::IdDerivation("x".into()),
-            ReceiptError::SignatureInvalid {
-                detail: "x".into(),
-            },
+            ReceiptError::SignatureInvalid { detail: "x".into() },
             ReceiptError::IntegrityFailure {
                 expected: "a".into(),
                 actual: "b".into(),
@@ -1731,7 +1729,11 @@ mod tests {
             assert!(!dbg.is_empty());
             set.insert(dbg);
         }
-        assert_eq!(set.len(), variants.len(), "all ReceiptError variants produce distinct Debug");
+        assert_eq!(
+            set.len(),
+            variants.len(),
+            "all ReceiptError variants produce distinct Debug"
+        );
     }
 
     // ===================================================================
@@ -1823,9 +1825,7 @@ mod tests {
                 window_ticks: 10,
             },
             ReceiptError::IdDerivation("d".into()),
-            ReceiptError::SignatureInvalid {
-                detail: "s".into(),
-            },
+            ReceiptError::SignatureInvalid { detail: "s".into() },
             ReceiptError::IntegrityFailure {
                 expected: "e".into(),
                 actual: "a".into(),
@@ -1840,7 +1840,11 @@ mod tests {
             let json = serde_json::to_string(v).unwrap();
             set.insert(json);
         }
-        assert_eq!(set.len(), variants.len(), "all ReceiptError variants serialize distinctly");
+        assert_eq!(
+            set.len(),
+            variants.len(),
+            "all ReceiptError variants serialize distinctly"
+        );
     }
 
     // ===================================================================
@@ -1862,7 +1866,10 @@ mod tests {
         let mut cloned = original.clone();
         cloned.description = "MUTATED".to_string();
         assert_ne!(original.description, cloned.description);
-        assert_eq!(original.description, "Specialized hostcall dispatch for extension X");
+        assert_eq!(
+            original.description,
+            "Specialized hostcall dispatch for extension X"
+        );
     }
 
     #[test]
@@ -1900,7 +1907,10 @@ mod tests {
         cloned.timestamp_ns = u64::MAX;
         assert_ne!(original.fallback_path, cloned.fallback_path);
         assert_ne!(original.timestamp_ns, cloned.timestamp_ns);
-        assert_eq!(original.fallback_path, "modules::hostcall::unspecialized_dispatch");
+        assert_eq!(
+            original.fallback_path,
+            "modules::hostcall::unspecialized_dispatch"
+        );
     }
 
     #[test]
@@ -1924,7 +1934,9 @@ mod tests {
         let mut original = ReceiptIndex::new();
         original.insert(test_receipt(epoch())).unwrap();
         let mut cloned = original.clone();
-        cloned.insert(test_receipt(SecurityEpoch::from_raw(99))).unwrap();
+        cloned
+            .insert(test_receipt(SecurityEpoch::from_raw(99)))
+            .unwrap();
         assert_eq!(original.len(), 1);
         assert_eq!(cloned.len(), 2);
     }
@@ -1937,7 +1949,12 @@ mod tests {
     fn proof_input_json_field_names() {
         let pi = test_proof_input(ProofType::CapabilityWitness, epoch());
         let json = serde_json::to_string(&pi).unwrap();
-        for key in ["proof_type", "proof_id", "proof_epoch", "validity_window_ticks"] {
+        for key in [
+            "proof_type",
+            "proof_id",
+            "proof_epoch",
+            "validity_window_ticks",
+        ] {
             assert!(json.contains(key), "ProofInput JSON missing field: {key}");
         }
     }
@@ -1947,7 +1964,10 @@ mod tests {
         let tw = test_transformation_witness();
         let json = serde_json::to_string(&tw).unwrap();
         for key in ["description", "before_ir_digest", "after_ir_digest"] {
-            assert!(json.contains(key), "TransformationWitness JSON missing field: {key}");
+            assert!(
+                json.contains(key),
+                "TransformationWitness JSON missing field: {key}"
+            );
         }
     }
 
@@ -1961,7 +1981,10 @@ mod tests {
             "test_count",
             "pass_rate_millionths",
         ] {
-            assert!(json.contains(key), "EquivalenceEvidence JSON missing field: {key}");
+            assert!(
+                json.contains(key),
+                "EquivalenceEvidence JSON missing field: {key}"
+            );
         }
     }
 
@@ -1970,7 +1993,10 @@ mod tests {
         let rt = test_rollback_token();
         let json = serde_json::to_string(&rt).unwrap();
         for key in ["baseline_hash", "rollback_procedure_hash", "validated"] {
-            assert!(json.contains(key), "RollbackToken JSON missing field: {key}");
+            assert!(
+                json.contains(key),
+                "RollbackToken JSON missing field: {key}"
+            );
         }
     }
 
@@ -1983,7 +2009,10 @@ mod tests {
             "throughput_increase_millionths",
             "sample_count",
         ] {
-            assert!(json.contains(key), "PerformanceDelta JSON missing field: {key}");
+            assert!(
+                json.contains(key),
+                "PerformanceDelta JSON missing field: {key}"
+            );
         }
     }
 
@@ -2015,7 +2044,10 @@ mod tests {
         let v = ReceiptSchemaVersion::CURRENT;
         let json = serde_json::to_string(&v).unwrap();
         for key in ["major", "minor"] {
-            assert!(json.contains(key), "ReceiptSchemaVersion JSON missing field: {key}");
+            assert!(
+                json.contains(key),
+                "ReceiptSchemaVersion JSON missing field: {key}"
+            );
         }
     }
 
@@ -2025,7 +2057,10 @@ mod tests {
 
     #[test]
     fn receipt_schema_version_display_format() {
-        let v = ReceiptSchemaVersion { major: 3, minor: 14 };
+        let v = ReceiptSchemaVersion {
+            major: 3,
+            minor: 14,
+        };
         assert_eq!(v.to_string(), "3.14");
     }
 
@@ -2044,7 +2079,11 @@ mod tests {
             assert_eq!(variant.to_string(), *display);
             set.insert(variant.to_string());
         }
-        assert_eq!(set.len(), expected.len(), "all ReceiptEventKind display values distinct");
+        assert_eq!(
+            set.len(),
+            expected.len(),
+            "all ReceiptEventKind display values distinct"
+        );
     }
 
     #[test]
@@ -2176,7 +2215,11 @@ mod tests {
             v.hash(&mut h);
             hashes.insert(h.finish());
         }
-        assert_eq!(hashes.len(), 4, "all OptimizationClass variants hash distinctly");
+        assert_eq!(
+            hashes.len(),
+            4,
+            "all OptimizationClass variants hash distinctly"
+        );
     }
 
     // ===================================================================
@@ -2341,7 +2384,10 @@ mod tests {
         let unknown = EngineObjectId([0xABu8; 32]);
         assert!(idx.specializations_from_proof(&unknown).is_empty());
         assert!(idx.proofs_for_specialization(&unknown).is_empty());
-        assert!(idx.by_optimization_class(OptimizationClass::PathElimination).is_empty());
+        assert!(
+            idx.by_optimization_class(OptimizationClass::PathElimination)
+                .is_empty()
+        );
         assert!(idx.by_epoch(SecurityEpoch::from_raw(1)).is_empty());
     }
 
@@ -2646,7 +2692,8 @@ mod tests {
     fn index_all_returns_all_inserted() {
         let mut idx = ReceiptIndex::new();
         for raw in 1..=5u64 {
-            idx.insert(test_receipt(SecurityEpoch::from_raw(raw))).unwrap();
+            idx.insert(test_receipt(SecurityEpoch::from_raw(raw)))
+                .unwrap();
         }
         assert_eq!(idx.all().len(), 5);
     }
@@ -2724,7 +2771,13 @@ mod tests {
         let err = receipt.validate_epoch_consistency().unwrap_err();
         // Should detect the first mismatch (index 0 is fine at 42, index 1 fine at 42,
         // but index 2 is 999)
-        assert!(matches!(err, ReceiptError::EpochMismatch { proof_epoch: 999, .. }));
+        assert!(matches!(
+            err,
+            ReceiptError::EpochMismatch {
+                proof_epoch: 999,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -2732,7 +2785,9 @@ mod tests {
         let e = epoch();
         let mut receipt = test_receipt(e);
         for _ in 0..10 {
-            receipt.proof_inputs.push(test_proof_input(ProofType::ReplayMotif, e));
+            receipt
+                .proof_inputs
+                .push(test_proof_input(ProofType::ReplayMotif, e));
         }
         assert!(receipt.validate_epoch_consistency().is_ok());
     }

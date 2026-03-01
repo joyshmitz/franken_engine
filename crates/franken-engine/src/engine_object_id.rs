@@ -1271,7 +1271,11 @@ mod tests {
         ];
         let debugs: std::collections::BTreeSet<String> =
             errors.iter().map(|e| format!("{e:?}")).collect();
-        assert_eq!(debugs.len(), errors.len(), "all IdError debug strings must be distinct");
+        assert_eq!(
+            debugs.len(),
+            errors.len(),
+            "all IdError debug strings must be distinct"
+        );
     }
 
     // -- Serde variant distinctness for ObjectDomain --
@@ -1311,9 +1315,15 @@ mod tests {
             },
             IdError::InvalidHexChar { position: 1 },
         ];
-        let jsons: std::collections::BTreeSet<String> =
-            errors.iter().map(|e| serde_json::to_string(e).unwrap()).collect();
-        assert_eq!(jsons.len(), errors.len(), "all IdError variants must serialize to distinct JSON");
+        let jsons: std::collections::BTreeSet<String> = errors
+            .iter()
+            .map(|e| serde_json::to_string(e).unwrap())
+            .collect();
+        assert_eq!(
+            jsons.len(),
+            errors.len(),
+            "all IdError variants must serialize to distinct JSON"
+        );
     }
 
     // -- Hash consistency --
@@ -1496,9 +1506,7 @@ mod tests {
             expected: 64,
             actual: 0,
         });
-        assert_error(&IdError::NonCanonicalInput {
-            reason: "x".into(),
-        });
+        assert_error(&IdError::NonCanonicalInput { reason: "x".into() });
     }
 
     #[test]
@@ -1660,7 +1668,10 @@ mod tests {
         ];
         for err in &errors {
             let msg = err.to_string();
-            assert!(!msg.is_empty(), "IdError variant has empty Display: {err:?}");
+            assert!(
+                !msg.is_empty(),
+                "IdError variant has empty Display: {err:?}"
+            );
         }
     }
 

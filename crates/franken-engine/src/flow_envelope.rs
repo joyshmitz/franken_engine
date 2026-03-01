@@ -1937,7 +1937,9 @@ mod tests {
             },
             EnvelopeError::IdDerivation("id".into()),
             EnvelopeError::SignatureError("sig".into()),
-            EnvelopeError::BudgetExhausted { phase: "dyn".into() },
+            EnvelopeError::BudgetExhausted {
+                phase: "dyn".into(),
+            },
         ];
         let mut serialized: BTreeSet<String> = BTreeSet::new();
         for e in &errors {
@@ -2284,7 +2286,9 @@ mod tests {
             },
             EnvelopeError::IdDerivation(String::new()),
             EnvelopeError::SignatureError(String::new()),
-            EnvelopeError::BudgetExhausted { phase: String::new() },
+            EnvelopeError::BudgetExhausted {
+                phase: String::new(),
+            },
         ];
         let codes: BTreeSet<&'static str> = errors.iter().map(error_code).collect();
         assert_eq!(codes.len(), errors.len());
@@ -2341,13 +2345,7 @@ mod tests {
         let mut synth =
             FlowEnvelopeSynthesizer::new("ext-fb3", 30_000_000_000, SecurityEpoch::from_raw(1));
         let envelope = synth
-            .synthesize_fallback(
-                &upper,
-                "policy-fb",
-                0,
-                FallbackQuality::StaticBound,
-                "t",
-            )
+            .synthesize_fallback(&upper, "policy-fb", 0, FallbackQuality::StaticBound, "t")
             .unwrap();
         for obl in &envelope.proof_obligations {
             assert_eq!(obl.required_method, FlowProofMethod::RuntimeCheck);

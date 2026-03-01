@@ -1114,10 +1114,7 @@ mod tests {
         let policy = sample_policy(SecurityEpoch::from_raw(5), measurement_digest_hex, "root-1");
         let mut revocation_observations = BTreeMap::new();
         revocation_observations.insert("intel_pcs".to_string(), RevocationProbeStatus::Good);
-        revocation_observations.insert(
-            "internal_ledger".to_string(),
-            RevocationProbeStatus::Good,
-        );
+        revocation_observations.insert("internal_ledger".to_string(), RevocationProbeStatus::Good);
         let policy_quote = PolicyAttestationQuote {
             platform: TeePlatform::IntelSgx,
             measurement: MeasurementDigest {

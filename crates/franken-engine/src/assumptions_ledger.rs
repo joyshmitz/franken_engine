@@ -1571,7 +1571,10 @@ mod tests {
     fn demotion_action_serde_variants_distinct() {
         let variants = vec![
             DemotionAction::EnterSafeMode { reason: "r".into() },
-            DemotionAction::DemoteLane { lane_id: "l".into(), reason: "r".into() },
+            DemotionAction::DemoteLane {
+                lane_id: "l".into(),
+                reason: "r".into(),
+            },
             DemotionAction::SuspendAdaptive { reason: "r".into() },
             DemotionAction::EscalateToOperator { reason: "r".into() },
             DemotionAction::NoAction,
@@ -1824,7 +1827,10 @@ mod tests {
         let mut ledger = default_ledger();
         for i in (0..10).rev() {
             ledger
-                .record_assumption(make_assumption(&format!("a{i:02}"), ViolationSeverity::Advisory))
+                .record_assumption(make_assumption(
+                    &format!("a{i:02}"),
+                    ViolationSeverity::Advisory,
+                ))
                 .unwrap();
         }
         let keys: Vec<&String> = ledger.assumptions().keys().collect();
@@ -1840,8 +1846,10 @@ mod tests {
     fn ledger_chain_hash_deterministic() {
         let mut l1 = default_ledger();
         let mut l2 = default_ledger();
-        l1.record_assumption(make_assumption("a1", ViolationSeverity::Warning)).unwrap();
-        l2.record_assumption(make_assumption("a1", ViolationSeverity::Warning)).unwrap();
+        l1.record_assumption(make_assumption("a1", ViolationSeverity::Warning))
+            .unwrap();
+        l2.record_assumption(make_assumption("a1", ViolationSeverity::Warning))
+            .unwrap();
         assert_eq!(l1.chain_hash(), l2.chain_hash());
     }
 
@@ -1849,8 +1857,10 @@ mod tests {
     fn ledger_chain_hash_differs_for_different_assumptions() {
         let mut l1 = default_ledger();
         let mut l2 = default_ledger();
-        l1.record_assumption(make_assumption("a1", ViolationSeverity::Warning)).unwrap();
-        l2.record_assumption(make_assumption("a2", ViolationSeverity::Warning)).unwrap();
+        l1.record_assumption(make_assumption("a1", ViolationSeverity::Warning))
+            .unwrap();
+        l2.record_assumption(make_assumption("a2", ViolationSeverity::Warning))
+            .unwrap();
         assert_ne!(l1.chain_hash(), l2.chain_hash());
     }
 

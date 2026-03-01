@@ -1760,7 +1760,9 @@ mod tests {
 
     #[test]
     fn high_impact_action_copy_into_fn() {
-        fn consume(a: HighImpactAction) -> HighImpactAction { a }
+        fn consume(a: HighImpactAction) -> HighImpactAction {
+            a
+        }
         let a = HighImpactAction::Terminate;
         let b = consume(a);
         // a is still valid because it's Copy:
@@ -1788,7 +1790,9 @@ mod tests {
             EmissionError::LedgerWriteFailure { reason: "r".into() },
             EmissionError::ValidationFailure { reason: "v".into() },
             EmissionError::BufferFull { capacity: 1 },
-            EmissionError::NotRequired { action: HighImpactAction::Sandbox },
+            EmissionError::NotRequired {
+                action: HighImpactAction::Sandbox,
+            },
         ];
         let mut debugs = std::collections::BTreeSet::new();
         for v in &variants {
@@ -1818,7 +1822,9 @@ mod tests {
             EmissionError::LedgerWriteFailure { reason: "y".into() },
             EmissionError::ValidationFailure { reason: "z".into() },
             EmissionError::BufferFull { capacity: 42 },
-            EmissionError::NotRequired { action: HighImpactAction::Quarantine },
+            EmissionError::NotRequired {
+                action: HighImpactAction::Quarantine,
+            },
         ];
         let mut jsons = std::collections::BTreeSet::new();
         for v in &variants {
@@ -1858,14 +1864,18 @@ mod tests {
 
     #[test]
     fn emission_error_clone_independence() {
-        let original = EmissionError::MissingField { field: "trace_id".into() };
+        let original = EmissionError::MissingField {
+            field: "trace_id".into(),
+        };
         let mut cloned = original.clone();
         if let EmissionError::MissingField { ref mut field } = cloned {
             *field = "mutated".into();
         }
         assert_eq!(
             original,
-            EmissionError::MissingField { field: "trace_id".into() }
+            EmissionError::MissingField {
+                field: "trace_id".into()
+            }
         );
     }
 
@@ -1968,7 +1978,11 @@ mod tests {
         assert!(obj.contains_key("event"));
         assert!(obj.contains_key("outcome"));
         assert!(obj.contains_key("error_code"));
-        assert_eq!(obj.len(), 7, "StructuredLogEvent should have exactly 7 fields");
+        assert_eq!(
+            obj.len(),
+            7,
+            "StructuredLogEvent should have exactly 7 fields"
+        );
     }
 
     #[test]
@@ -1977,7 +1991,10 @@ mod tests {
         let json = serde_json::to_string(&err).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         let obj = v.as_object().unwrap();
-        assert!(obj.contains_key("MissingField"), "JSON should have MissingField key");
+        assert!(
+            obj.contains_key("MissingField"),
+            "JSON should have MissingField key"
+        );
     }
 
     #[test]
@@ -1986,7 +2003,10 @@ mod tests {
         let json = serde_json::to_string(&err).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         let obj = v.as_object().unwrap();
-        assert!(obj.contains_key("BufferFull"), "JSON should have BufferFull key");
+        assert!(
+            obj.contains_key("BufferFull"),
+            "JSON should have BufferFull key"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1997,7 +2017,10 @@ mod tests {
     fn high_impact_action_display_all_lowercase_underscore() {
         for action in HighImpactAction::ALL {
             let display = action.to_string();
-            assert!(!display.is_empty(), "Display should not be empty for {action:?}");
+            assert!(
+                !display.is_empty(),
+                "Display should not be empty for {action:?}"
+            );
             for ch in display.chars() {
                 assert!(
                     ch.is_ascii_lowercase() || ch == '_',
@@ -2014,7 +2037,9 @@ mod tests {
             EmissionError::LedgerWriteFailure { reason: "r".into() },
             EmissionError::ValidationFailure { reason: "v".into() },
             EmissionError::BufferFull { capacity: 0 },
-            EmissionError::NotRequired { action: HighImpactAction::Sandbox },
+            EmissionError::NotRequired {
+                action: HighImpactAction::Sandbox,
+            },
         ];
         for v in &variants {
             let display = v.to_string();
@@ -2024,19 +2049,25 @@ mod tests {
 
     #[test]
     fn emission_error_display_missing_field_contains_field_name() {
-        let err = EmissionError::MissingField { field: "my_field".into() };
+        let err = EmissionError::MissingField {
+            field: "my_field".into(),
+        };
         assert!(err.to_string().contains("my_field"));
     }
 
     #[test]
     fn emission_error_display_ledger_write_failure_contains_reason() {
-        let err = EmissionError::LedgerWriteFailure { reason: "disk full".into() };
+        let err = EmissionError::LedgerWriteFailure {
+            reason: "disk full".into(),
+        };
         assert!(err.to_string().contains("disk full"));
     }
 
     #[test]
     fn emission_error_display_validation_failure_contains_reason() {
-        let err = EmissionError::ValidationFailure { reason: "bad schema".into() };
+        let err = EmissionError::ValidationFailure {
+            reason: "bad schema".into(),
+        };
         assert!(err.to_string().contains("bad schema"));
     }
 
@@ -2048,7 +2079,9 @@ mod tests {
 
     #[test]
     fn emission_error_display_not_required_contains_action_name() {
-        let err = EmissionError::NotRequired { action: HighImpactAction::Terminate };
+        let err = EmissionError::NotRequired {
+            action: HighImpactAction::Terminate,
+        };
         assert!(err.to_string().contains("terminate"));
     }
 
@@ -2064,7 +2097,11 @@ mod tests {
             let mut h2 = std::collections::hash_map::DefaultHasher::new();
             action.hash(&mut h1);
             action.hash(&mut h2);
-            assert_eq!(h1.finish(), h2.finish(), "Hash should be consistent for {action:?}");
+            assert_eq!(
+                h1.finish(),
+                h2.finish(),
+                "Hash should be consistent for {action:?}"
+            );
         }
     }
 
@@ -2078,7 +2115,10 @@ mod tests {
             hashes.insert(hasher.finish());
         }
         // At minimum most should be distinct (hash collisions possible but very unlikely for 20)
-        assert!(hashes.len() >= 18, "expected at least 18 distinct hashes out of 20");
+        assert!(
+            hashes.len() >= 18,
+            "expected at least 18 distinct hashes out of 20"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2269,7 +2309,9 @@ mod tests {
 
     #[test]
     fn emission_error_buffer_full_capacity_max() {
-        let err = EmissionError::BufferFull { capacity: usize::MAX };
+        let err = EmissionError::BufferFull {
+            capacity: usize::MAX,
+        };
         let display = err.to_string();
         assert!(display.contains(&usize::MAX.to_string()));
     }

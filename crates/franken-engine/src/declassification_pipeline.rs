@@ -1673,9 +1673,7 @@ mod tests {
                 source: Label::Public,
                 sink: Label::Internal,
             },
-            PipelineError::PolicyUnavailable {
-                reason: "x".into(),
-            },
+            PipelineError::PolicyUnavailable { reason: "x".into() },
             PipelineError::NoMatchingRoute {
                 source: Label::Secret,
                 sink: Label::Public,
@@ -1688,9 +1686,7 @@ mod tests {
                 request_id: "r".into(),
                 expiry_ms: 1,
             },
-            PipelineError::SigningError {
-                detail: "d".into(),
-            },
+            PipelineError::SigningError { detail: "d".into() },
             PipelineError::ValidationError(IfcValidationError::EmptyClaim {
                 claim_id: "c".into(),
             }),
@@ -1722,9 +1718,7 @@ mod tests {
                 source: Label::Public,
                 sink: Label::Internal,
             },
-            PipelineError::PolicyUnavailable {
-                reason: "x".into(),
-            },
+            PipelineError::PolicyUnavailable { reason: "x".into() },
             PipelineError::NoMatchingRoute {
                 source: Label::Secret,
                 sink: Label::Public,
@@ -1737,9 +1731,7 @@ mod tests {
                 request_id: "r".into(),
                 expiry_ms: 1,
             },
-            PipelineError::SigningError {
-                detail: "d".into(),
-            },
+            PipelineError::SigningError { detail: "d".into() },
             PipelineError::ValidationError(IfcValidationError::EmptyClaim {
                 claim_id: "c".into(),
             }),
@@ -2058,7 +2050,10 @@ mod tests {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
-        for decision in &[DeclassificationDecision::Allow, DeclassificationDecision::Deny] {
+        for decision in &[
+            DeclassificationDecision::Allow,
+            DeclassificationDecision::Deny,
+        ] {
             let mut h1 = DefaultHasher::new();
             let mut h2 = DefaultHasher::new();
             decision.hash(&mut h1);
@@ -2402,9 +2397,7 @@ mod tests {
                 failed_conditions: vec![],
             },
             PolicyEvalResult::NoMatchingRoute,
-            PolicyEvalResult::PolicyUnavailable {
-                reason: "x".into(),
-            },
+            PolicyEvalResult::PolicyUnavailable { reason: "x".into() },
         ];
         for v in &variants {
             assert!(!format!("{v:?}").is_empty());
@@ -2473,9 +2466,7 @@ mod tests {
                 source: Label::Public,
                 sink: Label::Internal,
             },
-            PipelineError::PolicyUnavailable {
-                reason: "x".into(),
-            },
+            PipelineError::PolicyUnavailable { reason: "x".into() },
             PipelineError::NoMatchingRoute {
                 source: Label::Secret,
                 sink: Label::Public,
@@ -2488,9 +2479,7 @@ mod tests {
                 request_id: "r".into(),
                 expiry_ms: 0,
             },
-            PipelineError::SigningError {
-                detail: "d".into(),
-            },
+            PipelineError::SigningError { detail: "d".into() },
             PipelineError::ValidationError(IfcValidationError::EmptyClaim {
                 claim_id: "c".into(),
             }),

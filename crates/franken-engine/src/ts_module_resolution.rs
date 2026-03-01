@@ -290,12 +290,16 @@ impl DeterministicTsModuleResolver {
                 );
                 return Err(TsModuleResolutionError {
                     code: TsResolutionErrorCode::MissingReferrer,
-                    message: format!("relative specifier '{}' requires referrer", request.specifier),
+                    message: format!(
+                        "relative specifier '{}' requires referrer",
+                        request.specifier
+                    ),
                     traces,
                 });
             };
 
-            let Some(referrer_dir) = resolve_referrer_directory(referrer, &self.config.project_root)
+            let Some(referrer_dir) =
+                resolve_referrer_directory(referrer, &self.config.project_root)
             else {
                 push_trace(
                     &mut traces,
@@ -364,7 +368,10 @@ impl DeterministicTsModuleResolver {
                                 .selected_condition
                                 .as_deref()
                                 .unwrap_or("fallback"),
-                            package_candidate.package_name.as_deref().unwrap_or("<unknown>")
+                            package_candidate
+                                .package_name
+                                .as_deref()
+                                .unwrap_or("<unknown>")
                         ),
                         Some(package_candidate.base.clone()),
                     );
@@ -389,7 +396,8 @@ impl DeterministicTsModuleResolver {
                 }
             }
 
-            let fallback_base = normalize_absolute_path(&join_paths(&self.base_url_dir(), specifier));
+            let fallback_base =
+                normalize_absolute_path(&join_paths(&self.base_url_dir(), specifier));
             push_trace(
                 &mut traces,
                 context,
@@ -558,7 +566,10 @@ impl DeterministicTsModuleResolver {
             return normalize_absolute_path(&self.config.base_url);
         }
 
-        normalize_absolute_path(&join_paths(&self.config.project_root, &self.config.base_url))
+        normalize_absolute_path(&join_paths(
+            &self.config.project_root,
+            &self.config.base_url,
+        ))
     }
 
     fn to_workspace_path(&self, value: &str) -> String {
@@ -875,10 +886,12 @@ pub fn classify_resolution_drift(
     let drift_class = if reference_candidates == observed_candidates {
         TsResolutionDriftClass::NoDrift
     } else {
-        let reference_set: BTreeSet<&str> = reference_candidates.iter().map(String::as_str).collect();
+        let reference_set: BTreeSet<&str> =
+            reference_candidates.iter().map(String::as_str).collect();
         let observed_set: BTreeSet<&str> = observed_candidates.iter().map(String::as_str).collect();
 
-        if reference_set == observed_set && reference_candidates.len() == observed_candidates.len() {
+        if reference_set == observed_set && reference_candidates.len() == observed_candidates.len()
+        {
             TsResolutionDriftClass::CandidateOrderMismatch
         } else if observed_set.is_subset(&reference_set) {
             TsResolutionDriftClass::MissingTarget
@@ -1140,11 +1153,26 @@ mod tests {
 
     #[test]
     fn error_code_stable_codes() {
-        assert_eq!(TsResolutionErrorCode::EmptySpecifier.stable_code(), "FE-TSRES-0001");
-        assert_eq!(TsResolutionErrorCode::MissingReferrer.stable_code(), "FE-TSRES-0002");
-        assert_eq!(TsResolutionErrorCode::InvalidReferrer.stable_code(), "FE-TSRES-0003");
-        assert_eq!(TsResolutionErrorCode::PackageResolutionFailed.stable_code(), "FE-TSRES-0004");
-        assert_eq!(TsResolutionErrorCode::ModuleNotFound.stable_code(), "FE-TSRES-0005");
+        assert_eq!(
+            TsResolutionErrorCode::EmptySpecifier.stable_code(),
+            "FE-TSRES-0001"
+        );
+        assert_eq!(
+            TsResolutionErrorCode::MissingReferrer.stable_code(),
+            "FE-TSRES-0002"
+        );
+        assert_eq!(
+            TsResolutionErrorCode::InvalidReferrer.stable_code(),
+            "FE-TSRES-0003"
+        );
+        assert_eq!(
+            TsResolutionErrorCode::PackageResolutionFailed.stable_code(),
+            "FE-TSRES-0004"
+        );
+        assert_eq!(
+            TsResolutionErrorCode::ModuleNotFound.stable_code(),
+            "FE-TSRES-0005"
+        );
     }
 
     #[test]
@@ -1330,7 +1358,10 @@ mod tests {
 
         let req = import_request("react");
         let outcome = resolver.resolve(&req, &ctx()).unwrap();
-        assert_eq!(outcome.resolved_path, "/project/node_modules/react/dist/index.mjs");
+        assert_eq!(
+            outcome.resolved_path,
+            "/project/node_modules/react/dist/index.mjs"
+        );
         assert_eq!(outcome.package_name.as_deref(), Some("react"));
         assert_eq!(outcome.selected_condition.as_deref(), Some("import"));
     }
@@ -1352,7 +1383,10 @@ mod tests {
 
         let req = require_request("lodash");
         let outcome = resolver.resolve(&req, &ctx()).unwrap();
-        assert_eq!(outcome.resolved_path, "/project/node_modules/lodash/dist/index.cjs");
+        assert_eq!(
+            outcome.resolved_path,
+            "/project/node_modules/lodash/dist/index.cjs"
+        );
         assert_eq!(outcome.selected_condition.as_deref(), Some("require"));
     }
 
@@ -1370,7 +1404,10 @@ mod tests {
 
         let req = import_request("fallback-pkg");
         let outcome = resolver.resolve(&req, &ctx()).unwrap();
-        assert_eq!(outcome.resolved_path, "/project/node_modules/fallback-pkg/lib/main.js");
+        assert_eq!(
+            outcome.resolved_path,
+            "/project/node_modules/fallback-pkg/lib/main.js"
+        );
     }
 
     #[test]
@@ -1408,7 +1445,10 @@ mod tests {
 
         let req = import_request("toolkit/utils");
         let outcome = resolver.resolve(&req, &ctx()).unwrap();
-        assert_eq!(outcome.resolved_path, "/project/node_modules/toolkit/utils.mjs");
+        assert_eq!(
+            outcome.resolved_path,
+            "/project/node_modules/toolkit/utils.mjs"
+        );
     }
 
     #[test]
@@ -1555,10 +1595,8 @@ mod tests {
 
     #[test]
     fn drift_extra_target() {
-        let report = classify_resolution_drift(
-            &["a".to_string()],
-            &["a".to_string(), "b".to_string()],
-        );
+        let report =
+            classify_resolution_drift(&["a".to_string()], &["a".to_string(), "b".to_string()]);
         assert!(report.drift_detected);
         assert_eq!(report.class, TsResolutionDriftClass::ExtraTarget);
     }
@@ -1648,7 +1686,10 @@ mod tests {
 
     #[test]
     fn capture_wildcard_basic() {
-        assert_eq!(capture_wildcard("@utils/*", "@utils/math"), Some("math".to_string()));
+        assert_eq!(
+            capture_wildcard("@utils/*", "@utils/math"),
+            Some("math".to_string())
+        );
     }
 
     #[test]

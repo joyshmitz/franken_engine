@@ -1524,8 +1524,7 @@ mod tests {
 
     #[test]
     fn update_result_json_field_names_stable() {
-        let mut updater =
-            BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
         let result = updater.update(&benign_evidence());
         let v: serde_json::Value = serde_json::to_value(&result).unwrap();
         let obj = v.as_object().unwrap();
@@ -1538,8 +1537,7 @@ mod tests {
 
     #[test]
     fn calibration_result_json_field_names_stable() {
-        let updater =
-            BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
         let cal = updater.calibration_check(RiskState::Benign);
         let v: serde_json::Value = serde_json::to_value(&cal).unwrap();
         let obj = v.as_object().unwrap();
@@ -1598,8 +1596,7 @@ mod tests {
 
     #[test]
     fn update_result_debug_contains_type_name() {
-        let mut updater =
-            BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
         let result = updater.update(&benign_evidence());
         let dbg = format!("{:?}", result);
         assert!(dbg.contains("UpdateResult"));
@@ -1607,8 +1604,7 @@ mod tests {
 
     #[test]
     fn calibration_result_debug_contains_type_name() {
-        let updater =
-            BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
         let cal = updater.calibration_check(RiskState::Benign);
         let dbg = format!("{:?}", cal);
         assert!(dbg.contains("CalibrationResult"));
@@ -1656,8 +1652,7 @@ mod tests {
 
     #[test]
     fn updater_clone_independent() {
-        let mut u =
-            BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let mut u = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
         u.update(&benign_evidence());
         let u2 = u.clone();
         u.reset(Posterior::uniform());
@@ -1850,19 +1845,15 @@ mod tests {
             timing_anomaly_threshold: 250_000,
             resource_threshold: 350_000,
         };
-        let updater = BayesianPosteriorUpdater::with_model(
-            Posterior::uniform(),
-            "ext-custom",
-            model,
-        );
+        let updater =
+            BayesianPosteriorUpdater::with_model(Posterior::uniform(), "ext-custom", model);
         assert_eq!(updater.extension_id(), "ext-custom");
         assert_eq!(*updater.posterior(), Posterior::uniform());
     }
 
     #[test]
     fn updater_reset_preserves_extension_id() {
-        let mut updater =
-            BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
         updater.update(&malicious_evidence());
         updater.reset(Posterior::uniform());
         assert_eq!(updater.extension_id(), "ext-001");
@@ -1870,8 +1861,7 @@ mod tests {
 
     #[test]
     fn updater_reset_clears_evidence_hashes() {
-        let mut updater =
-            BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
         updater.update(&benign_evidence());
         assert_eq!(updater.evidence_hashes().len(), 1);
         updater.reset(Posterior::default_prior());
@@ -1880,8 +1870,7 @@ mod tests {
 
     #[test]
     fn updater_reset_clears_change_detector() {
-        let mut updater =
-            BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
         for _ in 0..10 {
             updater.update(&benign_evidence());
         }
@@ -1891,8 +1880,7 @@ mod tests {
 
     #[test]
     fn calibration_all_risk_states() {
-        let updater =
-            BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
         for state in &RiskState::ALL {
             let cal = updater.calibration_check(*state);
             assert_eq!(cal.ground_truth, *state);
@@ -1945,10 +1933,8 @@ mod tests {
 
     #[test]
     fn evidence_same_data_produces_same_hash() {
-        let mut u1 =
-            BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
-        let mut u2 =
-            BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let mut u1 = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let mut u2 = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
         u1.update(&benign_evidence());
         u2.update(&benign_evidence());
         assert_eq!(u1.evidence_hashes()[0], u2.evidence_hashes()[0]);
@@ -1956,10 +1942,8 @@ mod tests {
 
     #[test]
     fn content_hash_differs_for_different_extensions() {
-        let u1 =
-            BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
-        let u2 =
-            BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-002");
+        let u1 = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let u2 = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-002");
         assert_ne!(u1.content_hash(), u2.content_hash());
     }
 
@@ -2021,16 +2005,14 @@ mod tests {
 
     #[test]
     fn updater_serde_roundtrip_preserves_all_state() {
-        let mut updater =
-            BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
         updater.set_epoch(SecurityEpoch::from_raw(42));
         updater.update(&benign_evidence());
         updater.update(&malicious_evidence());
         updater.update(&anomalous_evidence());
 
         let json = serde_json::to_string(&updater).unwrap();
-        let restored: BayesianPosteriorUpdater =
-            serde_json::from_str(&json).unwrap();
+        let restored: BayesianPosteriorUpdater = serde_json::from_str(&json).unwrap();
 
         assert_eq!(updater.posterior(), restored.posterior());
         assert_eq!(updater.update_count(), restored.update_count());
@@ -2080,8 +2062,7 @@ mod tests {
 
     #[test]
     fn llr_accumulates_across_mixed_evidence() {
-        let mut updater =
-            BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
         updater.update(&malicious_evidence());
         let llr_after_mal = updater.log_likelihood_ratio();
         assert!(llr_after_mal > 0);
@@ -2098,8 +2079,7 @@ mod tests {
 
     #[test]
     fn many_updates_posterior_stays_valid() {
-        let mut updater =
-            BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
+        let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-001");
         for i in 0..50 {
             let ev = if i % 3 == 0 {
                 malicious_evidence()

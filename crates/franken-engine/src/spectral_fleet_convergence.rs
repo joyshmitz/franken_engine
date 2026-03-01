@@ -1593,14 +1593,14 @@ mod tests {
             SpectralError::EmptyGraph,
             SpectralError::Disconnected { components: 2 },
             SpectralError::NodeOutOfBounds { index: 0, size: 0 },
-            SpectralError::InvalidEdgeWeight { weight_millionths: -1 },
+            SpectralError::InvalidEdgeWeight {
+                weight_millionths: -1,
+            },
             SpectralError::ConvergenceFailure { iterations: 10 },
             SpectralError::DegenerateSpectralGap,
         ];
-        let set: std::collections::BTreeSet<String> = variants
-            .iter()
-            .map(|v| format!("{v:?}"))
-            .collect();
+        let set: std::collections::BTreeSet<String> =
+            variants.iter().map(|v| format!("{v:?}")).collect();
         assert_eq!(set.len(), 7);
     }
 
@@ -1611,7 +1611,9 @@ mod tests {
             SpectralError::EmptyGraph,
             SpectralError::Disconnected { components: 2 },
             SpectralError::NodeOutOfBounds { index: 0, size: 0 },
-            SpectralError::InvalidEdgeWeight { weight_millionths: -1 },
+            SpectralError::InvalidEdgeWeight {
+                weight_millionths: -1,
+            },
             SpectralError::ConvergenceFailure { iterations: 10 },
             SpectralError::DegenerateSpectralGap,
         ];
@@ -1624,7 +1626,10 @@ mod tests {
 
     #[test]
     fn spectral_error_display_exact_too_many_nodes() {
-        let e = SpectralError::TooManyNodes { count: 2000, max: 1024 };
+        let e = SpectralError::TooManyNodes {
+            count: 2000,
+            max: 1024,
+        };
         assert_eq!(e.to_string(), "2000 nodes exceeds limit 1024");
     }
 
@@ -1647,19 +1652,27 @@ mod tests {
 
     #[test]
     fn spectral_error_display_exact_invalid_edge_weight() {
-        let e = SpectralError::InvalidEdgeWeight { weight_millionths: -100 };
+        let e = SpectralError::InvalidEdgeWeight {
+            weight_millionths: -100,
+        };
         assert_eq!(e.to_string(), "invalid edge weight -100; expected > 0");
     }
 
     #[test]
     fn spectral_error_display_exact_convergence_failure() {
         let e = SpectralError::ConvergenceFailure { iterations: 100 };
-        assert_eq!(e.to_string(), "power iteration did not converge after 100 iterations");
+        assert_eq!(
+            e.to_string(),
+            "power iteration did not converge after 100 iterations"
+        );
     }
 
     #[test]
     fn spectral_error_display_exact_degenerate() {
-        assert_eq!(SpectralError::DegenerateSpectralGap.to_string(), "spectral gap is zero or negative");
+        assert_eq!(
+            SpectralError::DegenerateSpectralGap.to_string(),
+            "spectral gap is zero or negative"
+        );
     }
 
     #[test]
@@ -1733,7 +1746,10 @@ mod tests {
     fn spectral_analyzer_default_values() {
         let a = SpectralAnalyzer::default();
         assert_eq!(a.max_iterations, POWER_ITERATIONS);
-        assert_eq!(a.convergence_threshold_millionths, CONVERGENCE_THRESHOLD_MILLIONTHS);
+        assert_eq!(
+            a.convergence_threshold_millionths,
+            CONVERGENCE_THRESHOLD_MILLIONTHS
+        );
     }
 
     #[test]
@@ -1820,28 +1836,44 @@ mod tests {
     fn boundary_edge_weight_zero_rejected() {
         let mut topo = GossipTopology::new(vec!["a".to_string(), "b".to_string()]).unwrap();
         let err = topo.add_edge(0, 1, 0).unwrap_err();
-        assert!(matches!(err, SpectralError::InvalidEdgeWeight { weight_millionths: 0 }));
+        assert!(matches!(
+            err,
+            SpectralError::InvalidEdgeWeight {
+                weight_millionths: 0
+            }
+        ));
     }
 
     #[test]
     fn boundary_negative_edge_weight_rejected() {
         let mut topo = GossipTopology::new(vec!["a".to_string(), "b".to_string()]).unwrap();
         let err = topo.add_edge(0, 1, -1).unwrap_err();
-        assert!(matches!(err, SpectralError::InvalidEdgeWeight { weight_millionths: -1 }));
+        assert!(matches!(
+            err,
+            SpectralError::InvalidEdgeWeight {
+                weight_millionths: -1
+            }
+        ));
     }
 
     #[test]
     fn boundary_node_out_of_bounds_from() {
         let mut topo = GossipTopology::new(vec!["a".to_string()]).unwrap();
         let err = topo.add_edge(5, 0, MILLION).unwrap_err();
-        assert!(matches!(err, SpectralError::NodeOutOfBounds { index: 5, .. }));
+        assert!(matches!(
+            err,
+            SpectralError::NodeOutOfBounds { index: 5, .. }
+        ));
     }
 
     #[test]
     fn boundary_node_out_of_bounds_to() {
         let mut topo = GossipTopology::new(vec!["a".to_string()]).unwrap();
         let err = topo.add_edge(0, 5, MILLION).unwrap_err();
-        assert!(matches!(err, SpectralError::NodeOutOfBounds { index: 5, .. }));
+        assert!(matches!(
+            err,
+            SpectralError::NodeOutOfBounds { index: 5, .. }
+        ));
     }
 
     #[test]
@@ -1856,7 +1888,10 @@ mod tests {
 
     #[test]
     fn schema_version_constant_stable() {
-        assert_eq!(SPECTRAL_SCHEMA_VERSION, "franken-engine.spectral-fleet-convergence.v1");
+        assert_eq!(
+            SPECTRAL_SCHEMA_VERSION,
+            "franken-engine.spectral-fleet-convergence.v1"
+        );
     }
 
     #[test]
@@ -1871,11 +1906,16 @@ mod tests {
     #[test]
     fn spectral_error_serde_roundtrip_all_variants() {
         let variants: Vec<SpectralError> = vec![
-            SpectralError::TooManyNodes { count: 2000, max: 1024 },
+            SpectralError::TooManyNodes {
+                count: 2000,
+                max: 1024,
+            },
             SpectralError::EmptyGraph,
             SpectralError::Disconnected { components: 3 },
             SpectralError::NodeOutOfBounds { index: 5, size: 3 },
-            SpectralError::InvalidEdgeWeight { weight_millionths: -100 },
+            SpectralError::InvalidEdgeWeight {
+                weight_millionths: -100,
+            },
             SpectralError::ConvergenceFailure { iterations: 100 },
             SpectralError::DegenerateSpectralGap,
         ];
@@ -1917,7 +1957,10 @@ mod tests {
         let json = serde_json::to_string(&a).unwrap();
         let back: SpectralAnalyzer = serde_json::from_str(&json).unwrap();
         assert_eq!(a.max_iterations, back.max_iterations);
-        assert_eq!(a.convergence_threshold_millionths, back.convergence_threshold_millionths);
+        assert_eq!(
+            a.convergence_threshold_millionths,
+            back.convergence_threshold_millionths
+        );
     }
 
     #[test]
@@ -1926,7 +1969,8 @@ mod tests {
             num_nodes: 0,
             node_ids: vec![],
             adjacency: BTreeMap::new(),
-        }).unwrap_err();
+        })
+        .unwrap_err();
         assert!(matches!(err, SpectralError::EmptyGraph));
     }
 

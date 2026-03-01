@@ -468,21 +468,22 @@ pub fn validate_artifact_triad(run_dir: impl AsRef<Path>) -> ArtifactValidationR
         match fs::read_to_string(&manifest_path) {
             Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
                 Ok(manifest) => {
-                    let schema = manifest_required_field(&manifest, "schema_version", &mut findings);
+                    let schema =
+                        manifest_required_field(&manifest, "schema_version", &mut findings);
                     if let Some(schema) = schema
-                        && schema != RGC_TEST_HARNESS_MANIFEST_SCHEMA_VERSION {
-                            findings.push(ArtifactValidationFinding::new(
-                                ArtifactValidationErrorCode::MissingRequiredField,
-                                format!(
-                                    "manifest schema_version mismatch: expected `{}` found `{schema}`",
-                                    RGC_TEST_HARNESS_MANIFEST_SCHEMA_VERSION
-                                ),
-                            ));
-                        }
+                        && schema != RGC_TEST_HARNESS_MANIFEST_SCHEMA_VERSION
+                    {
+                        findings.push(ArtifactValidationFinding::new(
+                            ArtifactValidationErrorCode::MissingRequiredField,
+                            format!(
+                                "manifest schema_version mismatch: expected `{}` found `{schema}`",
+                                RGC_TEST_HARNESS_MANIFEST_SCHEMA_VERSION
+                            ),
+                        ));
+                    }
                     run_id = manifest_required_field(&manifest, "run_id", &mut findings);
                     trace_id = manifest_required_field(&manifest, "trace_id", &mut findings);
-                    decision_id =
-                        manifest_required_field(&manifest, "decision_id", &mut findings);
+                    decision_id = manifest_required_field(&manifest, "decision_id", &mut findings);
                     policy_id = manifest_required_field(&manifest, "policy_id", &mut findings);
                     let _scenario_id =
                         manifest_required_field(&manifest, "scenario_id", &mut findings);
@@ -501,8 +502,9 @@ pub fn validate_artifact_triad(run_dir: impl AsRef<Path>) -> ArtifactValidationR
                         ));
                     }
 
-                    expected_event_count =
-                        manifest.get("event_count").and_then(serde_json::Value::as_u64);
+                    expected_event_count = manifest
+                        .get("event_count")
+                        .and_then(serde_json::Value::as_u64);
                     if expected_event_count.is_none() {
                         findings.push(ArtifactValidationFinding::new(
                             ArtifactValidationErrorCode::MissingRequiredField,
@@ -510,8 +512,9 @@ pub fn validate_artifact_triad(run_dir: impl AsRef<Path>) -> ArtifactValidationR
                         ));
                     }
 
-                    expected_command_count =
-                        manifest.get("command_count").and_then(serde_json::Value::as_u64);
+                    expected_command_count = manifest
+                        .get("command_count")
+                        .and_then(serde_json::Value::as_u64);
                     if expected_command_count.is_none() {
                         findings.push(ArtifactValidationFinding::new(
                             ArtifactValidationErrorCode::MissingRequiredField,
@@ -543,8 +546,9 @@ pub fn validate_artifact_triad(run_dir: impl AsRef<Path>) -> ArtifactValidationR
                     match serde_json::from_str::<HarnessLogEvent>(line) {
                         Ok(event) => {
                             if let Some(expected) = trace_id.as_deref()
-                                && event.trace_id != expected {
-                                    findings.push(ArtifactValidationFinding::new(
+                                && event.trace_id != expected
+                            {
+                                findings.push(ArtifactValidationFinding::new(
                                         ArtifactValidationErrorCode::CorrelationMismatch,
                                         format!(
                                             "events line {} trace_id mismatch: expected `{expected}` found `{}`",
@@ -552,10 +556,11 @@ pub fn validate_artifact_triad(run_dir: impl AsRef<Path>) -> ArtifactValidationR
                                             event.trace_id
                                         ),
                                     ));
-                                }
+                            }
                             if let Some(expected) = decision_id.as_deref()
-                                && event.decision_id != expected {
-                                    findings.push(ArtifactValidationFinding::new(
+                                && event.decision_id != expected
+                            {
+                                findings.push(ArtifactValidationFinding::new(
                                         ArtifactValidationErrorCode::CorrelationMismatch,
                                         format!(
                                             "events line {} decision_id mismatch: expected `{expected}` found `{}`",
@@ -563,10 +568,11 @@ pub fn validate_artifact_triad(run_dir: impl AsRef<Path>) -> ArtifactValidationR
                                             event.decision_id
                                         ),
                                     ));
-                                }
+                            }
                             if let Some(expected) = policy_id.as_deref()
-                                && event.policy_id != expected {
-                                    findings.push(ArtifactValidationFinding::new(
+                                && event.policy_id != expected
+                            {
+                                findings.push(ArtifactValidationFinding::new(
                                         ArtifactValidationErrorCode::CorrelationMismatch,
                                         format!(
                                             "events line {} policy_id mismatch: expected `{expected}` found `{}`",
@@ -574,10 +580,11 @@ pub fn validate_artifact_triad(run_dir: impl AsRef<Path>) -> ArtifactValidationR
                                             event.policy_id
                                         ),
                                     ));
-                                }
+                            }
                             if let Some(expected_seed) = seed
-                                && event.seed != expected_seed {
-                                    findings.push(ArtifactValidationFinding::new(
+                                && event.seed != expected_seed
+                            {
+                                findings.push(ArtifactValidationFinding::new(
                                         ArtifactValidationErrorCode::CorrelationMismatch,
                                         format!(
                                             "events line {} seed mismatch: expected `{expected_seed}` found `{}`",
@@ -585,7 +592,7 @@ pub fn validate_artifact_triad(run_dir: impl AsRef<Path>) -> ArtifactValidationR
                                             event.seed
                                         ),
                                     ));
-                                }
+                            }
                         }
                         Err(err) => findings.push(ArtifactValidationFinding::new(
                             ArtifactValidationErrorCode::InvalidEventJson,
@@ -594,14 +601,13 @@ pub fn validate_artifact_triad(run_dir: impl AsRef<Path>) -> ArtifactValidationR
                     }
                 }
                 if let Some(expected) = expected_event_count
-                    && parsed_count != expected {
-                        findings.push(ArtifactValidationFinding::new(
-                            ArtifactValidationErrorCode::CountMismatch,
-                            format!(
-                                "event count mismatch: manifest={expected} parsed={parsed_count}"
-                            ),
-                        ));
-                    }
+                    && parsed_count != expected
+                {
+                    findings.push(ArtifactValidationFinding::new(
+                        ArtifactValidationErrorCode::CountMismatch,
+                        format!("event count mismatch: manifest={expected} parsed={parsed_count}"),
+                    ));
+                }
             }
             Err(err) => findings.push(ArtifactValidationFinding::new(
                 ArtifactValidationErrorCode::InvalidEventJson,
@@ -613,7 +619,8 @@ pub fn validate_artifact_triad(run_dir: impl AsRef<Path>) -> ArtifactValidationR
     if commands_path.exists() {
         match fs::read_to_string(&commands_path) {
             Ok(raw) => {
-                let command_count = raw.lines().filter(|line| !line.trim().is_empty()).count() as u64;
+                let command_count =
+                    raw.lines().filter(|line| !line.trim().is_empty()).count() as u64;
                 if command_count == 0 {
                     findings.push(ArtifactValidationFinding::new(
                         ArtifactValidationErrorCode::EmptyCommands,
@@ -621,14 +628,15 @@ pub fn validate_artifact_triad(run_dir: impl AsRef<Path>) -> ArtifactValidationR
                     ));
                 }
                 if let Some(expected) = expected_command_count
-                    && command_count != expected {
-                        findings.push(ArtifactValidationFinding::new(
-                            ArtifactValidationErrorCode::CountMismatch,
-                            format!(
-                                "command count mismatch: manifest={expected} parsed={command_count}"
-                            ),
-                        ));
-                    }
+                    && command_count != expected
+                {
+                    findings.push(ArtifactValidationFinding::new(
+                        ArtifactValidationErrorCode::CountMismatch,
+                        format!(
+                            "command count mismatch: manifest={expected} parsed={command_count}"
+                        ),
+                    ));
+                }
             }
             Err(err) => findings.push(ArtifactValidationFinding::new(
                 ArtifactValidationErrorCode::EmptyCommands,
@@ -967,18 +975,32 @@ mod tests {
     #[test]
     fn baseline_selection_is_deterministic_and_filterable() {
         let first = select_baseline_e2e_scenarios(
-            &[BaselineScenarioDomain::Runtime, BaselineScenarioDomain::Security],
+            &[
+                BaselineScenarioDomain::Runtime,
+                BaselineScenarioDomain::Security,
+            ],
             true,
         );
         let second = select_baseline_e2e_scenarios(
-            &[BaselineScenarioDomain::Runtime, BaselineScenarioDomain::Security],
+            &[
+                BaselineScenarioDomain::Runtime,
+                BaselineScenarioDomain::Security,
+            ],
             true,
         );
         assert_eq!(first, second, "selection must be deterministic");
-        assert_eq!(first.len(), 4, "runtime+security should return four scenarios");
+        assert_eq!(
+            first.len(),
+            4,
+            "runtime+security should return four scenarios"
+        );
 
         let happy_only = select_baseline_e2e_scenarios(&[], false);
-        assert_eq!(happy_only.len(), 3, "happy-only should include one per domain");
+        assert_eq!(
+            happy_only.len(),
+            3,
+            "happy-only should include one per domain"
+        );
         assert!(
             happy_only
                 .iter()
@@ -1005,9 +1027,9 @@ mod tests {
             timing_us: 31,
             timestamp_unix_ms: 1_700_100_000_000,
         })];
-        let commands =
-            vec!["cargo test -p frankenengine-engine --test rgc_test_harness_integration"
-                .to_string()];
+        let commands = vec![
+            "cargo test -p frankenengine-engine --test rgc_test_harness_integration".to_string(),
+        ];
         let manifest = HarnessRunManifest::from_context(
             &context,
             run_id,
@@ -1020,7 +1042,11 @@ mod tests {
         let triad = write_artifact_triad(&root, &manifest, &events, &commands)
             .expect("artifact triad should write");
         let report = validate_artifact_triad(&triad.run_dir);
-        assert!(report.valid, "expected valid report, got: {:?}", report.findings);
+        assert!(
+            report.valid,
+            "expected valid report, got: {:?}",
+            report.findings
+        );
         assert!(report.findings.is_empty());
         assert_eq!(report.run_id.as_deref(), Some(manifest.run_id.as_str()));
         assert_eq!(report.trace_id.as_deref(), Some(manifest.trace_id.as_str()));
@@ -1049,8 +1075,10 @@ mod tests {
         assert!(report.findings.iter().any(|finding| {
             finding.error_code == ArtifactValidationErrorCode::InvalidEventJson
         }));
-        assert!(report.findings.iter().any(|finding| {
-            finding.error_code == ArtifactValidationErrorCode::EmptyCommands
-        }));
+        assert!(
+            report.findings.iter().any(|finding| {
+                finding.error_code == ArtifactValidationErrorCode::EmptyCommands
+            })
+        );
     }
 }

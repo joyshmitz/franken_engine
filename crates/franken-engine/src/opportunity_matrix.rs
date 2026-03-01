@@ -1533,24 +1533,25 @@ mod tests {
             OpportunityStatus::RejectedSecurityClearance,
             OpportunityStatus::RejectedMissingHotspot,
         ];
-        let set: std::collections::BTreeSet<String> = variants
-            .iter()
-            .map(|v| format!("{v:?}"))
-            .collect();
+        let set: std::collections::BTreeSet<String> =
+            variants.iter().map(|v| format!("{v:?}")).collect();
         assert_eq!(set.len(), 4);
     }
 
     #[test]
     fn opportunity_matrix_error_debug_distinct() {
         let variants: Vec<OpportunityMatrixError> = vec![
-            OpportunityMatrixError::InvalidRequest { field: "f".into(), detail: "d".into() },
-            OpportunityMatrixError::DuplicateOpportunityId { opportunity_id: "x".into() },
+            OpportunityMatrixError::InvalidRequest {
+                field: "f".into(),
+                detail: "d".into(),
+            },
+            OpportunityMatrixError::DuplicateOpportunityId {
+                opportunity_id: "x".into(),
+            },
             OpportunityMatrixError::InvalidTimestamp { value: "v".into() },
         ];
-        let set: std::collections::BTreeSet<String> = variants
-            .iter()
-            .map(|v| format!("{v:?}"))
-            .collect();
+        let set: std::collections::BTreeSet<String> =
+            variants.iter().map(|v| format!("{v:?}")).collect();
         assert_eq!(set.len(), 3);
     }
 
@@ -1650,7 +1651,10 @@ mod tests {
             field: "trace_id".to_string(),
             detail: "must not be empty".to_string(),
         };
-        assert_eq!(e.to_string(), "invalid request field `trace_id`: must not be empty");
+        assert_eq!(
+            e.to_string(),
+            "invalid request field `trace_id`: must not be empty"
+        );
     }
 
     #[test]
@@ -1728,7 +1732,10 @@ mod tests {
     #[test]
     fn decision_threshold_matches_constant() {
         let d = run_opportunity_matrix_scoring(&base_request());
-        assert_eq!(d.score_threshold_millionths, OPPORTUNITY_SCORE_THRESHOLD_MILLIONTHS);
+        assert_eq!(
+            d.score_threshold_millionths,
+            OPPORTUNITY_SCORE_THRESHOLD_MILLIONTHS
+        );
     }
 
     #[test]
@@ -1817,7 +1824,10 @@ mod tests {
     #[test]
     fn constants_stable() {
         assert_eq!(OPPORTUNITY_MATRIX_COMPONENT, "opportunity_matrix");
-        assert_eq!(OPPORTUNITY_MATRIX_SCHEMA_VERSION, "franken-engine.opportunity-matrix.v1");
+        assert_eq!(
+            OPPORTUNITY_MATRIX_SCHEMA_VERSION,
+            "franken-engine.opportunity-matrix.v1"
+        );
         assert_eq!(OPPORTUNITY_SCORE_THRESHOLD_MILLIONTHS, 2_000_000);
     }
 
@@ -1906,7 +1916,16 @@ mod tests {
             opportunity_id: Some("opp-1".to_string()),
         };
         let j = serde_json::to_string(&e).unwrap();
-        for field in &["trace_id", "decision_id", "policy_id", "component", "event", "outcome", "error_code", "opportunity_id"] {
+        for field in &[
+            "trace_id",
+            "decision_id",
+            "policy_id",
+            "component",
+            "event",
+            "outcome",
+            "error_code",
+            "opportunity_id",
+        ] {
             assert!(j.contains(field), "missing field: {field}");
         }
     }

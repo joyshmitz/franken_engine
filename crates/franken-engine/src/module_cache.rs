@@ -1790,7 +1790,11 @@ mod tests {
             CacheErrorCode::EmptyModuleId,
         ];
         let debugs: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
-        assert_eq!(debugs.len(), 3, "all CacheErrorCode variants have distinct Debug output");
+        assert_eq!(
+            debugs.len(),
+            3,
+            "all CacheErrorCode variants have distinct Debug output"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1808,7 +1812,11 @@ mod tests {
             .iter()
             .map(|v| serde_json::to_string(v).unwrap())
             .collect();
-        assert_eq!(jsons.len(), 3, "all CacheErrorCode variants serialize to distinct JSON");
+        assert_eq!(
+            jsons.len(),
+            3,
+            "all CacheErrorCode variants serialize to distinct JSON"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1951,8 +1959,14 @@ mod tests {
             .unwrap_err();
         let display = format!("{err}");
         // Format is "<stable_code>: <message>"
-        assert!(display.contains(": "), "display must contain ': ' separator; got: {display}");
-        assert!(display.starts_with("FE-MODCACHE-"), "display must start with FE-MODCACHE-; got: {display}");
+        assert!(
+            display.contains(": "),
+            "display must contain ': ' separator; got: {display}"
+        );
+        assert!(
+            display.starts_with("FE-MODCACHE-"),
+            "display must start with FE-MODCACHE-; got: {display}"
+        );
     }
 
     #[test]
@@ -2058,7 +2072,12 @@ mod tests {
         let v = ModuleVersionFingerprint::new(source_hash("s"), 1, 1);
         cache
             .insert(
-                CacheInsertRequest::new("mod:zero-tr", v.clone(), ContentHash::compute(b"a"), "/z.js"),
+                CacheInsertRequest::new(
+                    "mod:zero-tr",
+                    v.clone(),
+                    ContentHash::compute(b"a"),
+                    "/z.js",
+                ),
                 &ctx,
             )
             .unwrap();
@@ -2085,7 +2104,12 @@ mod tests {
         let v2 = ModuleVersionFingerprint::new(source_hash("s2"), 1, 10);
         cache
             .insert(
-                CacheInsertRequest::new("mod:restore2", v2.clone(), ContentHash::compute(b"a2"), "/r2.js"),
+                CacheInsertRequest::new(
+                    "mod:restore2",
+                    v2.clone(),
+                    ContentHash::compute(b"a2"),
+                    "/r2.js",
+                ),
                 &ctx,
             )
             .unwrap();
@@ -2099,7 +2123,12 @@ mod tests {
         let v = ModuleVersionFingerprint::new(source_hash("max-pol"), u64::MAX, 1);
         cache
             .insert(
-                CacheInsertRequest::new("mod:max-pol", v.clone(), ContentHash::compute(b"amax"), "/max.js"),
+                CacheInsertRequest::new(
+                    "mod:max-pol",
+                    v.clone(),
+                    ContentHash::compute(b"amax"),
+                    "/max.js",
+                ),
                 &ctx,
             )
             .unwrap();
@@ -2147,7 +2176,12 @@ mod tests {
         let v = ModuleVersionFingerprint::new(source_hash("ev-all"), 1, 1);
         cache
             .insert(
-                CacheInsertRequest::new("mod:ev-all", v, ContentHash::compute(b"art-ev"), "/ev-all.js"),
+                CacheInsertRequest::new(
+                    "mod:ev-all",
+                    v,
+                    ContentHash::compute(b"art-ev"),
+                    "/ev-all.js",
+                ),
                 &ctx,
             )
             .unwrap();
@@ -2291,13 +2325,23 @@ mod tests {
         let vb = ModuleVersionFingerprint::new(source_hash("sb"), 1, 1);
         cache
             .insert(
-                CacheInsertRequest::new("mod:pol-a", va.clone(), ContentHash::compute(b"aa"), "/a.js"),
+                CacheInsertRequest::new(
+                    "mod:pol-a",
+                    va.clone(),
+                    ContentHash::compute(b"aa"),
+                    "/a.js",
+                ),
                 &ctx,
             )
             .unwrap();
         cache
             .insert(
-                CacheInsertRequest::new("mod:pol-b", vb.clone(), ContentHash::compute(b"bb"), "/b.js"),
+                CacheInsertRequest::new(
+                    "mod:pol-b",
+                    vb.clone(),
+                    ContentHash::compute(b"bb"),
+                    "/b.js",
+                ),
                 &ctx,
             )
             .unwrap();
@@ -2320,7 +2364,12 @@ mod tests {
         let v = ModuleVersionFingerprint::new(source_hash("seq0"), 1, 1);
         cache
             .insert(
-                CacheInsertRequest::new("mod:seq0", v.clone(), ContentHash::compute(b"a"), "/s0.js"),
+                CacheInsertRequest::new(
+                    "mod:seq0",
+                    v.clone(),
+                    ContentHash::compute(b"a"),
+                    "/s0.js",
+                ),
                 &context(),
             )
             .unwrap();

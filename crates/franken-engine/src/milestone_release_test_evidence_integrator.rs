@@ -1842,9 +1842,11 @@ mod tests {
             .insert("C99".to_string(), 999_999);
         assert_eq!(original.max_signal_age_ns, 3_600_000_000_000);
         assert_eq!(original.min_schema_major, 1);
-        assert!(!original
-            .minimum_cut_line_scores_millionths
-            .contains_key("C99"));
+        assert!(
+            !original
+                .minimum_cut_line_scores_millionths
+                .contains_key("C99")
+        );
     }
 
     #[test]
@@ -2208,11 +2210,7 @@ mod tests {
         let mut signal = baseline_signal(EvidenceSource::UnitDepthGate, 980_000, now_ns);
         signal.artifact_links[0].path = "   ".to_string();
         let findings = validate_signal(&signal, now_ns, &policy);
-        assert!(
-            findings
-                .iter()
-                .any(|f| f.message.contains("missing path"))
-        );
+        assert!(findings.iter().any(|f| f.message.contains("missing path")));
     }
 
     #[test]
@@ -2254,9 +2252,11 @@ mod tests {
         signal.schema_major = 3; // signal is ok
         signal.artifact_links[0].schema_major = 2; // artifact is below
         let findings = validate_signal(&signal, now_ns, &policy);
-        assert!(findings
-            .iter()
-            .any(|f| f.message.contains("artifact") && f.message.contains("below minimum")));
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.message.contains("artifact") && f.message.contains("below minimum"))
+        );
     }
 
     // Category 9: Serde roundtrips — complex struct roundtrips
@@ -2548,9 +2548,7 @@ mod tests {
         );
         let findings = validate_signal(&signal, now_ns, &policy);
         assert!(
-            !findings
-                .iter()
-                .any(|f| f.message.contains("flake burden")),
+            !findings.iter().any(|f| f.message.contains("flake burden")),
             "flake burden at max should not produce finding"
         );
     }

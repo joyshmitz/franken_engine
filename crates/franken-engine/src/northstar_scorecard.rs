@@ -1560,15 +1560,16 @@ mod tests {
 
     #[test]
     fn milestone_debug_all_distinct() {
-        let debugs: std::collections::BTreeSet<String> = [
-            Milestone::Alpha,
-            Milestone::Beta,
-            Milestone::Ga,
-        ]
-        .iter()
-        .map(|m| format!("{m:?}"))
-        .collect();
-        assert_eq!(debugs.len(), 3, "all Milestone variants have distinct Debug");
+        let debugs: std::collections::BTreeSet<String> =
+            [Milestone::Alpha, Milestone::Beta, Milestone::Ga]
+                .iter()
+                .map(|m| format!("{m:?}"))
+                .collect();
+        assert_eq!(
+            debugs.len(),
+            3,
+            "all Milestone variants have distinct Debug"
+        );
     }
 
     #[test]
@@ -1602,9 +1603,15 @@ mod tests {
             metric: MetricKind::CompatibilityPassRate,
             milestone: Milestone::Alpha,
         };
-        let debugs: std::collections::BTreeSet<String> =
-            [&pass, &fail, &insuf].iter().map(|r| format!("{r:?}")).collect();
-        assert_eq!(debugs.len(), 3, "all ThresholdResult variants distinct Debug");
+        let debugs: std::collections::BTreeSet<String> = [&pass, &fail, &insuf]
+            .iter()
+            .map(|r| format!("{r:?}"))
+            .collect();
+        assert_eq!(
+            debugs.len(),
+            3,
+            "all ThresholdResult variants distinct Debug"
+        );
     }
 
     // ===================================================================
@@ -1613,15 +1620,16 @@ mod tests {
 
     #[test]
     fn milestone_serde_variant_distinctness() {
-        let jsons: std::collections::BTreeSet<String> = [
-            Milestone::Alpha,
-            Milestone::Beta,
-            Milestone::Ga,
-        ]
-        .iter()
-        .map(|m| serde_json::to_string(m).unwrap())
-        .collect();
-        assert_eq!(jsons.len(), 3, "all Milestone variants serialize distinctly");
+        let jsons: std::collections::BTreeSet<String> =
+            [Milestone::Alpha, Milestone::Beta, Milestone::Ga]
+                .iter()
+                .map(|m| serde_json::to_string(m).unwrap())
+                .collect();
+        assert_eq!(
+            jsons.len(),
+            3,
+            "all Milestone variants serialize distinctly"
+        );
     }
 
     #[test]
@@ -1657,8 +1665,10 @@ mod tests {
             metric: MetricKind::BundleSizeBytes,
             milestone: Milestone::Alpha,
         };
-        let jsons: std::collections::BTreeSet<String> =
-            [&pass, &fail, &insuf].iter().map(|r| serde_json::to_string(r).unwrap()).collect();
+        let jsons: std::collections::BTreeSet<String> = [&pass, &fail, &insuf]
+            .iter()
+            .map(|r| serde_json::to_string(r).unwrap())
+            .collect();
         assert_eq!(jsons.len(), 3);
     }
 
@@ -1892,14 +1902,11 @@ mod tests {
 
     #[test]
     fn milestone_display_all_distinct() {
-        let displays: std::collections::BTreeSet<String> = [
-            Milestone::Alpha,
-            Milestone::Beta,
-            Milestone::Ga,
-        ]
-        .iter()
-        .map(|m| m.to_string())
-        .collect();
+        let displays: std::collections::BTreeSet<String> =
+            [Milestone::Alpha, Milestone::Beta, Milestone::Ga]
+                .iter()
+                .map(|m| m.to_string())
+                .collect();
         assert_eq!(displays.len(), 3);
     }
 
@@ -1917,11 +1924,7 @@ mod tests {
             let mut h2 = DefaultHasher::new();
             ms.hash(&mut h1);
             ms.hash(&mut h2);
-            assert_eq!(
-                h1.finish(),
-                h2.finish(),
-                "hash not consistent for {ms:?}"
-            );
+            assert_eq!(h1.finish(), h2.finish(), "hash not consistent for {ms:?}");
         }
     }
 
@@ -1935,11 +1938,7 @@ mod tests {
             let mut h2 = DefaultHasher::new();
             kind.hash(&mut h1);
             kind.hash(&mut h2);
-            assert_eq!(
-                h1.finish(),
-                h2.finish(),
-                "hash not consistent for {kind:?}"
-            );
+            assert_eq!(h1.finish(), h2.finish(), "hash not consistent for {kind:?}");
         }
     }
 
@@ -1948,18 +1947,15 @@ mod tests {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
-        let hashes: std::collections::BTreeSet<u64> = [
-            Milestone::Alpha,
-            Milestone::Beta,
-            Milestone::Ga,
-        ]
-        .iter()
-        .map(|ms| {
-            let mut h = DefaultHasher::new();
-            ms.hash(&mut h);
-            h.finish()
-        })
-        .collect();
+        let hashes: std::collections::BTreeSet<u64> =
+            [Milestone::Alpha, Milestone::Beta, Milestone::Ga]
+                .iter()
+                .map(|ms| {
+                    let mut h = DefaultHasher::new();
+                    ms.hash(&mut h);
+                    h.finish()
+                })
+                .collect();
         assert_eq!(hashes.len(), 3, "Milestone variants have distinct hashes");
     }
 
@@ -2132,7 +2128,10 @@ mod tests {
         let mut sc = Scorecard::with_thresholds(thresholds, epoch(1));
         sc.record(sample(MetricKind::CompatibilityPassRate, 800_000, 1)); // exactly at boundary
         let eval = sc.evaluate(Milestone::Alpha);
-        assert!(eval.overall_pass, "exact boundary should pass for higher-is-better");
+        assert!(
+            eval.overall_pass,
+            "exact boundary should pass for higher-is-better"
+        );
     }
 
     #[test]
@@ -2145,7 +2144,10 @@ mod tests {
         let mut sc = Scorecard::with_thresholds(thresholds, epoch(1));
         sc.record(sample(MetricKind::BundleSizeBytes, 10_000, 1)); // exactly at boundary
         let eval = sc.evaluate(Milestone::Alpha);
-        assert!(eval.overall_pass, "exact boundary should pass for lower-is-better");
+        assert!(
+            eval.overall_pass,
+            "exact boundary should pass for lower-is-better"
+        );
     }
 
     #[test]
@@ -2209,7 +2211,11 @@ mod tests {
         let mut sc = Scorecard::new(epoch(42));
         for i in 0..20 {
             sc.record(sample(MetricKind::CompatibilityPassRate, 900_000 + i, 42));
-            sc.record(sample(MetricKind::BundleSizeBytes, 1_000_000 + i * 1000, 42));
+            sc.record(sample(
+                MetricKind::BundleSizeBytes,
+                1_000_000 + i * 1000,
+                42,
+            ));
             sc.record(sample(MetricKind::FallbackFrequency, 50_000 + i, 42));
         }
         let json = serde_json::to_string(&sc).unwrap();
@@ -2322,9 +2328,15 @@ mod tests {
             let _result = kind.higher_is_better();
         }
         // Only two should be higher-is-better
-        let higher_count = MetricKind::ALL.iter().filter(|k| k.higher_is_better()).count();
+        let higher_count = MetricKind::ALL
+            .iter()
+            .filter(|k| k.higher_is_better())
+            .count();
         assert_eq!(higher_count, 2);
-        let lower_count = MetricKind::ALL.iter().filter(|k| !k.higher_is_better()).count();
+        let lower_count = MetricKind::ALL
+            .iter()
+            .filter(|k| !k.higher_is_better())
+            .count();
         assert_eq!(lower_count, 8);
     }
 

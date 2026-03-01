@@ -1851,7 +1851,11 @@ mod tests {
 
     #[test]
     fn latency_stats_clone_independence() {
-        let mut original = LatencyStatsNs { p50_ns: 100, p95_ns: 200, p99_ns: 300 };
+        let mut original = LatencyStatsNs {
+            p50_ns: 100,
+            p95_ns: 200,
+            p99_ns: 300,
+        };
         let cloned = original.clone();
         original.p99_ns = 999;
         assert_eq!(cloned.p99_ns, 300);
@@ -1861,7 +1865,11 @@ mod tests {
     fn split_metrics_clone_independence() {
         let mut original = SplitBenchmarkMetrics {
             throughput_ops_per_sec: 1000,
-            latency_ns: LatencyStatsNs { p50_ns: 10, p95_ns: 20, p99_ns: 30 },
+            latency_ns: LatencyStatsNs {
+                p50_ns: 10,
+                p95_ns: 20,
+                p99_ns: 30,
+            },
             peak_rss_delta_bytes: 1024,
         };
         let cloned = original.clone();
@@ -1896,7 +1904,11 @@ mod tests {
 
     #[test]
     fn latency_stats_json_field_names() {
-        let stats = LatencyStatsNs { p50_ns: 100, p95_ns: 200, p99_ns: 300 };
+        let stats = LatencyStatsNs {
+            p50_ns: 100,
+            p95_ns: 200,
+            p99_ns: 300,
+        };
         let val: serde_json::Value = serde_json::to_value(&stats).unwrap();
         let obj = val.as_object().unwrap();
         assert!(obj.contains_key("p50_ns"));
@@ -1909,7 +1921,11 @@ mod tests {
     fn split_metrics_json_field_names() {
         let m = SplitBenchmarkMetrics {
             throughput_ops_per_sec: 1000,
-            latency_ns: LatencyStatsNs { p50_ns: 10, p95_ns: 20, p99_ns: 30 },
+            latency_ns: LatencyStatsNs {
+                p50_ns: 10,
+                p95_ns: 20,
+                p99_ns: 30,
+            },
             peak_rss_delta_bytes: 1024,
         };
         let val: serde_json::Value = serde_json::to_value(&m).unwrap();
@@ -1999,7 +2015,11 @@ mod tests {
         ] {
             let display = c.to_string();
             assert!(!display.is_empty());
-            assert!(display.chars().all(|ch| ch.is_ascii_lowercase() || ch == '_'));
+            assert!(
+                display
+                    .chars()
+                    .all(|ch| ch.is_ascii_lowercase() || ch == '_')
+            );
         }
     }
 
@@ -2105,7 +2125,10 @@ mod tests {
 
     #[test]
     fn cv_identical_samples_returns_zero() {
-        assert_eq!(coefficient_of_variation_millionths(&[100, 100, 100]), Some(0));
+        assert_eq!(
+            coefficient_of_variation_millionths(&[100, 100, 100]),
+            Some(0)
+        );
     }
 
     #[test]
@@ -2144,7 +2167,11 @@ mod tests {
 
     #[test]
     fn latency_stats_debug_nonempty() {
-        let stats = LatencyStatsNs { p50_ns: 100, p95_ns: 200, p99_ns: 300 };
+        let stats = LatencyStatsNs {
+            p50_ns: 100,
+            p95_ns: 200,
+            p99_ns: 300,
+        };
         let dbg = format!("{stats:?}");
         assert!(!dbg.is_empty());
         assert!(dbg.contains("LatencyStatsNs"));

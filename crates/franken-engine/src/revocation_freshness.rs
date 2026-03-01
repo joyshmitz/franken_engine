@@ -1707,9 +1707,15 @@ mod tests {
                 requested: OperationType::TokenAcceptance,
                 override_type: OperationType::HealthCheck,
             },
-            OverrideError::SignatureInvalid { detail: "bad".to_string() },
-            OverrideError::UnauthorizedOperator { operator_id: "op".to_string() },
-            OverrideError::NotDegraded { current_state: FreshnessState::Fresh },
+            OverrideError::SignatureInvalid {
+                detail: "bad".to_string(),
+            },
+            OverrideError::UnauthorizedOperator {
+                operator_id: "op".to_string(),
+            },
+            OverrideError::NotDegraded {
+                current_state: FreshnessState::Fresh,
+            },
         ];
         let set: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
         assert_eq!(set.len(), 5);
@@ -1757,9 +1763,15 @@ mod tests {
                 requested: OperationType::SafeOperation,
                 override_type: OperationType::SafeOperation,
             },
-            OverrideError::SignatureInvalid { detail: "x".to_string() },
-            OverrideError::UnauthorizedOperator { operator_id: "x".to_string() },
-            OverrideError::NotDegraded { current_state: FreshnessState::Fresh },
+            OverrideError::SignatureInvalid {
+                detail: "x".to_string(),
+            },
+            OverrideError::UnauthorizedOperator {
+                operator_id: "x".to_string(),
+            },
+            OverrideError::NotDegraded {
+                current_state: FreshnessState::Fresh,
+            },
         ];
         let set: BTreeSet<String> = variants
             .iter()
@@ -1782,7 +1794,9 @@ mod tests {
 
     #[test]
     fn override_error_clone_independence() {
-        let a = OverrideError::SignatureInvalid { detail: "bad sig".to_string() };
+        let a = OverrideError::SignatureInvalid {
+            detail: "bad sig".to_string(),
+        };
         let b = a.clone();
         assert_eq!(a, b);
     }
@@ -1891,19 +1905,25 @@ mod tests {
 
     #[test]
     fn override_error_display_signature_invalid() {
-        let e = OverrideError::SignatureInvalid { detail: "bad hash".to_string() };
+        let e = OverrideError::SignatureInvalid {
+            detail: "bad hash".to_string(),
+        };
         assert_eq!(e.to_string(), "signature invalid: bad hash");
     }
 
     #[test]
     fn override_error_display_unauthorized() {
-        let e = OverrideError::UnauthorizedOperator { operator_id: "alice".to_string() };
+        let e = OverrideError::UnauthorizedOperator {
+            operator_id: "alice".to_string(),
+        };
         assert_eq!(e.to_string(), "unauthorized operator: alice");
     }
 
     #[test]
     fn override_error_display_not_degraded() {
-        let e = OverrideError::NotDegraded { current_state: FreshnessState::Fresh };
+        let e = OverrideError::NotDegraded {
+            current_state: FreshnessState::Fresh,
+        };
         assert_eq!(e.to_string(), "not in degraded mode: state=fresh");
     }
 
@@ -1985,7 +2005,9 @@ mod tests {
 
     #[test]
     fn debug_nonempty_override_error() {
-        let e = OverrideError::SignatureInvalid { detail: "x".to_string() };
+        let e = OverrideError::SignatureInvalid {
+            detail: "x".to_string(),
+        };
         assert!(!format!("{e:?}").is_empty());
     }
 
@@ -2016,9 +2038,18 @@ mod tests {
     #[test]
     fn operation_type_display_exact() {
         assert_eq!(OperationType::SafeOperation.to_string(), "safe_operation");
-        assert_eq!(OperationType::TokenAcceptance.to_string(), "token_acceptance");
-        assert_eq!(OperationType::ExtensionActivation.to_string(), "extension_activation");
-        assert_eq!(OperationType::HighRiskOperation.to_string(), "high_risk_operation");
+        assert_eq!(
+            OperationType::TokenAcceptance.to_string(),
+            "token_acceptance"
+        );
+        assert_eq!(
+            OperationType::ExtensionActivation.to_string(),
+            "extension_activation"
+        );
+        assert_eq!(
+            OperationType::HighRiskOperation.to_string(),
+            "high_risk_operation"
+        );
         assert_eq!(OperationType::HealthCheck.to_string(), "health_check");
     }
 
@@ -2078,6 +2109,9 @@ mod tests {
         let c = FreshnessConfig::default();
         assert_eq!(c.staleness_threshold, 5);
         assert_eq!(c.holdoff_ticks, 10);
-        assert!(c.override_eligible.contains(&OperationType::ExtensionActivation));
+        assert!(
+            c.override_eligible
+                .contains(&OperationType::ExtensionActivation)
+        );
     }
 }

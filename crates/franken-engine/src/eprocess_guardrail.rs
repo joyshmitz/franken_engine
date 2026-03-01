@@ -1639,21 +1639,41 @@ mod tests {
             GuardrailState::Suspended,
         ];
         let dbg_set: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
-        assert_eq!(dbg_set.len(), 3, "all GuardrailState variants have distinct Debug");
+        assert_eq!(
+            dbg_set.len(),
+            3,
+            "all GuardrailState variants have distinct Debug"
+        );
     }
 
     #[test]
     fn guardrail_error_debug_distinct() {
         let errors = [
-            GuardrailError::Suspended { guardrail_id: "x".into() },
-            GuardrailError::AlreadyTriggered { guardrail_id: "x".into() },
-            GuardrailError::InvalidObservation { guardrail_id: "x".into() },
-            GuardrailError::ResetUnauthorized { guardrail_id: "x".into() },
-            GuardrailError::NotTriggered { guardrail_id: "x".into() },
-            GuardrailError::EValueOverflow { guardrail_id: "x".into() },
+            GuardrailError::Suspended {
+                guardrail_id: "x".into(),
+            },
+            GuardrailError::AlreadyTriggered {
+                guardrail_id: "x".into(),
+            },
+            GuardrailError::InvalidObservation {
+                guardrail_id: "x".into(),
+            },
+            GuardrailError::ResetUnauthorized {
+                guardrail_id: "x".into(),
+            },
+            GuardrailError::NotTriggered {
+                guardrail_id: "x".into(),
+            },
+            GuardrailError::EValueOverflow {
+                guardrail_id: "x".into(),
+            },
         ];
         let dbg_set: BTreeSet<String> = errors.iter().map(|e| format!("{e:?}")).collect();
-        assert_eq!(dbg_set.len(), 6, "all GuardrailError variants have distinct Debug");
+        assert_eq!(
+            dbg_set.len(),
+            6,
+            "all GuardrailError variants have distinct Debug"
+        );
     }
 
     #[test]
@@ -1687,7 +1707,11 @@ mod tests {
             },
         ];
         let dbg_set: BTreeSet<String> = events.iter().map(|e| format!("{e:?}")).collect();
-        assert_eq!(dbg_set.len(), 5, "all GuardrailEvent variants have distinct Debug");
+        assert_eq!(
+            dbg_set.len(),
+            5,
+            "all GuardrailEvent variants have distinct Debug"
+        );
     }
 
     // -- Category 3: Serde variant distinctness --
@@ -1703,24 +1727,44 @@ mod tests {
             .iter()
             .map(|v| serde_json::to_string(v).unwrap())
             .collect();
-        assert_eq!(json_set.len(), 3, "all GuardrailState serde outputs distinct");
+        assert_eq!(
+            json_set.len(),
+            3,
+            "all GuardrailState serde outputs distinct"
+        );
     }
 
     #[test]
     fn guardrail_error_serde_variant_distinct() {
         let errors = [
-            GuardrailError::Suspended { guardrail_id: "g".into() },
-            GuardrailError::AlreadyTriggered { guardrail_id: "g".into() },
-            GuardrailError::InvalidObservation { guardrail_id: "g".into() },
-            GuardrailError::ResetUnauthorized { guardrail_id: "g".into() },
-            GuardrailError::NotTriggered { guardrail_id: "g".into() },
-            GuardrailError::EValueOverflow { guardrail_id: "g".into() },
+            GuardrailError::Suspended {
+                guardrail_id: "g".into(),
+            },
+            GuardrailError::AlreadyTriggered {
+                guardrail_id: "g".into(),
+            },
+            GuardrailError::InvalidObservation {
+                guardrail_id: "g".into(),
+            },
+            GuardrailError::ResetUnauthorized {
+                guardrail_id: "g".into(),
+            },
+            GuardrailError::NotTriggered {
+                guardrail_id: "g".into(),
+            },
+            GuardrailError::EValueOverflow {
+                guardrail_id: "g".into(),
+            },
         ];
         let json_set: BTreeSet<String> = errors
             .iter()
             .map(|e| serde_json::to_string(e).unwrap())
             .collect();
-        assert_eq!(json_set.len(), 6, "all GuardrailError serde outputs distinct");
+        assert_eq!(
+            json_set.len(),
+            6,
+            "all GuardrailError serde outputs distinct"
+        );
     }
 
     #[test]
@@ -1757,7 +1801,11 @@ mod tests {
             .iter()
             .map(|e| serde_json::to_string(e).unwrap())
             .collect();
-        assert_eq!(json_set.len(), 5, "all GuardrailEvent serde outputs distinct");
+        assert_eq!(
+            json_set.len(),
+            5,
+            "all GuardrailEvent serde outputs distinct"
+        );
     }
 
     // -- Category 4: Clone independence --
@@ -2232,12 +2280,24 @@ mod tests {
     #[test]
     fn guardrail_error_debug_nonempty() {
         let errors = [
-            GuardrailError::Suspended { guardrail_id: "g".into() },
-            GuardrailError::AlreadyTriggered { guardrail_id: "g".into() },
-            GuardrailError::InvalidObservation { guardrail_id: "g".into() },
-            GuardrailError::ResetUnauthorized { guardrail_id: "g".into() },
-            GuardrailError::NotTriggered { guardrail_id: "g".into() },
-            GuardrailError::EValueOverflow { guardrail_id: "g".into() },
+            GuardrailError::Suspended {
+                guardrail_id: "g".into(),
+            },
+            GuardrailError::AlreadyTriggered {
+                guardrail_id: "g".into(),
+            },
+            GuardrailError::InvalidObservation {
+                guardrail_id: "g".into(),
+            },
+            GuardrailError::ResetUnauthorized {
+                guardrail_id: "g".into(),
+            },
+            GuardrailError::NotTriggered {
+                guardrail_id: "g".into(),
+            },
+            GuardrailError::EValueOverflow {
+                guardrail_id: "g".into(),
+            },
         ];
         for e in &errors {
             assert!(!format!("{e:?}").is_empty());
@@ -2478,8 +2538,8 @@ mod tests {
             SecurityEpoch::GENESIS,
             Box::new(ThresholdLikelihoodRatio {
                 threshold_millionths: 1_000_000_000, // unreachable
-                high_ratio_millionths: 500_000,       // 0.5
-                low_ratio_millionths: 500_000,        // 0.5
+                high_ratio_millionths: 500_000,      // 0.5
+                low_ratio_millionths: 500_000,       // 0.5
             }),
         );
         gr.update(0).unwrap(); // e = 1M * 500K / 1M = 500K

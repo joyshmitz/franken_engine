@@ -2096,10 +2096,7 @@ mod tests {
         let e = CalibrationError::CalibrationFailed {
             detail: "diverged".to_string(),
         };
-        assert_eq!(
-            e.to_string(),
-            "FE-GCAL-0003: calibration failed: diverged"
-        );
+        assert_eq!(e.to_string(), "FE-GCAL-0003: calibration failed: diverged");
     }
 
     #[test]
@@ -2573,8 +2570,7 @@ mod tests {
         history.insert(
             "B".to_string(),
             vec![
-                600_000, 600_000, 600_000, 600_000, 600_000, 50_000, 50_000, 50_000, 50_000,
-                50_000,
+                600_000, 600_000, 600_000, 600_000, 600_000, 50_000, 50_000, 50_000, 50_000, 50_000,
             ],
         );
         assert_eq!(
@@ -2597,8 +2593,7 @@ mod tests {
         history.insert(
             "B".to_string(),
             vec![
-                50_000, 50_000, 50_000, 50_000, 50_000, 600_000, 600_000, 600_000, 600_000,
-                600_000,
+                50_000, 50_000, 50_000, 50_000, 50_000, 600_000, 600_000, 600_000, 600_000, 600_000,
             ],
         );
         assert_eq!(
@@ -2658,9 +2653,7 @@ mod tests {
             timestamp_ns: 1_000_000_000,
         };
 
-        let r = engine
-            .run_calibration_cycle(&[outcome], &ctx)
-            .unwrap();
+        let r = engine.run_calibration_cycle(&[outcome], &ctx).unwrap();
         assert!(r.regression_fixtures_added > 0);
     }
 

@@ -1978,10 +1978,7 @@ mod tests {
         let mut guards = Vec::new();
         for i in 0..100 {
             let guard = barrier
-                .enter_critical(
-                    CriticalOpKind::EvidenceEmission,
-                    &format!("t-{i}"),
-                )
+                .enter_critical(CriticalOpKind::EvidenceEmission, &format!("t-{i}"))
                 .unwrap();
             guards.push(guard);
         }
@@ -1997,10 +1994,7 @@ mod tests {
         let mut barrier = det_barrier(1);
         for i in 0..50 {
             let _g = barrier
-                .enter_critical(
-                    CriticalOpKind::CapabilityCheck,
-                    &format!("t-{i}"),
-                )
+                .enter_critical(CriticalOpKind::CapabilityCheck, &format!("t-{i}"))
                 .unwrap();
         }
         assert_eq!(barrier.in_flight(), 50);
@@ -2183,10 +2177,7 @@ mod tests {
                 "t",
             )
             .unwrap_err();
-        assert!(matches!(
-            err,
-            BarrierError::NonMonotonicTransition { .. }
-        ));
+        assert!(matches!(err, BarrierError::NonMonotonicTransition { .. }));
     }
 
     #[test]
@@ -2332,8 +2323,7 @@ mod tests {
                 trace_id: format!("serde-{i}"),
             };
             let json = serde_json::to_string(&guard).unwrap();
-            let restored: EpochGuard =
-                serde_json::from_str(&json).unwrap();
+            let restored: EpochGuard = serde_json::from_str(&json).unwrap();
             assert_eq!(guard, restored);
         }
     }
@@ -2360,8 +2350,7 @@ mod tests {
                 trace_id: format!("reason-{i}"),
             };
             let json = serde_json::to_string(&ev).unwrap();
-            let restored: TransitionEvidence =
-                serde_json::from_str(&json).unwrap();
+            let restored: TransitionEvidence = serde_json::from_str(&json).unwrap();
             assert_eq!(ev, restored);
         }
     }
@@ -2378,8 +2367,7 @@ mod tests {
                 state,
             };
             let json = serde_json::to_string(&err).unwrap();
-            let restored: BarrierError =
-                serde_json::from_str(&json).unwrap();
+            let restored: BarrierError = serde_json::from_str(&json).unwrap();
             assert_eq!(err, restored);
         }
     }

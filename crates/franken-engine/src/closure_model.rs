@@ -1758,7 +1758,11 @@ mod tests {
             .iter()
             .map(|v| serde_json::to_string(v).unwrap())
             .collect();
-        assert_eq!(jsons.len(), 8, "all 8 EnvValue variants must serialize to distinct JSON");
+        assert_eq!(
+            jsons.len(),
+            8,
+            "all 8 EnvValue variants must serialize to distinct JSON"
+        );
     }
 
     #[test]
@@ -1774,7 +1778,11 @@ mod tests {
             .iter()
             .map(|v| serde_json::to_string(v).unwrap())
             .collect();
-        assert_eq!(jsons.len(), 5, "all 5 EnvironmentKind variants must produce distinct JSON");
+        assert_eq!(
+            jsons.len(),
+            5,
+            "all 5 EnvironmentKind variants must produce distinct JSON"
+        );
     }
 
     #[test]
@@ -1790,13 +1798,19 @@ mod tests {
                 scope_max: Label::Public,
             },
             ScopeError::DuplicateBinding { name: "a".into() },
-            ScopeError::InvalidEnvironment { handle: EnvironmentHandle(0) },
+            ScopeError::InvalidEnvironment {
+                handle: EnvironmentHandle(0),
+            },
         ];
         let jsons: std::collections::BTreeSet<String> = variants
             .iter()
             .map(|v| serde_json::to_string(v).unwrap())
             .collect();
-        assert_eq!(jsons.len(), 7, "all 7 ScopeError variants must produce distinct JSON");
+        assert_eq!(
+            jsons.len(),
+            7,
+            "all 7 ScopeError variants must produce distinct JSON"
+        );
     }
 
     // --- Debug distinctness (3 tests) ---
@@ -1815,7 +1829,11 @@ mod tests {
         ];
         let debugs: std::collections::BTreeSet<String> =
             variants.iter().map(|v| format!("{v:?}")).collect();
-        assert_eq!(debugs.len(), 8, "all 8 EnvValue variants must have distinct Debug");
+        assert_eq!(
+            debugs.len(),
+            8,
+            "all 8 EnvValue variants must have distinct Debug"
+        );
     }
 
     #[test]
@@ -1829,7 +1847,11 @@ mod tests {
         ];
         let debugs: std::collections::BTreeSet<String> =
             variants.iter().map(|v| format!("{v:?}")).collect();
-        assert_eq!(debugs.len(), 5, "all 5 EnvironmentKind variants must have distinct Debug");
+        assert_eq!(
+            debugs.len(),
+            5,
+            "all 5 EnvironmentKind variants must have distinct Debug"
+        );
     }
 
     #[test]
@@ -1845,11 +1867,17 @@ mod tests {
                 scope_max: Label::Public,
             },
             ScopeError::DuplicateBinding { name: "n".into() },
-            ScopeError::InvalidEnvironment { handle: EnvironmentHandle(0) },
+            ScopeError::InvalidEnvironment {
+                handle: EnvironmentHandle(0),
+            },
         ];
         let debugs: std::collections::BTreeSet<String> =
             variants.iter().map(|v| format!("{v:?}")).collect();
-        assert_eq!(debugs.len(), 7, "all 7 ScopeError variants must have distinct Debug");
+        assert_eq!(
+            debugs.len(),
+            7,
+            "all 7 ScopeError variants must have distinct Debug"
+        );
     }
 
     // --- Copy semantics (2 tests) ---
@@ -1883,7 +1911,11 @@ mod tests {
         let mut hasher2 = std::collections::hash_map::DefaultHasher::new();
         h1.hash(&mut hasher1);
         h2.hash(&mut hasher2);
-        assert_eq!(hasher1.finish(), hasher2.finish(), "equal ClosureHandles must hash equally");
+        assert_eq!(
+            hasher1.finish(),
+            hasher2.finish(),
+            "equal ClosureHandles must hash equally"
+        );
     }
 
     #[test]
@@ -2120,7 +2152,13 @@ mod tests {
         let mut chain = fresh_chain();
         // Push 50 nested block scopes
         for i in 0..50u32 {
-            chain.push_scope(ScopeId { depth: i + 1, index: 0 }, ScopeKind::Block);
+            chain.push_scope(
+                ScopeId {
+                    depth: i + 1,
+                    index: 0,
+                },
+                ScopeKind::Block,
+            );
         }
         assert_eq!(chain.depth(), 51); // 1 global + 50 blocks
         // Declare var in deepest — should hoist to global
@@ -2239,7 +2277,10 @@ mod tests {
         set.insert(ClosureHandle(5));
         assert_eq!(set.len(), 3);
         let as_vec: Vec<_> = set.into_iter().collect();
-        assert_eq!(as_vec, vec![ClosureHandle(1), ClosureHandle(3), ClosureHandle(5)]);
+        assert_eq!(
+            as_vec,
+            vec![ClosureHandle(1), ClosureHandle(3), ClosureHandle(5)]
+        );
     }
 
     // --- ClosureStore default/new equivalence (1 test) ---

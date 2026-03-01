@@ -1617,8 +1617,7 @@ mod tests {
         for _ in 0..10 {
             est.observe(0);
         }
-        let ss =
-            SufficientStatistic::from_estimator(&est, 100, 200, ContentHash::compute(b"ci"));
+        let ss = SufficientStatistic::from_estimator(&est, 100, 200, ContentHash::compute(b"ci"));
         let mut cloned = ss.clone();
         cloned.total_count = 999;
         assert_ne!(ss, cloned);
@@ -1710,8 +1709,7 @@ mod tests {
         let mut est = EntropyEstimator::new();
         est.observe(0);
         est.observe(1);
-        let ss =
-            SufficientStatistic::from_estimator(&est, 500, 1000, ContentHash::compute(b"ss"));
+        let ss = SufficientStatistic::from_estimator(&est, 500, 1000, ContentHash::compute(b"ss"));
         let json = serde_json::to_string(&ss).unwrap();
         for field in &[
             "symbol_counts",
@@ -1818,10 +1816,7 @@ mod tests {
             est.observe(1);
         }
         let r = est.redundancy_millibits();
-        assert!(
-            r > 0,
-            "skewed distribution should have positive redundancy"
-        );
+        assert!(r > 0, "skewed distribution should have positive redundancy");
     }
 
     #[test]
@@ -1928,8 +1923,7 @@ mod tests {
     #[test]
     fn sufficient_statistic_empty_estimator() {
         let est = EntropyEstimator::new();
-        let ss =
-            SufficientStatistic::from_estimator(&est, 0, 0, ContentHash::compute(b"empty_ss"));
+        let ss = SufficientStatistic::from_estimator(&est, 0, 0, ContentHash::compute(b"empty_ss"));
         assert!(ss.is_consistent());
         assert_eq!(ss.total_count, 0);
         assert_eq!(ss.mean_millionths, 0);
@@ -1945,8 +1939,7 @@ mod tests {
         est.observe(2);
         est.observe(2);
         est.observe(2);
-        let ss =
-            SufficientStatistic::from_estimator(&est, 0, 0, ContentHash::compute(b"counts"));
+        let ss = SufficientStatistic::from_estimator(&est, 0, 0, ContentHash::compute(b"counts"));
         assert_eq!(ss.symbol_counts.get(&0), Some(&2));
         assert_eq!(ss.symbol_counts.get(&1), Some(&1));
         assert_eq!(ss.symbol_counts.get(&2), Some(&3));
@@ -2112,10 +2105,7 @@ mod tests {
         let err = EntropyError::KraftViolation {
             kraft_sum_millionths: 1_200_000,
         };
-        assert_eq!(
-            format!("{err}"),
-            "Kraft inequality violated: sum = 1200000"
-        );
+        assert_eq!(format!("{err}"), "Kraft inequality violated: sum = 1200000");
     }
 
     // -----------------------------------------------------------------------

@@ -1648,7 +1648,11 @@ mod tests {
 
     #[test]
     fn evidence_severity_copy_from_array() {
-        let arr = [EvidenceSeverity::Info, EvidenceSeverity::Warning, EvidenceSeverity::Critical];
+        let arr = [
+            EvidenceSeverity::Info,
+            EvidenceSeverity::Warning,
+            EvidenceSeverity::Critical,
+        ];
         let copied = arr[1];
         assert_eq!(copied, EvidenceSeverity::Warning);
         assert_eq!(arr[1], EvidenceSeverity::Warning);
@@ -2026,22 +2030,46 @@ mod tests {
 
     #[test]
     fn parse_severity_case_insensitive() {
-        assert_eq!(parse_evidence_severity("INFO"), Some(EvidenceSeverity::Info));
-        assert_eq!(parse_evidence_severity("Warning"), Some(EvidenceSeverity::Warning));
-        assert_eq!(parse_evidence_severity("CRITICAL"), Some(EvidenceSeverity::Critical));
+        assert_eq!(
+            parse_evidence_severity("INFO"),
+            Some(EvidenceSeverity::Info)
+        );
+        assert_eq!(
+            parse_evidence_severity("Warning"),
+            Some(EvidenceSeverity::Warning)
+        );
+        assert_eq!(
+            parse_evidence_severity("CRITICAL"),
+            Some(EvidenceSeverity::Critical)
+        );
     }
 
     #[test]
     fn parse_severity_with_whitespace() {
-        assert_eq!(parse_evidence_severity("  info  "), Some(EvidenceSeverity::Info));
+        assert_eq!(
+            parse_evidence_severity("  info  "),
+            Some(EvidenceSeverity::Info)
+        );
     }
 
     #[test]
     fn parse_decision_type_all_variants() {
-        assert_eq!(parse_decision_type("security_action"), Some(DecisionType::SecurityAction));
-        assert_eq!(parse_decision_type("policy_update"), Some(DecisionType::PolicyUpdate));
-        assert_eq!(parse_decision_type("epoch_transition"), Some(DecisionType::EpochTransition));
-        assert_eq!(parse_decision_type("revocation"), Some(DecisionType::Revocation));
+        assert_eq!(
+            parse_decision_type("security_action"),
+            Some(DecisionType::SecurityAction)
+        );
+        assert_eq!(
+            parse_decision_type("policy_update"),
+            Some(DecisionType::PolicyUpdate)
+        );
+        assert_eq!(
+            parse_decision_type("epoch_transition"),
+            Some(DecisionType::EpochTransition)
+        );
+        assert_eq!(
+            parse_decision_type("revocation"),
+            Some(DecisionType::Revocation)
+        );
         assert_eq!(
             parse_decision_type("extension_lifecycle"),
             Some(DecisionType::ExtensionLifecycle)
@@ -2078,15 +2106,30 @@ mod tests {
 
     #[test]
     fn evidence_severity_serde_uses_snake_case() {
-        assert_eq!(serde_json::to_string(&EvidenceSeverity::Info).unwrap(), "\"info\"");
-        assert_eq!(serde_json::to_string(&EvidenceSeverity::Warning).unwrap(), "\"warning\"");
-        assert_eq!(serde_json::to_string(&EvidenceSeverity::Critical).unwrap(), "\"critical\"");
+        assert_eq!(
+            serde_json::to_string(&EvidenceSeverity::Info).unwrap(),
+            "\"info\""
+        );
+        assert_eq!(
+            serde_json::to_string(&EvidenceSeverity::Warning).unwrap(),
+            "\"warning\""
+        );
+        assert_eq!(
+            serde_json::to_string(&EvidenceSeverity::Critical).unwrap(),
+            "\"critical\""
+        );
     }
 
     #[test]
     fn evidence_record_kind_serde_uses_snake_case() {
-        assert_eq!(serde_json::to_string(&EvidenceRecordKind::DecisionReceipt).unwrap(), "\"decision_receipt\"");
-        assert_eq!(serde_json::to_string(&EvidenceRecordKind::HostcallTelemetry).unwrap(), "\"hostcall_telemetry\"");
+        assert_eq!(
+            serde_json::to_string(&EvidenceRecordKind::DecisionReceipt).unwrap(),
+            "\"decision_receipt\""
+        );
+        assert_eq!(
+            serde_json::to_string(&EvidenceRecordKind::HostcallTelemetry).unwrap(),
+            "\"hostcall_telemetry\""
+        );
     }
 
     #[test]

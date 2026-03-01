@@ -1826,12 +1826,24 @@ mod tests {
 
     #[test]
     fn exploit_class_display_exact_known() {
-        assert_eq!(ExploitClass::CapabilityEscalation.to_string(), "capability_escalation");
+        assert_eq!(
+            ExploitClass::CapabilityEscalation.to_string(),
+            "capability_escalation"
+        );
         assert_eq!(ExploitClass::PolicyBypass.to_string(), "policy_bypass");
-        assert_eq!(ExploitClass::ResourceExhaustion.to_string(), "resource_exhaustion");
-        assert_eq!(ExploitClass::InformationLeakage.to_string(), "information_leakage");
+        assert_eq!(
+            ExploitClass::ResourceExhaustion.to_string(),
+            "resource_exhaustion"
+        );
+        assert_eq!(
+            ExploitClass::InformationLeakage.to_string(),
+            "information_leakage"
+        );
         assert_eq!(ExploitClass::ReplayAttack.to_string(), "replay_attack");
-        assert_eq!(ExploitClass::Novel("foo".to_string()).to_string(), "novel:foo");
+        assert_eq!(
+            ExploitClass::Novel("foo".to_string()).to_string(),
+            "novel:foo"
+        );
     }
 
     #[test]
@@ -2111,21 +2123,31 @@ mod tests {
 
     #[test]
     fn coevolution_error_display_exact_empty_strategies() {
-        let e = CoevolutionError::EmptyStrategies { player: PlayerRole::Attacker };
+        let e = CoevolutionError::EmptyStrategies {
+            player: PlayerRole::Attacker,
+        };
         assert_eq!(e.to_string(), "no strategies defined for attacker");
-        let e2 = CoevolutionError::EmptyStrategies { player: PlayerRole::Defender };
+        let e2 = CoevolutionError::EmptyStrategies {
+            player: PlayerRole::Defender,
+        };
         assert_eq!(e2.to_string(), "no strategies defined for defender");
     }
 
     #[test]
     fn coevolution_error_display_exact_too_many_strategies() {
-        let e = CoevolutionError::TooManyStrategies { count: 100, max: 64 };
+        let e = CoevolutionError::TooManyStrategies {
+            count: 100,
+            max: 64,
+        };
         assert_eq!(e.to_string(), "strategy count 100 exceeds maximum 64");
     }
 
     #[test]
     fn coevolution_error_display_exact_incomplete_matrix() {
-        let e = CoevolutionError::IncompletePayoffMatrix { expected: 9, actual: 6 };
+        let e = CoevolutionError::IncompletePayoffMatrix {
+            expected: 9,
+            actual: 6,
+        };
         assert_eq!(e.to_string(), "payoff matrix has 6 entries, expected 9");
     }
 
@@ -2137,14 +2159,23 @@ mod tests {
 
     #[test]
     fn coevolution_error_display_exact_too_many_rounds() {
-        let e = CoevolutionError::TooManyRounds { rounds: 200_000, max: 100_000 };
+        let e = CoevolutionError::TooManyRounds {
+            rounds: 200_000,
+            max: 100_000,
+        };
         assert_eq!(e.to_string(), "rounds 200000 exceed maximum 100000");
     }
 
     #[test]
     fn coevolution_error_display_exact_budget_exhausted() {
-        let e = CoevolutionError::BudgetExhausted { spent: 5_000_000, budget: 3_000_000 };
-        assert_eq!(e.to_string(), "exploration budget exhausted: spent 5000000, budget 3000000");
+        let e = CoevolutionError::BudgetExhausted {
+            spent: 5_000_000,
+            budget: 3_000_000,
+        };
+        assert_eq!(
+            e.to_string(),
+            "exploration budget exhausted: spent 5000000, budget 3000000"
+        );
     }
 
     #[test]
@@ -2156,12 +2187,20 @@ mod tests {
     #[test]
     fn coevolution_error_serde_variant_distinct() {
         let variants: Vec<CoevolutionError> = vec![
-            CoevolutionError::EmptyStrategies { player: PlayerRole::Attacker },
+            CoevolutionError::EmptyStrategies {
+                player: PlayerRole::Attacker,
+            },
             CoevolutionError::TooManyStrategies { count: 1, max: 1 },
-            CoevolutionError::IncompletePayoffMatrix { expected: 1, actual: 0 },
+            CoevolutionError::IncompletePayoffMatrix {
+                expected: 1,
+                actual: 0,
+            },
             CoevolutionError::InvalidGamma { value: 0 },
             CoevolutionError::TooManyRounds { rounds: 1, max: 1 },
-            CoevolutionError::BudgetExhausted { spent: 1, budget: 0 },
+            CoevolutionError::BudgetExhausted {
+                spent: 1,
+                budget: 0,
+            },
             CoevolutionError::ZeroRounds,
         ];
         let set: BTreeSet<String> = variants
@@ -2174,18 +2213,23 @@ mod tests {
     #[test]
     fn coevolution_error_debug_distinct() {
         let variants: Vec<CoevolutionError> = vec![
-            CoevolutionError::EmptyStrategies { player: PlayerRole::Attacker },
+            CoevolutionError::EmptyStrategies {
+                player: PlayerRole::Attacker,
+            },
             CoevolutionError::TooManyStrategies { count: 1, max: 1 },
-            CoevolutionError::IncompletePayoffMatrix { expected: 1, actual: 0 },
+            CoevolutionError::IncompletePayoffMatrix {
+                expected: 1,
+                actual: 0,
+            },
             CoevolutionError::InvalidGamma { value: 0 },
             CoevolutionError::TooManyRounds { rounds: 1, max: 1 },
-            CoevolutionError::BudgetExhausted { spent: 1, budget: 0 },
+            CoevolutionError::BudgetExhausted {
+                spent: 1,
+                budget: 0,
+            },
             CoevolutionError::ZeroRounds,
         ];
-        let set: BTreeSet<String> = variants
-            .iter()
-            .map(|v| format!("{v:?}"))
-            .collect();
+        let set: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
         assert_eq!(set.len(), variants.len());
     }
 
@@ -2237,10 +2281,8 @@ mod tests {
 
     #[test]
     fn debug_nonempty_coevolution_harness() {
-        let h = CoevolutionHarness::new(
-            TournamentConfig::default(),
-            rock_paper_scissors_matrix(),
-        ).unwrap();
+        let h = CoevolutionHarness::new(TournamentConfig::default(), rock_paper_scissors_matrix())
+            .unwrap();
         assert!(!format!("{h:?}").is_empty());
     }
 
@@ -2288,7 +2330,10 @@ mod tests {
 
     #[test]
     fn schema_version_constant_stable() {
-        assert_eq!(COEVOLUTION_SCHEMA_VERSION, "franken-engine.adversarial-coevolution.v1");
+        assert_eq!(
+            COEVOLUTION_SCHEMA_VERSION,
+            "franken-engine.adversarial-coevolution.v1"
+        );
     }
 
     #[test]
@@ -2408,20 +2453,33 @@ mod tests {
         let r1 = h1.run().unwrap();
         let r2 = h2.run().unwrap();
         assert_eq!(r1.artifact_hash, r2.artifact_hash);
-        assert_eq!(r1.total_attacker_payoff_millionths, r2.total_attacker_payoff_millionths);
+        assert_eq!(
+            r1.total_attacker_payoff_millionths,
+            r2.total_attacker_payoff_millionths
+        );
     }
 
     #[test]
     fn run_different_seed_different_hash() {
         let m = rock_paper_scissors_matrix();
         let mut h1 = CoevolutionHarness::new(
-            TournamentConfig { rounds: 50, seed: 1, ..TournamentConfig::default() },
+            TournamentConfig {
+                rounds: 50,
+                seed: 1,
+                ..TournamentConfig::default()
+            },
             m.clone(),
-        ).unwrap();
+        )
+        .unwrap();
         let mut h2 = CoevolutionHarness::new(
-            TournamentConfig { rounds: 50, seed: 999, ..TournamentConfig::default() },
+            TournamentConfig {
+                rounds: 50,
+                seed: 999,
+                ..TournamentConfig::default()
+            },
             m,
-        ).unwrap();
+        )
+        .unwrap();
         let r1 = h1.run().unwrap();
         let r2 = h2.run().unwrap();
         // Different seeds should (almost certainly) produce different results
@@ -2430,7 +2488,10 @@ mod tests {
 
     #[test]
     fn result_schema_version_matches_constant() {
-        let config = TournamentConfig { rounds: 5, ..TournamentConfig::default() };
+        let config = TournamentConfig {
+            rounds: 5,
+            ..TournamentConfig::default()
+        };
         let m = rock_paper_scissors_matrix();
         let mut h = CoevolutionHarness::new(config, m).unwrap();
         let r = h.run().unwrap();

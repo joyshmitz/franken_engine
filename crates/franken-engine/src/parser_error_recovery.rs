@@ -1641,7 +1641,11 @@ mod tests {
 
     #[test]
     fn recovery_mode_copy_from_array() {
-        let arr = [RecoveryMode::Strict, RecoveryMode::Diagnostic, RecoveryMode::Execution];
+        let arr = [
+            RecoveryMode::Strict,
+            RecoveryMode::Diagnostic,
+            RecoveryMode::Execution,
+        ];
         let copied = arr[1];
         assert_eq!(copied, RecoveryMode::Diagnostic);
         assert_eq!(arr[1], RecoveryMode::Diagnostic);
@@ -1649,7 +1653,11 @@ mod tests {
 
     #[test]
     fn error_state_copy_from_array() {
-        let arr = [ErrorState::Recoverable, ErrorState::Ambiguous, ErrorState::Unrecoverable];
+        let arr = [
+            ErrorState::Recoverable,
+            ErrorState::Ambiguous,
+            ErrorState::Unrecoverable,
+        ];
         let copied = arr[2];
         assert_eq!(copied, ErrorState::Unrecoverable);
         assert_eq!(arr[2], ErrorState::Unrecoverable);
@@ -1780,10 +1788,23 @@ mod tests {
     fn repair_edit_serde_variants_distinct() {
         use std::collections::BTreeSet;
         let variants = vec![
-            RepairEdit::Insert { offset: 0, token_text: ";".into() },
-            RepairEdit::Delete { offset: 0, length: 1 },
-            RepairEdit::Replace { offset: 0, length: 1, replacement: ";".into() },
-            RepairEdit::Skip { offset: 0, count: 1 },
+            RepairEdit::Insert {
+                offset: 0,
+                token_text: ";".into(),
+            },
+            RepairEdit::Delete {
+                offset: 0,
+                length: 1,
+            },
+            RepairEdit::Replace {
+                offset: 0,
+                length: 1,
+                replacement: ";".into(),
+            },
+            RepairEdit::Skip {
+                offset: 0,
+                count: 1,
+            },
         ];
         let jsons: BTreeSet<String> = variants
             .iter()
@@ -1924,10 +1945,23 @@ mod tests {
     #[test]
     fn repair_edit_display_all_variants() {
         let edits = vec![
-            RepairEdit::Insert { offset: 10, token_text: ";".into() },
-            RepairEdit::Delete { offset: 20, length: 3 },
-            RepairEdit::Replace { offset: 30, length: 2, replacement: "{}".into() },
-            RepairEdit::Skip { offset: 40, count: 5 },
+            RepairEdit::Insert {
+                offset: 10,
+                token_text: ";".into(),
+            },
+            RepairEdit::Delete {
+                offset: 20,
+                length: 3,
+            },
+            RepairEdit::Replace {
+                offset: 30,
+                length: 2,
+                replacement: "{}".into(),
+            },
+            RepairEdit::Skip {
+                offset: 40,
+                count: 5,
+            },
         ];
         use std::collections::BTreeSet;
         let displays: BTreeSet<String> = edits.iter().map(|e| e.to_string()).collect();
@@ -1952,8 +1986,8 @@ mod tests {
 
     #[test]
     fn error_state_hash_all_distinct() {
-        use std::hash::{Hash, Hasher};
         use std::collections::BTreeSet;
+        use std::hash::{Hash, Hasher};
         let variants = [
             ErrorState::Recoverable,
             ErrorState::Ambiguous,
@@ -2077,7 +2111,11 @@ mod tests {
             ambiguous: 0,
             unrecoverable: 0,
         };
-        let loss = expected_loss(RecoveryAction::RecoverContinue, &posterior, &LossMatrix::default());
+        let loss = expected_loss(
+            RecoveryAction::RecoverContinue,
+            &posterior,
+            &LossMatrix::default(),
+        );
         assert_eq!(loss, 0);
     }
 
@@ -2131,10 +2169,23 @@ mod tests {
     #[test]
     fn repair_edit_serde_roundtrip_all_variants() {
         let variants = vec![
-            RepairEdit::Insert { offset: 10, token_text: "semicolon".into() },
-            RepairEdit::Delete { offset: 20, length: 5 },
-            RepairEdit::Replace { offset: 30, length: 3, replacement: "{}".into() },
-            RepairEdit::Skip { offset: 40, count: 7 },
+            RepairEdit::Insert {
+                offset: 10,
+                token_text: "semicolon".into(),
+            },
+            RepairEdit::Delete {
+                offset: 20,
+                length: 5,
+            },
+            RepairEdit::Replace {
+                offset: 30,
+                length: 3,
+                replacement: "{}".into(),
+            },
+            RepairEdit::Skip {
+                offset: 40,
+                count: 7,
+            },
         ];
         for v in &variants {
             let json = serde_json::to_string(v).unwrap();

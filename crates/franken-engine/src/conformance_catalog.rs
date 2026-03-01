@@ -182,7 +182,7 @@ pub struct VersionNegotiationResult {
 }
 
 /// Semantic version triplet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SemanticVersion {
     pub major: u32,
     pub minor: u32,
@@ -1960,7 +1960,11 @@ mod tests {
             .iter()
             .map(|r| serde_json::to_string(r).expect("serialize"))
             .collect();
-        assert_eq!(jsons.len(), 6, "all 6 sibling repo variants serialize distinctly");
+        assert_eq!(
+            jsons.len(),
+            6,
+            "all 6 sibling repo variants serialize distinctly"
+        );
     }
 
     #[test]
@@ -1986,7 +1990,11 @@ mod tests {
 
     #[test]
     fn version_class_serde_variants_distinct() {
-        let variants = [VersionClass::Patch, VersionClass::Minor, VersionClass::Major];
+        let variants = [
+            VersionClass::Patch,
+            VersionClass::Minor,
+            VersionClass::Major,
+        ];
         let jsons: BTreeSet<String> = variants
             .iter()
             .map(|v| serde_json::to_string(v).expect("serialize"))
@@ -2026,7 +2034,11 @@ mod tests {
 
     #[test]
     fn required_response_serde_variants_distinct() {
-        let variants = [RequiredResponse::Log, RequiredResponse::Warn, RequiredResponse::Block];
+        let variants = [
+            RequiredResponse::Log,
+            RequiredResponse::Warn,
+            RequiredResponse::Block,
+        ];
         let jsons: BTreeSet<String> = variants
             .iter()
             .map(|v| serde_json::to_string(v).expect("serialize"))
@@ -2176,7 +2188,11 @@ mod tests {
 
     #[test]
     fn version_class_display_matches_as_str() {
-        let variants = [VersionClass::Patch, VersionClass::Minor, VersionClass::Major];
+        let variants = [
+            VersionClass::Patch,
+            VersionClass::Minor,
+            VersionClass::Major,
+        ];
         for v in &variants {
             assert_eq!(v.to_string(), v.as_str());
         }
@@ -2197,7 +2213,11 @@ mod tests {
 
     #[test]
     fn required_response_display_matches_as_str() {
-        let variants = [RequiredResponse::Log, RequiredResponse::Warn, RequiredResponse::Block];
+        let variants = [
+            RequiredResponse::Log,
+            RequiredResponse::Warn,
+            RequiredResponse::Block,
+        ];
         for v in &variants {
             assert_eq!(v.to_string(), v.as_str());
         }
@@ -2383,23 +2403,24 @@ mod tests {
 
     #[test]
     fn catalog_entry_has_required_vectors_true_when_both_present() {
-        let make_entry = |id: &str, pos: Vec<ConformanceVector>, neg: Vec<ConformanceVector>| CatalogEntry {
-            entry_id: id.to_string(),
-            boundary: BoundarySurface {
-                sibling: SiblingRepo::Frankentui,
-                surface_id: id.to_string(),
-                surface_kind: SurfaceKind::ApiMessage,
-                description: "test".to_string(),
-                covered_fields: ["f"].iter().map(|s| s.to_string()).collect(),
-                version_class: VersionClass::Minor,
-            },
-            positive_vectors: pos,
-            negative_vectors: neg,
-            replay_obligation: ReplayObligation::standard(id, SiblingRepo::Frankentui),
-            failure_class: RegressionClass::Behavioral,
-            approved: false,
-            approval_epoch: None,
-        };
+        let make_entry =
+            |id: &str, pos: Vec<ConformanceVector>, neg: Vec<ConformanceVector>| CatalogEntry {
+                entry_id: id.to_string(),
+                boundary: BoundarySurface {
+                    sibling: SiblingRepo::Frankentui,
+                    surface_id: id.to_string(),
+                    surface_kind: SurfaceKind::ApiMessage,
+                    description: "test".to_string(),
+                    covered_fields: ["f"].iter().map(|s| s.to_string()).collect(),
+                    version_class: VersionClass::Minor,
+                },
+                positive_vectors: pos,
+                negative_vectors: neg,
+                replay_obligation: ReplayObligation::standard(id, SiblingRepo::Frankentui),
+                failure_class: RegressionClass::Behavioral,
+                approved: false,
+                approval_epoch: None,
+            };
         let pos_vec = ConformanceVector {
             vector_id: "p".to_string(),
             description: "positive".to_string(),
@@ -2586,7 +2607,10 @@ mod tests {
         // All 6 sibling repos should be covered by canonical catalog
         assert_eq!(covered.len(), 6);
         for repo in SiblingRepo::all() {
-            assert!(covered.contains(repo), "expected {repo} in covered boundaries");
+            assert!(
+                covered.contains(repo),
+                "expected {repo} in covered boundaries"
+            );
         }
     }
 
@@ -2615,7 +2639,10 @@ mod tests {
         let decoded: VersionNegotiationResult = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(result, decoded);
         assert!(decoded.migration_required);
-        assert_eq!(decoded.migration_path, Some("migrate_v1_to_v2.sh".to_string()));
+        assert_eq!(
+            decoded.migration_path,
+            Some("migrate_v1_to_v2.sh".to_string())
+        );
     }
 
     #[test]
@@ -2653,15 +2680,13 @@ mod tests {
                 version_class: VersionClass::Minor,
             },
             positive_vectors: vec![dup_vector.clone()],
-            negative_vectors: vec![
-                ConformanceVector {
-                    vector_id: "same-id".to_string(), // duplicate!
-                    description: "negative with dup id".to_string(),
-                    input_json: "{}".to_string(),
-                    expected_pass: false,
-                    expected_regression_class: Some(RegressionClass::Behavioral),
-                },
-            ],
+            negative_vectors: vec![ConformanceVector {
+                vector_id: "same-id".to_string(), // duplicate!
+                description: "negative with dup id".to_string(),
+                input_json: "{}".to_string(),
+                expected_pass: false,
+                expected_regression_class: Some(RegressionClass::Behavioral),
+            }],
             replay_obligation: ReplayObligation::standard(
                 "test/dup_vectors",
                 SiblingRepo::SqlmodelRust,
@@ -2672,7 +2697,9 @@ mod tests {
         });
         let errors = validate_catalog(&catalog);
         assert!(
-            errors.iter().any(|e| e.detail.contains("duplicate vector ID")),
+            errors
+                .iter()
+                .any(|e| e.detail.contains("duplicate vector ID")),
             "expected duplicate vector ID error, got: {errors:?}"
         );
     }
@@ -2687,7 +2714,10 @@ mod tests {
         // When minor differs, even if patch also differs, result is MinorCompatible
         let local = SemanticVersion::new(1, 2, 0);
         let remote = SemanticVersion::new(1, 3, 5);
-        assert_eq!(negotiate_version(local, remote), VersionCompatibility::MinorCompatible);
+        assert_eq!(
+            negotiate_version(local, remote),
+            VersionCompatibility::MinorCompatible
+        );
     }
 
     #[test]

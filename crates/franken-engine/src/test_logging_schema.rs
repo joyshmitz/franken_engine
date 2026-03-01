@@ -262,9 +262,7 @@ impl ValidationFailure {
             event: "validate_redaction".to_string(),
             outcome: "fail".to_string(),
             error_code: ValidationErrorCode::SecretPatternLeak,
-            message: format!(
-                "secret pattern `{pattern_id}` detected in unresolved field `{path}`"
-            ),
+            message: format!("secret pattern `{pattern_id}` detected in unresolved field `{path}`"),
         }
     }
 
@@ -430,7 +428,9 @@ fn stable_sensitive_hash(value: &str) -> String {
 }
 
 fn contains_ascii_uppercase_alnum(value: &str) -> bool {
-    value.bytes().all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
 }
 
 fn looks_like_aws_access_key_id(value: &str) -> bool {
@@ -1377,7 +1377,10 @@ mod tests {
                 "payload.github_token".to_string(),
                 "ghp_abcdefghijklmnopqrstuvwxyz123456".to_string(),
             ),
-            ("payload.inline".to_string(), "password=supersecret".to_string()),
+            (
+                "payload.inline".to_string(),
+                "password=supersecret".to_string(),
+            ),
         ]);
 
         let matches = detect_secret_patterns(&record);
@@ -1420,7 +1423,10 @@ mod tests {
             "payload.user_email".to_string(),
             "alice@example.com".to_string(),
         );
-        record.insert("payload.auth_token".to_string(), "ghp_supersecret".to_string());
+        record.insert(
+            "payload.auth_token".to_string(),
+            "ghp_supersecret".to_string(),
+        );
         record.insert("payload.ip_address".to_string(), "127.0.0.1".to_string());
 
         let mut reversed_spec = TestLoggingSchemaSpec::default();

@@ -834,6 +834,26 @@ mod tests {
         DecisionMarkerStream::new(5, b"test-checkpoint-key".to_vec())
     }
 
+    fn make_input(decision_type: DecisionType) -> MarkerInput {
+        MarkerInput {
+            timestamp_ticks: 100,
+            epoch_id: 1,
+            decision_type,
+            decision_id: "decision-test".to_string(),
+            policy_id: Some("policy-default".to_string()),
+            correlation_id: CorrelationId::new("corr-test").expect("valid correlation id"),
+            trace_context: None,
+            principal_id: Some("principal-operator".to_string()),
+            zone_id: Some("zone-a".to_string()),
+            error_code: None,
+            evidence_entry_hash: test_evidence_hash(),
+            actor: "operator".to_string(),
+            payload_summary: "summary".to_string(),
+            full_payload: None,
+            trace_id: "trace-test".to_string(),
+        }
+    }
+
     fn security_input(id_suffix: &str) -> MarkerInput {
         MarkerInput {
             timestamp_ticks: 100,
@@ -2092,7 +2112,12 @@ mod tests {
             signed_head_hash: AuthenticityHash([0u8; 32]),
         };
         let j = serde_json::to_string(&h).unwrap();
-        for field in &["head_marker_id", "latest_marker_hash", "rolling_chain_hash", "signed_head_hash"] {
+        for field in &[
+            "head_marker_id",
+            "latest_marker_hash",
+            "rolling_chain_hash",
+            "signed_head_hash",
+        ] {
             assert!(j.contains(field), "missing: {field}");
         }
     }
@@ -2126,7 +2151,17 @@ mod tests {
             error_code: None,
         };
         let j = serde_json::to_string(&e).unwrap();
-        for field in &["marker_id", "marker_type", "chain_length", "decision_id", "correlation_id", "trace_id", "component", "event", "outcome"] {
+        for field in &[
+            "marker_id",
+            "marker_type",
+            "chain_length",
+            "decision_id",
+            "correlation_id",
+            "trace_id",
+            "component",
+            "event",
+            "outcome",
+        ] {
             assert!(j.contains(field), "missing: {field}");
         }
     }
@@ -2283,9 +2318,18 @@ mod tests {
     #[test]
     fn decision_type_policy_transition_display_all_kinds() {
         for (kind, expected) in [
-            (PolicyTransitionKind::Activation, "policy_transition:activation"),
-            (PolicyTransitionKind::Deactivation, "policy_transition:deactivation"),
-            (PolicyTransitionKind::EpochAdvancement, "policy_transition:epoch_advancement"),
+            (
+                PolicyTransitionKind::Activation,
+                "policy_transition:activation",
+            ),
+            (
+                PolicyTransitionKind::Deactivation,
+                "policy_transition:deactivation",
+            ),
+            (
+                PolicyTransitionKind::EpochAdvancement,
+                "policy_transition:epoch_advancement",
+            ),
         ] {
             let dt = DecisionType::PolicyTransition { transition: kind };
             assert_eq!(dt.to_string(), expected);
@@ -2296,7 +2340,10 @@ mod tests {
     fn decision_type_revocation_event_display_all_kinds() {
         for (kind, expected) in [
             (RevocationKind::Issuance, "revocation_event:issuance"),
-            (RevocationKind::PropagationConfirmation, "revocation_event:propagation_confirmation"),
+            (
+                RevocationKind::PropagationConfirmation,
+                "revocation_event:propagation_confirmation",
+            ),
         ] {
             let dt = DecisionType::RevocationEvent { revocation: kind };
             assert_eq!(dt.to_string(), expected);

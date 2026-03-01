@@ -2005,11 +2005,12 @@ mod tests {
 
     #[test]
     fn trust_level_debug_all_distinct() {
-        let debugs: BTreeSet<String> = TrustLevel::ALL
-            .iter()
-            .map(|v| format!("{v:?}"))
-            .collect();
-        assert_eq!(debugs.len(), 7, "all 7 TrustLevel variants have distinct Debug");
+        let debugs: BTreeSet<String> = TrustLevel::ALL.iter().map(|v| format!("{v:?}")).collect();
+        assert_eq!(
+            debugs.len(),
+            7,
+            "all 7 TrustLevel variants have distinct Debug"
+        );
     }
 
     #[test]
@@ -2024,7 +2025,11 @@ mod tests {
             EvidenceType::OperatorAssessment,
         ];
         let debugs: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
-        assert_eq!(debugs.len(), 7, "all 7 EvidenceType variants have distinct Debug");
+        assert_eq!(
+            debugs.len(),
+            7,
+            "all 7 EvidenceType variants have distinct Debug"
+        );
     }
 
     #[test]
@@ -2038,7 +2043,11 @@ mod tests {
             EvidenceSource::BuildProvenance,
         ];
         let debugs: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
-        assert_eq!(debugs.len(), 6, "all 6 EvidenceSource variants have distinct Debug");
+        assert_eq!(
+            debugs.len(),
+            6,
+            "all 6 EvidenceSource variants have distinct Debug"
+        );
     }
 
     #[test]
@@ -2075,7 +2084,11 @@ mod tests {
             .iter()
             .map(|v| serde_json::to_string(v).unwrap())
             .collect();
-        assert_eq!(jsons.len(), 7, "all 7 TrustLevel variants serialize to distinct JSON");
+        assert_eq!(
+            jsons.len(),
+            7,
+            "all 7 TrustLevel variants serialize to distinct JSON"
+        );
     }
 
     #[test]
@@ -2089,7 +2102,10 @@ mod tests {
             EvidenceType::ProvenanceAttestation,
             EvidenceType::OperatorAssessment,
         ];
-        let jsons: BTreeSet<String> = variants.iter().map(|v| serde_json::to_string(v).unwrap()).collect();
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
         assert_eq!(jsons.len(), 7);
     }
 
@@ -2103,7 +2119,10 @@ mod tests {
             EvidenceSource::ExternalThreatFeed,
             EvidenceSource::BuildProvenance,
         ];
-        let jsons: BTreeSet<String> = variants.iter().map(|v| serde_json::to_string(v).unwrap()).collect();
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
         assert_eq!(jsons.len(), 6);
     }
 
@@ -2115,7 +2134,10 @@ mod tests {
             ResolutionStatus::Resolved,
             ResolutionStatus::FalsePositive,
         ];
-        let jsons: BTreeSet<String> = variants.iter().map(|v| serde_json::to_string(v).unwrap()).collect();
+        let jsons: BTreeSet<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
         assert_eq!(jsons.len(), 4);
     }
 
@@ -2335,7 +2357,10 @@ mod tests {
         assert!(s.contains("ext-x"), "must contain extension id");
         assert!(s.contains("suspicious"), "must contain current level");
         assert!(s.contains("trusted"), "must contain attempted level");
-        assert!(s.contains("operator override"), "must mention operator override");
+        assert!(
+            s.contains("operator override"),
+            "must mention operator override"
+        );
     }
 
     #[test]
@@ -2928,12 +2953,7 @@ mod tests {
             .register_extension(test_extension("ext-isolated", "pub-1"))
             .unwrap();
         let impact = graph
-            .propagate_revocation(
-                "ext-isolated",
-                "inc-noop",
-                SecurityEpoch::from_raw(1),
-                0,
-            )
+            .propagate_revocation("ext-isolated", "inc-noop", SecurityEpoch::from_raw(1), 0)
             .unwrap();
         assert!(impact.directly_affected.is_empty());
         assert!(impact.transitively_affected.is_empty());

@@ -328,7 +328,8 @@ fn invalid_expiry_equal_to_issued() {
 fn is_expired_boundary() {
     let att = create_attestation(KeyRole::Signing, 1, 100, 200);
     assert!(!att.is_expired(DeterministicTimestamp(199)));
-    assert!(att.is_expired(DeterministicTimestamp(200)));
+    // At exact expiry, not yet expired (strictly greater semantics).
+    assert!(!att.is_expired(DeterministicTimestamp(200)));
     assert!(att.is_expired(DeterministicTimestamp(201)));
 }
 
@@ -517,13 +518,14 @@ fn store_register_expired_rejected() {
 }
 
 #[test]
-fn store_register_at_exact_expiry_rejected() {
+fn store_register_at_exact_expiry_accepted() {
+    // At exact expiry, not yet expired (strictly greater semantics) — registration succeeds.
     let mut store = AttestationStore::new(TEST_ZONE);
     let att = create_attestation(KeyRole::Signing, 1, 100, 200);
-    let err = store
+    let id = store
         .register(att, &owner_vk(), DeterministicTimestamp(200), "t")
-        .unwrap_err();
-    assert!(matches!(err, AttestationError::Expired { .. }));
+        .unwrap();
+    assert!(!id.as_bytes().is_empty());
 }
 
 #[test]

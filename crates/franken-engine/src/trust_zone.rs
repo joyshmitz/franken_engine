@@ -1747,8 +1747,11 @@ mod tests {
 
     #[test]
     fn zone_event_json_field_names() {
-        let event =
-            ZoneEvent::base("trace-1", ZoneEventType::Assignment, ZoneEventOutcome::Assigned);
+        let event = ZoneEvent::base(
+            "trace-1",
+            ZoneEventType::Assignment,
+            ZoneEventOutcome::Assigned,
+        );
         let json = serde_json::to_string(&event).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         let obj = v.as_object().unwrap();
@@ -1916,9 +1919,7 @@ mod tests {
     #[test]
     fn assign_entity_reassignment_updates_zone() {
         let mut hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
-        hierarchy
-            .assign_entity("ext-1", "community", "t1")
-            .unwrap();
+        hierarchy.assign_entity("ext-1", "community", "t1").unwrap();
         hierarchy.assign_entity("ext-1", "team", "t2").unwrap();
         let zone = hierarchy.zone_for_entity("ext-1").unwrap();
         assert_eq!(zone.zone_name, "team");
@@ -1934,9 +1935,7 @@ mod tests {
     #[test]
     fn drain_events_twice_second_is_empty() {
         let mut hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
-        hierarchy
-            .assign_entity("ext-1", "community", "t")
-            .unwrap();
+        hierarchy.assign_entity("ext-1", "community", "t").unwrap();
         let events1 = hierarchy.drain_events();
         assert!(!events1.is_empty());
         let events2 = hierarchy.drain_events();
@@ -1966,13 +1965,9 @@ mod tests {
     #[test]
     fn zone_hierarchy_with_assignments_serde_roundtrip() {
         let mut hierarchy = ZoneHierarchy::standard("admin", 1).unwrap();
-        hierarchy
-            .assign_entity("ext-1", "community", "t1")
-            .unwrap();
+        hierarchy.assign_entity("ext-1", "community", "t1").unwrap();
         hierarchy.assign_entity("ext-2", "team", "t2").unwrap();
-        hierarchy
-            .assign_entity("ext-3", "private", "t3")
-            .unwrap();
+        hierarchy.assign_entity("ext-3", "private", "t3").unwrap();
         let json = serde_json::to_string(&hierarchy).unwrap();
         let back: ZoneHierarchy = serde_json::from_str(&json).unwrap();
         assert_eq!(hierarchy, back);
@@ -1981,15 +1976,9 @@ mod tests {
     #[test]
     fn zone_hierarchy_with_events_serde_roundtrip() {
         let mut hierarchy = ZoneHierarchy::standard("admin", 1).unwrap();
+        hierarchy.assign_entity("ext-1", "community", "t1").unwrap();
         hierarchy
-            .assign_entity("ext-1", "community", "t1")
-            .unwrap();
-        hierarchy
-            .enforce_ceiling(
-                "community",
-                &capset(&[RuntimeCapability::VmDispatch]),
-                "t2",
-            )
+            .enforce_ceiling("community", &capset(&[RuntimeCapability::VmDispatch]), "t2")
             .unwrap();
         let json = serde_json::to_string(&hierarchy).unwrap();
         let back: ZoneHierarchy = serde_json::from_str(&json).unwrap();
@@ -2077,20 +2066,11 @@ mod tests {
         let hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
         let zone = hierarchy.zone("team").unwrap();
         let schema = SchemaId::from_definition(b"test-domain-v1");
-        let id_a = derive_zone_scoped_object_id(
-            zone,
-            ObjectDomain::EvidenceRecord,
-            &schema,
-            b"data",
-        )
-        .unwrap();
-        let id_b = derive_zone_scoped_object_id(
-            zone,
-            ObjectDomain::PolicyObject,
-            &schema,
-            b"data",
-        )
-        .unwrap();
+        let id_a =
+            derive_zone_scoped_object_id(zone, ObjectDomain::EvidenceRecord, &schema, b"data")
+                .unwrap();
+        let id_b = derive_zone_scoped_object_id(zone, ObjectDomain::PolicyObject, &schema, b"data")
+            .unwrap();
         assert_ne!(id_a, id_b);
     }
 
@@ -2099,29 +2079,19 @@ mod tests {
         let hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
         let zone = hierarchy.zone("owner").unwrap();
         let schema = SchemaId::from_definition(b"test-schema-v1");
-        let id_a = derive_zone_scoped_object_id(
-            zone,
-            ObjectDomain::EvidenceRecord,
-            &schema,
-            b"data-a",
-        )
-        .unwrap();
-        let id_b = derive_zone_scoped_object_id(
-            zone,
-            ObjectDomain::EvidenceRecord,
-            &schema,
-            b"data-b",
-        )
-        .unwrap();
+        let id_a =
+            derive_zone_scoped_object_id(zone, ObjectDomain::EvidenceRecord, &schema, b"data-a")
+                .unwrap();
+        let id_b =
+            derive_zone_scoped_object_id(zone, ObjectDomain::EvidenceRecord, &schema, b"data-b")
+                .unwrap();
         assert_ne!(id_a, id_b);
     }
 
     #[test]
     fn transition_approved_then_denied_preserves_first_move() {
         let mut hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
-        hierarchy
-            .assign_entity("ext-1", "community", "t1")
-            .unwrap();
+        hierarchy.assign_entity("ext-1", "community", "t1").unwrap();
 
         // Approve transition to team
         hierarchy
@@ -2151,9 +2121,7 @@ mod tests {
     #[test]
     fn multiple_entities_independent_assignments() {
         let mut hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
-        hierarchy
-            .assign_entity("ext-1", "community", "t1")
-            .unwrap();
+        hierarchy.assign_entity("ext-1", "community", "t1").unwrap();
         hierarchy.assign_entity("ext-2", "team", "t2").unwrap();
         hierarchy.assign_entity("ext-3", "owner", "t3").unwrap();
         assert_eq!(
@@ -2175,26 +2143,17 @@ mod tests {
         let mut hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
         assert_eq!(hierarchy.events().len(), 0);
 
-        hierarchy
-            .assign_entity("ext-1", "community", "t1")
-            .unwrap();
+        hierarchy.assign_entity("ext-1", "community", "t1").unwrap();
         assert_eq!(hierarchy.events().len(), 1);
 
         hierarchy
-            .enforce_ceiling(
-                "community",
-                &capset(&[RuntimeCapability::VmDispatch]),
-                "t2",
-            )
+            .enforce_ceiling("community", &capset(&[RuntimeCapability::VmDispatch]), "t2")
             .unwrap();
         assert_eq!(hierarchy.events().len(), 2);
 
         // Failed enforce should also emit an event
-        let _ = hierarchy.enforce_ceiling(
-            "community",
-            &capset(&[RuntimeCapability::FsWrite]),
-            "t3",
-        );
+        let _ =
+            hierarchy.enforce_ceiling("community", &capset(&[RuntimeCapability::FsWrite]), "t3");
         assert_eq!(hierarchy.events().len(), 3);
     }
 
@@ -2243,9 +2202,7 @@ mod tests {
     #[test]
     fn zone_event_component_is_trust_zone() {
         let mut hierarchy = ZoneHierarchy::standard("m", 1).unwrap();
-        hierarchy
-            .assign_entity("ext-1", "community", "t")
-            .unwrap();
+        hierarchy.assign_entity("ext-1", "community", "t").unwrap();
         for event in hierarchy.events() {
             assert_eq!(event.component, "trust_zone");
         }

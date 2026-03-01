@@ -2011,13 +2011,23 @@ mod tests {
     #[test]
     fn parity_tracker_error_debug_all_distinct() {
         let errors = vec![
-            ParityTrackerError::FeatureNotFound { feature_id: "f".into() },
-            ParityTrackerError::WaiverNotFound { waiver_id: "w".into() },
-            ParityTrackerError::WaiverAlreadyExists { waiver_id: "w".into() },
-            ParityTrackerError::WaiverSealed { waiver_id: "w".into() },
+            ParityTrackerError::FeatureNotFound {
+                feature_id: "f".into(),
+            },
+            ParityTrackerError::WaiverNotFound {
+                waiver_id: "w".into(),
+            },
+            ParityTrackerError::WaiverAlreadyExists {
+                waiver_id: "w".into(),
+            },
+            ParityTrackerError::WaiverSealed {
+                waiver_id: "w".into(),
+            },
             ParityTrackerError::InvalidWaiver { detail: "d".into() },
             ParityTrackerError::InvalidMetrics { detail: "d".into() },
-            ParityTrackerError::DuplicateFeature { feature_id: "f".into() },
+            ParityTrackerError::DuplicateFeature {
+                feature_id: "f".into(),
+            },
             ParityTrackerError::GateEvaluationFailed { detail: "d".into() },
         ];
         let dbgs: BTreeSet<String> = errors.iter().map(|e| format!("{e:?}")).collect();
@@ -2052,14 +2062,28 @@ mod tests {
     #[test]
     fn parity_tracker_error_serde_all_variants_distinct() {
         let errors = vec![
-            ParityTrackerError::FeatureNotFound { feature_id: "f".into() },
-            ParityTrackerError::WaiverNotFound { waiver_id: "w".into() },
-            ParityTrackerError::WaiverAlreadyExists { waiver_id: "w2".into() },
-            ParityTrackerError::WaiverSealed { waiver_id: "w3".into() },
+            ParityTrackerError::FeatureNotFound {
+                feature_id: "f".into(),
+            },
+            ParityTrackerError::WaiverNotFound {
+                waiver_id: "w".into(),
+            },
+            ParityTrackerError::WaiverAlreadyExists {
+                waiver_id: "w2".into(),
+            },
+            ParityTrackerError::WaiverSealed {
+                waiver_id: "w3".into(),
+            },
             ParityTrackerError::InvalidWaiver { detail: "d".into() },
-            ParityTrackerError::InvalidMetrics { detail: "d2".into() },
-            ParityTrackerError::DuplicateFeature { feature_id: "f2".into() },
-            ParityTrackerError::GateEvaluationFailed { detail: "d3".into() },
+            ParityTrackerError::InvalidMetrics {
+                detail: "d2".into(),
+            },
+            ParityTrackerError::DuplicateFeature {
+                feature_id: "f2".into(),
+            },
+            ParityTrackerError::GateEvaluationFailed {
+                detail: "d3".into(),
+            },
         ];
         let jsons: BTreeSet<String> = errors
             .iter()
@@ -2222,10 +2246,7 @@ mod tests {
 
     #[test]
     fn feature_area_display_all_unique() {
-        let displays: BTreeSet<String> = FeatureArea::all()
-            .iter()
-            .map(|a| a.to_string())
-            .collect();
+        let displays: BTreeSet<String> = FeatureArea::all().iter().map(|a| a.to_string()).collect();
         assert_eq!(displays.len(), 10);
     }
 
@@ -2310,10 +2331,7 @@ mod tests {
         tracker.ingest_lockstep(&r, &ctx).unwrap();
         let fid = format!("{}-{}", EsVersion::Es2020, FeatureArea::BigInt);
         let entry = tracker.feature(&fid).unwrap();
-        assert_eq!(
-            entry.lockstep_match_rates_millionths.get("node"),
-            Some(&0)
-        );
+        assert_eq!(entry.lockstep_match_rates_millionths.get("node"), Some(&0));
     }
 
     #[test]

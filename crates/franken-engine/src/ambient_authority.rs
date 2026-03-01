@@ -1406,7 +1406,11 @@ mod tests {
         for v in &variants {
             set.insert(format!("{v:?}"));
         }
-        assert_eq!(set.len(), 7, "all 7 category Debug outputs must be distinct");
+        assert_eq!(
+            set.len(),
+            7,
+            "all 7 category Debug outputs must be distinct"
+        );
     }
 
     #[test]
@@ -1514,7 +1518,11 @@ mod tests {
         for v in &variants {
             jsons.insert(serde_json::to_string(v).unwrap());
         }
-        assert_eq!(jsons.len(), 7, "all category serde outputs must be distinct");
+        assert_eq!(
+            jsons.len(),
+            7,
+            "all category serde outputs must be distinct"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1955,7 +1963,9 @@ mod tests {
     #[test]
     fn category_ordering_all_variants() {
         assert!(ForbiddenCallCategory::FileSystem < ForbiddenCallCategory::GlobalMutableState);
-        assert!(ForbiddenCallCategory::Environment < ForbiddenCallCategory::RawPointerExternalState);
+        assert!(
+            ForbiddenCallCategory::Environment < ForbiddenCallCategory::RawPointerExternalState
+        );
         assert!(ForbiddenCallCategory::RawPointerExternalState < ForbiddenCallCategory::DirectTime);
     }
 

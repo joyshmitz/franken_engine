@@ -1427,11 +1427,10 @@ mod tests {
             ScenarioKind::DegradedMode,
             ScenarioKind::MultiExtension,
         ];
-        let jsons: std::collections::BTreeSet<String> =
-            kinds
-                .iter()
-                .map(|k| serde_json::to_string(k).unwrap())
-                .collect();
+        let jsons: std::collections::BTreeSet<String> = kinds
+            .iter()
+            .map(|k| serde_json::to_string(k).unwrap())
+            .collect();
         assert_eq!(jsons.len(), 7, "all serde JSON strings must be distinct");
     }
 
@@ -1444,13 +1443,19 @@ mod tests {
     #[test]
     fn scenario_kind_quarantine_serde_token() {
         let json = serde_json::to_string(&ScenarioKind::Quarantine).unwrap();
-        assert!(json.contains("Quarantine"), "expected 'Quarantine' in {json}");
+        assert!(
+            json.contains("Quarantine"),
+            "expected 'Quarantine' in {json}"
+        );
     }
 
     #[test]
     fn scenario_kind_multi_extension_serde_token() {
         let json = serde_json::to_string(&ScenarioKind::MultiExtension).unwrap();
-        assert!(json.contains("MultiExtension"), "expected 'MultiExtension' in {json}");
+        assert!(
+            json.contains("MultiExtension"),
+            "expected 'MultiExtension' in {json}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1487,7 +1492,9 @@ mod tests {
         let mut cx = mock_cx(100_000);
         let suite = run_all_scenarios(42, &mut cx);
         let mut cloned = suite.clone();
-        cloned.scenarios.push(ScenarioResult::new(ScenarioKind::Startup, 99));
+        cloned
+            .scenarios
+            .push(ScenarioResult::new(ScenarioKind::Startup, 99));
         assert_eq!(suite.scenarios.len(), 7);
         assert_eq!(cloned.scenarios.len(), 8);
     }

@@ -1834,14 +1834,10 @@ mod tests {
                 policy_type: PolicyType::RuntimeExecution,
             })
             .unwrap(),
-            serde_json::to_string(&CheckpointError::IdDerivationFailed {
-                detail: "x".into(),
-            })
-            .unwrap(),
-            serde_json::to_string(&CheckpointError::SignatureInvalid {
-                detail: "y".into(),
-            })
-            .unwrap(),
+            serde_json::to_string(&CheckpointError::IdDerivationFailed { detail: "x".into() })
+                .unwrap(),
+            serde_json::to_string(&CheckpointError::SignatureInvalid { detail: "y".into() })
+                .unwrap(),
             serde_json::to_string(&CheckpointError::EpochRegression {
                 prev_epoch: SecurityEpoch::from_raw(5),
                 current_epoch: SecurityEpoch::from_raw(3),
@@ -2012,7 +2008,10 @@ mod tests {
     #[test]
     fn checkpoint_error_display_genesis_must_have_no_predecessor() {
         let err = CheckpointError::GenesisMustHaveNoPredecessor;
-        assert_eq!(err.to_string(), "genesis checkpoint must have no predecessor");
+        assert_eq!(
+            err.to_string(),
+            "genesis checkpoint must have no predecessor"
+        );
     }
 
     #[test]
@@ -2164,9 +2163,7 @@ mod tests {
 
     #[test]
     fn checkpoint_error_debug_nonempty() {
-        assert!(
-            !format!("{:?}", CheckpointError::EmptyPolicyHeads).is_empty()
-        );
+        assert!(!format!("{:?}", CheckpointError::EmptyPolicyHeads).is_empty());
     }
 
     #[test]
@@ -2312,7 +2309,10 @@ mod tests {
             detail: "zone-missing".to_string(),
         };
         let s = err.to_string();
-        assert!(s.contains("zone-missing"), "display should contain detail: {s}");
+        assert!(
+            s.contains("zone-missing"),
+            "display should contain detail: {s}"
+        );
     }
 
     #[test]

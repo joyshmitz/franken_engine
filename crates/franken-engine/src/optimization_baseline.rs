@@ -1542,10 +1542,8 @@ mod tests {
 
     #[test]
     fn profile_kind_debug_all_distinct() {
-        let set: std::collections::BTreeSet<String> = ProfileKind::ALL
-            .iter()
-            .map(|k| format!("{k:?}"))
-            .collect();
+        let set: std::collections::BTreeSet<String> =
+            ProfileKind::ALL.iter().map(|k| format!("{k:?}")).collect();
         assert_eq!(set.len(), 5);
     }
 
@@ -1870,9 +1868,21 @@ mod tests {
     #[test]
     fn pstats_filters_warmup_samples() {
         let samples = vec![
-            LatencySample { latency_ns: 9999, iteration: 0, is_warmup: true },
-            LatencySample { latency_ns: 1000, iteration: 1, is_warmup: false },
-            LatencySample { latency_ns: 2000, iteration: 2, is_warmup: false },
+            LatencySample {
+                latency_ns: 9999,
+                iteration: 0,
+                is_warmup: true,
+            },
+            LatencySample {
+                latency_ns: 1000,
+                iteration: 1,
+                is_warmup: false,
+            },
+            LatencySample {
+                latency_ns: 2000,
+                iteration: 2,
+                is_warmup: false,
+            },
         ];
         let stats = PercentileStats::from_samples(&samples).unwrap();
         assert_eq!(stats.sample_count, 2);
@@ -1919,7 +1929,11 @@ mod tests {
             tags: Vec::new(),
         };
         let errors = env.validate();
-        assert!(errors.len() >= 2, "should have at least 2 errors, got {}", errors.len());
+        assert!(
+            errors.len() >= 2,
+            "should have at least 2 errors, got {}",
+            errors.len()
+        );
     }
 
     #[test]
@@ -1951,13 +1965,14 @@ mod tests {
 
     #[test]
     fn profile_artifact_serde_roundtrip() {
-        let p = ProfileArtifact::new(ProfileKind::AllocationFlamegraph, "bench-x")
-            .with_hotspot(Hotspot {
+        let p = ProfileArtifact::new(ProfileKind::AllocationFlamegraph, "bench-x").with_hotspot(
+            Hotspot {
                 symbol: "alloc_hot".to_string(),
                 percentage_millionths: 600_000,
                 samples: 6000,
                 module_path: "alloc/mod.rs".to_string(),
-            });
+            },
+        );
         let json = serde_json::to_string(&p).unwrap();
         let back: ProfileArtifact = serde_json::from_str(&json).unwrap();
         assert_eq!(p, back);
@@ -1984,7 +1999,9 @@ mod tests {
                 total_allocations: 200,
                 total_deallocations: 198,
             });
-        result.metadata.insert("version".to_string(), "1.0".to_string());
+        result
+            .metadata
+            .insert("version".to_string(), "1.0".to_string());
         result.add_profile(ProfileArtifact::new(ProfileKind::SyscallTrace, "full"));
 
         let json = serde_json::to_string(&result).unwrap();

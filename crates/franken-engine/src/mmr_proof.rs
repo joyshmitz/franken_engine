@@ -1487,10 +1487,7 @@ mod tests {
     #[test]
     fn proof_error_serde_variants_produce_distinct_json() {
         let v1 = serde_json::to_string(&ProofError::EmptyStream).unwrap();
-        let v2 = serde_json::to_string(&ProofError::InvalidProof {
-            reason: "r".into(),
-        })
-        .unwrap();
+        let v2 = serde_json::to_string(&ProofError::InvalidProof { reason: "r".into() }).unwrap();
         let v3 = serde_json::to_string(&ProofError::IndexOutOfRange {
             index: 0,
             stream_length: 1,
@@ -1919,8 +1916,7 @@ mod tests {
             let old_root = build_mmr(old_n).root_hash().unwrap();
             let new_mmr = build_mmr(old_n + 1);
             let proof = new_mmr.consistency_proof(old_n).unwrap();
-            verify_consistency(&old_root, &proof)
-                .unwrap_or_else(|e| panic!("old_n={old_n}: {e}"));
+            verify_consistency(&old_root, &proof).unwrap_or_else(|e| panic!("old_n={old_n}: {e}"));
         }
     }
 }

@@ -2107,8 +2107,7 @@ mod tests {
 
     #[test]
     fn linkage_error_is_std_error() {
-        let err: Box<dyn std::error::Error> =
-            Box::new(LinkageError::EmptyProofInputs);
+        let err: Box<dyn std::error::Error> = Box::new(LinkageError::EmptyProofInputs);
         assert!(err.to_string().contains("no proof inputs"));
     }
 
@@ -2560,9 +2559,16 @@ mod tests {
             speedup_millionths: 1_100_000,
             instruction_ratio_millionths: 900_000,
         };
-        engine.record_execution(&lid, &mut ir4, perf1, "t2").unwrap();
+        engine
+            .record_execution(&lid, &mut ir4, perf1, "t2")
+            .unwrap();
         assert_eq!(
-            engine.get(&lid).unwrap().performance_delta.unwrap().speedup_millionths,
+            engine
+                .get(&lid)
+                .unwrap()
+                .performance_delta
+                .unwrap()
+                .speedup_millionths,
             1_100_000
         );
 
@@ -2570,9 +2576,16 @@ mod tests {
             speedup_millionths: 2_000_000,
             instruction_ratio_millionths: 500_000,
         };
-        engine.record_execution(&lid, &mut ir4, perf2, "t3").unwrap();
+        engine
+            .record_execution(&lid, &mut ir4, perf2, "t3")
+            .unwrap();
         assert_eq!(
-            engine.get(&lid).unwrap().performance_delta.unwrap().speedup_millionths,
+            engine
+                .get(&lid)
+                .unwrap()
+                .performance_delta
+                .unwrap()
+                .speedup_millionths,
             2_000_000
         );
     }
@@ -2584,7 +2597,9 @@ mod tests {
     #[test]
     fn error_code_linkage_not_found_stable() {
         assert_eq!(
-            error_code(&LinkageError::LinkageNotFound { id: "anything".into() }),
+            error_code(&LinkageError::LinkageNotFound {
+                id: "anything".into()
+            }),
             "LINKAGE_NOT_FOUND"
         );
     }
@@ -2605,10 +2620,16 @@ mod tests {
     fn invalidate_by_proof_multiple_linkages_sharing_proof() {
         let mut engine = make_engine(5);
         engine
-            .register(make_linkage("link-1", 5, &["shared-proof", "proof-b"]), "t1")
+            .register(
+                make_linkage("link-1", 5, &["shared-proof", "proof-b"]),
+                "t1",
+            )
             .unwrap();
         engine
-            .register(make_linkage("link-2", 5, &["shared-proof", "proof-c"]), "t1")
+            .register(
+                make_linkage("link-2", 5, &["shared-proof", "proof-c"]),
+                "t1",
+            )
             .unwrap();
         engine
             .register(make_linkage("link-3", 5, &["proof-d"]), "t1")

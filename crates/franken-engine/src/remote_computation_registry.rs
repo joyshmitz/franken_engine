@@ -1882,8 +1882,12 @@ mod tests {
                 registered: SchemaVersion::new(3, 1, 0),
                 requested: SchemaVersion::new(3, 0, 0),
             },
-            RegistryError::ClosureRejected { reason: "rr".into() },
-            RegistryError::HotRegistrationDenied { reason: "rr".into() },
+            RegistryError::ClosureRejected {
+                reason: "rr".into(),
+            },
+            RegistryError::HotRegistrationDenied {
+                reason: "rr".into(),
+            },
         ];
         for err in &variants {
             let json = serde_json::to_string(err).unwrap();

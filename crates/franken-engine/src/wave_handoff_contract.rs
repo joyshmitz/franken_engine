@@ -1222,9 +1222,7 @@ mod tests {
     #[test]
     fn required_bead_status_debug_contains_variant_name() {
         assert!(format!("{:?}", RequiredBeadStatus::Open).contains("Open"));
-        assert!(
-            format!("{:?}", RequiredBeadStatus::InProgress).contains("InProgress")
-        );
+        assert!(format!("{:?}", RequiredBeadStatus::InProgress).contains("InProgress"));
         assert!(format!("{:?}", RequiredBeadStatus::Closed).contains("Closed"));
     }
 
@@ -1401,7 +1399,10 @@ mod tests {
         let mut cloned = original.clone();
         cloned.code = HandoffValidationErrorCode::WeakHandoffPackage;
         cloned.message = "modified".to_string();
-        assert_eq!(original.code, HandoffValidationErrorCode::MissingRequiredField);
+        assert_eq!(
+            original.code,
+            HandoffValidationErrorCode::MissingRequiredField
+        );
         assert_eq!(original.message, "original");
     }
 
@@ -1658,7 +1659,10 @@ mod tests {
         assert_eq!(set.len(), 4);
         // Verify ordering is correct
         let v: Vec<_> = set.into_iter().collect();
-        assert_eq!(v, vec![WaveId::Wave0, WaveId::Wave1, WaveId::Wave2, WaveId::Wave3]);
+        assert_eq!(
+            v,
+            vec![WaveId::Wave0, WaveId::Wave1, WaveId::Wave2, WaveId::Wave3]
+        );
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -1879,8 +1883,7 @@ mod tests {
         let pkg = HandoffPackage::baseline();
         let (report, events) = simulate_wave_transition("t", "d", "p", &contract, &pkg);
         let report_json = serde_json::to_string(&report).unwrap();
-        let report_back: HandoffValidationReport =
-            serde_json::from_str(&report_json).unwrap();
+        let report_back: HandoffValidationReport = serde_json::from_str(&report_json).unwrap();
         assert_eq!(report, report_back);
         for event in &events {
             let ej = serde_json::to_string(event).unwrap();
@@ -2142,7 +2145,10 @@ mod tests {
     #[test]
     fn required_bead_status_eq_same() {
         assert_eq!(RequiredBeadStatus::Open, RequiredBeadStatus::Open);
-        assert_eq!(RequiredBeadStatus::InProgress, RequiredBeadStatus::InProgress);
+        assert_eq!(
+            RequiredBeadStatus::InProgress,
+            RequiredBeadStatus::InProgress
+        );
         assert_eq!(RequiredBeadStatus::Closed, RequiredBeadStatus::Closed);
     }
 
@@ -2299,8 +2305,7 @@ mod tests {
 
     #[test]
     fn handoff_validation_error_code_deserialize_invalid_variant_fails() {
-        let result =
-            serde_json::from_str::<HandoffValidationErrorCode>("\"nonexistent_code\"");
+        let result = serde_json::from_str::<HandoffValidationErrorCode>("\"nonexistent_code\"");
         assert!(result.is_err());
     }
 

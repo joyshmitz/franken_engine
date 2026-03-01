@@ -1813,8 +1813,8 @@ mod tests {
 
     #[test]
     fn containment_state_hash_all_distinct() {
-        use std::collections::hash_map::DefaultHasher;
         use std::collections::BTreeSet;
+        use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let variants = [
             ContainmentState::Running,
