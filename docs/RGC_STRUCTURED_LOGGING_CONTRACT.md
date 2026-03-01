@@ -54,6 +54,20 @@ Failure code for contract-level violations:
 
 - `FE-RGC-054A-LOG-SCHEMA-0001`
 
+## Secret Redaction Audit Contract (RGC-065A)
+
+`RGC-065A` extends the structured logging contract with deterministic secret-redaction
+auditing primitives used by logs, advisories, and support bundles.
+
+- Bead id: `bd-1lsy.11.18`
+- Audit schema version: `rgc.redaction-audit-report.v1`
+- Component: `rgc_redaction_audit`
+- Event: `apply_redaction_with_audit`
+- Deterministic serialization API:
+  - `serialize_redaction_audit_report`
+  - `deserialize_redaction_audit_report`
+- Stable hash field for replay/evidence linkage: `report_hash`
+
 ## Backward-Compatible Evolution Rules
 
 1. Required fields and required correlation IDs are additive-only.

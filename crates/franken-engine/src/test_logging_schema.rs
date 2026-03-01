@@ -14,6 +14,10 @@ pub const RGC_STRUCTURED_LOGGING_COMPONENT: &str = "rgc_structured_logging_contr
 pub const RGC_STRUCTURED_LOGGING_CONTRACT_SCHEMA_VERSION: &str =
     "rgc.structured-logging.contract.v1";
 pub const RGC_STRUCTURED_LOGGING_FAILURE_CODE: &str = "FE-RGC-054A-LOG-SCHEMA-0001";
+pub const RGC_SECRET_REDACTION_AUDIT_BEAD_ID: &str = "bd-1lsy.11.18";
+pub const RGC_SECRET_REDACTION_AUDIT_SCHEMA_VERSION: &str = "rgc.redaction-audit-report.v1";
+pub const RGC_SECRET_REDACTION_AUDIT_COMPONENT: &str = "rgc_redaction_audit";
+pub const RGC_SECRET_REDACTION_AUDIT_EVENT: &str = "apply_redaction_with_audit";
 
 const REQUIRED_FIELDS: [&str; 13] = [
     "scenario_id",
@@ -38,10 +42,6 @@ const REQUIRED_CORRELATION_IDS: [&str; 5] = [
     "policy_id",
     "seed",
 ];
-
-const REDACTION_AUDIT_SCHEMA_VERSION: &str = "rgc.redaction-audit-report.v1";
-const REDACTION_AUDIT_COMPONENT: &str = "rgc_redaction_audit";
-const REDACTION_AUDIT_EVENT: &str = "apply_redaction_with_audit";
 
 const SECRET_PATTERN_PASSWORD_INLINE: &str = "password_inline";
 const SECRET_PATTERN_SECRET_INLINE: &str = "secret_inline";
@@ -580,9 +580,9 @@ pub fn apply_redaction_with_audit(
     };
 
     let hash_input = RedactionAuditHashInput {
-        schema_version: REDACTION_AUDIT_SCHEMA_VERSION,
-        component: REDACTION_AUDIT_COMPONENT,
-        event: REDACTION_AUDIT_EVENT,
+        schema_version: RGC_SECRET_REDACTION_AUDIT_SCHEMA_VERSION,
+        component: RGC_SECRET_REDACTION_AUDIT_COMPONENT,
+        event: RGC_SECRET_REDACTION_AUDIT_EVENT,
         outcome: &outcome,
         redacted_record: &redacted_record,
         audit_entries: &audit_entries,
@@ -593,9 +593,9 @@ pub fn apply_redaction_with_audit(
     );
 
     RedactionAuditReport {
-        schema_version: REDACTION_AUDIT_SCHEMA_VERSION.to_string(),
-        component: REDACTION_AUDIT_COMPONENT.to_string(),
-        event: REDACTION_AUDIT_EVENT.to_string(),
+        schema_version: RGC_SECRET_REDACTION_AUDIT_SCHEMA_VERSION.to_string(),
+        component: RGC_SECRET_REDACTION_AUDIT_COMPONENT.to_string(),
+        event: RGC_SECRET_REDACTION_AUDIT_EVENT.to_string(),
         outcome,
         redacted_record,
         audit_entries,
@@ -609,6 +609,18 @@ pub fn apply_redaction(
     spec: &TestLoggingSchemaSpec,
 ) -> BTreeMap<String, String> {
     apply_redaction_with_audit(record, spec).redacted_record
+}
+
+pub fn serialize_redaction_audit_report(
+    report: &RedactionAuditReport,
+) -> Result<String, serde_json::Error> {
+    serde_json::to_string(report)
+}
+
+pub fn deserialize_redaction_audit_report(
+    raw: &str,
+) -> Result<RedactionAuditReport, serde_json::Error> {
+    serde_json::from_str(raw)
 }
 
 pub fn validate_redaction(
@@ -1458,6 +1470,56 @@ mod tests {
                 .any(|entry| entry.pattern_id == SECRET_PATTERN_SLACK_TOKEN)
         );
         assert!(report.report_hash.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn redaction_audit_serialization_is_deterministic_for_equivalent_specs() {
+        let record = BTreeMap::from([
+            (
+                "payload.user_email".to_string(),
+                "audit@example.com".to_string(),
+            ),
+            (
+                "payload.auth_token".to_string(),
+                "ghp_abcdefghijklmnopqrstuvwxyz123456".to_string(),
+            ),
+            ("payload.ip_address".to_string(), "10.1.2.3".to_string()),
+        ]);
+
+        let baseline_spec = TestLoggingSchemaSpec::default();
+        let mut reordered_spec = baseline_spec.clone();
+        reordered_spec.redaction_rules.reverse();
+
+        let baseline_report = apply_redaction_with_audit(&record, &baseline_spec);
+        let reordered_report = apply_redaction_with_audit(&record, &reordered_spec);
+
+        let baseline_serialized = serialize_redaction_audit_report(&baseline_report)
+            .expect("baseline report should serialize");
+        let reordered_serialized = serialize_redaction_audit_report(&reordered_report)
+            .expect("reordered report should serialize");
+
+        assert_eq!(baseline_serialized, reordered_serialized);
+    }
+
+    #[test]
+    fn redaction_audit_serialization_roundtrip_is_lossless() {
+        let record = BTreeMap::from([
+            (
+                "payload.user_email".to_string(),
+                "roundtrip@example.com".to_string(),
+            ),
+            ("payload.auth_token".to_string(), "secret-inline".to_string()),
+            ("payload.ip_address".to_string(), "192.0.2.10".to_string()),
+        ]);
+        let spec = TestLoggingSchemaSpec::default();
+
+        let report = apply_redaction_with_audit(&record, &spec);
+        let serialized =
+            serialize_redaction_audit_report(&report).expect("report should serialize");
+        let deserialized = deserialize_redaction_audit_report(&serialized)
+            .expect("serialized report should deserialize");
+
+        assert_eq!(deserialized, report);
     }
 
     // -- Enrichment: validate_events integration --

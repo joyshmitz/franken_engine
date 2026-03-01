@@ -10,12 +10,15 @@ use std::path::{Path, PathBuf};
 use frankenengine_engine::test_logging_schema::{
     DataSensitivity, FailureTaxonomy, RGC_STRUCTURED_LOGGING_BEAD_ID,
     RGC_STRUCTURED_LOGGING_COMPONENT, RGC_STRUCTURED_LOGGING_CONTRACT_SCHEMA_VERSION,
-    RGC_STRUCTURED_LOGGING_FAILURE_CODE, RedactionAction, RedactionRule, RetentionPolicy,
+    RGC_STRUCTURED_LOGGING_FAILURE_CODE, RGC_SECRET_REDACTION_AUDIT_BEAD_ID,
+    RGC_SECRET_REDACTION_AUDIT_COMPONENT, RGC_SECRET_REDACTION_AUDIT_EVENT,
+    RGC_SECRET_REDACTION_AUDIT_SCHEMA_VERSION, RedactionAction, RedactionRule, RetentionPolicy,
     TEST_LOG_EVENT_SCHEMA_VERSION, TEST_LOGGING_COMPONENT, TEST_LOGGING_CONTRACT_SCHEMA_VERSION,
     TEST_LOGGING_FAILURE_CODE, TestLane, TestLogEvent, TestLoggingSchemaSpec, ValidationErrorCode,
     ValidationFailure, ValidationReport, apply_redaction, apply_redaction_with_audit,
-    detect_secret_patterns, rgc_structured_logging_spec, validate_correlation, validate_event,
-    validate_events, validate_logging_contract, validate_redaction, validate_schema_evolution,
+    deserialize_redaction_audit_report, detect_secret_patterns, rgc_structured_logging_spec,
+    serialize_redaction_audit_report, validate_correlation, validate_event, validate_events,
+    validate_logging_contract, validate_redaction, validate_schema_evolution,
 };
 use serde::Deserialize;
 
@@ -66,6 +69,7 @@ struct RgcLoggingContract {
     logging_schema: RgcLoggingSchema,
     correlation_policy: RgcCorrelationPolicy,
     failure_policy: RgcFailurePolicy,
+    redaction_audit_contract: RgcRedactionAuditContract,
     operator_verification: Vec<String>,
 }
 
@@ -85,6 +89,22 @@ struct RgcCorrelationPolicy {
 struct RgcFailurePolicy {
     mode: String,
     error_code: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RgcRedactionAuditContract {
+    bead_id: String,
+    schema_version: String,
+    component: String,
+    event: String,
+    deterministic_serialization: RgcDeterministicSerialization,
+}
+
+#[derive(Debug, Deserialize)]
+struct RgcDeterministicSerialization {
+    serialize_fn: String,
+    deserialize_fn: String,
+    hash_field: String,
 }
 
 // ===================================================================
@@ -859,6 +879,56 @@ fn apply_redaction_with_audit_is_deterministic() {
 }
 
 #[test]
+fn serialize_redaction_audit_report_is_deterministic() {
+    let record = BTreeMap::from([
+        (
+            "payload.user_email".to_string(),
+            "ops@example.com".to_string(),
+        ),
+        (
+            "payload.auth_token".to_string(),
+            "ghp_abcdefghijklmnopqrstuvwxyz123456".to_string(),
+        ),
+        ("payload.ip_address".to_string(), "10.0.0.4".to_string()),
+    ]);
+
+    let mut spec_reordered = TestLoggingSchemaSpec::default();
+    spec_reordered.redaction_rules.reverse();
+    let spec_default = TestLoggingSchemaSpec::default();
+
+    let report_a = apply_redaction_with_audit(&record, &spec_default);
+    let report_b = apply_redaction_with_audit(&record, &spec_reordered);
+
+    let serialized_a =
+        serialize_redaction_audit_report(&report_a).expect("report_a should serialize");
+    let serialized_b =
+        serialize_redaction_audit_report(&report_b).expect("report_b should serialize");
+
+    assert_eq!(serialized_a, serialized_b);
+}
+
+#[test]
+fn serialize_redaction_audit_report_roundtrip_is_lossless() {
+    let record = BTreeMap::from([
+        (
+            "payload.user_email".to_string(),
+            "roundtrip@example.com".to_string(),
+        ),
+        ("payload.auth_token".to_string(), "secret-inline".to_string()),
+        ("payload.ip_address".to_string(), "192.0.2.10".to_string()),
+    ]);
+    let spec = TestLoggingSchemaSpec::default();
+
+    let report = apply_redaction_with_audit(&record, &spec);
+    let serialized =
+        serialize_redaction_audit_report(&report).expect("report should serialize");
+    let decoded =
+        deserialize_redaction_audit_report(&serialized).expect("report should deserialize");
+
+    assert_eq!(decoded, report);
+}
+
+#[test]
 fn detect_secret_patterns_catches_multiple_shapes() {
     let record = BTreeMap::from([
         (
@@ -1103,6 +1173,7 @@ fn rgc_054a_doc_contains_required_sections() {
         "## Required Event Fields",
         "## Correlation Keys",
         "## Validation Hooks",
+        "## Secret Redaction Audit Contract (RGC-065A)",
         "## Backward-Compatible Evolution Rules",
         "## Operator Verification",
     ] {
@@ -1120,6 +1191,7 @@ fn rgc_054a_doc_contains_required_sections() {
         "schema",
         "compatibility",
         "fail-closed",
+        "redaction-audit-report",
     ] {
         assert!(
             doc.to_ascii_lowercase().contains(phrase),
@@ -1161,6 +1233,43 @@ fn rgc_054a_contract_is_machine_readable_and_matches_spec() {
     assert_eq!(
         contract.failure_policy.error_code,
         RGC_STRUCTURED_LOGGING_FAILURE_CODE
+    );
+    assert_eq!(
+        contract.redaction_audit_contract.bead_id,
+        RGC_SECRET_REDACTION_AUDIT_BEAD_ID
+    );
+    assert_eq!(
+        contract.redaction_audit_contract.schema_version,
+        RGC_SECRET_REDACTION_AUDIT_SCHEMA_VERSION
+    );
+    assert_eq!(
+        contract.redaction_audit_contract.component,
+        RGC_SECRET_REDACTION_AUDIT_COMPONENT
+    );
+    assert_eq!(
+        contract.redaction_audit_contract.event,
+        RGC_SECRET_REDACTION_AUDIT_EVENT
+    );
+    assert_eq!(
+        contract
+            .redaction_audit_contract
+            .deterministic_serialization
+            .serialize_fn,
+        "serialize_redaction_audit_report"
+    );
+    assert_eq!(
+        contract
+            .redaction_audit_contract
+            .deterministic_serialization
+            .deserialize_fn,
+        "deserialize_redaction_audit_report"
+    );
+    assert_eq!(
+        contract
+            .redaction_audit_contract
+            .deterministic_serialization
+            .hash_field,
+        "report_hash"
     );
     assert!(
         contract
