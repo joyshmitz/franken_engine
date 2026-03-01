@@ -13,6 +13,8 @@ artifact_root="${RGC_ARTIFACT_VALIDATOR_PHASE_A_ARTIFACT_ROOT:-artifacts/rgc_art
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
 rch_ready_attempts="${RCH_READY_ATTEMPTS:-18}"
 rch_ready_sleep_seconds="${RCH_READY_SLEEP_SECONDS:-2}"
+rch_step_retry_attempts="${RCH_STEP_RETRY_ATTEMPTS:-3}"
+rch_step_retry_sleep_seconds="${RCH_STEP_RETRY_SLEEP_SECONDS:-2}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 default_target_dir="/data/projects/franken_engine/target_rch_rgc_artifact_validator_phase_a"
 target_dir="${CARGO_TARGET_DIR:-${default_target_dir}}"
@@ -142,54 +144,78 @@ ensure_rch_ready() {
 run_step_expect_exit() {
   local command_text="$1"
   local expected_exit="$2"
-  local log_path remote_exit_code run_status
+  local log_path remote_exit_code run_status attempt
+  local fallback_detected
   shift 2
 
   commands_run+=("$command_text")
   echo "==> $command_text"
-  log_path="$(mktemp "${run_dir}/rch-log.XXXXXX")"
-  step_logs+=("$log_path")
+  for ((attempt = 1; attempt <= rch_step_retry_attempts; attempt++)); do
+    log_path="$(mktemp "${run_dir}/rch-log.XXXXXX")"
+    step_logs+=("$log_path")
 
-  if ! ensure_rch_ready "${rch_ready_attempts}" "${rch_ready_sleep_seconds}"; then
-    echo "==> warning: rch check not ready after ${rch_ready_attempts} attempts; attempting remote execution anyway" \
-      | tee -a "$log_path"
-  fi
+    if ! ensure_rch_ready "${rch_ready_attempts}" "${rch_ready_sleep_seconds}"; then
+      echo "==> warning: rch check not ready after ${rch_ready_attempts} attempts; attempting remote execution anyway" \
+        | tee -a "$log_path"
+    fi
 
-  run_rch_strict_logged "$log_path" "$@"
-  run_status=$?
-  if [[ "$run_status" -ne 0 ]]; then
+    run_rch_strict_logged "$log_path" "$@"
+    run_status=$?
+    fallback_detected=false
     if [[ "$run_status" -eq 125 ]]; then
-      failed_command="${command_text} (rch-local-fallback-detected)"
-      return 1
+      fallback_detected=true
     fi
 
     if ! rch_reject_local_fallback "$log_path"; then
+      fallback_detected=true
+    fi
+
+    if [[ "$fallback_detected" == true ]]; then
+      if [[ "$attempt" -lt "$rch_step_retry_attempts" ]]; then
+        echo "==> warning: detected rch local fallback signature (attempt ${attempt}/${rch_step_retry_attempts}); retrying step after daemon nudge" \
+          | tee -a "$log_path"
+        rch daemon start >/dev/null 2>&1 || true
+        sleep "${rch_step_retry_sleep_seconds}"
+        continue
+      fi
       failed_command="${command_text} (rch-local-fallback-detected)"
       return 1
     fi
 
-    if rg -q "Remote command finished: exit=${expected_exit}" "$log_path"; then
-      echo "==> recovered: remote execution produced expected exit=${expected_exit}" \
-        | tee -a "$log_path"
-    elif rg -q 'Remote command finished: exit=0' "$log_path"; then
-      echo "==> recovered: remote execution succeeded; artifact retrieval timed out" \
-        | tee -a "$log_path"
-    else
-      failed_command="$command_text"
+    if [[ "$run_status" -ne 0 ]]; then
+      if rg -q "Remote command finished: exit=${expected_exit}" "$log_path"; then
+        echo "==> recovered: remote execution produced expected exit=${expected_exit}" \
+          | tee -a "$log_path"
+      elif rg -q 'Remote command finished: exit=0' "$log_path"; then
+        echo "==> recovered: remote execution succeeded; artifact retrieval timed out" \
+          | tee -a "$log_path"
+      elif [[ "$run_status" -eq "$expected_exit" ]]; then
+        echo "==> info: accepted rch process exit=${run_status} (daemon output omitted remote-exit marker)" \
+          | tee -a "$log_path"
+      else
+        failed_command="$command_text"
+        return 1
+      fi
+    fi
+
+    remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
+    if [[ -z "$remote_exit_code" ]]; then
+      if [[ "$run_status" -eq "$expected_exit" ]]; then
+        echo "==> info: remote exit marker missing; accepted rch process exit=${run_status}" \
+          | tee -a "$log_path"
+        return 0
+      fi
+      failed_command="${command_text} (remote-exit=missing, expected=${expected_exit})"
       return 1
     fi
-  fi
 
-  if ! rch_reject_local_fallback "$log_path"; then
-    failed_command="${command_text} (rch-local-fallback-detected)"
-    return 1
-  fi
+    if [[ "$remote_exit_code" != "$expected_exit" ]]; then
+      failed_command="${command_text} (remote-exit=${remote_exit_code:-missing}, expected=${expected_exit})"
+      return 1
+    fi
 
-  remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
-  if [[ -z "$remote_exit_code" || "$remote_exit_code" != "$expected_exit" ]]; then
-    failed_command="${command_text} (remote-exit=${remote_exit_code:-missing}, expected=${expected_exit})"
-    return 1
-  fi
+    return 0
+  done
 }
 
 run_step() {
