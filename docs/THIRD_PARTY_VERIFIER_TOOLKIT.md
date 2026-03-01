@@ -28,6 +28,10 @@ Binary path:
 ```bash
 franken-verify receipt <receipt_id> --input <path> [--summary]
 franken-verify benchmark --input <path> [--summary]
+franken-verify benchmark audit --input <path> [--summary]
+franken-verify benchmark fairness --input <path> [--summary]
+franken-verify benchmark reproduce --bundle <dir> [--summary] [--output <path>]
+franken-verify benchmark verify --bundle <dir> [--summary] [--output <path>]
 franken-verify replay --input <path> [--summary]
     [--signature-key-hex <hex> | --signature-key-file <path>]
     [--receipt-key <signer_hex>=<verification_key_hex>]...
@@ -274,6 +278,9 @@ Example report fields of interest:
 ## Verification Semantics
 
 - Benchmark:
+  - `benchmark audit`: recomputes publication-gate scores and blocker/publish decisions from claim input
+  - `benchmark fairness`: verifies node/bun workload-set fairness only
+  - `benchmark reproduce` / `benchmark verify`: validates benchmark result bundles (`env.json`, `manifest.json`, `repro.lock`, `commands.txt`, `results.json`) and checks context consistency
   - recomputes publication-gate scores
   - compares claimed vs recomputed scores and publish decision
   - compares blocker sets
@@ -301,6 +308,8 @@ Suggested gate pattern:
 
 ```bash
 franken-verify benchmark --input <bundle.json> --summary
+franken-verify benchmark fairness --input <bundle.json> --summary
+franken-verify benchmark reproduce --bundle <bundle_dir> --summary
 franken-verify replay --input <bundle.json> --summary
 franken-verify containment --input <bundle.json> --summary
 ```

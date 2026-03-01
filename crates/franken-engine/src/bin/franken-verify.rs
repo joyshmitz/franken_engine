@@ -1,20 +1,22 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use frankenengine_engine::benchmark_denominator::BenchmarkCase;
 use frankenengine_engine::causal_replay::CounterfactualConfig;
 use frankenengine_engine::receipt_verifier_pipeline::{
     ReceiptVerifierCliInput, render_verdict_summary, verify_receipt_by_id,
 };
 use frankenengine_engine::third_party_verifier::{
     BenchmarkClaimBundle, ContainmentClaimBundle, ReplayClaimBundle,
-    THIRD_PARTY_VERIFIER_COMPONENT, VerificationAttestation, VerificationAttestationInput,
-    VerificationCheckResult, VerificationVerdict, VerifierEvent, generate_attestation,
-    render_attestation_summary, render_report_summary, verify_attestation, verify_benchmark_claim,
-    verify_containment_claim, verify_replay_claim,
+    THIRD_PARTY_VERIFIER_COMPONENT, ThirdPartyVerificationReport, VerificationAttestation,
+    VerificationAttestationInput, VerificationCheckResult, VerificationVerdict, VerifierEvent,
+    generate_attestation, render_attestation_summary, render_report_summary, verify_attestation,
+    verify_benchmark_claim, verify_containment_claim, verify_replay_claim,
 };
 use serde::{Deserialize, de::DeserializeOwned};
 
+const CODE_BENCHMARK_FAIRNESS: &str = "FE-TPV-BENCH-0005";
 const CODE_BUNDLE_MISSING_FILE: &str = "FE-TPV-BUNDLE-0001";
 const CODE_BUNDLE_PARSE_ERROR: &str = "FE-TPV-BUNDLE-0002";
 const CODE_BUNDLE_CONTEXT_MISMATCH: &str = "FE-TPV-BUNDLE-0003";
@@ -55,6 +57,9 @@ fn usage() -> String {
         "franken-verify usage:",
         "  franken-verify receipt <receipt_id> --input <path> [--summary]",
         "  franken-verify benchmark --input <path> [--summary]",
+        "  franken-verify benchmark audit --input <path> [--summary]",
+        "  franken-verify benchmark fairness --input <path> [--summary]",
+        "  franken-verify benchmark reproduce --bundle <dir> [--summary] [--output <path>]",
         "  franken-verify benchmark verify --bundle <dir> [--summary] [--output <path>]",
         "  franken-verify replay --input <path> [--summary]",
         "      [--signature-key-hex <hex> | --signature-key-file <path>]",
@@ -121,16 +126,107 @@ fn run_receipt(args: &[String]) -> Result<i32, String> {
 }
 
 fn run_benchmark(args: &[String]) -> Result<i32, String> {
-    if let Some(mode) = args.first()
-        && mode == "verify"
-    {
-        return run_benchmark_verify_bundle(&args[1..]);
+    if let Some(mode) = args.first() {
+        match mode.as_str() {
+            "verify" | "reproduce" => return run_benchmark_verify_bundle(&args[1..]),
+            "audit" => return run_benchmark_audit(&args[1..]),
+            "fairness" => return run_benchmark_fairness(&args[1..]),
+            _ => {}
+        }
     }
+    run_benchmark_audit(args)
+}
+
+fn run_benchmark_audit(args: &[String]) -> Result<i32, String> {
     let (input_path, summary) = parse_input_flags(args, "benchmark")?;
     let input = load_json::<BenchmarkClaimBundle>(input_path, "benchmark bundle")?;
     let report = verify_benchmark_claim(&input);
     print_report(&report, summary)?;
     Ok(report.exit_code())
+}
+
+fn run_benchmark_fairness(args: &[String]) -> Result<i32, String> {
+    let (input_path, summary) = parse_input_flags(args, "benchmark fairness")?;
+    let input = load_json::<BenchmarkClaimBundle>(input_path, "benchmark bundle")?;
+
+    let node_ids = benchmark_workload_id_set(&input.input.node_cases);
+    let bun_ids = benchmark_workload_id_set(&input.input.bun_cases);
+    let fairness_passed = node_ids == bun_ids;
+
+    let check = if fairness_passed {
+        VerificationCheckResult {
+            name: "cross_runtime_workload_set_matches".to_string(),
+            passed: true,
+            error_code: None,
+            detail: "node and bun workload sets are identical".to_string(),
+        }
+    } else {
+        VerificationCheckResult {
+            name: "cross_runtime_workload_set_matches".to_string(),
+            passed: false,
+            error_code: Some(CODE_BENCHMARK_FAIRNESS.to_string()),
+            detail: format!(
+                "node workload ids {:?} differ from bun workload ids {:?}",
+                node_ids, bun_ids
+            ),
+        }
+    };
+
+    let verdict = if fairness_passed {
+        VerificationVerdict::Verified
+    } else {
+        VerificationVerdict::Failed
+    };
+    let report = ThirdPartyVerificationReport {
+        claim_type: "benchmark_fairness".to_string(),
+        trace_id: input.trace_id.clone(),
+        decision_id: input.decision_id.clone(),
+        policy_id: input.policy_id.clone(),
+        component: THIRD_PARTY_VERIFIER_COMPONENT.to_string(),
+        verdict,
+        confidence_statement: if fairness_passed {
+            "cross-runtime workload fairness check passed".to_string()
+        } else {
+            "cross-runtime workload fairness check failed".to_string()
+        },
+        scope_limitations: Vec::new(),
+        checks: vec![check],
+        events: vec![
+            VerifierEvent {
+                trace_id: input.trace_id.clone(),
+                decision_id: input.decision_id.clone(),
+                policy_id: input.policy_id.clone(),
+                component: THIRD_PARTY_VERIFIER_COMPONENT.to_string(),
+                event: "benchmark_fairness_check_started".to_string(),
+                outcome: "pass".to_string(),
+                error_code: None,
+            },
+            VerifierEvent {
+                trace_id: input.trace_id,
+                decision_id: input.decision_id,
+                policy_id: input.policy_id,
+                component: THIRD_PARTY_VERIFIER_COMPONENT.to_string(),
+                event: "benchmark_fairness_check_completed".to_string(),
+                outcome: if fairness_passed {
+                    "pass".to_string()
+                } else {
+                    "fail".to_string()
+                },
+                error_code: if fairness_passed {
+                    None
+                } else {
+                    Some(CODE_BENCHMARK_FAIRNESS.to_string())
+                },
+            },
+        ],
+    };
+
+    print_report(&report, summary)?;
+    Ok(report.exit_code())
+}
+
+fn benchmark_workload_id_set(cases: &[BenchmarkCase]) -> BTreeSet<String> {
+    cases.iter().map(|case| case.workload_id.clone()).collect()
 }
 
 #[derive(Debug, Deserialize)]

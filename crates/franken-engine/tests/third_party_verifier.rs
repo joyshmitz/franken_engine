@@ -427,6 +427,30 @@ fn franken_verify_benchmark_command_exits_successfully() {
 }
 
 #[test]
+fn franken_verify_benchmark_audit_command_exits_successfully() {
+    let input = make_benchmark_claim_bundle();
+    let input_path = write_json("tpv_benchmark_audit", &input);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken-verify"))
+        .args([
+            "benchmark",
+            "audit",
+            "--input",
+            input_path.to_str().expect("utf8 path"),
+            "--summary",
+        ])
+        .output()
+        .expect("benchmark audit command should execute");
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("claim_type=benchmark"));
+    assert!(stdout.contains("verdict=Verified"));
+
+    let _ = fs::remove_file(input_path);
+}
+
+#[test]
 fn franken_verify_benchmark_verify_bundle_command_exits_successfully() {
     let input = make_benchmark_claim_bundle();
     let bundle_dir = write_benchmark_verifier_bundle("tpv_benchmark_bundle_ok", &input);
@@ -441,6 +465,30 @@ fn franken_verify_benchmark_verify_bundle_command_exits_successfully() {
         ])
         .output()
         .expect("benchmark verify bundle command should execute");
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("claim_type=benchmark"));
+    assert!(stdout.contains("verdict=Verified"));
+
+    let _ = fs::remove_dir_all(bundle_dir);
+}
+
+#[test]
+fn franken_verify_benchmark_reproduce_bundle_command_exits_successfully() {
+    let input = make_benchmark_claim_bundle();
+    let bundle_dir = write_benchmark_verifier_bundle("tpv_benchmark_bundle_reproduce", &input);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken-verify"))
+        .args([
+            "benchmark",
+            "reproduce",
+            "--bundle",
+            bundle_dir.to_str().expect("utf8 bundle path"),
+            "--summary",
+        ])
+        .output()
+        .expect("benchmark reproduce bundle command should execute");
 
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
@@ -477,6 +525,31 @@ fn franken_verify_benchmark_verify_bundle_fails_when_commands_missing() {
     }));
 
     let _ = fs::remove_dir_all(bundle_dir);
+}
+
+#[test]
+fn franken_verify_benchmark_fairness_command_surfaces_mismatch_failure() {
+    let mut input = make_benchmark_claim_bundle();
+    input.input.bun_cases[0].workload_id = "different-workload".to_string();
+    let input_path = write_json("tpv_benchmark_fairness_mismatch", &input);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken-verify"))
+        .args([
+            "benchmark",
+            "fairness",
+            "--input",
+            input_path.to_str().expect("utf8 path"),
+            "--summary",
+        ])
+        .output()
+        .expect("benchmark fairness command should execute");
+
+    assert_eq!(output.status.code(), Some(25));
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("claim_type=benchmark_fairness"));
+    assert!(stdout.contains("verdict=Failed"));
+
+    let _ = fs::remove_file(input_path);
 }
 
 #[test]
