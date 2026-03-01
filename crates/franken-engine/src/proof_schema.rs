@@ -1629,4 +1629,464 @@ mod tests {
             serde_json::from_str(&json).expect("deserialize");
         assert_eq!(policy, restored);
     }
+
+    // ── enrichment tests ────────────────────────────────────
+
+    #[test]
+    fn activation_stage_copy_semantics() {
+        let a = ActivationStage::Shadow;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn signer_role_copy_semantics() {
+        let a = SignerRole::OptimizerSubsystem;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn optimization_class_all_variants_serde_distinct() {
+        let variants = vec![
+            OptimizationClass::Superinstruction,
+            OptimizationClass::TraceSpecialization,
+            OptimizationClass::LayoutSpecialization,
+            OptimizationClass::DevirtualizedHostcallFastPath,
+        ];
+        let jsons: Vec<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        for (i, a) in jsons.iter().enumerate() {
+            for (j, b) in jsons.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn activation_stage_all_variants_serde_distinct() {
+        let variants = vec![
+            ActivationStage::Shadow,
+            ActivationStage::Canary,
+            ActivationStage::Ramp,
+            ActivationStage::Default,
+        ];
+        let jsons: Vec<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        for (i, a) in jsons.iter().enumerate() {
+            for (j, b) in jsons.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn equivalence_verdict_all_variants_serde_distinct() {
+        let variants = vec![
+            EquivalenceVerdict::Equivalent,
+            EquivalenceVerdict::NonEquivalent {
+                reason: "mismatch".to_string(),
+            },
+            EquivalenceVerdict::Inconclusive {
+                reason: "timeout".to_string(),
+            },
+        ];
+        let jsons: Vec<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        for (i, a) in jsons.iter().enumerate() {
+            for (j, b) in jsons.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn trace_comparison_methodology_all_variants_serde_distinct() {
+        let variants = vec![
+            TraceComparisonMethodology::DeterministicReplay,
+            TraceComparisonMethodology::SymbolicEquivalence,
+            TraceComparisonMethodology::StatisticalCorpus { corpus_size: 100 },
+        ];
+        let jsons: Vec<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        for (i, a) in jsons.iter().enumerate() {
+            for (j, b) in jsons.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn signer_role_all_variants_serde_distinct() {
+        let variants = vec![
+            SignerRole::OptimizerSubsystem,
+            SignerRole::PolicyPlane,
+            SignerRole::AttestationCell,
+        ];
+        let jsons: Vec<String> = variants
+            .iter()
+            .map(|v| serde_json::to_string(v).unwrap())
+            .collect();
+        for (i, a) in jsons.iter().enumerate() {
+            for (j, b) in jsons.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn optimization_class_debug_distinct() {
+        let variants = vec![
+            OptimizationClass::Superinstruction,
+            OptimizationClass::TraceSpecialization,
+            OptimizationClass::LayoutSpecialization,
+            OptimizationClass::DevirtualizedHostcallFastPath,
+        ];
+        let dbgs: Vec<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        for (i, a) in dbgs.iter().enumerate() {
+            assert!(!a.is_empty());
+            for (j, b) in dbgs.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn activation_stage_debug_distinct() {
+        let variants = vec![
+            ActivationStage::Shadow,
+            ActivationStage::Canary,
+            ActivationStage::Ramp,
+            ActivationStage::Default,
+        ];
+        let dbgs: Vec<String> = variants.iter().map(|v| format!("{v:?}")).collect();
+        for (i, a) in dbgs.iter().enumerate() {
+            assert!(!a.is_empty());
+            for (j, b) in dbgs.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn signer_key_id_clone_independence() {
+        let s = SignerKeyId {
+            key_id: test_signer_key_id(),
+            role: SignerRole::PolicyPlane,
+            bound_epoch: test_epoch(),
+        };
+        let mut cloned = s.clone();
+        cloned.role = SignerRole::AttestationCell;
+        assert_eq!(s.role, SignerRole::PolicyPlane);
+    }
+
+    #[test]
+    fn invariance_digest_clone_independence() {
+        let d = test_invariance_digest();
+        let mut cloned = d.clone();
+        cloned.equivalence_verdict = EquivalenceVerdict::NonEquivalent {
+            reason: "changed".to_string(),
+        };
+        assert_eq!(d.equivalence_verdict, EquivalenceVerdict::Equivalent);
+    }
+
+    #[test]
+    fn opt_receipt_clone_independence() {
+        let r = test_receipt();
+        let mut cloned = r.clone();
+        cloned.optimization_id = "changed".to_string();
+        assert_eq!(r.optimization_id, "opt-001");
+    }
+
+    #[test]
+    fn rollback_token_clone_independence() {
+        let t = test_rollback();
+        let mut cloned = t.clone();
+        cloned.token_id = "changed".to_string();
+        assert_eq!(t.token_id, "rtk-001");
+    }
+
+    #[test]
+    fn invariance_digest_json_field_names() {
+        let d = test_invariance_digest();
+        let j = serde_json::to_string(&d).unwrap();
+        for field in &[
+            "schema_version",
+            "golden_corpus_hash",
+            "trace_comparison_methodology",
+            "equivalence_verdict",
+            "witness_chain_root",
+        ] {
+            assert!(j.contains(field), "missing: {field}");
+        }
+    }
+
+    #[test]
+    fn opt_receipt_json_field_names() {
+        let r = test_receipt();
+        let j = serde_json::to_string(&r).unwrap();
+        for field in &[
+            "schema_version",
+            "optimization_id",
+            "optimization_class",
+            "baseline_ir_hash",
+            "candidate_ir_hash",
+            "rollback_token_id",
+            "policy_epoch",
+            "timestamp_ticks",
+            "correlation_id",
+            "signature",
+        ] {
+            assert!(j.contains(field), "missing: {field}");
+        }
+    }
+
+    #[test]
+    fn rollback_token_json_field_names() {
+        let t = test_rollback();
+        let j = serde_json::to_string(&t).unwrap();
+        for field in &[
+            "schema_version",
+            "token_id",
+            "optimization_id",
+            "baseline_snapshot_hash",
+            "activation_stage",
+            "expiry_epoch",
+            "signature",
+        ] {
+            assert!(j.contains(field), "missing: {field}");
+        }
+    }
+
+    #[test]
+    fn signer_key_id_json_field_names() {
+        let s = SignerKeyId {
+            key_id: test_signer_key_id(),
+            role: SignerRole::OptimizerSubsystem,
+            bound_epoch: test_epoch(),
+        };
+        let j = serde_json::to_string(&s).unwrap();
+        for field in &["key_id", "role", "bound_epoch"] {
+            assert!(j.contains(field), "missing: {field}");
+        }
+    }
+
+    #[test]
+    fn attestation_validity_window_json_field_names() {
+        let w = AttestationValidityWindow {
+            start_timestamp_ticks: 100,
+            end_timestamp_ticks: 200,
+        };
+        let j = serde_json::to_string(&w).unwrap();
+        assert!(j.contains("start_timestamp_ticks"));
+        assert!(j.contains("end_timestamp_ticks"));
+    }
+
+    #[test]
+    fn schema_version_v1_0_is_compatible_with_v1_1() {
+        let v10 = proof_schema_version_v1_0();
+        let v11 = proof_schema_version_v1_1();
+        assert!(v10.is_compatible_with(&v11));
+        assert!(v11.is_compatible_with(&v10));
+    }
+
+    #[test]
+    fn schema_version_v1_0_does_not_support_attestation_enrichment_block() {
+        let v10 = proof_schema_version_v1_0();
+        assert!(!v10.supports_attestation_bindings());
+    }
+
+    #[test]
+    fn schema_version_v1_1_supports_attestation_enrichment_block() {
+        let v11 = proof_schema_version_v1_1();
+        assert!(v11.supports_attestation_bindings());
+    }
+
+    #[test]
+    fn schema_version_current_is_v1_1() {
+        let current = proof_schema_version_current();
+        let v11 = proof_schema_version_v1_1();
+        assert_eq!(current, v11);
+    }
+
+    #[test]
+    fn attestation_binding_intro_is_v1_1() {
+        let intro = proof_schema_attestation_binding_intro();
+        let v11 = proof_schema_version_v1_1();
+        assert_eq!(intro, v11);
+    }
+
+    #[test]
+    fn schema_version_major_minor_accessors() {
+        let v = proof_schema_version_v1_1();
+        assert_eq!(v.major_val(), 1);
+        assert_eq!(v.minor_val(), 1);
+    }
+
+    #[test]
+    fn proof_schema_error_debug_nonempty_enriched() {
+        let e = ProofSchemaError::InvalidSignature {
+            artifact: "receipt".to_string(),
+        };
+        let dbg = format!("{e:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("InvalidSignature"));
+    }
+
+    #[test]
+    fn proof_schema_error_clone_independence_enriched() {
+        let e = ProofSchemaError::InvalidSignature {
+            artifact: "receipt".to_string(),
+        };
+        let cloned = e.clone();
+        assert_eq!(e, cloned);
+    }
+
+    #[test]
+    fn receipt_nonce_registry_starts_empty() {
+        let r = ReceiptNonceRegistry::new();
+        let j = serde_json::to_string(&r).unwrap();
+        assert!(j.contains("seen"));
+    }
+
+    #[test]
+    fn receipt_nonce_registry_detects_replay() {
+        let mut reg = ReceiptNonceRegistry::new();
+        let key_id = test_signer_key_id();
+        let nonce = [42u8; 32];
+        assert!(reg.check_and_record(&key_id, nonce).is_ok());
+        assert!(reg.check_and_record(&key_id, nonce).is_err());
+    }
+
+    #[test]
+    fn receipt_nonce_registry_allows_different_nonces() {
+        let mut reg = ReceiptNonceRegistry::new();
+        let key_id = test_signer_key_id();
+        assert!(reg.check_and_record(&key_id, [1u8; 32]).is_ok());
+        assert!(reg.check_and_record(&key_id, [2u8; 32]).is_ok());
+    }
+
+    #[test]
+    fn activation_stage_ordering() {
+        assert!(ActivationStage::Shadow < ActivationStage::Canary);
+        assert!(ActivationStage::Canary < ActivationStage::Ramp);
+        assert!(ActivationStage::Ramp < ActivationStage::Default);
+    }
+
+    #[test]
+    fn optimization_class_ordering() {
+        assert!(OptimizationClass::Superinstruction < OptimizationClass::TraceSpecialization);
+        assert!(OptimizationClass::TraceSpecialization < OptimizationClass::LayoutSpecialization);
+    }
+
+    #[test]
+    fn signer_role_ordering() {
+        assert!(SignerRole::OptimizerSubsystem < SignerRole::PolicyPlane);
+        assert!(SignerRole::PolicyPlane < SignerRole::AttestationCell);
+    }
+
+    #[test]
+    fn attestation_validity_window_clone_independence() {
+        let w = AttestationValidityWindow {
+            start_timestamp_ticks: 100,
+            end_timestamp_ticks: 200,
+        };
+        let mut cloned = w.clone();
+        cloned.start_timestamp_ticks = 999;
+        assert_eq!(w.start_timestamp_ticks, 100);
+    }
+
+    #[test]
+    fn receipt_attestation_bindings_json_field_names() {
+        let b = test_attestation_bindings();
+        let j = serde_json::to_string(&b).unwrap();
+        for field in &[
+            "quote_digest",
+            "measurement_id",
+            "attested_signer_key_id",
+            "nonce",
+            "validity_window",
+        ] {
+            assert!(j.contains(field), "missing: {field}");
+        }
+    }
+
+    #[test]
+    fn receipt_attestation_bindings_clone_independence() {
+        let b = test_attestation_bindings();
+        let cloned = b.clone();
+        assert_eq!(b, cloned);
+    }
+
+    #[test]
+    fn attestation_requirement_policy_copy_semantics() {
+        let p = AttestationRequirementPolicy::default();
+        let q = p;
+        assert_eq!(p, q);
+    }
+
+    #[test]
+    fn attestation_requirement_policy_json_field_names() {
+        let p = AttestationRequirementPolicy::default();
+        let j = serde_json::to_string(&p).unwrap();
+        assert!(j.contains("require_at_or_above"));
+        assert!(j.contains("allow_legacy_receipts_without_attestation"));
+    }
+
+    #[test]
+    fn signer_key_id_serde_roundtrip() {
+        let s = SignerKeyId {
+            key_id: test_signer_key_id(),
+            role: SignerRole::AttestationCell,
+            bound_epoch: test_epoch(),
+        };
+        let j = serde_json::to_string(&s).unwrap();
+        let restored: SignerKeyId = serde_json::from_str(&j).unwrap();
+        assert_eq!(s, restored);
+    }
+
+    #[test]
+    fn signer_key_id_ordering() {
+        let a = SignerKeyId {
+            key_id: test_signer_key_id(),
+            role: SignerRole::OptimizerSubsystem,
+            bound_epoch: test_epoch(),
+        };
+        let b = SignerKeyId {
+            key_id: test_signer_key_id(),
+            role: SignerRole::PolicyPlane,
+            bound_epoch: test_epoch(),
+        };
+        assert!(a < b);
+    }
+
+    #[test]
+    fn receipt_attestation_bindings_serde_roundtrip() {
+        let b = test_attestation_bindings();
+        let j = serde_json::to_string(&b).unwrap();
+        let restored: ReceiptAttestationBindings = serde_json::from_str(&j).unwrap();
+        assert_eq!(b, restored);
+    }
 }
