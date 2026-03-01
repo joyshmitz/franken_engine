@@ -1,0 +1,436 @@
+#![forbid(unsafe_code)]
+
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::PathBuf;
+
+use serde::Deserialize;
+
+const MATRIX_SCHEMA_VERSION: &str = "franken-engine.rgc-cross-platform-matrix.v1";
+const MATRIX_JSON: &str = include_str!("../../../docs/rgc_cross_platform_matrix_v1.json");
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct CrossPlatformMatrixContract {
+    schema_version: String,
+    contract_version: String,
+    bead_id: String,
+    policy_id: String,
+    required_log_keys: Vec<String>,
+    required_artifacts: Vec<String>,
+    targets: Vec<TargetSpec>,
+    drift_classes: Vec<DriftClass>,
+    gate_runner: GateRunner,
+    operator_verification: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct TargetSpec {
+    target_id: String,
+    os: String,
+    arch: String,
+    tier: String,
+    required: bool,
+    path_style: String,
+    line_endings: String,
+    manifest_env_var: String,
+    replay_command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct DriftClass {
+    class_id: String,
+    severity: String,
+    description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct GateRunner {
+    script: String,
+    replay_wrapper: String,
+    strict_mode: String,
+    manifest_schema_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TargetRunSummary {
+    outcome: String,
+    error_code: Option<String>,
+    witness_digest: String,
+    toolchain_fingerprint: String,
+    normalized_runtime_digest: String,
+    normalized_cli_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DriftExplanation {
+    class_id: String,
+    severity: String,
+}
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn parse_contract() -> CrossPlatformMatrixContract {
+    serde_json::from_str(MATRIX_JSON).expect("RGC cross-platform matrix contract must parse")
+}
+
+fn load_doc() -> String {
+    let path = repo_root().join("docs/RGC_CROSS_PLATFORM_MATRIX_V1.md");
+    fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()))
+}
+
+fn normalize_platform_path(path: &str) -> String {
+    let mut normalized = path.replace('\\', "/");
+    if normalized.len() >= 2 && normalized.as_bytes()[1] == b':' {
+        let drive = normalized[..1].to_ascii_lowercase();
+        normalized = format!("{drive}{}", &normalized[1..]);
+    }
+
+    let mut collapsed = String::with_capacity(normalized.len());
+    let mut prev_slash = false;
+    for ch in normalized.chars() {
+        if ch == '/' {
+            if !prev_slash {
+                collapsed.push(ch);
+            }
+            prev_slash = true;
+        } else {
+            collapsed.push(ch);
+            prev_slash = false;
+        }
+    }
+    collapsed
+}
+
+fn normalize_line_endings(input: &str) -> String {
+    input.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+fn classify_drift(baseline: &TargetRunSummary, target: &TargetRunSummary) -> DriftExplanation {
+    if target.witness_digest == "missing-input" {
+        return DriftExplanation {
+            class_id: "missing_target_input".to_string(),
+            severity: "critical".to_string(),
+        };
+    }
+
+    if baseline.outcome != target.outcome || baseline.error_code != target.error_code {
+        return DriftExplanation {
+            class_id: "workflow_behavior_drift".to_string(),
+            severity: "critical".to_string(),
+        };
+    }
+
+    if baseline.witness_digest == target.witness_digest {
+        return DriftExplanation {
+            class_id: "none".to_string(),
+            severity: "info".to_string(),
+        };
+    }
+
+    if baseline.normalized_runtime_digest == target.normalized_runtime_digest
+        && baseline.normalized_cli_digest == target.normalized_cli_digest
+    {
+        return DriftExplanation {
+            class_id: "artifact_only_drift".to_string(),
+            severity: "warning".to_string(),
+        };
+    }
+
+    if baseline.toolchain_fingerprint != target.toolchain_fingerprint {
+        return DriftExplanation {
+            class_id: "toolchain_fingerprint_delta".to_string(),
+            severity: "warning".to_string(),
+        };
+    }
+
+    DriftExplanation {
+        class_id: "unexplained_digest_drift".to_string(),
+        severity: "critical".to_string(),
+    }
+}
+
+#[test]
+fn rgc_063_doc_contains_required_sections() {
+    let doc = load_doc();
+    let required_sections = [
+        "# RGC Cross-Platform Matrix Contract V1",
+        "## Scope",
+        "## Contract Version",
+        "## Matrix Dimensions",
+        "## Drift Classification",
+        "## Structured Logging Contract",
+        "## Replay and Execution",
+        "## Required Artifacts",
+        "## Operator Verification",
+    ];
+
+    for section in required_sections {
+        assert!(
+            doc.contains(section),
+            "missing required section: {section}"
+        );
+    }
+}
+
+#[test]
+fn rgc_063_contract_is_versioned_and_target_complete() {
+    let contract = parse_contract();
+    assert_eq!(contract.schema_version, MATRIX_SCHEMA_VERSION);
+    assert_eq!(contract.contract_version, "1.0.0");
+    assert_eq!(contract.bead_id, "bd-1lsy.11.13");
+    assert_eq!(contract.policy_id, "policy-rgc-cross-platform-matrix-v1");
+
+    let target_ids: BTreeSet<_> = contract.targets.iter().map(|t| t.target_id.as_str()).collect();
+    let expected_target_ids: BTreeSet<_> = [
+        "linux-x64",
+        "linux-arm64",
+        "macos-x64",
+        "macos-arm64",
+        "windows-x64",
+        "windows-arm64",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(target_ids, expected_target_ids);
+
+    let oses: BTreeSet<_> = contract.targets.iter().map(|t| t.os.as_str()).collect();
+    assert_eq!(oses, BTreeSet::from(["linux", "macos", "windows"]));
+    let arches: BTreeSet<_> = contract.targets.iter().map(|t| t.arch.as_str()).collect();
+    assert_eq!(arches, BTreeSet::from(["arm64", "x64"]));
+
+    let required_targets: BTreeSet<_> = contract
+        .targets
+        .iter()
+        .filter(|target| target.required)
+        .map(|target| target.target_id.as_str())
+        .collect();
+    assert!(required_targets.contains("linux-x64"));
+    assert!(required_targets.contains("linux-arm64"));
+    assert!(required_targets.contains("macos-arm64"));
+    assert!(required_targets.contains("windows-x64"));
+}
+
+#[test]
+fn rgc_063_contract_declares_required_logs_artifacts_and_drift_classes() {
+    let contract = parse_contract();
+
+    let required_logs: BTreeSet<_> = contract.required_log_keys.iter().map(String::as_str).collect();
+    for field in [
+        "trace_id",
+        "decision_id",
+        "policy_id",
+        "component",
+        "event",
+        "target_id",
+        "outcome",
+        "error_code",
+    ] {
+        assert!(required_logs.contains(field), "missing required log key {field}");
+    }
+
+    let required_artifacts: BTreeSet<_> = contract
+        .required_artifacts
+        .iter()
+        .map(String::as_str)
+        .collect();
+    for artifact in [
+        "run_manifest.json",
+        "events.jsonl",
+        "commands.txt",
+        "matrix_target_deltas.jsonl",
+        "matrix_summary.json",
+    ] {
+        assert!(
+            required_artifacts.contains(artifact),
+            "missing required artifact {artifact}"
+        );
+    }
+
+    let drift_classes: BTreeSet<_> = contract
+        .drift_classes
+        .iter()
+        .map(|entry| (entry.class_id.as_str(), entry.severity.as_str()))
+        .collect();
+    for entry in [
+        ("none", "info"),
+        ("artifact_only_drift", "warning"),
+        ("toolchain_fingerprint_delta", "warning"),
+        ("workflow_behavior_drift", "critical"),
+        ("unexplained_digest_drift", "critical"),
+        ("missing_target_input", "critical"),
+        ("missing_baseline_input", "critical"),
+    ] {
+        assert!(drift_classes.contains(&entry), "missing drift class {:?}", entry);
+    }
+}
+
+#[test]
+fn rgc_063_targets_reference_expected_env_vars_and_replay_script() {
+    let contract = parse_contract();
+    for target in &contract.targets {
+        assert!(
+            target.manifest_env_var.starts_with("RGC_CROSS_PLATFORM_"),
+            "unexpected manifest env var for {}",
+            target.target_id
+        );
+        assert!(
+            target.replay_command
+                .starts_with("./scripts/e2e/rgc_cross_platform_matrix_replay.sh"),
+            "unexpected replay command for {}",
+            target.target_id
+        );
+        assert!(
+            ["ga", "candidate"].contains(&target.tier.as_str()),
+            "unexpected tier {} for {}",
+            target.tier,
+            target.target_id
+        );
+        assert!(
+            ["posix", "windows"].contains(&target.path_style.as_str()),
+            "unexpected path_style {} for {}",
+            target.path_style,
+            target.target_id
+        );
+        assert!(
+            ["lf", "crlf"].contains(&target.line_endings.as_str()),
+            "unexpected line_endings {} for {}",
+            target.line_endings,
+            target.target_id
+        );
+    }
+}
+
+#[test]
+fn rgc_063_normalization_helpers_are_deterministic() {
+    assert_eq!(
+        normalize_platform_path(r"C:\\franken\\.\artifacts\\run_manifest.json"),
+        "c:/franken/./artifacts/run_manifest.json"
+    );
+    assert_eq!(
+        normalize_platform_path("/tmp//franken///events.jsonl"),
+        "/tmp/franken/events.jsonl"
+    );
+
+    assert_eq!(
+        normalize_line_endings("line1\r\nline2\rline3\nline4"),
+        "line1\nline2\nline3\nline4"
+    );
+}
+
+#[test]
+fn rgc_063_drift_classifier_assigns_expected_classes() {
+    let baseline = TargetRunSummary {
+        outcome: "pass".to_string(),
+        error_code: None,
+        witness_digest: "sha256:stable".to_string(),
+        toolchain_fingerprint: "fp-linux".to_string(),
+        normalized_runtime_digest: "sha256:runtime-stable".to_string(),
+        normalized_cli_digest: "sha256:cli-stable".to_string(),
+    };
+
+    let parity = TargetRunSummary {
+        outcome: "pass".to_string(),
+        error_code: None,
+        witness_digest: "sha256:stable".to_string(),
+        toolchain_fingerprint: "fp-linux".to_string(),
+        normalized_runtime_digest: "sha256:runtime-stable".to_string(),
+        normalized_cli_digest: "sha256:cli-stable".to_string(),
+    };
+    let parity_class = classify_drift(&baseline, &parity);
+    assert_eq!(parity_class.class_id, "none");
+    assert_eq!(parity_class.severity, "info");
+
+    let artifact_only = TargetRunSummary {
+        outcome: "pass".to_string(),
+        error_code: None,
+        witness_digest: "sha256:windows-crlf".to_string(),
+        toolchain_fingerprint: "fp-linux".to_string(),
+        normalized_runtime_digest: "sha256:runtime-stable".to_string(),
+        normalized_cli_digest: "sha256:cli-stable".to_string(),
+    };
+    let artifact_class = classify_drift(&baseline, &artifact_only);
+    assert_eq!(artifact_class.class_id, "artifact_only_drift");
+    assert_eq!(artifact_class.severity, "warning");
+
+    let toolchain_delta = TargetRunSummary {
+        outcome: "pass".to_string(),
+        error_code: None,
+        witness_digest: "sha256:macos-build".to_string(),
+        toolchain_fingerprint: "fp-macos".to_string(),
+        normalized_runtime_digest: "sha256:runtime-macos".to_string(),
+        normalized_cli_digest: "sha256:cli-macos".to_string(),
+    };
+    let toolchain_class = classify_drift(&baseline, &toolchain_delta);
+    assert_eq!(toolchain_class.class_id, "toolchain_fingerprint_delta");
+    assert_eq!(toolchain_class.severity, "warning");
+
+    let behavior_drift = TargetRunSummary {
+        outcome: "fail".to_string(),
+        error_code: Some("FE-RUNTIME-0001".to_string()),
+        witness_digest: "sha256:runtime-fail".to_string(),
+        toolchain_fingerprint: "fp-linux".to_string(),
+        normalized_runtime_digest: "sha256:runtime-fail".to_string(),
+        normalized_cli_digest: "sha256:cli-stable".to_string(),
+    };
+    let behavior_class = classify_drift(&baseline, &behavior_drift);
+    assert_eq!(behavior_class.class_id, "workflow_behavior_drift");
+    assert_eq!(behavior_class.severity, "critical");
+
+    let missing_target = TargetRunSummary {
+        outcome: "unknown".to_string(),
+        error_code: Some("missing_input".to_string()),
+        witness_digest: "missing-input".to_string(),
+        toolchain_fingerprint: "unknown".to_string(),
+        normalized_runtime_digest: "unknown".to_string(),
+        normalized_cli_digest: "unknown".to_string(),
+    };
+    let missing_class = classify_drift(&baseline, &missing_target);
+    assert_eq!(missing_class.class_id, "missing_target_input");
+    assert_eq!(missing_class.severity, "critical");
+
+    let unexplained = TargetRunSummary {
+        outcome: "pass".to_string(),
+        error_code: None,
+        witness_digest: "sha256:drift-unknown".to_string(),
+        toolchain_fingerprint: "fp-linux".to_string(),
+        normalized_runtime_digest: "sha256:runtime-other".to_string(),
+        normalized_cli_digest: "sha256:cli-other".to_string(),
+    };
+    let unexplained_class = classify_drift(&baseline, &unexplained);
+    assert_eq!(unexplained_class.class_id, "unexplained_digest_drift");
+    assert_eq!(unexplained_class.severity, "critical");
+}
+
+#[test]
+fn rgc_063_gate_runner_and_operator_commands_are_wired() {
+    let contract = parse_contract();
+    assert_eq!(
+        contract.gate_runner.script,
+        "scripts/run_rgc_cross_platform_matrix_gate.sh"
+    );
+    assert_eq!(
+        contract.gate_runner.replay_wrapper,
+        "scripts/e2e/rgc_cross_platform_matrix_replay.sh"
+    );
+    assert!(
+        contract.gate_runner.strict_mode.contains("RGC_CROSS_PLATFORM_REQUIRE_MATRIX")
+    );
+    assert_eq!(
+        contract.gate_runner.manifest_schema_version,
+        "franken-engine.rgc-cross-platform-matrix.run-manifest.v1"
+    );
+
+    let repo = repo_root();
+    assert!(repo.join(&contract.gate_runner.script).exists());
+    assert!(repo.join(&contract.gate_runner.replay_wrapper).exists());
+
+    assert!(
+        contract
+            .operator_verification
+            .iter()
+            .any(|cmd| cmd.contains("run_rgc_cross_platform_matrix_gate.sh ci"))
+    );
+}
