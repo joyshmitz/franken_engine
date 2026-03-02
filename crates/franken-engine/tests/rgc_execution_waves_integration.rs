@@ -2,10 +2,11 @@
 //! Integration tests for RGC execution-wave coordination protocol.
 
 use frankenengine_engine::rgc_execution_waves::{
-    AntiStallAction, CoordinationValidationError, RGC_COORDINATION_EVENT_SCHEMA_VERSION,
-    RGC_EXECUTION_WAVE_PROTOCOL_SCHEMA_VERSION, RGC_WAVE_HANDOFF_SCHEMA_VERSION, ExecutionWave,
-    default_rgc_execution_wave_protocol, default_wave_handoff_package, run_coordination_dry_run,
-    validate_execution_wave_protocol, validate_wave_handoff_package,
+    AntiStallAction, CoordinationValidationError, ExecutionWave,
+    RGC_COORDINATION_EVENT_SCHEMA_VERSION, RGC_EXECUTION_WAVE_PROTOCOL_SCHEMA_VERSION,
+    RGC_WAVE_HANDOFF_SCHEMA_VERSION, default_rgc_execution_wave_protocol,
+    default_wave_handoff_package, run_coordination_dry_run, validate_execution_wave_protocol,
+    validate_wave_handoff_package,
 };
 
 #[test]
@@ -26,10 +27,22 @@ fn rgc_execution_waves_default_contract_versions_are_stable() {
 
 #[test]
 fn rgc_execution_waves_serde_tags_are_stable() {
-    assert_eq!(serde_json::to_string(&ExecutionWave::Wave0).unwrap(), "\"wave_0\"");
-    assert_eq!(serde_json::to_string(&ExecutionWave::Wave1).unwrap(), "\"wave_1\"");
-    assert_eq!(serde_json::to_string(&ExecutionWave::Wave2).unwrap(), "\"wave_2\"");
-    assert_eq!(serde_json::to_string(&ExecutionWave::Wave3).unwrap(), "\"wave_3\"");
+    assert_eq!(
+        serde_json::to_string(&ExecutionWave::Wave0).unwrap(),
+        "\"wave_0\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ExecutionWave::Wave1).unwrap(),
+        "\"wave_1\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ExecutionWave::Wave2).unwrap(),
+        "\"wave_2\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ExecutionWave::Wave3).unwrap(),
+        "\"wave_3\""
+    );
 }
 
 #[test]

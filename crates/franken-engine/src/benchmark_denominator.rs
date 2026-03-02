@@ -1574,7 +1574,10 @@ mod tests {
             .unwrap();
         assert_eq!(node_event.outcome, "fail");
         assert!(node_event.error_code.is_some());
-        assert_eq!(node_event.error_code.as_deref(), Some(ERROR_PUBLICATION_GATE_DENY));
+        assert_eq!(
+            node_event.error_code.as_deref(),
+            Some(ERROR_PUBLICATION_GATE_DENY)
+        );
         // The publication_gate_decision event should also have error_code
         let gate_event = decision
             .events
@@ -1604,8 +1607,7 @@ mod tests {
     #[test]
     fn gate_lineage_ids_sorted() {
         let mut input = test_gate_input();
-        input.replacement_lineage_ids =
-            vec!["charlie".into(), "alpha".into(), "bravo".into()];
+        input.replacement_lineage_ids = vec!["charlie".into(), "alpha".into(), "bravo".into()];
         let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
         assert_eq!(
             decision.replacement_lineage_ids,

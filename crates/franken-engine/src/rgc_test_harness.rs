@@ -1693,7 +1693,8 @@ mod tests {
             BaselineScenarioDomain::Security,
         ] {
             let json = serde_json::to_string(&domain).expect("serialize");
-            let restored: BaselineScenarioDomain = serde_json::from_str(&json).expect("deserialize");
+            let restored: BaselineScenarioDomain =
+                serde_json::from_str(&json).expect("deserialize");
             assert_eq!(domain, restored);
         }
     }
@@ -1707,7 +1708,8 @@ mod tests {
             BaselineScenarioOutcome::CanonicalFailure,
         ] {
             let json = serde_json::to_string(&outcome).expect("serialize");
-            let restored: BaselineScenarioOutcome = serde_json::from_str(&json).expect("deserialize");
+            let restored: BaselineScenarioOutcome =
+                serde_json::from_str(&json).expect("deserialize");
             assert_eq!(outcome, restored);
         }
     }
@@ -1797,7 +1799,8 @@ mod tests {
     #[test]
     fn manifest_serde_round_trip() {
         let ctx = DeterministicTestContext::new("rgc-052", "fixture-a", HarnessLane::E2e, 53);
-        let manifest = HarnessRunManifest::from_context(&ctx, "run-001", 3, 2, "replay.sh", 1_700_000_000_000);
+        let manifest =
+            HarnessRunManifest::from_context(&ctx, "run-001", 3, 2, "replay.sh", 1_700_000_000_000);
         let json = serde_json::to_string(&manifest).expect("serialize");
         let restored: HarnessRunManifest = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(manifest, restored);
@@ -1806,16 +1809,35 @@ mod tests {
     #[test]
     fn manifest_env_fingerprint_is_deterministic() {
         let ctx = DeterministicTestContext::new("rgc-052", "fixture-a", HarnessLane::E2e, 53);
-        let m1 = HarnessRunManifest::from_context(&ctx, "run-001", 3, 2, "replay.sh", 1_700_000_000_000);
-        let m2 = HarnessRunManifest::from_context(&ctx, "run-001", 3, 2, "replay.sh", 1_700_000_000_001);
-        assert_eq!(m1.env_fingerprint, m2.env_fingerprint, "fingerprint must not depend on timestamp");
+        let m1 =
+            HarnessRunManifest::from_context(&ctx, "run-001", 3, 2, "replay.sh", 1_700_000_000_000);
+        let m2 =
+            HarnessRunManifest::from_context(&ctx, "run-001", 3, 2, "replay.sh", 1_700_000_000_001);
+        assert_eq!(
+            m1.env_fingerprint, m2.env_fingerprint,
+            "fingerprint must not depend on timestamp"
+        );
     }
 
     #[test]
     fn manifest_env_fingerprint_changes_with_different_replay_command() {
         let ctx = DeterministicTestContext::new("rgc-052", "fixture-a", HarnessLane::E2e, 53);
-        let m1 = HarnessRunManifest::from_context(&ctx, "run-001", 3, 2, "replay-a.sh", 1_700_000_000_000);
-        let m2 = HarnessRunManifest::from_context(&ctx, "run-001", 3, 2, "replay-b.sh", 1_700_000_000_000);
+        let m1 = HarnessRunManifest::from_context(
+            &ctx,
+            "run-001",
+            3,
+            2,
+            "replay-a.sh",
+            1_700_000_000_000,
+        );
+        let m2 = HarnessRunManifest::from_context(
+            &ctx,
+            "run-001",
+            3,
+            2,
+            "replay-b.sh",
+            1_700_000_000_000,
+        );
         assert_ne!(m1.env_fingerprint, m2.env_fingerprint);
     }
 
@@ -1833,7 +1855,8 @@ mod tests {
             ArtifactValidationErrorCode::EmptyCommands,
         ] {
             let json = serde_json::to_string(&code).expect("serialize");
-            let restored: ArtifactValidationErrorCode = serde_json::from_str(&json).expect("deserialize");
+            let restored: ArtifactValidationErrorCode =
+                serde_json::from_str(&json).expect("deserialize");
             assert_eq!(code, restored);
         }
     }
@@ -1961,9 +1984,11 @@ mod tests {
     #[test]
     fn fixture_loader_rejects_empty_path() {
         let root = PathBuf::from("/tmp");
-        let error = load_json_fixture::<DemoFixture>(&root, "")
-            .expect_err("empty path must fail");
-        assert!(matches!(error, FixtureLoadError::InvalidRelativePath { .. }));
+        let error = load_json_fixture::<DemoFixture>(&root, "").expect_err("empty path must fail");
+        assert!(matches!(
+            error,
+            FixtureLoadError::InvalidRelativePath { .. }
+        ));
     }
 
     #[test]
@@ -1971,7 +1996,10 @@ mod tests {
         let root = PathBuf::from("/tmp");
         let error = load_json_fixture::<DemoFixture>(&root, "/etc/passwd")
             .expect_err("absolute path must fail");
-        assert!(matches!(error, FixtureLoadError::InvalidRelativePath { .. }));
+        assert!(matches!(
+            error,
+            FixtureLoadError::InvalidRelativePath { .. }
+        ));
     }
 
     #[test]
@@ -1988,8 +2016,8 @@ mod tests {
         let root = temp_dir("fixture_loader_bad_json");
         fs::create_dir_all(&root).expect("create temp dir");
         fs::write(root.join("bad.json"), "not-json").expect("write bad fixture");
-        let error = load_json_fixture::<DemoFixture>(&root, "bad.json")
-            .expect_err("bad JSON must fail");
+        let error =
+            load_json_fixture::<DemoFixture>(&root, "bad.json").expect_err("bad JSON must fail");
         assert!(matches!(error, FixtureLoadError::JsonParse { .. }));
     }
 
@@ -2089,9 +2117,11 @@ mod tests {
         fs::create_dir_all(&root).expect("create bundle dir");
         let report = validate_artifact_bundle(&root, &[HarnessLane::Runtime]);
         assert!(!report.valid);
-        assert!(report.findings.iter().any(|f| {
-            f.error_code == ArtifactBundleValidationErrorCode::MissingRunDirectory
-        }));
+        assert!(
+            report.findings.iter().any(|f| {
+                f.error_code == ArtifactBundleValidationErrorCode::MissingRunDirectory
+            })
+        );
     }
 
     #[test]
@@ -2117,10 +2147,8 @@ mod tests {
             200,
         );
 
-        let report = validate_artifact_bundle(
-            &bundle_dir,
-            &[HarnessLane::Runtime, HarnessLane::Security],
-        );
+        let report =
+            validate_artifact_bundle(&bundle_dir, &[HarnessLane::Runtime, HarnessLane::Security]);
         assert!(!report.valid);
         assert!(report.findings.iter().any(|f| {
             f.error_code == ArtifactBundleValidationErrorCode::CorrelationMismatch
@@ -2149,10 +2177,8 @@ mod tests {
             42,
         );
 
-        let report = validate_artifact_bundle(
-            &bundle_dir,
-            &[HarnessLane::Runtime, HarnessLane::Security],
-        );
+        let report =
+            validate_artifact_bundle(&bundle_dir, &[HarnessLane::Runtime, HarnessLane::Security]);
         assert!(!report.valid);
         assert!(report.findings.iter().any(|f| {
             f.error_code == ArtifactBundleValidationErrorCode::CorrelationMismatch
@@ -2164,21 +2190,23 @@ mod tests {
 
     #[test]
     fn select_scenarios_single_domain_with_failures() {
-        let selected = select_baseline_e2e_scenarios(
-            &[BaselineScenarioDomain::Security],
-            true,
-        );
+        let selected = select_baseline_e2e_scenarios(&[BaselineScenarioDomain::Security], true);
         assert_eq!(selected.len(), 2, "security domain has 1 happy + 1 failure");
-        assert!(selected.iter().all(|s| s.domain == BaselineScenarioDomain::Security));
+        assert!(
+            selected
+                .iter()
+                .all(|s| s.domain == BaselineScenarioDomain::Security)
+        );
     }
 
     #[test]
     fn select_scenarios_single_domain_happy_only() {
-        let selected = select_baseline_e2e_scenarios(
-            &[BaselineScenarioDomain::Module],
-            false,
+        let selected = select_baseline_e2e_scenarios(&[BaselineScenarioDomain::Module], false);
+        assert_eq!(
+            selected.len(),
+            1,
+            "module domain happy-only should return 1"
         );
-        assert_eq!(selected.len(), 1, "module domain happy-only should return 1");
         assert_eq!(selected[0].outcome, BaselineScenarioOutcome::HappyPath);
         assert_eq!(selected[0].domain, BaselineScenarioDomain::Module);
     }
@@ -2283,7 +2311,11 @@ mod tests {
         let triad = write_artifact_triad(&root, &manifest, &events, &commands)
             .expect("write should succeed");
         let report = validate_artifact_triad(&triad.run_dir);
-        assert!(report.valid, "zero events is valid when manifest says 0: {:?}", report.findings);
+        assert!(
+            report.valid,
+            "zero events is valid when manifest says 0: {:?}",
+            report.findings
+        );
     }
 
     #[test]

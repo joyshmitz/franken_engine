@@ -650,7 +650,10 @@ fn lockstep_runner_preflight_only_passes_for_valid_runtime_specs() {
 
 #[test]
 fn lockstep_runner_preflight_only_rejects_missing_command() {
-    let catalog_path = temp_path("franken_lockstep_runner_preflight_missing_cmd_catalog", "json");
+    let catalog_path = temp_path(
+        "franken_lockstep_runner_preflight_missing_cmd_catalog",
+        "json",
+    );
     let runtime_specs_path = temp_path("franken_lockstep_runner_preflight_missing_cmd", "toml");
     write_fixture_catalog(&catalog_path);
     write_missing_command_runtime_specs(&runtime_specs_path);
@@ -680,10 +683,14 @@ fn lockstep_runner_preflight_only_rejects_missing_command() {
 
 #[test]
 fn lockstep_runner_preflight_only_rejects_missing_script_path() {
-    let catalog_path =
-        temp_path("franken_lockstep_runner_preflight_missing_script_catalog", "json");
-    let runtime_specs_path =
-        temp_path("franken_lockstep_runner_preflight_missing_script_specs", "toml");
+    let catalog_path = temp_path(
+        "franken_lockstep_runner_preflight_missing_script_catalog",
+        "json",
+    );
+    let runtime_specs_path = temp_path(
+        "franken_lockstep_runner_preflight_missing_script_specs",
+        "toml",
+    );
     write_fixture_catalog(&catalog_path);
     write_missing_script_runtime_specs(&runtime_specs_path);
 

@@ -1876,7 +1876,10 @@ mod tests {
     #[test]
     fn permit_id_display_format_enrichment() {
         assert_eq!(PermitId(0).to_string(), "permit:0");
-        assert_eq!(PermitId(u64::MAX).to_string(), format!("permit:{}", u64::MAX));
+        assert_eq!(
+            PermitId(u64::MAX).to_string(),
+            format!("permit:{}", u64::MAX)
+        );
     }
 
     #[test]
@@ -2183,8 +2186,7 @@ mod tests {
 
         let snap = reg.snapshot();
         let json = serde_json::to_string(&snap).unwrap();
-        let restored: BTreeMap<String, BulkheadSnapshot> =
-            serde_json::from_str(&json).unwrap();
+        let restored: BTreeMap<String, BulkheadSnapshot> = serde_json::from_str(&json).unwrap();
         assert_eq!(snap, restored);
     }
 
@@ -2476,7 +2478,10 @@ mod tests {
         let _ = reg.drain_events();
         let counts_after = reg.event_counts().clone();
 
-        assert_eq!(counts_before, counts_after, "drain_events should not reset counters");
+        assert_eq!(
+            counts_before, counts_after,
+            "drain_events should not reset counters"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2495,9 +2500,7 @@ mod tests {
             BulkheadError::BulkheadNotFound {
                 bulkhead_id: "b".into(),
             },
-            BulkheadError::InvalidConfig {
-                reason: "c".into(),
-            },
+            BulkheadError::InvalidConfig { reason: "c".into() },
         ];
         let debugs: std::collections::BTreeSet<String> =
             variants.iter().map(|e| format!("{e:?}")).collect();

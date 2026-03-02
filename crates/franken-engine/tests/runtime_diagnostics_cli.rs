@@ -514,7 +514,10 @@ fn doctor_command_writes_support_bundle_and_preflight_report() {
     let written_index = out_dir.join("support_bundle/index.json");
     let written_report = out_dir.join("support_bundle/preflight_report.json");
     assert!(written_index.exists(), "index file should be written");
-    assert!(written_report.exists(), "preflight report should be written");
+    assert!(
+        written_report.exists(),
+        "preflight report should be written"
+    );
 
     let report_content = fs::read_to_string(&written_report).expect("report should be readable");
     let report_json: serde_json::Value =

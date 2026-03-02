@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use frankenengine_engine::runtime_diagnostics_cli::{
     EvidenceExportFilter, RuntimeDiagnosticsCliInput, SupportBundleOutput,
     SupportBundleRedactionPolicy, collect_runtime_diagnostics, export_evidence_bundle,
-    export_support_bundle, parse_decision_type, parse_evidence_severity, render_diagnostics_summary,
-    render_evidence_summary, render_preflight_summary, render_support_bundle_summary,
-    run_preflight_doctor,
+    export_support_bundle, parse_decision_type, parse_evidence_severity,
+    render_diagnostics_summary, render_evidence_summary, render_preflight_summary,
+    render_support_bundle_summary, run_preflight_doctor,
 };
 
 fn main() {

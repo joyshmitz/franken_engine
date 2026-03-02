@@ -1547,7 +1547,10 @@ mod tests {
 
     #[test]
     fn schema_version_constant_value() {
-        assert_eq!(SCHEMA_VERSION, "franken-engine.reproducibility-provenance.v1");
+        assert_eq!(
+            SCHEMA_VERSION,
+            "franken-engine.reproducibility-provenance.v1"
+        );
     }
 
     #[test]
@@ -1877,10 +1880,7 @@ mod tests {
         env.container_digest = Some("sha256:abc123".to_string());
         let json = serde_json::to_string(&env).unwrap();
         let back: BuildEnvironment = serde_json::from_str(&json).unwrap();
-        assert_eq!(
-            back.container_digest,
-            Some("sha256:abc123".to_string())
-        );
+        assert_eq!(back.container_digest, Some("sha256:abc123".to_string()));
     }
 
     #[test]

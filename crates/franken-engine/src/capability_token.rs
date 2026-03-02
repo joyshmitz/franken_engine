@@ -2430,10 +2430,7 @@ mod tests {
             verifier_revocation_seq: 20,
         };
         let err = verify_token(&token, &make_principal(10), &ctx_cp_fail).unwrap_err();
-        assert!(matches!(
-            err,
-            TokenError::CheckpointBindingFailed { .. }
-        ));
+        assert!(matches!(err, TokenError::CheckpointBindingFailed { .. }));
 
         // Checkpoint ok, revocation fails.
         let ctx_rv_fail = VerificationContext {
@@ -2442,10 +2439,7 @@ mod tests {
             verifier_revocation_seq: 10, // below 15
         };
         let err = verify_token(&token, &make_principal(10), &ctx_rv_fail).unwrap_err();
-        assert!(matches!(
-            err,
-            TokenError::RevocationFreshnessStale { .. }
-        ));
+        assert!(matches!(err, TokenError::RevocationFreshnessStale { .. }));
     }
 
     #[test]

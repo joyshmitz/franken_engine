@@ -1799,7 +1799,10 @@ mod tests {
         let json = serde_json::to_string(&m).unwrap();
         let back: TailRiskMetrics = serde_json::from_str(&json).unwrap();
         assert_eq!(m, back);
-        assert_eq!(back.worst_exploit.as_deref(), Some("capability-leak-via-proxy"));
+        assert_eq!(
+            back.worst_exploit.as_deref(),
+            Some("capability-leak-via-proxy")
+        );
     }
 
     #[test]
@@ -1863,21 +1866,34 @@ mod tests {
     fn serde_roundtrip_error_all_variants_enrichment() {
         let variants: Vec<TailGateError> = vec![
             TailGateError::NoThreatClasses,
-            TailGateError::TooManyThreatClasses { count: 100, max: 64 },
+            TailGateError::TooManyThreatClasses {
+                count: 100,
+                max: 64,
+            },
             TailGateError::NoCampaigns,
-            TailGateError::TooManyCampaigns { count: 200, max: 128 },
+            TailGateError::TooManyCampaigns {
+                count: 200,
+                max: 128,
+            },
             TailGateError::UnknownThreatClass {
                 campaign_id: "c-err".to_string(),
                 threat_class_id: "t-err".to_string(),
             },
-            TailGateError::DuplicateThreatClass { id: "dup-id".to_string() },
+            TailGateError::DuplicateThreatClass {
+                id: "dup-id".to_string(),
+            },
             TailGateError::InsufficientRounds {
                 campaign_id: "c-short".to_string(),
                 rounds: 10,
                 required: 100,
             },
-            TailGateError::InvalidConfig { detail: "bad alpha".to_string() },
-            TailGateError::TooManyObservations { count: 200_000, max: 100_000 },
+            TailGateError::InvalidConfig {
+                detail: "bad alpha".to_string(),
+            },
+            TailGateError::TooManyObservations {
+                count: 200_000,
+                max: 100_000,
+            },
         ];
         for err in &variants {
             let json = serde_json::to_string(err).unwrap();
@@ -1888,7 +1904,11 @@ mod tests {
 
     #[test]
     fn serde_roundtrip_gate_verdict_enrichment() {
-        for v in &[GateVerdict::Pass, GateVerdict::Fail, GateVerdict::Inconclusive] {
+        for v in &[
+            GateVerdict::Pass,
+            GateVerdict::Fail,
+            GateVerdict::Inconclusive,
+        ] {
             let json = serde_json::to_string(v).unwrap();
             let back: GateVerdict = serde_json::from_str(&json).unwrap();
             assert_eq!(*v, back);
@@ -2007,8 +2027,18 @@ mod tests {
             rollback_action: LaneAction::FallbackSafe,
             triggering_threats: vec!["t1".to_string(), "t2".to_string(), "t3".to_string()],
             mitigation_steps: vec![
-                MitigationStep { step: 1, description: "a".to_string(), automated: true, action: None },
-                MitigationStep { step: 2, description: "b".to_string(), automated: false, action: None },
+                MitigationStep {
+                    step: 1,
+                    description: "a".to_string(),
+                    automated: true,
+                    action: None,
+                },
+                MitigationStep {
+                    step: 2,
+                    description: "b".to_string(),
+                    automated: false,
+                    action: None,
+                },
             ],
             evidence_hash: ContentHash::compute(b"pb-disp"),
         };
@@ -2028,7 +2058,10 @@ mod tests {
 
     #[test]
     fn error_display_too_many_campaigns_enrichment() {
-        let e = TailGateError::TooManyCampaigns { count: 200, max: 128 };
+        let e = TailGateError::TooManyCampaigns {
+            count: 200,
+            max: 128,
+        };
         let s = format!("{}", e);
         assert!(s.contains("200"));
         assert!(s.contains("128"));
@@ -2049,7 +2082,9 @@ mod tests {
 
     #[test]
     fn error_display_duplicate_threat_class_enrichment() {
-        let e = TailGateError::DuplicateThreatClass { id: "dup-x".to_string() };
+        let e = TailGateError::DuplicateThreatClass {
+            id: "dup-x".to_string(),
+        };
         let s = format!("{}", e);
         assert!(s.contains("dup-x"));
         assert!(s.contains("duplicate"));
@@ -2057,7 +2092,10 @@ mod tests {
 
     #[test]
     fn error_display_too_many_observations_enrichment() {
-        let e = TailGateError::TooManyObservations { count: 200_000, max: 100_000 };
+        let e = TailGateError::TooManyObservations {
+            count: 200_000,
+            max: 100_000,
+        };
         let s = format!("{}", e);
         assert!(s.contains("200000"));
         assert!(s.contains("100000"));
@@ -2065,7 +2103,9 @@ mod tests {
 
     #[test]
     fn error_display_invalid_config_detail_enrichment() {
-        let e = TailGateError::InvalidConfig { detail: "alpha out of range".to_string() };
+        let e = TailGateError::InvalidConfig {
+            detail: "alpha out of range".to_string(),
+        };
         let s = format!("{}", e);
         assert!(s.contains("alpha out of range"));
         assert!(s.contains("invalid config"));
@@ -2093,7 +2133,11 @@ mod tests {
 
     #[test]
     fn debug_all_gate_verdicts_unique_enrichment() {
-        let verdicts = [GateVerdict::Pass, GateVerdict::Fail, GateVerdict::Inconclusive];
+        let verdicts = [
+            GateVerdict::Pass,
+            GateVerdict::Fail,
+            GateVerdict::Inconclusive,
+        ];
         let mut seen = BTreeSet::new();
         for v in &verdicts {
             let d = format!("{:?}", v);
@@ -2133,16 +2177,13 @@ mod tests {
             make_campaign("c2", "t2", vec![50_000; 200]),
         ];
 
-        let mut g1 = CatastrophicTailTournamentGate::new(
-            TailGateConfig::default(),
-            threats.clone(),
-        ).unwrap();
+        let mut g1 =
+            CatastrophicTailTournamentGate::new(TailGateConfig::default(), threats.clone())
+                .unwrap();
         let d1 = g1.evaluate("rc-det", &campaigns).unwrap();
 
-        let mut g2 = CatastrophicTailTournamentGate::new(
-            TailGateConfig::default(),
-            threats,
-        ).unwrap();
+        let mut g2 =
+            CatastrophicTailTournamentGate::new(TailGateConfig::default(), threats).unwrap();
         let d2 = g2.evaluate("rc-det", &campaigns).unwrap();
 
         assert_eq!(d1.verdict, d2.verdict);
@@ -2154,19 +2195,20 @@ mod tests {
 
     #[test]
     fn deterministic_hash_changes_with_different_candidate_enrichment() {
-        let threats = vec![make_threat("t1", ThreatCategory::CapabilityEscalation, MILLION)];
+        let threats = vec![make_threat(
+            "t1",
+            ThreatCategory::CapabilityEscalation,
+            MILLION,
+        )];
         let campaigns = vec![make_campaign("c1", "t1", low_risk_payoffs(200))];
 
-        let mut g1 = CatastrophicTailTournamentGate::new(
-            TailGateConfig::default(),
-            threats.clone(),
-        ).unwrap();
+        let mut g1 =
+            CatastrophicTailTournamentGate::new(TailGateConfig::default(), threats.clone())
+                .unwrap();
         let d1 = g1.evaluate("rc-alpha", &campaigns).unwrap();
 
-        let mut g2 = CatastrophicTailTournamentGate::new(
-            TailGateConfig::default(),
-            threats,
-        ).unwrap();
+        let mut g2 =
+            CatastrophicTailTournamentGate::new(TailGateConfig::default(), threats).unwrap();
         let d2 = g2.evaluate("rc-beta", &campaigns).unwrap();
 
         assert_ne!(d1.artifact_hash, d2.artifact_hash);
@@ -2186,11 +2228,13 @@ mod tests {
 
     #[test]
     fn max_campaigns_exactly_128_enrichment() {
-        let threats = vec![make_threat("t1", ThreatCategory::CapabilityEscalation, MILLION)];
-        let mut gate = CatastrophicTailTournamentGate::new(
-            TailGateConfig::default(),
-            threats,
-        ).unwrap();
+        let threats = vec![make_threat(
+            "t1",
+            ThreatCategory::CapabilityEscalation,
+            MILLION,
+        )];
+        let mut gate =
+            CatastrophicTailTournamentGate::new(TailGateConfig::default(), threats).unwrap();
 
         let campaigns: Vec<_> = (0..128)
             .map(|i| make_campaign(&format!("c{}", i), "t1", low_risk_payoffs(200)))
@@ -2202,17 +2246,25 @@ mod tests {
 
     #[test]
     fn too_many_campaigns_129_enrichment() {
-        let threats = vec![make_threat("t1", ThreatCategory::CapabilityEscalation, MILLION)];
-        let mut gate = CatastrophicTailTournamentGate::new(
-            TailGateConfig::default(),
-            threats,
-        ).unwrap();
+        let threats = vec![make_threat(
+            "t1",
+            ThreatCategory::CapabilityEscalation,
+            MILLION,
+        )];
+        let mut gate =
+            CatastrophicTailTournamentGate::new(TailGateConfig::default(), threats).unwrap();
 
         let campaigns: Vec<_> = (0..129)
             .map(|i| make_campaign(&format!("c{}", i), "t1", low_risk_payoffs(200)))
             .collect();
         let result = gate.evaluate("rc-toomany", &campaigns);
-        assert!(matches!(result, Err(TailGateError::TooManyCampaigns { count: 129, max: 128 })));
+        assert!(matches!(
+            result,
+            Err(TailGateError::TooManyCampaigns {
+                count: 129,
+                max: 128
+            })
+        ));
     }
 
     #[test]
@@ -2222,7 +2274,11 @@ mod tests {
             cvar_alpha_millionths: MILLION,
             ..Default::default()
         };
-        let threats = vec![make_threat("t1", ThreatCategory::CapabilityEscalation, MILLION)];
+        let threats = vec![make_threat(
+            "t1",
+            ThreatCategory::CapabilityEscalation,
+            MILLION,
+        )];
         let gate = CatastrophicTailTournamentGate::new(config, threats);
         assert!(gate.is_ok());
     }
@@ -2233,7 +2289,11 @@ mod tests {
             cvar_alpha_millionths: MILLION + 1,
             ..Default::default()
         };
-        let threats = vec![make_threat("t1", ThreatCategory::CapabilityEscalation, MILLION)];
+        let threats = vec![make_threat(
+            "t1",
+            ThreatCategory::CapabilityEscalation,
+            MILLION,
+        )];
         let result = CatastrophicTailTournamentGate::new(config, threats);
         assert!(matches!(result, Err(TailGateError::InvalidConfig { .. })));
     }
@@ -2244,7 +2304,11 @@ mod tests {
             cvar_alpha_millionths: -1,
             ..Default::default()
         };
-        let threats = vec![make_threat("t1", ThreatCategory::CapabilityEscalation, MILLION)];
+        let threats = vec![make_threat(
+            "t1",
+            ThreatCategory::CapabilityEscalation,
+            MILLION,
+        )];
         let result = CatastrophicTailTournamentGate::new(config, threats);
         assert!(matches!(result, Err(TailGateError::InvalidConfig { .. })));
     }
@@ -2255,7 +2319,11 @@ mod tests {
             min_rounds_per_campaign: 100,
             ..Default::default()
         };
-        let threats = vec![make_threat("t1", ThreatCategory::CapabilityEscalation, MILLION)];
+        let threats = vec![make_threat(
+            "t1",
+            ThreatCategory::CapabilityEscalation,
+            MILLION,
+        )];
         let mut gate = CatastrophicTailTournamentGate::new(config, threats).unwrap();
         // Exactly 100 payoffs → exactly 100 rounds.
         let campaigns = vec![make_campaign("c1", "t1", vec![1_000; 100])];
@@ -2269,11 +2337,22 @@ mod tests {
             min_rounds_per_campaign: 100,
             ..Default::default()
         };
-        let threats = vec![make_threat("t1", ThreatCategory::CapabilityEscalation, MILLION)];
+        let threats = vec![make_threat(
+            "t1",
+            ThreatCategory::CapabilityEscalation,
+            MILLION,
+        )];
         let mut gate = CatastrophicTailTournamentGate::new(config, threats).unwrap();
         let campaigns = vec![make_campaign("c1", "t1", vec![1_000; 99])];
         let result = gate.evaluate("rc-short", &campaigns);
-        assert!(matches!(result, Err(TailGateError::InsufficientRounds { rounds: 99, required: 100, .. })));
+        assert!(matches!(
+            result,
+            Err(TailGateError::InsufficientRounds {
+                rounds: 99,
+                required: 100,
+                ..
+            })
+        ));
     }
 
     // ── Enrichment: Evaluation State Management ─────────────────────
@@ -2313,8 +2392,13 @@ mod tests {
     #[test]
     fn inconclusive_when_empty_payoffs_enrichment() {
         // A campaign with 0 payoffs but >= min rounds → observation_count=0 → inconclusive.
-        let threats = vec![make_threat("t1", ThreatCategory::CapabilityEscalation, MILLION)];
-        let mut gate = CatastrophicTailTournamentGate::new(TailGateConfig::default(), threats).unwrap();
+        let threats = vec![make_threat(
+            "t1",
+            ThreatCategory::CapabilityEscalation,
+            MILLION,
+        )];
+        let mut gate =
+            CatastrophicTailTournamentGate::new(TailGateConfig::default(), threats).unwrap();
         let campaign = Campaign {
             campaign_id: "c-empty".to_string(),
             threat_class_id: "t1".to_string(),
@@ -2332,7 +2416,8 @@ mod tests {
     fn aggregate_cvar_zero_weight_returns_zero_enrichment() {
         // If all impact weights are 0, aggregate CVaR should be 0 (division guard).
         let threats = vec![make_threat("t1", ThreatCategory::CapabilityEscalation, 0)];
-        let mut gate = CatastrophicTailTournamentGate::new(TailGateConfig::default(), threats).unwrap();
+        let mut gate =
+            CatastrophicTailTournamentGate::new(TailGateConfig::default(), threats).unwrap();
         let campaigns = vec![make_campaign("c1", "t1", vec![100_000; 200])];
         let decision = gate.evaluate("rc-zw", &campaigns).unwrap();
         assert_eq!(decision.aggregate_cvar_millionths, 0);
@@ -2342,7 +2427,8 @@ mod tests {
     fn aggregate_cvar_single_threat_equals_cvar_enrichment() {
         // With one threat class at weight=MILLION, aggregate = cvar of that class.
         let threats = vec![make_threat("t1", ThreatCategory::PolicyBypass, MILLION)];
-        let mut gate = CatastrophicTailTournamentGate::new(TailGateConfig::default(), threats).unwrap();
+        let mut gate =
+            CatastrophicTailTournamentGate::new(TailGateConfig::default(), threats).unwrap();
         let campaigns = vec![make_campaign("c1", "t1", vec![100_000; 200])];
         let decision = gate.evaluate("rc-single", &campaigns).unwrap();
         assert_eq!(
@@ -2359,7 +2445,11 @@ mod tests {
             tail_budget_millionths: 10_000,
             ..Default::default()
         };
-        let threats = vec![make_threat("t1", ThreatCategory::CapabilityEscalation, MILLION)];
+        let threats = vec![make_threat(
+            "t1",
+            ThreatCategory::CapabilityEscalation,
+            MILLION,
+        )];
         let mut gate = CatastrophicTailTournamentGate::new(config, threats).unwrap();
         let campaigns = vec![make_campaign("c1", "t1", high_risk_payoffs(200))];
         let decision = gate.evaluate("rc-steps", &campaigns).unwrap();
@@ -2375,7 +2465,11 @@ mod tests {
             tail_budget_millionths: 10_000,
             ..Default::default()
         };
-        let threats = vec![make_threat("t1", ThreatCategory::CapabilityEscalation, MILLION)];
+        let threats = vec![make_threat(
+            "t1",
+            ThreatCategory::CapabilityEscalation,
+            MILLION,
+        )];
         let campaigns = vec![make_campaign("c1", "t1", high_risk_payoffs(200))];
 
         let mut g1 = CatastrophicTailTournamentGate::new(config.clone(), threats.clone()).unwrap();
@@ -2397,7 +2491,11 @@ mod tests {
             e_value_alarm_threshold_millionths: 5_000_000,
             ..Default::default()
         };
-        let threats = vec![make_threat("t1", ThreatCategory::InformationLeakage, MILLION)];
+        let threats = vec![make_threat(
+            "t1",
+            ThreatCategory::InformationLeakage,
+            MILLION,
+        )];
         let mut gate = CatastrophicTailTournamentGate::new(config, threats).unwrap();
         // 199 zeros + one big value → mean ≈ big/200, max=big → e-value = big * M / (big/200) = 200M >> threshold
         let mut payoffs = vec![0_i64; 199];
@@ -2459,10 +2557,14 @@ mod tests {
     fn fail_rationale_with_alarm_mentions_threat_class_enrichment() {
         let config = TailGateConfig {
             e_value_alarm_threshold_millionths: 1_000, // Very low threshold
-            tail_budget_millionths: 100_000_000, // High budget so only alarm triggers fail
+            tail_budget_millionths: 100_000_000,       // High budget so only alarm triggers fail
             ..Default::default()
         };
-        let threats = vec![make_threat("timing-leak", ThreatCategory::TimingChannel, MILLION)];
+        let threats = vec![make_threat(
+            "timing-leak",
+            ThreatCategory::TimingChannel,
+            MILLION,
+        )];
         let mut gate = CatastrophicTailTournamentGate::new(config, threats).unwrap();
         let mut payoffs = vec![1_000; 199];
         payoffs.push(100_000_000);
@@ -2478,13 +2580,20 @@ mod tests {
     #[test]
     fn cvar_monotonic_in_tail_enrichment() {
         // If we increase tail payoffs, CVaR should increase.
-        let threats = vec![make_threat("t1", ThreatCategory::CapabilityEscalation, MILLION)];
+        let threats = vec![make_threat(
+            "t1",
+            ThreatCategory::CapabilityEscalation,
+            MILLION,
+        )];
 
-        let mut g1 = CatastrophicTailTournamentGate::new(TailGateConfig::default(), threats.clone()).unwrap();
+        let mut g1 =
+            CatastrophicTailTournamentGate::new(TailGateConfig::default(), threats.clone())
+                .unwrap();
         let campaigns_low = vec![make_campaign("c1", "t1", vec![10_000; 200])];
         let d_low = g1.evaluate("rc-low", &campaigns_low).unwrap();
 
-        let mut g2 = CatastrophicTailTournamentGate::new(TailGateConfig::default(), threats).unwrap();
+        let mut g2 =
+            CatastrophicTailTournamentGate::new(TailGateConfig::default(), threats).unwrap();
         let campaigns_high = vec![make_campaign("c1", "t1", vec![500_000; 200])];
         let d_high = g2.evaluate("rc-high", &campaigns_high).unwrap();
 

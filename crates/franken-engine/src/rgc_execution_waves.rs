@@ -947,10 +947,22 @@ mod tests {
 
     #[test]
     fn execution_wave_serde_tags_are_stable() {
-        assert_eq!(serde_json::to_string(&ExecutionWave::Wave0).unwrap(), "\"wave_0\"");
-        assert_eq!(serde_json::to_string(&ExecutionWave::Wave1).unwrap(), "\"wave_1\"");
-        assert_eq!(serde_json::to_string(&ExecutionWave::Wave2).unwrap(), "\"wave_2\"");
-        assert_eq!(serde_json::to_string(&ExecutionWave::Wave3).unwrap(), "\"wave_3\"");
+        assert_eq!(
+            serde_json::to_string(&ExecutionWave::Wave0).unwrap(),
+            "\"wave_0\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ExecutionWave::Wave1).unwrap(),
+            "\"wave_1\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ExecutionWave::Wave2).unwrap(),
+            "\"wave_2\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ExecutionWave::Wave3).unwrap(),
+            "\"wave_3\""
+        );
     }
 
     // ── WavePlanEntry ──

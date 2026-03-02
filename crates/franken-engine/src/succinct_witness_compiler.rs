@@ -2200,8 +2200,7 @@ mod tests {
 
     #[test]
     fn witness_pack_covers_all_obligation_categories() {
-        let mut compiler = WitnessCompiler::new(test_schema())
-            .add_chunk("decision", b"d".to_vec());
+        let mut compiler = WitnessCompiler::new(test_schema()).add_chunk("decision", b"d".to_vec());
         for cat in &ObligationCategory::ALL {
             compiler = compiler.obligation_category(*cat);
         }

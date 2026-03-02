@@ -1285,10 +1285,10 @@ mod tests {
     fn schema_prefixed_complex_value() {
         let schema = SchemaHash::from_definition(b"complex-schema");
         let mut map = BTreeMap::new();
-        map.insert("arr".to_string(), CanonicalValue::Array(vec![
-            CanonicalValue::I64(-1),
-            CanonicalValue::Bool(false),
-        ]));
+        map.insert(
+            "arr".to_string(),
+            CanonicalValue::Array(vec![CanonicalValue::I64(-1), CanonicalValue::Bool(false)]),
+        );
         map.insert("data".to_string(), CanonicalValue::Bytes(vec![0xFF; 16]));
         let val = CanonicalValue::Map(map);
         let bytes = serialize_with_schema(&schema, &val);
@@ -1303,7 +1303,10 @@ mod tests {
         let data = vec![0u8; 31];
         assert!(matches!(
             deserialize_with_schema(&schema, &data),
-            Err(SerdeError::BufferTooShort { expected: 32, actual: 31 })
+            Err(SerdeError::BufferTooShort {
+                expected: 32,
+                actual: 31
+            })
         ));
     }
 
@@ -1447,14 +1450,19 @@ mod tests {
     #[test]
     fn display_unknown_schema_contains_hash() {
         let hash = SchemaHash([0xCC; 32]);
-        let err = SerdeError::UnknownSchema { schema_hash: hash.clone() };
+        let err = SerdeError::UnknownSchema {
+            schema_hash: hash.clone(),
+        };
         let msg = err.to_string();
         assert!(msg.contains(&hash.to_string()));
     }
 
     #[test]
     fn display_invalid_tag_contains_hex() {
-        let err = SerdeError::InvalidTag { tag: 0xDE, offset: 42 };
+        let err = SerdeError::InvalidTag {
+            tag: 0xDE,
+            offset: 42,
+        };
         let msg = err.to_string();
         assert!(msg.contains("de")); // hex of 0xDE
         assert!(msg.contains("42"));
@@ -1514,7 +1522,10 @@ mod tests {
         let reg = SchemaRegistry::new();
         assert!(matches!(
             reg.deserialize_checked(&[0u8; 10]),
-            Err(SerdeError::BufferTooShort { expected: 32, actual: 10 })
+            Err(SerdeError::BufferTooShort {
+                expected: 32,
+                actual: 10
+            })
         ));
     }
 
@@ -1532,15 +1543,9 @@ mod tests {
 
     #[test]
     fn stress_nested_maps_3_deep() {
-        let inner = BTreeMap::from([
-            ("leaf".to_string(), CanonicalValue::I64(42)),
-        ]);
-        let mid = BTreeMap::from([
-            ("mid_key".to_string(), CanonicalValue::Map(inner)),
-        ]);
-        let outer = BTreeMap::from([
-            ("top_key".to_string(), CanonicalValue::Map(mid)),
-        ]);
+        let inner = BTreeMap::from([("leaf".to_string(), CanonicalValue::I64(42))]);
+        let mid = BTreeMap::from([("mid_key".to_string(), CanonicalValue::Map(inner))]);
+        let outer = BTreeMap::from([("top_key".to_string(), CanonicalValue::Map(mid))]);
         let val = CanonicalValue::Map(outer);
         let bytes = encode_value(&val);
         let decoded = decode_value(&bytes).unwrap();

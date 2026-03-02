@@ -1221,7 +1221,10 @@ mod tests {
             operation_name: "op_a".to_string(),
         };
         let mut cloned = orig.clone();
-        if let MaskError::OperationNotAllowed { ref mut operation_name } = cloned {
+        if let MaskError::OperationNotAllowed {
+            ref mut operation_name,
+        } = cloned
+        {
             *operation_name = "op_b".to_string();
         }
         assert_ne!(orig, cloned);
@@ -1239,7 +1242,11 @@ mod tests {
         .iter()
         .map(|o| format!("{o:?}"))
         .collect();
-        assert_eq!(debugs.len(), 3, "all MaskOutcome Debug representations must be unique");
+        assert_eq!(
+            debugs.len(),
+            3,
+            "all MaskOutcome Debug representations must be unique"
+        );
     }
 
     #[test]
@@ -1254,7 +1261,11 @@ mod tests {
         .iter()
         .map(|e| format!("{e:?}"))
         .collect();
-        assert_eq!(debugs.len(), 3, "all MaskError Debug representations must be unique");
+        assert_eq!(
+            debugs.len(),
+            3,
+            "all MaskError Debug representations must be unique"
+        );
     }
 
     #[test]
@@ -1316,9 +1327,7 @@ mod tests {
             lab_mode: false,
         };
         let mut ctx = CancelMaskContext::new(policy, "t", "r");
-        let err = ctx
-            .create_mask(&checkpoint_justification())
-            .unwrap_err();
+        let err = ctx.create_mask(&checkpoint_justification()).unwrap_err();
         assert_eq!(
             err,
             MaskError::OperationNotAllowed {
@@ -1540,9 +1549,7 @@ mod tests {
 
     #[test]
     fn mask_bounds_large_max_ops_serde() {
-        let bounds = MaskBounds {
-            max_ops: u64::MAX,
-        };
+        let bounds = MaskBounds { max_ops: u64::MAX };
         let json = serde_json::to_string(&bounds).unwrap();
         let restored: MaskBounds = serde_json::from_str(&json).unwrap();
         assert_eq!(bounds, restored);
@@ -1552,10 +1559,9 @@ mod tests {
     fn mask_policy_many_operations_serde() {
         let mut policy = MaskPolicy::standard();
         for i in 0..50 {
-            policy.operation_bounds.insert(
-                format!("op_{i}"),
-                MaskBounds { max_ops: i + 1 },
-            );
+            policy
+                .operation_bounds
+                .insert(format!("op_{i}"), MaskBounds { max_ops: i + 1 });
         }
         let json = serde_json::to_string(&policy).unwrap();
         let restored: MaskPolicy = serde_json::from_str(&json).unwrap();

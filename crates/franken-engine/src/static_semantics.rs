@@ -585,16 +585,12 @@ fn analyze_statement(
             }
             if let Some(ref handler) = tc.handler {
                 for child in &handler.body.body {
-                    analyze_statement(
-                        state, child, scope_id, bindings, lexical_names, var_names,
-                    );
+                    analyze_statement(state, child, scope_id, bindings, lexical_names, var_names);
                 }
             }
             if let Some(ref finalizer) = tc.finalizer {
                 for child in &finalizer.body {
-                    analyze_statement(
-                        state, child, scope_id, bindings, lexical_names, var_names,
-                    );
+                    analyze_statement(state, child, scope_id, bindings, lexical_names, var_names);
                 }
             }
         }
@@ -606,9 +602,7 @@ fn analyze_statement(
                     check_await_in_expression(state, test, &sw.span);
                 }
                 for child in &case.consequent {
-                    analyze_statement(
-                        state, child, scope_id, bindings, lexical_names, var_names,
-                    );
+                    analyze_statement(state, child, scope_id, bindings, lexical_names, var_names);
                 }
             }
         }

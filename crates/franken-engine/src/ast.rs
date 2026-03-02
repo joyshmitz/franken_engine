@@ -226,10 +226,7 @@ impl Statement {
                 map.insert("payload".to_string(), block.canonical_value());
             }
             Self::If(if_stmt) => {
-                map.insert(
-                    "kind".to_string(),
-                    CanonicalValue::String("if".to_string()),
-                );
+                map.insert("kind".to_string(), CanonicalValue::String("if".to_string()));
                 map.insert("payload".to_string(), if_stmt.canonical_value());
             }
             Self::For(for_stmt) => {
@@ -498,10 +495,7 @@ impl IfStatement {
     pub fn canonical_value(&self) -> CanonicalValue {
         let mut map = BTreeMap::new();
         map.insert("condition".to_string(), self.condition.canonical_value());
-        map.insert(
-            "consequent".to_string(),
-            self.consequent.canonical_value(),
-        );
+        map.insert("consequent".to_string(), self.consequent.canonical_value());
         map.insert(
             "alternate".to_string(),
             self.alternate
@@ -724,12 +718,7 @@ impl SwitchStatement {
         );
         map.insert(
             "cases".to_string(),
-            CanonicalValue::Array(
-                self.cases
-                    .iter()
-                    .map(SwitchCase::canonical_value)
-                    .collect(),
-            ),
+            CanonicalValue::Array(self.cases.iter().map(SwitchCase::canonical_value).collect()),
         );
         map.insert("span".to_string(), self.span.canonical_value());
         CanonicalValue::Map(map)

@@ -942,8 +942,8 @@ pub fn run_preflight_doctor(
                 "extension {} exceeds memory budget (used={} budget={})",
                 gc.extension_id, gc.used_bytes, gc.budget_bytes
             ),
-            remediation:
-                "reduce heap pressure or raise deterministic budget before promotion".to_string(),
+            remediation: "reduce heap pressure or raise deterministic budget before promotion"
+                .to_string(),
             reproducible_command: "runtime_diagnostics diagnostics --input <path> --summary"
                 .to_string(),
             evidence_links: vec!["support_bundle/runtime_diagnostics.json".to_string()],
@@ -979,10 +979,11 @@ pub fn run_preflight_doctor(
             blocker_id: "critical_evidence_records_present".to_string(),
             severity: EvidenceSeverity::Critical,
             rationale: format!("{critical_records} critical evidence records present"),
-            remediation:
-                "inspect critical records and resolve containment/security failures".to_string(),
-            reproducible_command: "runtime_diagnostics export-evidence --input <path> --summary --severity critical"
+            remediation: "inspect critical records and resolve containment/security failures"
                 .to_string(),
+            reproducible_command:
+                "runtime_diagnostics export-evidence --input <path> --summary --severity critical"
+                    .to_string(),
             evidence_links: vec!["support_bundle/evidence_records.jsonl".to_string()],
         });
     }
@@ -997,10 +998,11 @@ pub fn run_preflight_doctor(
             blocker_id: "warning_evidence_records_present".to_string(),
             severity: EvidenceSeverity::Warning,
             rationale: format!("{warning_records} warning evidence records present"),
-            remediation:
-                "review warning records and confirm acceptable rollout posture".to_string(),
-            reproducible_command: "runtime_diagnostics export-evidence --input <path> --summary --severity warning"
+            remediation: "review warning records and confirm acceptable rollout posture"
                 .to_string(),
+            reproducible_command:
+                "runtime_diagnostics export-evidence --input <path> --summary --severity warning"
+                    .to_string(),
             evidence_links: vec!["support_bundle/evidence_records.jsonl".to_string()],
         });
     }
