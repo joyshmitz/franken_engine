@@ -180,6 +180,7 @@ write_manifest() {
     echo "{"
     echo '  "schema_version": "franken-engine.rgc-execution-waves.gate.run-manifest.v1",'
     echo '  "bead_id": "bd-1lsy.1.4",'
+    echo '  "related_bead_id": "bd-1lsy.1.5",'
     echo "  \"deterministic_env_schema_version\": \"${PARSER_FRONTIER_ENV_SCHEMA_VERSION}\","
     echo "  \"component\": \"${component}\","
     echo "  \"mode\": \"${mode}\","
