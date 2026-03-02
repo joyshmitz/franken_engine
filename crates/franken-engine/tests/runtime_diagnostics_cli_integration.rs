@@ -1454,7 +1454,6 @@ fn preflight_doctor_red_for_critical_signals() {
     assert!(
         output
             .support_bundle
-            .index
             .files
             .iter()
             .any(|file| file.path == "support_bundle/index.json"),

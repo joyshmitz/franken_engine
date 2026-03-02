@@ -1170,12 +1170,7 @@ fn validate_preflight_mandatory_fields(
         "support_bundle/index.json",
     ];
     for path in required_paths {
-        if !support_bundle
-            .index
-            .files
-            .iter()
-            .any(|entry| entry.path == path)
-        {
+        if !support_bundle.files.iter().any(|entry| entry.path == path) {
             missing_fields.push(format!("support_bundle.file:{path}"));
         }
     }

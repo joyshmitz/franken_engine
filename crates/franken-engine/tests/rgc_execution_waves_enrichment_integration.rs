@@ -155,7 +155,7 @@ fn debug_distinct_anti_stall_action() {
 #[test]
 fn serde_exact_execution_wave_tags() {
     let waves = ExecutionWave::ALL;
-    let expected = ["\"wave0\"", "\"wave1\"", "\"wave2\"", "\"wave3\""];
+    let expected = ["\"wave_0\"", "\"wave_1\"", "\"wave_2\"", "\"wave_3\""];
     for (w, exp) in waves.iter().zip(expected.iter()) {
         let json = serde_json::to_string(w).unwrap();
         assert_eq!(json, *exp, "ExecutionWave serde tag mismatch for {w:?}");

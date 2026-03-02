@@ -1625,4 +1625,689 @@ mod tests {
             finding.error_code == ArtifactBundleValidationErrorCode::DuplicateLane
         }));
     }
+
+    // --- Enrichment: HarnessLane coverage ---
+
+    #[test]
+    fn harness_lane_as_str_all_variants() {
+        assert_eq!(HarnessLane::Parser.as_str(), "parser");
+        assert_eq!(HarnessLane::Runtime.as_str(), "runtime");
+        assert_eq!(HarnessLane::Security.as_str(), "security");
+        assert_eq!(HarnessLane::Governance.as_str(), "governance");
+        assert_eq!(HarnessLane::E2e.as_str(), "e2e");
+    }
+
+    #[test]
+    fn harness_lane_display_matches_as_str() {
+        for lane in [
+            HarnessLane::Parser,
+            HarnessLane::Runtime,
+            HarnessLane::Security,
+            HarnessLane::Governance,
+            HarnessLane::E2e,
+        ] {
+            assert_eq!(format!("{lane}"), lane.as_str());
+        }
+    }
+
+    #[test]
+    fn harness_lane_serde_round_trip_all_variants() {
+        for lane in [
+            HarnessLane::Parser,
+            HarnessLane::Runtime,
+            HarnessLane::Security,
+            HarnessLane::Governance,
+            HarnessLane::E2e,
+        ] {
+            let json = serde_json::to_string(&lane).expect("serialize");
+            let restored: HarnessLane = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(lane, restored);
+        }
+    }
+
+    // --- Enrichment: BaselineScenarioDomain coverage ---
+
+    #[test]
+    fn baseline_scenario_domain_as_str_all_variants() {
+        assert_eq!(BaselineScenarioDomain::Runtime.as_str(), "runtime");
+        assert_eq!(BaselineScenarioDomain::Module.as_str(), "module");
+        assert_eq!(BaselineScenarioDomain::Security.as_str(), "security");
+    }
+
+    #[test]
+    fn baseline_scenario_domain_display_matches_as_str() {
+        for domain in [
+            BaselineScenarioDomain::Runtime,
+            BaselineScenarioDomain::Module,
+            BaselineScenarioDomain::Security,
+        ] {
+            assert_eq!(format!("{domain}"), domain.as_str());
+        }
+    }
+
+    #[test]
+    fn baseline_scenario_domain_serde_round_trip() {
+        for domain in [
+            BaselineScenarioDomain::Runtime,
+            BaselineScenarioDomain::Module,
+            BaselineScenarioDomain::Security,
+        ] {
+            let json = serde_json::to_string(&domain).expect("serialize");
+            let restored: BaselineScenarioDomain = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(domain, restored);
+        }
+    }
+
+    // --- Enrichment: BaselineScenarioOutcome serde ---
+
+    #[test]
+    fn baseline_scenario_outcome_serde_round_trip() {
+        for outcome in [
+            BaselineScenarioOutcome::HappyPath,
+            BaselineScenarioOutcome::CanonicalFailure,
+        ] {
+            let json = serde_json::to_string(&outcome).expect("serialize");
+            let restored: BaselineScenarioOutcome = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(outcome, restored);
+        }
+    }
+
+    // --- Enrichment: DeterministicTestContext edge cases ---
+
+    #[test]
+    fn context_ids_differ_when_scenario_changes() {
+        let a = DeterministicTestContext::new("scenario-a", "fixture-a", HarnessLane::Runtime, 42);
+        let b = DeterministicTestContext::new("scenario-b", "fixture-a", HarnessLane::Runtime, 42);
+        assert_ne!(a.trace_id, b.trace_id);
+        assert_ne!(a.decision_id, b.decision_id);
+    }
+
+    #[test]
+    fn context_ids_differ_when_fixture_changes() {
+        let a = DeterministicTestContext::new("scenario-a", "fixture-a", HarnessLane::Runtime, 42);
+        let b = DeterministicTestContext::new("scenario-a", "fixture-b", HarnessLane::Runtime, 42);
+        assert_ne!(a.trace_id, b.trace_id);
+        assert_ne!(a.decision_id, b.decision_id);
+    }
+
+    #[test]
+    fn context_ids_differ_when_lane_changes() {
+        let a = DeterministicTestContext::new("scenario-a", "fixture-a", HarnessLane::Parser, 42);
+        let b = DeterministicTestContext::new("scenario-a", "fixture-a", HarnessLane::Security, 42);
+        assert_ne!(a.trace_id, b.trace_id);
+        assert_ne!(a.decision_id, b.decision_id);
+        assert_ne!(a.policy_id, b.policy_id);
+    }
+
+    #[test]
+    fn context_default_run_id_format() {
+        let ctx = DeterministicTestContext::new("rgc-052", "fixture-a", HarnessLane::Runtime, 42);
+        let run_id = ctx.default_run_id();
+        assert!(run_id.starts_with("run-rgc-052-"));
+        assert!(run_id.len() > "run-rgc-052-".len());
+    }
+
+    #[test]
+    fn context_serde_round_trip() {
+        let ctx = DeterministicTestContext::new("rgc-052", "fixture-a", HarnessLane::Security, 7);
+        let json = serde_json::to_string(&ctx).expect("serialize");
+        let restored: DeterministicTestContext = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ctx, restored);
+    }
+
+    // --- Enrichment: HarnessLogEvent serde ---
+
+    #[test]
+    fn harness_log_event_serde_round_trip() {
+        let ctx = DeterministicTestContext::new("scenario-rt", "fix-1", HarnessLane::Runtime, 99);
+        let event = ctx.event(EventInput {
+            sequence: 5,
+            component: "parser",
+            event: "parse_complete",
+            outcome: "pass",
+            error_code: None,
+            timing_us: 123,
+            timestamp_unix_ms: 1_700_000_000_000,
+        });
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: HarnessLogEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn harness_log_event_with_error_code() {
+        let ctx = DeterministicTestContext::new("scenario-err", "fix-1", HarnessLane::Security, 1);
+        let event = ctx.event(EventInput {
+            sequence: 0,
+            component: "guardplane",
+            event: "containment_triggered",
+            outcome: "fail",
+            error_code: Some("FE-SEC-0001"),
+            timing_us: 50,
+            timestamp_unix_ms: 1_700_000_000_100,
+        });
+        assert_eq!(event.error_code.as_deref(), Some("FE-SEC-0001"));
+        let json = serde_json::to_string(&event).expect("serialize");
+        let restored: HarnessLogEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, restored);
+    }
+
+    // --- Enrichment: HarnessRunManifest serde and determinism ---
+
+    #[test]
+    fn manifest_serde_round_trip() {
+        let ctx = DeterministicTestContext::new("rgc-052", "fixture-a", HarnessLane::E2e, 53);
+        let manifest = HarnessRunManifest::from_context(&ctx, "run-001", 3, 2, "replay.sh", 1_700_000_000_000);
+        let json = serde_json::to_string(&manifest).expect("serialize");
+        let restored: HarnessRunManifest = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(manifest, restored);
+    }
+
+    #[test]
+    fn manifest_env_fingerprint_is_deterministic() {
+        let ctx = DeterministicTestContext::new("rgc-052", "fixture-a", HarnessLane::E2e, 53);
+        let m1 = HarnessRunManifest::from_context(&ctx, "run-001", 3, 2, "replay.sh", 1_700_000_000_000);
+        let m2 = HarnessRunManifest::from_context(&ctx, "run-001", 3, 2, "replay.sh", 1_700_000_000_001);
+        assert_eq!(m1.env_fingerprint, m2.env_fingerprint, "fingerprint must not depend on timestamp");
+    }
+
+    #[test]
+    fn manifest_env_fingerprint_changes_with_different_replay_command() {
+        let ctx = DeterministicTestContext::new("rgc-052", "fixture-a", HarnessLane::E2e, 53);
+        let m1 = HarnessRunManifest::from_context(&ctx, "run-001", 3, 2, "replay-a.sh", 1_700_000_000_000);
+        let m2 = HarnessRunManifest::from_context(&ctx, "run-001", 3, 2, "replay-b.sh", 1_700_000_000_000);
+        assert_ne!(m1.env_fingerprint, m2.env_fingerprint);
+    }
+
+    // --- Enrichment: ArtifactValidationErrorCode serde ---
+
+    #[test]
+    fn artifact_validation_error_code_serde_round_trip_all_variants() {
+        for code in [
+            ArtifactValidationErrorCode::MissingArtifact,
+            ArtifactValidationErrorCode::InvalidManifestJson,
+            ArtifactValidationErrorCode::InvalidEventJson,
+            ArtifactValidationErrorCode::MissingRequiredField,
+            ArtifactValidationErrorCode::CorrelationMismatch,
+            ArtifactValidationErrorCode::CountMismatch,
+            ArtifactValidationErrorCode::EmptyCommands,
+        ] {
+            let json = serde_json::to_string(&code).expect("serialize");
+            let restored: ArtifactValidationErrorCode = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(code, restored);
+        }
+    }
+
+    // --- Enrichment: ArtifactBundleValidationErrorCode serde ---
+
+    #[test]
+    fn artifact_bundle_validation_error_code_serde_round_trip_all_variants() {
+        for code in [
+            ArtifactBundleValidationErrorCode::MissingBundleDirectory,
+            ArtifactBundleValidationErrorCode::MissingRunDirectory,
+            ArtifactBundleValidationErrorCode::InvalidManifest,
+            ArtifactBundleValidationErrorCode::InvalidTriad,
+            ArtifactBundleValidationErrorCode::DuplicateLane,
+            ArtifactBundleValidationErrorCode::DuplicateRunId,
+            ArtifactBundleValidationErrorCode::MissingRequiredLane,
+            ArtifactBundleValidationErrorCode::CorrelationMismatch,
+        ] {
+            let json = serde_json::to_string(&code).expect("serialize");
+            let restored: ArtifactBundleValidationErrorCode =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(code, restored);
+        }
+    }
+
+    // --- Enrichment: sanitize_label ---
+
+    #[test]
+    fn sanitize_label_replaces_special_chars_and_lowercases() {
+        assert_eq!(sanitize_label("Foo Bar!Baz"), "foo-bar-baz");
+    }
+
+    #[test]
+    fn sanitize_label_trims_leading_trailing_dashes() {
+        assert_eq!(sanitize_label("--hello--"), "hello");
+    }
+
+    #[test]
+    fn sanitize_label_preserves_underscores_and_hyphens() {
+        assert_eq!(sanitize_label("a_b-c"), "a_b-c");
+    }
+
+    #[test]
+    fn sanitize_label_empty_input() {
+        assert_eq!(sanitize_label(""), "");
+    }
+
+    // --- Enrichment: FixtureLoadError Display ---
+
+    #[test]
+    fn fixture_load_error_display_invalid_relative_path() {
+        let err = FixtureLoadError::InvalidRelativePath {
+            relative_path: "../escape".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("../escape"));
+        assert!(msg.contains("must not escape"));
+    }
+
+    #[test]
+    fn fixture_load_error_display_io_read() {
+        let err = FixtureLoadError::IoRead {
+            path: "/tmp/missing.json".to_string(),
+            message: "not found".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("/tmp/missing.json"));
+        assert!(msg.contains("not found"));
+    }
+
+    #[test]
+    fn fixture_load_error_display_json_parse() {
+        let err = FixtureLoadError::JsonParse {
+            path: "/tmp/bad.json".to_string(),
+            message: "unexpected token".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("/tmp/bad.json"));
+        assert!(msg.contains("unexpected token"));
+    }
+
+    #[test]
+    fn fixture_load_error_implements_std_error() {
+        let err = FixtureLoadError::InvalidRelativePath {
+            relative_path: "..".to_string(),
+        };
+        let _: &dyn std::error::Error = &err;
+    }
+
+    // --- Enrichment: ArtifactWriteError Display ---
+
+    #[test]
+    fn artifact_write_error_display_io() {
+        let err = ArtifactWriteError::Io {
+            path: "/tmp/out.json".to_string(),
+            message: "permission denied".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("/tmp/out.json"));
+        assert!(msg.contains("permission denied"));
+    }
+
+    #[test]
+    fn artifact_write_error_display_json() {
+        let err = ArtifactWriteError::Json {
+            path: "/tmp/data.json".to_string(),
+            message: "recursive structure".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("/tmp/data.json"));
+        assert!(msg.contains("recursive structure"));
+    }
+
+    #[test]
+    fn artifact_write_error_implements_std_error() {
+        let err = ArtifactWriteError::Io {
+            path: "test".to_string(),
+            message: "fail".to_string(),
+        };
+        let _: &dyn std::error::Error = &err;
+    }
+
+    // --- Enrichment: load_json_fixture security/edge cases ---
+
+    #[test]
+    fn fixture_loader_rejects_empty_path() {
+        let root = PathBuf::from("/tmp");
+        let error = load_json_fixture::<DemoFixture>(&root, "")
+            .expect_err("empty path must fail");
+        assert!(matches!(error, FixtureLoadError::InvalidRelativePath { .. }));
+    }
+
+    #[test]
+    fn fixture_loader_rejects_absolute_path() {
+        let root = PathBuf::from("/tmp");
+        let error = load_json_fixture::<DemoFixture>(&root, "/etc/passwd")
+            .expect_err("absolute path must fail");
+        assert!(matches!(error, FixtureLoadError::InvalidRelativePath { .. }));
+    }
+
+    #[test]
+    fn fixture_loader_missing_file_returns_io_error() {
+        let root = temp_dir("fixture_loader_missing");
+        fs::create_dir_all(&root).expect("create temp dir");
+        let error = load_json_fixture::<DemoFixture>(&root, "nonexistent.json")
+            .expect_err("missing file must fail");
+        assert!(matches!(error, FixtureLoadError::IoRead { .. }));
+    }
+
+    #[test]
+    fn fixture_loader_invalid_json_returns_parse_error() {
+        let root = temp_dir("fixture_loader_bad_json");
+        fs::create_dir_all(&root).expect("create temp dir");
+        fs::write(root.join("bad.json"), "not-json").expect("write bad fixture");
+        let error = load_json_fixture::<DemoFixture>(&root, "bad.json")
+            .expect_err("bad JSON must fail");
+        assert!(matches!(error, FixtureLoadError::JsonParse { .. }));
+    }
+
+    // --- Enrichment: validate_artifact_triad edge cases ---
+
+    #[test]
+    fn validate_triad_missing_all_files() {
+        let root = temp_dir("validate_triad_empty");
+        fs::create_dir_all(&root).expect("create temp dir");
+        let report = validate_artifact_triad(&root);
+        assert!(!report.valid);
+        assert!(report.findings.iter().any(|f| {
+            f.error_code == ArtifactValidationErrorCode::MissingArtifact
+                && f.message.contains("run_manifest.json")
+        }));
+        assert!(report.findings.iter().any(|f| {
+            f.error_code == ArtifactValidationErrorCode::MissingArtifact
+                && f.message.contains("events.jsonl")
+        }));
+        assert!(report.findings.iter().any(|f| {
+            f.error_code == ArtifactValidationErrorCode::MissingArtifact
+                && f.message.contains("commands.txt")
+        }));
+    }
+
+    #[test]
+    fn validate_triad_event_count_mismatch() {
+        let root = temp_dir("validate_triad_count_mismatch");
+        let ctx = DeterministicTestContext::new("count-test", "fix-1", HarnessLane::Runtime, 1);
+        let run_id = ctx.default_run_id();
+        let events = vec![ctx.event(EventInput {
+            sequence: 0,
+            component: "test",
+            event: "step",
+            outcome: "pass",
+            error_code: None,
+            timing_us: 10,
+            timestamp_unix_ms: 1_700_100_000_000,
+        })];
+        let commands = vec!["cargo test".to_string()];
+        // Manifest claims 5 events but only 1 written
+        let manifest =
+            HarnessRunManifest::from_context(&ctx, run_id, 5, 1, "replay.sh", 1_700_100_000_100);
+        let triad = write_artifact_triad(&root, &manifest, &events, &commands)
+            .expect("write should succeed");
+        let report = validate_artifact_triad(&triad.run_dir);
+        assert!(!report.valid);
+        assert!(report.findings.iter().any(|f| {
+            f.error_code == ArtifactValidationErrorCode::CountMismatch
+                && f.message.contains("event count")
+        }));
+    }
+
+    #[test]
+    fn validate_triad_command_count_mismatch() {
+        let root = temp_dir("validate_triad_cmd_count_mismatch");
+        let ctx = DeterministicTestContext::new("cmd-count-test", "fix-1", HarnessLane::Runtime, 1);
+        let run_id = ctx.default_run_id();
+        let events = vec![ctx.event(EventInput {
+            sequence: 0,
+            component: "test",
+            event: "step",
+            outcome: "pass",
+            error_code: None,
+            timing_us: 10,
+            timestamp_unix_ms: 1_700_100_000_000,
+        })];
+        let commands = vec!["cargo test".to_string()];
+        // Manifest claims 3 commands but only 1 written
+        let manifest =
+            HarnessRunManifest::from_context(&ctx, run_id, 1, 3, "replay.sh", 1_700_100_000_100);
+        let triad = write_artifact_triad(&root, &manifest, &events, &commands)
+            .expect("write should succeed");
+        let report = validate_artifact_triad(&triad.run_dir);
+        assert!(!report.valid);
+        assert!(report.findings.iter().any(|f| {
+            f.error_code == ArtifactValidationErrorCode::CountMismatch
+                && f.message.contains("command count")
+        }));
+    }
+
+    // --- Enrichment: validate_artifact_bundle edge cases ---
+
+    #[test]
+    fn validate_bundle_nonexistent_directory() {
+        let root = PathBuf::from("/tmp/franken_engine_nonexistent_bundle_dir_never_exists");
+        let report = validate_artifact_bundle(&root, &[HarnessLane::Runtime]);
+        assert!(!report.valid);
+        assert!(report.findings.iter().any(|f| {
+            f.error_code == ArtifactBundleValidationErrorCode::MissingBundleDirectory
+        }));
+    }
+
+    #[test]
+    fn validate_bundle_empty_directory() {
+        let root = temp_dir("validate_bundle_empty_dir");
+        fs::create_dir_all(&root).expect("create bundle dir");
+        let report = validate_artifact_bundle(&root, &[HarnessLane::Runtime]);
+        assert!(!report.valid);
+        assert!(report.findings.iter().any(|f| {
+            f.error_code == ArtifactBundleValidationErrorCode::MissingRunDirectory
+        }));
+    }
+
+    #[test]
+    fn validate_bundle_cross_lane_seed_mismatch() {
+        let root = temp_dir("validate_bundle_seed_mismatch");
+        let bundle_dir = root.join("bundle");
+        fs::create_dir_all(&bundle_dir).expect("create bundle dir");
+
+        // Runtime lane with seed 100
+        write_lane_triad(
+            &bundle_dir,
+            "rgc-seed-test",
+            "fixture-shared",
+            HarnessLane::Runtime,
+            100,
+        );
+        // Security lane with seed 200 (mismatch)
+        write_lane_triad(
+            &bundle_dir,
+            "rgc-seed-test",
+            "fixture-shared",
+            HarnessLane::Security,
+            200,
+        );
+
+        let report = validate_artifact_bundle(
+            &bundle_dir,
+            &[HarnessLane::Runtime, HarnessLane::Security],
+        );
+        assert!(!report.valid);
+        assert!(report.findings.iter().any(|f| {
+            f.error_code == ArtifactBundleValidationErrorCode::CorrelationMismatch
+                && f.message.contains("seed mismatch")
+        }));
+    }
+
+    #[test]
+    fn validate_bundle_cross_lane_scenario_mismatch() {
+        let root = temp_dir("validate_bundle_scenario_mismatch");
+        let bundle_dir = root.join("bundle");
+        fs::create_dir_all(&bundle_dir).expect("create bundle dir");
+
+        write_lane_triad(
+            &bundle_dir,
+            "scenario-alpha",
+            "fixture-shared",
+            HarnessLane::Runtime,
+            42,
+        );
+        write_lane_triad(
+            &bundle_dir,
+            "scenario-beta",
+            "fixture-shared",
+            HarnessLane::Security,
+            42,
+        );
+
+        let report = validate_artifact_bundle(
+            &bundle_dir,
+            &[HarnessLane::Runtime, HarnessLane::Security],
+        );
+        assert!(!report.valid);
+        assert!(report.findings.iter().any(|f| {
+            f.error_code == ArtifactBundleValidationErrorCode::CorrelationMismatch
+                && f.message.contains("scenario mismatch")
+        }));
+    }
+
+    // --- Enrichment: select_baseline_e2e_scenarios edge cases ---
+
+    #[test]
+    fn select_scenarios_single_domain_with_failures() {
+        let selected = select_baseline_e2e_scenarios(
+            &[BaselineScenarioDomain::Security],
+            true,
+        );
+        assert_eq!(selected.len(), 2, "security domain has 1 happy + 1 failure");
+        assert!(selected.iter().all(|s| s.domain == BaselineScenarioDomain::Security));
+    }
+
+    #[test]
+    fn select_scenarios_single_domain_happy_only() {
+        let selected = select_baseline_e2e_scenarios(
+            &[BaselineScenarioDomain::Module],
+            false,
+        );
+        assert_eq!(selected.len(), 1, "module domain happy-only should return 1");
+        assert_eq!(selected[0].outcome, BaselineScenarioOutcome::HappyPath);
+        assert_eq!(selected[0].domain, BaselineScenarioDomain::Module);
+    }
+
+    #[test]
+    fn select_scenarios_all_domains_with_failures() {
+        let selected = select_baseline_e2e_scenarios(&[], true);
+        assert_eq!(selected.len(), 6, "3 domains * 2 outcomes = 6");
+    }
+
+    // --- Enrichment: BaselineE2eScenario serde ---
+
+    #[test]
+    fn baseline_e2e_scenario_serde_round_trip() {
+        let scenario = BaselineE2eScenario::new(
+            "test-scenario",
+            "test-fixture",
+            BaselineScenarioDomain::Runtime,
+            BaselineScenarioOutcome::HappyPath,
+            "runtime_lane",
+            "execute",
+            None,
+        );
+        let json = serde_json::to_string(&scenario).expect("serialize");
+        let restored: BaselineE2eScenario = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(scenario, restored);
+    }
+
+    #[test]
+    fn baseline_e2e_scenario_with_error_code_serde_round_trip() {
+        let scenario = BaselineE2eScenario::new(
+            "test-fail",
+            "test-fixture",
+            BaselineScenarioDomain::Security,
+            BaselineScenarioOutcome::CanonicalFailure,
+            "guardplane",
+            "containment",
+            Some("FE-SEC-0001"),
+        );
+        let json = serde_json::to_string(&scenario).expect("serialize");
+        let restored: BaselineE2eScenario = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(scenario, restored);
+        assert_eq!(restored.error_code.as_deref(), Some("FE-SEC-0001"));
+    }
+
+    // --- Enrichment: ArtifactValidationReport/ArtifactBundleValidationReport serde ---
+
+    #[test]
+    fn artifact_validation_report_serde_round_trip() {
+        let report = ArtifactValidationReport {
+            schema_version: RGC_ARTIFACT_VALIDATOR_SCHEMA_VERSION.to_string(),
+            component: "test".to_string(),
+            event: "validate".to_string(),
+            outcome: "pass".to_string(),
+            valid: true,
+            run_id: Some("run-001".to_string()),
+            trace_id: Some("trace-001".to_string()),
+            decision_id: Some("decision-001".to_string()),
+            policy_id: Some("policy-001".to_string()),
+            findings: Vec::new(),
+        };
+        let json = serde_json::to_string(&report).expect("serialize");
+        let restored: ArtifactValidationReport = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(report, restored);
+    }
+
+    #[test]
+    fn artifact_bundle_validation_report_serde_round_trip() {
+        let report = ArtifactBundleValidationReport {
+            schema_version: RGC_ARTIFACT_BUNDLE_VALIDATOR_SCHEMA_VERSION.to_string(),
+            component: "test".to_string(),
+            event: "validate_bundle".to_string(),
+            outcome: "pass".to_string(),
+            valid: true,
+            bundle_dir: "/tmp/test".to_string(),
+            correlation_signature: Some(ArtifactBundleCorrelationSignature {
+                scenario_id: "test-scenario".to_string(),
+                seed: 42,
+                lanes: vec![HarnessLane::Runtime, HarnessLane::Security],
+            }),
+            run_dirs: vec!["/tmp/test/run-1".to_string()],
+            lane_reports: Vec::new(),
+            findings: Vec::new(),
+        };
+        let json = serde_json::to_string(&report).expect("serialize");
+        let restored: ArtifactBundleValidationReport =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(report, restored);
+    }
+
+    // --- Enrichment: write_artifact_triad with empty events ---
+
+    #[test]
+    fn write_and_validate_triad_with_zero_events() {
+        let root = temp_dir("write_triad_zero_events");
+        let ctx = DeterministicTestContext::new("zero-events", "fix-1", HarnessLane::Parser, 1);
+        let run_id = ctx.default_run_id();
+        let events: Vec<HarnessLogEvent> = Vec::new();
+        let commands = vec!["cargo test".to_string()];
+        let manifest =
+            HarnessRunManifest::from_context(&ctx, run_id, 0, 1, "replay.sh", 1_700_100_000_100);
+        let triad = write_artifact_triad(&root, &manifest, &events, &commands)
+            .expect("write should succeed");
+        let report = validate_artifact_triad(&triad.run_dir);
+        assert!(report.valid, "zero events is valid when manifest says 0: {:?}", report.findings);
+    }
+
+    #[test]
+    fn write_artifact_triad_creates_expected_files() {
+        let root = temp_dir("write_triad_files_check");
+        let ctx = DeterministicTestContext::new("file-check", "fix-1", HarnessLane::Governance, 5);
+        let run_id = ctx.default_run_id();
+        let events = vec![ctx.event(EventInput {
+            sequence: 0,
+            component: "gov",
+            event: "audit",
+            outcome: "pass",
+            error_code: None,
+            timing_us: 15,
+            timestamp_unix_ms: 1_700_200_000_000,
+        })];
+        let commands = vec!["cargo clippy".to_string()];
+        let manifest =
+            HarnessRunManifest::from_context(&ctx, run_id, 1, 1, "replay.sh", 1_700_200_000_100);
+        let triad = write_artifact_triad(&root, &manifest, &events, &commands)
+            .expect("write should succeed");
+        assert!(triad.manifest_path.exists());
+        assert!(triad.events_path.exists());
+        assert!(triad.commands_path.exists());
+        assert!(triad.run_dir.is_dir());
+    }
 }

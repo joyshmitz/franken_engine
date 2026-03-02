@@ -20,11 +20,14 @@ pub const RGC_COORDINATION_COMPONENT: &str = "rgc_execution_waves";
 
 /// Deterministic execution waves used by the RGC program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum ExecutionWave {
+    #[serde(rename = "wave_0")]
     Wave0,
+    #[serde(rename = "wave_1")]
     Wave1,
+    #[serde(rename = "wave_2")]
     Wave2,
+    #[serde(rename = "wave_3")]
     Wave3,
 }
 
@@ -940,6 +943,14 @@ mod tests {
             let back: ExecutionWave = serde_json::from_str(&json).unwrap();
             assert_eq!(wave, back);
         }
+    }
+
+    #[test]
+    fn execution_wave_serde_tags_are_stable() {
+        assert_eq!(serde_json::to_string(&ExecutionWave::Wave0).unwrap(), "\"wave_0\"");
+        assert_eq!(serde_json::to_string(&ExecutionWave::Wave1).unwrap(), "\"wave_1\"");
+        assert_eq!(serde_json::to_string(&ExecutionWave::Wave2).unwrap(), "\"wave_2\"");
+        assert_eq!(serde_json::to_string(&ExecutionWave::Wave3).unwrap(), "\"wave_3\"");
     }
 
     // ── WavePlanEntry ──
