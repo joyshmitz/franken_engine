@@ -7390,3 +7390,2209 @@ mod delegate_cell_tests {
         assert_eq!(decision.source_event, "delegate_hostcall");
     }
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Enrichment test module: serde round-trips, display/as_str, lattice,
+// signing, error-code stability, boundary conditions.
+// ────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod enrichment_tests {
+    use super::*;
+
+    // ── Capability ──────────────────────────────────────────────────────
+
+    #[test]
+    fn capability_serde_round_trip_all_variants() {
+        let variants = [
+            Capability::FsRead,
+            Capability::FsWrite,
+            Capability::NetClient,
+            Capability::HostCall,
+            Capability::ProcessSpawn,
+            Capability::Declassify,
+        ];
+        for cap in &variants {
+            let json = serde_json::to_string(cap).expect("serialize");
+            let back: Capability = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*cap, back);
+        }
+    }
+
+    #[test]
+    fn capability_as_str_display_agree() {
+        let variants = [
+            Capability::FsRead,
+            Capability::FsWrite,
+            Capability::NetClient,
+            Capability::HostCall,
+            Capability::ProcessSpawn,
+            Capability::Declassify,
+        ];
+        for cap in &variants {
+            assert_eq!(cap.as_str(), cap.to_string());
+        }
+    }
+
+    #[test]
+    fn capability_serde_matches_as_str() {
+        let variants = [
+            Capability::FsRead,
+            Capability::FsWrite,
+            Capability::NetClient,
+            Capability::HostCall,
+            Capability::ProcessSpawn,
+            Capability::Declassify,
+        ];
+        for cap in &variants {
+            let json = serde_json::to_string(cap).expect("serialize");
+            let expected = format!("\"{}\"", cap.as_str());
+            assert_eq!(json, expected);
+        }
+    }
+
+    #[test]
+    fn capability_implied_capabilities_coverage() {
+        assert_eq!(
+            Capability::FsWrite.implied_capabilities(),
+            &[Capability::FsRead]
+        );
+        assert!(Capability::FsRead.implied_capabilities().is_empty());
+        assert!(Capability::NetClient.implied_capabilities().is_empty());
+        assert!(Capability::HostCall.implied_capabilities().is_empty());
+        assert!(Capability::ProcessSpawn.implied_capabilities().is_empty());
+        assert!(Capability::Declassify.implied_capabilities().is_empty());
+    }
+
+    // ── ManifestTrustLevel ──────────────────────────────────────────────
+
+    #[test]
+    fn manifest_trust_level_serde_round_trip() {
+        for level in [
+            ManifestTrustLevel::Development,
+            ManifestTrustLevel::SignedSupplyChain,
+        ] {
+            let json = serde_json::to_string(&level).expect("serialize");
+            let back: ManifestTrustLevel = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(level, back);
+        }
+    }
+
+    // ── ExtensionState ──────────────────────────────────────────────────
+
+    #[test]
+    fn extension_state_serde_round_trip_all_variants() {
+        let variants = [
+            ExtensionState::Unloaded,
+            ExtensionState::Validating,
+            ExtensionState::Loading,
+            ExtensionState::Starting,
+            ExtensionState::Running,
+            ExtensionState::Suspending,
+            ExtensionState::Suspended,
+            ExtensionState::Resuming,
+            ExtensionState::Terminating,
+            ExtensionState::Terminated,
+            ExtensionState::Quarantined,
+        ];
+        for state in &variants {
+            let json = serde_json::to_string(state).expect("serialize");
+            let back: ExtensionState = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*state, back);
+        }
+    }
+
+    #[test]
+    fn extension_state_as_str_display_agree() {
+        let variants = [
+            ExtensionState::Unloaded,
+            ExtensionState::Validating,
+            ExtensionState::Loading,
+            ExtensionState::Starting,
+            ExtensionState::Running,
+            ExtensionState::Suspending,
+            ExtensionState::Suspended,
+            ExtensionState::Resuming,
+            ExtensionState::Terminating,
+            ExtensionState::Terminated,
+            ExtensionState::Quarantined,
+        ];
+        for state in &variants {
+            assert_eq!(state.as_str(), state.to_string());
+        }
+    }
+
+    #[test]
+    fn extension_state_serde_matches_as_str() {
+        let variants = [
+            ExtensionState::Unloaded,
+            ExtensionState::Validating,
+            ExtensionState::Loading,
+            ExtensionState::Starting,
+            ExtensionState::Running,
+            ExtensionState::Suspending,
+            ExtensionState::Suspended,
+            ExtensionState::Resuming,
+            ExtensionState::Terminating,
+            ExtensionState::Terminated,
+            ExtensionState::Quarantined,
+        ];
+        for state in &variants {
+            let json = serde_json::to_string(state).expect("serialize");
+            let expected = format!("\"{}\"", state.as_str());
+            assert_eq!(json, expected);
+        }
+    }
+
+    // ── LifecycleTransition ─────────────────────────────────────────────
+
+    #[test]
+    fn lifecycle_transition_serde_round_trip_all_variants() {
+        let variants = [
+            LifecycleTransition::Validate,
+            LifecycleTransition::Load,
+            LifecycleTransition::Start,
+            LifecycleTransition::Activate,
+            LifecycleTransition::Suspend,
+            LifecycleTransition::Freeze,
+            LifecycleTransition::Resume,
+            LifecycleTransition::Reactivate,
+            LifecycleTransition::Terminate,
+            LifecycleTransition::Finalize,
+            LifecycleTransition::Quarantine,
+        ];
+        for t in &variants {
+            let json = serde_json::to_string(t).expect("serialize");
+            let back: LifecycleTransition = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*t, back);
+        }
+    }
+
+    #[test]
+    fn lifecycle_transition_as_str_display_agree() {
+        let variants = [
+            LifecycleTransition::Validate,
+            LifecycleTransition::Load,
+            LifecycleTransition::Start,
+            LifecycleTransition::Activate,
+            LifecycleTransition::Suspend,
+            LifecycleTransition::Freeze,
+            LifecycleTransition::Resume,
+            LifecycleTransition::Reactivate,
+            LifecycleTransition::Terminate,
+            LifecycleTransition::Finalize,
+            LifecycleTransition::Quarantine,
+        ];
+        for t in &variants {
+            assert_eq!(t.as_str(), t.to_string());
+        }
+    }
+
+    // ── BudgetExhaustionPolicy ──────────────────────────────────────────
+
+    #[test]
+    fn budget_exhaustion_policy_serde_round_trip() {
+        for p in [
+            BudgetExhaustionPolicy::Suspend,
+            BudgetExhaustionPolicy::Terminate,
+        ] {
+            let json = serde_json::to_string(&p).expect("serialize");
+            let back: BudgetExhaustionPolicy = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(p, back);
+        }
+    }
+
+    #[test]
+    fn budget_exhaustion_policy_as_str_display_agree() {
+        for p in [
+            BudgetExhaustionPolicy::Suspend,
+            BudgetExhaustionPolicy::Terminate,
+        ] {
+            assert_eq!(p.as_str(), p.to_string());
+        }
+    }
+
+    // ── ResourceBudget ──────────────────────────────────────────────────
+
+    #[test]
+    fn resource_budget_serde_round_trip() {
+        let budget = ResourceBudget::new(1_000_000, 512 * 1024, 100);
+        let json = serde_json::to_string(&budget).expect("serialize");
+        let back: ResourceBudget = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(budget, back);
+    }
+
+    #[test]
+    fn resource_budget_exhausted_dimension_cpu() {
+        let budget = ResourceBudget::new(0, 1024, 10);
+        assert_eq!(
+            budget.exhausted_dimension(),
+            Some(("cpu_time_ns_remaining", 0))
+        );
+    }
+
+    #[test]
+    fn resource_budget_exhausted_dimension_memory() {
+        let budget = ResourceBudget::new(1, 0, 10);
+        assert_eq!(
+            budget.exhausted_dimension(),
+            Some(("memory_bytes_remaining", 0))
+        );
+    }
+
+    #[test]
+    fn resource_budget_exhausted_dimension_hostcall() {
+        let budget = ResourceBudget::new(1, 1, 0);
+        assert_eq!(
+            budget.exhausted_dimension(),
+            Some(("hostcall_count_remaining", 0))
+        );
+    }
+
+    #[test]
+    fn resource_budget_exhausted_dimension_none() {
+        let budget = ResourceBudget::new(1, 1, 1);
+        assert_eq!(budget.exhausted_dimension(), None);
+    }
+
+    #[test]
+    fn resource_budget_consume_saturates_at_zero() {
+        let mut budget = ResourceBudget::new(10, 10, 2);
+        budget.consume_cpu(100);
+        assert_eq!(budget.cpu_time_ns_remaining, 0);
+        budget.consume_memory(100);
+        assert_eq!(budget.memory_bytes_remaining, 0);
+        budget.consume_hostcall();
+        budget.consume_hostcall();
+        budget.consume_hostcall();
+        assert_eq!(budget.hostcall_count_remaining, 0);
+    }
+
+    // ── CancellationConfig ──────────────────────────────────────────────
+
+    #[test]
+    fn cancellation_config_default_matches_constant() {
+        let config = CancellationConfig::default();
+        assert_eq!(config.grace_period_ns, DEFAULT_TERMINATION_GRACE_PERIOD_NS);
+    }
+
+    #[test]
+    fn cancellation_config_clamped_zero_becomes_one() {
+        let config = CancellationConfig { grace_period_ns: 0 };
+        let clamped = config.clamped();
+        assert_eq!(clamped.grace_period_ns, 1);
+    }
+
+    #[test]
+    fn cancellation_config_clamped_above_max() {
+        let config = CancellationConfig {
+            grace_period_ns: MAX_TERMINATION_GRACE_PERIOD_NS + 1,
+        };
+        let clamped = config.clamped();
+        assert_eq!(clamped.grace_period_ns, MAX_TERMINATION_GRACE_PERIOD_NS);
+    }
+
+    #[test]
+    fn cancellation_config_clamped_within_range_unchanged() {
+        let config = CancellationConfig {
+            grace_period_ns: 1_000,
+        };
+        let clamped = config.clamped();
+        assert_eq!(clamped.grace_period_ns, 1_000);
+    }
+
+    #[test]
+    fn cancellation_config_serde_round_trip() {
+        let config = CancellationConfig {
+            grace_period_ns: 7_500_000,
+        };
+        let json = serde_json::to_string(&config).expect("serialize");
+        let back: CancellationConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(config, back);
+    }
+
+    // ── SecrecyLevel / IntegrityLevel ───────────────────────────────────
+
+    #[test]
+    fn secrecy_level_serde_round_trip() {
+        let variants = [
+            SecrecyLevel::Public,
+            SecrecyLevel::Internal,
+            SecrecyLevel::Confidential,
+            SecrecyLevel::Secret,
+            SecrecyLevel::TopSecret,
+        ];
+        for level in &variants {
+            let json = serde_json::to_string(level).expect("serialize");
+            let back: SecrecyLevel = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*level, back);
+        }
+    }
+
+    #[test]
+    fn secrecy_level_rank_is_monotonically_increasing() {
+        let ordered = [
+            SecrecyLevel::Public,
+            SecrecyLevel::Internal,
+            SecrecyLevel::Confidential,
+            SecrecyLevel::Secret,
+            SecrecyLevel::TopSecret,
+        ];
+        for window in ordered.windows(2) {
+            assert!(window[0].rank() < window[1].rank());
+        }
+    }
+
+    #[test]
+    fn integrity_level_serde_round_trip() {
+        let variants = [
+            IntegrityLevel::Untrusted,
+            IntegrityLevel::Validated,
+            IntegrityLevel::Verified,
+            IntegrityLevel::Trusted,
+        ];
+        for level in &variants {
+            let json = serde_json::to_string(level).expect("serialize");
+            let back: IntegrityLevel = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*level, back);
+        }
+    }
+
+    #[test]
+    fn integrity_level_rank_is_monotonically_increasing() {
+        let ordered = [
+            IntegrityLevel::Untrusted,
+            IntegrityLevel::Validated,
+            IntegrityLevel::Verified,
+            IntegrityLevel::Trusted,
+        ];
+        for window in ordered.windows(2) {
+            assert!(window[0].rank() < window[1].rank());
+        }
+    }
+
+    // ── FlowLabel ───────────────────────────────────────────────────────
+
+    #[test]
+    fn flow_label_serde_round_trip() {
+        let label = FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Verified);
+        let json = serde_json::to_string(&label).expect("serialize");
+        let back: FlowLabel = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(label, back);
+    }
+
+    #[test]
+    fn flow_label_default_is_maximally_restrictive() {
+        let label = FlowLabel::default();
+        assert_eq!(label.secrecy(), SecrecyLevel::TopSecret);
+        assert_eq!(label.integrity(), IntegrityLevel::Untrusted);
+    }
+
+    #[test]
+    fn flow_label_join_takes_max_secrecy_min_integrity() {
+        let a = FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Verified);
+        let b = FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Trusted);
+        let joined = a.join(b);
+        assert_eq!(joined.secrecy(), SecrecyLevel::Secret);
+        assert_eq!(joined.integrity(), IntegrityLevel::Verified);
+    }
+
+    #[test]
+    fn flow_label_join_is_commutative() {
+        let a = FlowLabel::new(SecrecyLevel::Public, IntegrityLevel::Trusted);
+        let b = FlowLabel::new(SecrecyLevel::Confidential, IntegrityLevel::Untrusted);
+        assert_eq!(a.join(b), b.join(a));
+    }
+
+    #[test]
+    fn flow_label_join_identity_same_label() {
+        let a = FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Validated);
+        assert_eq!(a.join(a), a);
+    }
+
+    #[test]
+    fn flow_label_join_default_is_absorbing() {
+        let specific = FlowLabel::new(SecrecyLevel::Public, IntegrityLevel::Trusted);
+        let joined = specific.join(FlowLabel::default());
+        assert_eq!(joined.secrecy(), SecrecyLevel::TopSecret);
+        assert_eq!(joined.integrity(), IntegrityLevel::Untrusted);
+    }
+
+    // ── FlowLabelLattice ────────────────────────────────────────────────
+
+    #[test]
+    fn can_flow_same_label_is_allowed() {
+        let label = FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Validated);
+        assert!(FlowLabelLattice::can_flow(&label, &label));
+    }
+
+    #[test]
+    fn can_flow_upward_secrecy_is_allowed() {
+        let from = FlowLabel::new(SecrecyLevel::Public, IntegrityLevel::Validated);
+        let to = FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated);
+        assert!(FlowLabelLattice::can_flow(&from, &to));
+    }
+
+    #[test]
+    fn can_flow_downward_secrecy_is_blocked() {
+        let from = FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated);
+        let to = FlowLabel::new(SecrecyLevel::Public, IntegrityLevel::Validated);
+        assert!(!FlowLabelLattice::can_flow(&from, &to));
+    }
+
+    #[test]
+    fn can_flow_downward_integrity_is_allowed() {
+        let from = FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Trusted);
+        let to = FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Untrusted);
+        assert!(FlowLabelLattice::can_flow(&from, &to));
+    }
+
+    #[test]
+    fn can_flow_upward_integrity_is_blocked() {
+        let from = FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Untrusted);
+        let to = FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Trusted);
+        assert!(!FlowLabelLattice::can_flow(&from, &to));
+    }
+
+    #[test]
+    fn can_flow_to_sink_respects_max_secrecy() {
+        let public_data = FlowLabel::new(SecrecyLevel::Public, IntegrityLevel::Validated);
+        let secret_data = FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated);
+        let sink = SinkClearance::new(SecrecyLevel::Internal, IntegrityLevel::Validated);
+        assert!(FlowLabelLattice::can_flow_to_sink(&public_data, &sink));
+        assert!(!FlowLabelLattice::can_flow_to_sink(&secret_data, &sink));
+    }
+
+    #[test]
+    fn can_flow_to_sink_respects_min_integrity() {
+        let trusted_data = FlowLabel::new(SecrecyLevel::Public, IntegrityLevel::Trusted);
+        let untrusted_data = FlowLabel::new(SecrecyLevel::Public, IntegrityLevel::Untrusted);
+        let sink = SinkClearance::new(SecrecyLevel::Secret, IntegrityLevel::Validated);
+        assert!(FlowLabelLattice::can_flow_to_sink(&trusted_data, &sink));
+        assert!(!FlowLabelLattice::can_flow_to_sink(&untrusted_data, &sink));
+    }
+
+    // ── Labeled<T> ──────────────────────────────────────────────────────
+
+    #[test]
+    fn labeled_new_preserves_value_and_label() {
+        let label = FlowLabel::new(SecrecyLevel::Confidential, IntegrityLevel::Verified);
+        let labeled = Labeled::new(42u64, label);
+        assert_eq!(*labeled.value(), 42);
+        assert_eq!(labeled.label(), label);
+    }
+
+    #[test]
+    fn labeled_system_generated_uses_public_trusted() {
+        let labeled = Labeled::system_generated("hello".to_string());
+        assert_eq!(labeled.label().secrecy(), SecrecyLevel::Public);
+        assert_eq!(labeled.label().integrity(), IntegrityLevel::Trusted);
+    }
+
+    #[test]
+    fn labeled_from_uses_default_label() {
+        let labeled: Labeled<i32> = 99.into();
+        assert_eq!(*labeled.value(), 99);
+        assert_eq!(labeled.label(), FlowLabel::default());
+    }
+
+    #[test]
+    fn labeled_into_inner_extracts_value() {
+        let labeled = Labeled::system_generated(vec![1, 2, 3]);
+        let inner = labeled.into_inner();
+        assert_eq!(inner, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn labeled_map_transforms_value_preserves_label() {
+        let label = FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Trusted);
+        let labeled = Labeled::new(10u32, label);
+        let mapped = labeled.map(|v| v * 2);
+        assert_eq!(*mapped.value(), 20);
+        assert_eq!(mapped.label(), label);
+    }
+
+    #[test]
+    fn labeled_serde_round_trip() {
+        let labeled = Labeled::new(
+            "test".to_string(),
+            FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Validated),
+        );
+        let json = serde_json::to_string(&labeled).expect("serialize");
+        let back: Labeled<String> = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(labeled, back);
+    }
+
+    // ── HostcallType ────────────────────────────────────────────────────
+
+    #[test]
+    fn hostcall_type_serde_round_trip_all_variants() {
+        let variants = [
+            HostcallType::FsRead,
+            HostcallType::FsWrite,
+            HostcallType::NetworkSend,
+            HostcallType::NetworkRecv,
+            HostcallType::ProcessSpawn,
+            HostcallType::EnvRead,
+            HostcallType::MemAlloc,
+            HostcallType::TimerCreate,
+            HostcallType::CryptoOp,
+            HostcallType::IpcSend,
+            HostcallType::IpcRecv,
+        ];
+        for ht in &variants {
+            let json = serde_json::to_string(ht).expect("serialize");
+            let back: HostcallType = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*ht, back);
+        }
+    }
+
+    #[test]
+    fn hostcall_type_as_str_display_agree() {
+        let variants = [
+            HostcallType::FsRead,
+            HostcallType::FsWrite,
+            HostcallType::NetworkSend,
+            HostcallType::NetworkRecv,
+            HostcallType::ProcessSpawn,
+            HostcallType::EnvRead,
+            HostcallType::MemAlloc,
+            HostcallType::TimerCreate,
+            HostcallType::CryptoOp,
+            HostcallType::IpcSend,
+            HostcallType::IpcRecv,
+        ];
+        for ht in &variants {
+            assert_eq!(ht.as_str(), ht.to_string());
+        }
+    }
+
+    #[test]
+    fn hostcall_type_is_sink_exactly_three() {
+        let sinks: Vec<_> = [
+            HostcallType::FsRead,
+            HostcallType::FsWrite,
+            HostcallType::NetworkSend,
+            HostcallType::NetworkRecv,
+            HostcallType::ProcessSpawn,
+            HostcallType::EnvRead,
+            HostcallType::MemAlloc,
+            HostcallType::TimerCreate,
+            HostcallType::CryptoOp,
+            HostcallType::IpcSend,
+            HostcallType::IpcRecv,
+        ]
+        .iter()
+        .filter(|ht| ht.is_sink())
+        .collect();
+        assert_eq!(sinks.len(), 3);
+        assert!(HostcallType::FsWrite.is_sink());
+        assert!(HostcallType::NetworkSend.is_sink());
+        assert!(HostcallType::IpcSend.is_sink());
+    }
+
+    #[test]
+    fn hostcall_type_default_escrow_route_sinks_get_challenge() {
+        assert_eq!(
+            HostcallType::FsWrite.default_escrow_route(),
+            CapabilityEscrowRoute::Challenge
+        );
+        assert_eq!(
+            HostcallType::NetworkSend.default_escrow_route(),
+            CapabilityEscrowRoute::Challenge
+        );
+        assert_eq!(
+            HostcallType::ProcessSpawn.default_escrow_route(),
+            CapabilityEscrowRoute::Challenge
+        );
+        assert_eq!(
+            HostcallType::IpcSend.default_escrow_route(),
+            CapabilityEscrowRoute::Challenge
+        );
+    }
+
+    #[test]
+    fn hostcall_type_default_escrow_route_sources_get_sandbox() {
+        assert_eq!(
+            HostcallType::FsRead.default_escrow_route(),
+            CapabilityEscrowRoute::Sandbox
+        );
+        assert_eq!(
+            HostcallType::NetworkRecv.default_escrow_route(),
+            CapabilityEscrowRoute::Sandbox
+        );
+        assert_eq!(
+            HostcallType::EnvRead.default_escrow_route(),
+            CapabilityEscrowRoute::Sandbox
+        );
+        assert_eq!(
+            HostcallType::MemAlloc.default_escrow_route(),
+            CapabilityEscrowRoute::Sandbox
+        );
+        assert_eq!(
+            HostcallType::TimerCreate.default_escrow_route(),
+            CapabilityEscrowRoute::Sandbox
+        );
+        assert_eq!(
+            HostcallType::CryptoOp.default_escrow_route(),
+            CapabilityEscrowRoute::Sandbox
+        );
+        assert_eq!(
+            HostcallType::IpcRecv.default_escrow_route(),
+            CapabilityEscrowRoute::Sandbox
+        );
+    }
+
+    // ── HostcallSinkPolicy ──────────────────────────────────────────────
+
+    #[test]
+    fn hostcall_sink_policy_default_clearances() {
+        let policy = HostcallSinkPolicy::default();
+        assert_eq!(
+            policy.fs_write,
+            SinkClearance::new(SecrecyLevel::Internal, IntegrityLevel::Validated)
+        );
+        assert_eq!(
+            policy.network_send,
+            SinkClearance::new(SecrecyLevel::Public, IntegrityLevel::Validated)
+        );
+        assert_eq!(
+            policy.ipc_send,
+            SinkClearance::new(SecrecyLevel::Secret, IntegrityLevel::Untrusted)
+        );
+    }
+
+    #[test]
+    fn hostcall_sink_policy_clearance_for_sinks() {
+        let policy = HostcallSinkPolicy::default();
+        assert_eq!(
+            policy.clearance_for(HostcallType::FsWrite),
+            Some(policy.fs_write)
+        );
+        assert_eq!(
+            policy.clearance_for(HostcallType::NetworkSend),
+            Some(policy.network_send)
+        );
+        assert_eq!(
+            policy.clearance_for(HostcallType::IpcSend),
+            Some(policy.ipc_send)
+        );
+    }
+
+    #[test]
+    fn hostcall_sink_policy_clearance_for_non_sinks_is_none() {
+        let policy = HostcallSinkPolicy::default();
+        assert_eq!(policy.clearance_for(HostcallType::FsRead), None);
+        assert_eq!(policy.clearance_for(HostcallType::NetworkRecv), None);
+        assert_eq!(policy.clearance_for(HostcallType::EnvRead), None);
+        assert_eq!(policy.clearance_for(HostcallType::MemAlloc), None);
+        assert_eq!(policy.clearance_for(HostcallType::TimerCreate), None);
+        assert_eq!(policy.clearance_for(HostcallType::CryptoOp), None);
+        assert_eq!(policy.clearance_for(HostcallType::ProcessSpawn), None);
+        assert_eq!(policy.clearance_for(HostcallType::IpcRecv), None);
+    }
+
+    #[test]
+    fn hostcall_sink_policy_serde_round_trip() {
+        let policy = HostcallSinkPolicy::default();
+        let json = serde_json::to_string(&policy).expect("serialize");
+        let back: HostcallSinkPolicy = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(policy, back);
+    }
+
+    // ── CapabilityEscrowRoute ───────────────────────────────────────────
+
+    #[test]
+    fn capability_escrow_route_serde_round_trip() {
+        for route in [
+            CapabilityEscrowRoute::Challenge,
+            CapabilityEscrowRoute::Sandbox,
+        ] {
+            let json = serde_json::to_string(&route).expect("serialize");
+            let back: CapabilityEscrowRoute = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(route, back);
+        }
+    }
+
+    #[test]
+    fn capability_escrow_route_as_str_display_agree() {
+        for route in [
+            CapabilityEscrowRoute::Challenge,
+            CapabilityEscrowRoute::Sandbox,
+        ] {
+            assert_eq!(route.as_str(), route.to_string());
+        }
+    }
+
+    // ── CapabilityEscrowState ───────────────────────────────────────────
+
+    #[test]
+    fn capability_escrow_state_serde_round_trip_all_variants() {
+        let variants = [
+            CapabilityEscrowState::Requested,
+            CapabilityEscrowState::Challenged,
+            CapabilityEscrowState::Sandboxed,
+            CapabilityEscrowState::Approved,
+            CapabilityEscrowState::Denied,
+            CapabilityEscrowState::Expired,
+        ];
+        for state in &variants {
+            let json = serde_json::to_string(state).expect("serialize");
+            let back: CapabilityEscrowState = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*state, back);
+        }
+    }
+
+    #[test]
+    fn capability_escrow_state_as_str_display_agree() {
+        let variants = [
+            CapabilityEscrowState::Requested,
+            CapabilityEscrowState::Challenged,
+            CapabilityEscrowState::Sandboxed,
+            CapabilityEscrowState::Approved,
+            CapabilityEscrowState::Denied,
+            CapabilityEscrowState::Expired,
+        ];
+        for state in &variants {
+            assert_eq!(state.as_str(), state.to_string());
+        }
+    }
+
+    #[test]
+    fn capability_escrow_state_terminal_only_denied_and_expired() {
+        let record_with_state = |state: CapabilityEscrowState| CapabilityEscrowRecord {
+            request_id: "r".to_string(),
+            extension_id: "e".to_string(),
+            hostcall_type: HostcallType::FsRead,
+            capability: Capability::FsRead,
+            justification: "j".to_string(),
+            state,
+            created_at_ns: 0,
+            expires_at_ns: 1000,
+            updated_at_ns: 0,
+        };
+
+        assert!(record_with_state(CapabilityEscrowState::Denied).is_terminal());
+        assert!(record_with_state(CapabilityEscrowState::Expired).is_terminal());
+        assert!(!record_with_state(CapabilityEscrowState::Requested).is_terminal());
+        assert!(!record_with_state(CapabilityEscrowState::Challenged).is_terminal());
+        assert!(!record_with_state(CapabilityEscrowState::Sandboxed).is_terminal());
+        assert!(!record_with_state(CapabilityEscrowState::Approved).is_terminal());
+    }
+
+    // ── CapabilityEscrowDecisionKind ────────────────────────────────────
+
+    #[test]
+    fn capability_escrow_decision_kind_serde_round_trip() {
+        let variants = [
+            CapabilityEscrowDecisionKind::Challenge,
+            CapabilityEscrowDecisionKind::Sandbox,
+            CapabilityEscrowDecisionKind::Approve,
+            CapabilityEscrowDecisionKind::Deny,
+            CapabilityEscrowDecisionKind::EmergencyGrant,
+            CapabilityEscrowDecisionKind::Expire,
+        ];
+        for kind in &variants {
+            let json = serde_json::to_string(kind).expect("serialize");
+            let back: CapabilityEscrowDecisionKind =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*kind, back);
+        }
+    }
+
+    #[test]
+    fn capability_escrow_decision_kind_as_str_display_agree() {
+        let variants = [
+            CapabilityEscrowDecisionKind::Challenge,
+            CapabilityEscrowDecisionKind::Sandbox,
+            CapabilityEscrowDecisionKind::Approve,
+            CapabilityEscrowDecisionKind::Deny,
+            CapabilityEscrowDecisionKind::EmergencyGrant,
+            CapabilityEscrowDecisionKind::Expire,
+        ];
+        for kind in &variants {
+            assert_eq!(kind.as_str(), kind.to_string());
+        }
+    }
+
+    // ── DeclassificationPurpose ─────────────────────────────────────────
+
+    #[test]
+    fn declassification_purpose_serde_round_trip() {
+        let variants = [
+            DeclassificationPurpose::UserConsent,
+            DeclassificationPurpose::AggregationAnonymization,
+            DeclassificationPurpose::PublicApiResponse,
+            DeclassificationPurpose::DiagnosticExport,
+            DeclassificationPurpose::OperatorOverride,
+            DeclassificationPurpose::Custom("audit_export".to_string()),
+        ];
+        for purpose in &variants {
+            let json = serde_json::to_string(purpose).expect("serialize");
+            let back: DeclassificationPurpose = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*purpose, back);
+        }
+    }
+
+    #[test]
+    fn declassification_purpose_display_custom_includes_value() {
+        let custom = DeclassificationPurpose::Custom("my_reason".to_string());
+        assert_eq!(custom.to_string(), "custom:my_reason");
+    }
+
+    #[test]
+    fn declassification_purpose_as_str_non_custom_agrees_with_display() {
+        let standard = [
+            DeclassificationPurpose::UserConsent,
+            DeclassificationPurpose::AggregationAnonymization,
+            DeclassificationPurpose::PublicApiResponse,
+            DeclassificationPurpose::DiagnosticExport,
+            DeclassificationPurpose::OperatorOverride,
+        ];
+        for purpose in &standard {
+            assert_eq!(purpose.as_str(), purpose.to_string());
+        }
+    }
+
+    // ── DeclassificationDenialReason ────────────────────────────────────
+
+    #[test]
+    fn declassification_denial_reason_error_codes_stable() {
+        assert_eq!(
+            DeclassificationDenialReason::MissingCapability {
+                capability: Capability::Declassify
+            }
+            .error_code(),
+            "FE-DECLASS-0001"
+        );
+        assert_eq!(
+            DeclassificationDenialReason::LabelDistanceTooLarge {
+                secrecy_distance: 2,
+                integrity_distance: 0
+            }
+            .error_code(),
+            "FE-DECLASS-0002"
+        );
+        assert_eq!(
+            DeclassificationDenialReason::InvalidPurpose {
+                purpose: DeclassificationPurpose::DiagnosticExport,
+                target: SecrecyLevel::Public
+            }
+            .error_code(),
+            "FE-DECLASS-0003"
+        );
+        assert_eq!(
+            DeclassificationDenialReason::RateLimited {
+                max_requests: 8,
+                window_ns: 60_000_000_000
+            }
+            .error_code(),
+            "FE-DECLASS-0004"
+        );
+        assert_eq!(
+            DeclassificationDenialReason::NoDeclassificationRequired.error_code(),
+            "FE-DECLASS-0005"
+        );
+        assert_eq!(
+            DeclassificationDenialReason::EmptyJustification.error_code(),
+            "FE-DECLASS-0006"
+        );
+        assert_eq!(
+            DeclassificationDenialReason::ContractRejected {
+                contract_id: "c".to_string(),
+                detail: "d".to_string()
+            }
+            .error_code(),
+            "FE-DECLASS-0007"
+        );
+    }
+
+    #[test]
+    fn declassification_denial_reason_serde_round_trip() {
+        let variants: Vec<DeclassificationDenialReason> = vec![
+            DeclassificationDenialReason::MissingCapability {
+                capability: Capability::Declassify,
+            },
+            DeclassificationDenialReason::LabelDistanceTooLarge {
+                secrecy_distance: 3,
+                integrity_distance: 1,
+            },
+            DeclassificationDenialReason::NoDeclassificationRequired,
+            DeclassificationDenialReason::EmptyJustification,
+            DeclassificationDenialReason::RateLimited {
+                max_requests: 5,
+                window_ns: 1_000_000,
+            },
+            DeclassificationDenialReason::ContractRejected {
+                contract_id: "test".to_string(),
+                detail: "rejected".to_string(),
+            },
+        ];
+        for reason in &variants {
+            let json = serde_json::to_string(reason).expect("serialize");
+            let back: DeclassificationDenialReason =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*reason, back);
+        }
+    }
+
+    // ── DecisionSigningKey / DecisionPublicKey ──────────────────────────
+
+    #[test]
+    fn signing_key_default_is_deterministic() {
+        let a = DecisionSigningKey::default();
+        let b = DecisionSigningKey::default();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn signing_key_sign_verify_round_trip() {
+        let key = DecisionSigningKey::new([0xAB; 32]);
+        let payload = b"test payload";
+        let signature = key.sign(payload);
+        let pubkey = key.public_key();
+        assert!(pubkey.verify(payload, &signature));
+    }
+
+    #[test]
+    fn signing_key_verify_rejects_tampered_payload() {
+        let key = DecisionSigningKey::new([0x01; 32]);
+        let signature = key.sign(b"original");
+        let pubkey = key.public_key();
+        assert!(!pubkey.verify(b"tampered", &signature));
+    }
+
+    #[test]
+    fn signing_key_verify_rejects_tampered_signature() {
+        let key = DecisionSigningKey::new([0x02; 32]);
+        let payload = b"some data";
+        let mut signature = key.sign(payload);
+        signature[0] ^= 0xFF;
+        let pubkey = key.public_key();
+        assert!(!pubkey.verify(payload, &signature));
+    }
+
+    #[test]
+    fn signing_key_different_keys_produce_different_signatures() {
+        let key_a = DecisionSigningKey::new([0x01; 32]);
+        let key_b = DecisionSigningKey::new([0x02; 32]);
+        let payload = b"same payload";
+        let sig_a = key_a.sign(payload);
+        let sig_b = key_b.sign(payload);
+        assert_ne!(sig_a, sig_b);
+    }
+
+    #[test]
+    fn signing_key_serde_round_trip() {
+        let key = DecisionSigningKey::new([0x55; 32]);
+        let json = serde_json::to_string(&key).expect("serialize");
+        let back: DecisionSigningKey = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(key, back);
+    }
+
+    #[test]
+    fn public_key_serde_round_trip() {
+        let pubkey = DecisionSigningKey::new([0x77; 32]).public_key();
+        let json = serde_json::to_string(&pubkey).expect("serialize");
+        let back: DecisionPublicKey = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(pubkey, back);
+    }
+
+    // ── ManifestValidationError ─────────────────────────────────────────
+
+    #[test]
+    fn manifest_validation_error_codes_stable() {
+        assert_eq!(
+            ManifestValidationError::EmptyName.error_code(),
+            "FE-MANIFEST-0001"
+        );
+        assert_eq!(
+            ManifestValidationError::EmptyVersion.error_code(),
+            "FE-MANIFEST-0002"
+        );
+        assert_eq!(
+            ManifestValidationError::EmptyEntrypoint.error_code(),
+            "FE-MANIFEST-0003"
+        );
+        assert_eq!(
+            ManifestValidationError::UnsupportedEngineVersion {
+                min_engine_version: "9.9.9".to_string(),
+                supported_engine_version: "0.1.0",
+            }
+            .error_code(),
+            "FE-MANIFEST-0004"
+        );
+        assert_eq!(
+            ManifestValidationError::InvalidCapabilityLattice {
+                declared: Capability::FsWrite,
+                missing_implied: Capability::FsRead,
+            }
+            .error_code(),
+            "FE-MANIFEST-0005"
+        );
+        assert_eq!(
+            ManifestValidationError::MissingPublisherSignature.error_code(),
+            "FE-MANIFEST-0006"
+        );
+        assert_eq!(
+            ManifestValidationError::MissingTrustChainRef.error_code(),
+            "FE-MANIFEST-0007"
+        );
+        assert_eq!(
+            ManifestValidationError::InvalidContentHash.error_code(),
+            "FE-MANIFEST-0008"
+        );
+        assert_eq!(
+            ManifestValidationError::CanonicalSerialization("err".to_string()).error_code(),
+            "FE-MANIFEST-0009"
+        );
+        assert_eq!(
+            ManifestValidationError::FieldTooLong {
+                field: "name",
+                max: 128,
+                actual: 200,
+            }
+            .error_code(),
+            "FE-MANIFEST-0010"
+        );
+    }
+
+    #[test]
+    fn manifest_validation_error_display_includes_code_and_message() {
+        let error = ManifestValidationError::EmptyName;
+        let display = error.to_string();
+        assert!(display.contains("FE-MANIFEST-0001"));
+        assert!(display.contains("name must not be empty"));
+    }
+
+    #[test]
+    fn manifest_validation_error_structured_message_includes_trace_context() {
+        let error = ManifestValidationError::EmptyName;
+        let msg = error.structured_message("trace-abc", "ext-xyz");
+        assert!(msg.contains("trace_id=trace-abc"));
+        assert!(msg.contains("extension_id=ext-xyz"));
+        assert!(msg.contains("FE-MANIFEST-0001"));
+    }
+
+    // ── LifecycleError ──────────────────────────────────────────────────
+
+    #[test]
+    fn lifecycle_error_codes_stable() {
+        assert_eq!(
+            LifecycleError::InvalidTransition {
+                extension_id: "e".to_string(),
+                current_state: ExtensionState::Running,
+                attempted_transition: LifecycleTransition::Load,
+            }
+            .error_code(),
+            "FE-LIFECYCLE-0001"
+        );
+        assert_eq!(
+            LifecycleError::MissingValidatedManifest {
+                extension_id: "e".to_string(),
+                attempted_transition: LifecycleTransition::Start,
+            }
+            .error_code(),
+            "FE-LIFECYCLE-0002"
+        );
+        assert_eq!(
+            LifecycleError::BudgetExhausted {
+                extension_id: "e".to_string(),
+                dimension: "cpu_time_ns_remaining",
+                remaining: 0,
+                attempted_transition: LifecycleTransition::Suspend,
+                action: LifecycleTransition::Suspend,
+            }
+            .error_code(),
+            "FE-LIFECYCLE-0003"
+        );
+        assert_eq!(
+            LifecycleError::NonMonotonicTimestamp {
+                previous: 100,
+                current: 50,
+            }
+            .error_code(),
+            "FE-LIFECYCLE-0004"
+        );
+        assert_eq!(
+            LifecycleError::MissingCancelToken {
+                extension_id: "e".to_string(),
+            }
+            .error_code(),
+            "FE-LIFECYCLE-0005"
+        );
+        assert_eq!(
+            LifecycleError::TerminationPending {
+                extension_id: "e".to_string(),
+                now_ns: 50,
+                deadline_ns: 100,
+            }
+            .error_code(),
+            "FE-LIFECYCLE-0006"
+        );
+    }
+
+    #[test]
+    fn lifecycle_error_display_includes_code_and_message() {
+        let error = LifecycleError::NonMonotonicTimestamp {
+            previous: 200,
+            current: 100,
+        };
+        let display = error.to_string();
+        assert!(display.contains("FE-LIFECYCLE-0004"));
+        assert!(display.contains("previous=200"));
+        assert!(display.contains("current=100"));
+    }
+
+    // ── CapabilityEscrowError ───────────────────────────────────────────
+
+    #[test]
+    fn capability_escrow_error_codes_stable() {
+        assert_eq!(
+            CapabilityEscrowError::UnknownRequest {
+                request_id: "r".to_string()
+            }
+            .error_code(),
+            "FE-ESCROW-0004"
+        );
+        assert_eq!(
+            CapabilityEscrowError::InvalidEmergencyGrant {
+                field: "f",
+                detail: "d".to_string()
+            }
+            .error_code(),
+            "FE-ESCROW-0006"
+        );
+        assert_eq!(
+            CapabilityEscrowError::PostReviewNotPending {
+                grant_id: "g".to_string()
+            }
+            .error_code(),
+            "FE-ESCROW-0009"
+        );
+        assert_eq!(
+            CapabilityEscrowError::ReceiptEmissionFailed {
+                request_id: "r".to_string(),
+                detail: "d".to_string()
+            }
+            .error_code(),
+            "FE-ESCROW-0010"
+        );
+    }
+
+    #[test]
+    fn capability_escrow_error_display_all_variants() {
+        let variants: Vec<CapabilityEscrowError> = vec![
+            CapabilityEscrowError::UnknownRequest {
+                request_id: "req-1".to_string(),
+            },
+            CapabilityEscrowError::InvalidStateTransition {
+                request_id: "req-2".to_string(),
+                from: CapabilityEscrowState::Denied,
+                to: CapabilityEscrowState::Approved,
+            },
+            CapabilityEscrowError::RequestNotActionable {
+                request_id: "req-3".to_string(),
+                state: CapabilityEscrowState::Expired,
+            },
+            CapabilityEscrowError::InvalidEmergencyGrant {
+                field: "actor",
+                detail: "empty".to_string(),
+            },
+            CapabilityEscrowError::PostReviewNotPending {
+                grant_id: "g-1".to_string(),
+            },
+            CapabilityEscrowError::ReceiptEmissionFailed {
+                request_id: "req-4".to_string(),
+                detail: "serialize failed".to_string(),
+            },
+        ];
+        for err in &variants {
+            let display = err.to_string();
+            assert!(!display.is_empty());
+        }
+    }
+
+    // ── DeclassificationEvidenceSeverity ────────────────────────────────
+
+    #[test]
+    fn declassification_evidence_severity_serde_round_trip() {
+        for sev in [
+            DeclassificationEvidenceSeverity::High,
+            DeclassificationEvidenceSeverity::Critical,
+        ] {
+            let json = serde_json::to_string(&sev).expect("serialize");
+            let back: DeclassificationEvidenceSeverity =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(sev, back);
+        }
+    }
+
+    // ── lifecycle_target_state exhaustive ────────────────────────────────
+
+    #[test]
+    fn lifecycle_target_state_happy_path_chain() {
+        assert_eq!(
+            lifecycle_target_state(ExtensionState::Unloaded, LifecycleTransition::Validate),
+            Some(ExtensionState::Validating)
+        );
+        assert_eq!(
+            lifecycle_target_state(ExtensionState::Validating, LifecycleTransition::Load),
+            Some(ExtensionState::Loading)
+        );
+        assert_eq!(
+            lifecycle_target_state(ExtensionState::Loading, LifecycleTransition::Start),
+            Some(ExtensionState::Starting)
+        );
+        assert_eq!(
+            lifecycle_target_state(ExtensionState::Starting, LifecycleTransition::Activate),
+            Some(ExtensionState::Running)
+        );
+        assert_eq!(
+            lifecycle_target_state(ExtensionState::Running, LifecycleTransition::Suspend),
+            Some(ExtensionState::Suspending)
+        );
+        assert_eq!(
+            lifecycle_target_state(ExtensionState::Suspending, LifecycleTransition::Freeze),
+            Some(ExtensionState::Suspended)
+        );
+        assert_eq!(
+            lifecycle_target_state(ExtensionState::Suspended, LifecycleTransition::Resume),
+            Some(ExtensionState::Resuming)
+        );
+        assert_eq!(
+            lifecycle_target_state(ExtensionState::Resuming, LifecycleTransition::Reactivate),
+            Some(ExtensionState::Running)
+        );
+    }
+
+    #[test]
+    fn lifecycle_target_state_terminate_from_most_states() {
+        let terminable = [
+            ExtensionState::Validating,
+            ExtensionState::Loading,
+            ExtensionState::Starting,
+            ExtensionState::Running,
+            ExtensionState::Suspending,
+            ExtensionState::Suspended,
+            ExtensionState::Resuming,
+        ];
+        for state in &terminable {
+            assert_eq!(
+                lifecycle_target_state(*state, LifecycleTransition::Terminate),
+                Some(ExtensionState::Terminating),
+                "terminate from {state:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn lifecycle_target_state_quarantine_from_most_states() {
+        let quarantinable = [
+            ExtensionState::Validating,
+            ExtensionState::Loading,
+            ExtensionState::Starting,
+            ExtensionState::Running,
+            ExtensionState::Suspending,
+            ExtensionState::Suspended,
+            ExtensionState::Resuming,
+            ExtensionState::Terminating,
+        ];
+        for state in &quarantinable {
+            assert_eq!(
+                lifecycle_target_state(*state, LifecycleTransition::Quarantine),
+                Some(ExtensionState::Quarantined),
+                "quarantine from {state:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn lifecycle_target_state_terminal_states_reject_all() {
+        let terminal = [ExtensionState::Terminated, ExtensionState::Quarantined];
+        let all_transitions = [
+            LifecycleTransition::Validate,
+            LifecycleTransition::Load,
+            LifecycleTransition::Start,
+            LifecycleTransition::Activate,
+            LifecycleTransition::Suspend,
+            LifecycleTransition::Freeze,
+            LifecycleTransition::Resume,
+            LifecycleTransition::Reactivate,
+            LifecycleTransition::Terminate,
+            LifecycleTransition::Finalize,
+            LifecycleTransition::Quarantine,
+        ];
+        for state in &terminal {
+            for transition in &all_transitions {
+                assert_eq!(
+                    lifecycle_target_state(*state, *transition),
+                    None,
+                    "{state:?} + {transition:?} should be None"
+                );
+            }
+        }
+    }
+
+    // ── allowed_lifecycle_transitions ────────────────────────────────────
+
+    #[test]
+    fn allowed_transitions_terminal_states_are_empty() {
+        assert!(allowed_lifecycle_transitions(ExtensionState::Terminated).is_empty());
+        assert!(allowed_lifecycle_transitions(ExtensionState::Quarantined).is_empty());
+    }
+
+    #[test]
+    fn allowed_transitions_running_includes_suspend_terminate_quarantine() {
+        let allowed = allowed_lifecycle_transitions(ExtensionState::Running);
+        assert!(allowed.contains(&LifecycleTransition::Suspend));
+        assert!(allowed.contains(&LifecycleTransition::Terminate));
+        assert!(allowed.contains(&LifecycleTransition::Quarantine));
+    }
+
+    // ── DataRef ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn data_ref_serde_round_trip() {
+        let data_ref = DataRef::new("memory", "token");
+        let json = serde_json::to_string(&data_ref).expect("serialize");
+        let back: DataRef = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(data_ref, back);
+    }
+
+    // ── ManifestValidationEvent ─────────────────────────────────────────
+
+    #[test]
+    fn manifest_validation_event_serde_round_trip() {
+        let event = ManifestValidationEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let back: ManifestValidationEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, back);
+    }
+
+    // ── ManifestValidationReport ────────────────────────────────────────
+
+    #[test]
+    fn manifest_validation_report_into_result_ok() {
+        let report = ManifestValidationReport {
+            event: ManifestValidationEvent {
+                trace_id: "t".to_string(),
+                decision_id: "d".to_string(),
+                policy_id: "p".to_string(),
+                component: "c".to_string(),
+                event: "e".to_string(),
+                outcome: "pass".to_string(),
+                error_code: None,
+            },
+            error: None,
+        };
+        assert!(report.into_result().is_ok());
+    }
+
+    #[test]
+    fn manifest_validation_report_into_result_err() {
+        let report = ManifestValidationReport {
+            event: ManifestValidationEvent {
+                trace_id: "t".to_string(),
+                decision_id: "d".to_string(),
+                policy_id: "p".to_string(),
+                component: "c".to_string(),
+                event: "e".to_string(),
+                outcome: "fail".to_string(),
+                error_code: Some("FE-MANIFEST-0001".to_string()),
+            },
+            error: Some(ManifestValidationError::EmptyName),
+        };
+        assert_eq!(
+            report.into_result(),
+            Err(ManifestValidationError::EmptyName)
+        );
+    }
+
+    // ── ExtensionManifest ───────────────────────────────────────────────
+
+    #[test]
+    fn extension_manifest_inferred_trust_level_with_signature() {
+        let manifest = ExtensionManifest {
+            name: "ext".to_string(),
+            version: "1.0.0".to_string(),
+            entrypoint: "index.js".to_string(),
+            capabilities: BTreeSet::new(),
+            publisher_signature: Some(vec![1, 2]),
+            content_hash: [0; 32],
+            trust_chain_ref: None,
+            min_engine_version: "0.1.0".to_string(),
+        };
+        assert_eq!(
+            manifest.inferred_trust_level(),
+            ManifestTrustLevel::SignedSupplyChain
+        );
+    }
+
+    #[test]
+    fn extension_manifest_inferred_trust_level_with_trust_chain() {
+        let manifest = ExtensionManifest {
+            name: "ext".to_string(),
+            version: "1.0.0".to_string(),
+            entrypoint: "index.js".to_string(),
+            capabilities: BTreeSet::new(),
+            publisher_signature: None,
+            content_hash: [0; 32],
+            trust_chain_ref: Some("chain/pub".to_string()),
+            min_engine_version: "0.1.0".to_string(),
+        };
+        assert_eq!(
+            manifest.inferred_trust_level(),
+            ManifestTrustLevel::SignedSupplyChain
+        );
+    }
+
+    #[test]
+    fn extension_manifest_inferred_trust_level_development() {
+        let manifest = ExtensionManifest {
+            name: "ext".to_string(),
+            version: "1.0.0".to_string(),
+            entrypoint: "index.js".to_string(),
+            capabilities: BTreeSet::new(),
+            publisher_signature: None,
+            content_hash: [0; 32],
+            trust_chain_ref: None,
+            min_engine_version: "0.1.0".to_string(),
+        };
+        assert_eq!(
+            manifest.inferred_trust_level(),
+            ManifestTrustLevel::Development
+        );
+    }
+
+    #[test]
+    fn extension_manifest_inferred_trust_level_empty_trust_chain_is_development() {
+        let manifest = ExtensionManifest {
+            name: "ext".to_string(),
+            version: "1.0.0".to_string(),
+            entrypoint: "index.js".to_string(),
+            capabilities: BTreeSet::new(),
+            publisher_signature: None,
+            content_hash: [0; 32],
+            trust_chain_ref: Some("   ".to_string()),
+            min_engine_version: "0.1.0".to_string(),
+        };
+        assert_eq!(
+            manifest.inferred_trust_level(),
+            ManifestTrustLevel::Development
+        );
+    }
+
+    // ── Manifest validation edge cases ──────────────────────────────────
+
+    #[test]
+    fn validate_manifest_rejects_empty_version() {
+        let manifest = ExtensionManifest {
+            name: "ext".to_string(),
+            version: "".to_string(),
+            entrypoint: "index.js".to_string(),
+            capabilities: BTreeSet::new(),
+            publisher_signature: None,
+            content_hash: [0; 32],
+            trust_chain_ref: None,
+            min_engine_version: "0.1.0".to_string(),
+        };
+        assert_eq!(
+            validate_manifest(&manifest),
+            Err(ManifestValidationError::EmptyVersion)
+        );
+    }
+
+    #[test]
+    fn validate_manifest_rejects_empty_entrypoint() {
+        let manifest = ExtensionManifest {
+            name: "ext".to_string(),
+            version: "1.0.0".to_string(),
+            entrypoint: "".to_string(),
+            capabilities: BTreeSet::new(),
+            publisher_signature: None,
+            content_hash: [0; 32],
+            trust_chain_ref: None,
+            min_engine_version: "0.1.0".to_string(),
+        };
+        assert_eq!(
+            validate_manifest(&manifest),
+            Err(ManifestValidationError::EmptyEntrypoint)
+        );
+    }
+
+    #[test]
+    fn validate_manifest_rejects_oversized_version() {
+        let manifest = ExtensionManifest {
+            name: "ext".to_string(),
+            version: "x".repeat(MAX_VERSION_LEN + 1),
+            entrypoint: "index.js".to_string(),
+            capabilities: BTreeSet::new(),
+            publisher_signature: None,
+            content_hash: [0; 32],
+            trust_chain_ref: None,
+            min_engine_version: "0.1.0".to_string(),
+        };
+        assert!(matches!(
+            validate_manifest(&manifest),
+            Err(ManifestValidationError::FieldTooLong {
+                field: "version",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn validate_manifest_rejects_oversized_entrypoint() {
+        let manifest = ExtensionManifest {
+            name: "ext".to_string(),
+            version: "1.0.0".to_string(),
+            entrypoint: "x".repeat(MAX_ENTRYPOINT_LEN + 1),
+            capabilities: BTreeSet::new(),
+            publisher_signature: None,
+            content_hash: [0; 32],
+            trust_chain_ref: None,
+            min_engine_version: "0.1.0".to_string(),
+        };
+        assert!(matches!(
+            validate_manifest(&manifest),
+            Err(ManifestValidationError::FieldTooLong {
+                field: "entrypoint",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn validate_manifest_rejects_oversized_trust_chain_ref() {
+        let mut manifest = ExtensionManifest {
+            name: "ext".to_string(),
+            version: "1.0.0".to_string(),
+            entrypoint: "index.js".to_string(),
+            capabilities: [Capability::FsRead].into_iter().collect(),
+            publisher_signature: Some(vec![1]),
+            content_hash: [0; 32],
+            trust_chain_ref: Some("x".repeat(MAX_TRUST_CHAIN_REF_LEN + 1)),
+            min_engine_version: "0.1.0".to_string(),
+        };
+        manifest.content_hash = compute_content_hash(&manifest).unwrap_or([0; 32]);
+        assert!(matches!(
+            validate_manifest(&manifest),
+            Err(ManifestValidationError::FieldTooLong {
+                field: "trust_chain_ref",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn validate_manifest_rejects_oversized_min_engine_version() {
+        let manifest = ExtensionManifest {
+            name: "ext".to_string(),
+            version: "1.0.0".to_string(),
+            entrypoint: "index.js".to_string(),
+            capabilities: BTreeSet::new(),
+            publisher_signature: None,
+            content_hash: [0; 32],
+            trust_chain_ref: None,
+            min_engine_version: "x".repeat(MAX_VERSION_LEN + 1),
+        };
+        assert!(matches!(
+            validate_manifest(&manifest),
+            Err(ManifestValidationError::FieldTooLong {
+                field: "min_engine_version",
+                ..
+            })
+        ));
+    }
+
+    // ── parse_semver ────────────────────────────────────────────────────
+
+    #[test]
+    fn validate_engine_version_rejects_malformed() {
+        assert!(matches!(
+            validate_engine_version("not.a.semver.really"),
+            Err(ManifestValidationError::UnsupportedEngineVersion { .. })
+        ));
+        assert!(matches!(
+            validate_engine_version("1"),
+            Err(ManifestValidationError::UnsupportedEngineVersion { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_engine_version_accepts_current() {
+        assert_eq!(validate_engine_version(CURRENT_ENGINE_VERSION), Ok(()));
+    }
+
+    #[test]
+    fn validate_engine_version_accepts_lower() {
+        assert_eq!(validate_engine_version("0.0.0"), Ok(()));
+    }
+
+    // ── EscrowCondition ─────────────────────────────────────────────────
+
+    #[test]
+    fn escrow_condition_serde_round_trip() {
+        let cond = EscrowCondition::new("key", "value");
+        let json = serde_json::to_string(&cond).expect("serialize");
+        let back: EscrowCondition = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(cond, back);
+    }
+
+    // ── DeclassificationCondition ───────────────────────────────────────
+
+    #[test]
+    fn declassification_condition_serde_round_trip() {
+        let cond = DeclassificationCondition::new("key", "value");
+        let json = serde_json::to_string(&cond).expect("serialize");
+        let back: DeclassificationCondition = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(cond, back);
+    }
+
+    // ── SinkClearance ───────────────────────────────────────────────────
+
+    #[test]
+    fn sink_clearance_serde_round_trip() {
+        let clearance = SinkClearance::new(SecrecyLevel::Confidential, IntegrityLevel::Verified);
+        let json = serde_json::to_string(&clearance).expect("serialize");
+        let back: SinkClearance = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(clearance, back);
+    }
+
+    // ── HostcallResult ──────────────────────────────────────────────────
+
+    #[test]
+    fn hostcall_result_serde_round_trip() {
+        let variants = [
+            HostcallResult::Success,
+            HostcallResult::Denied {
+                reason: DenialReason::CapabilityEscalation {
+                    attempted: Capability::ProcessSpawn,
+                },
+            },
+            HostcallResult::Error { code: 42 },
+            HostcallResult::Timeout,
+        ];
+        for result in &variants {
+            let json = serde_json::to_string(result).expect("serialize");
+            let back: HostcallResult = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*result, back);
+        }
+    }
+
+    // ── DenialReason ────────────────────────────────────────────────────
+
+    #[test]
+    fn denial_reason_serde_round_trip() {
+        let variants = [
+            DenialReason::FlowViolation {
+                source: FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated),
+                sink: SinkClearance::new(SecrecyLevel::Public, IntegrityLevel::Validated),
+            },
+            DenialReason::CapabilityEscalation {
+                attempted: Capability::FsWrite,
+            },
+            DenialReason::CapabilityEscrowPending {
+                attempted: Capability::NetClient,
+                action: CapabilityEscrowRoute::Challenge,
+                escrow_id: "esc-1".to_string(),
+            },
+        ];
+        for reason in &variants {
+            let json = serde_json::to_string(reason).expect("serialize");
+            let back: DenialReason = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*reason, back);
+        }
+    }
+
+    // ── RateLimitContract ───────────────────────────────────────────────
+
+    #[test]
+    fn rate_limit_contract_serde_round_trip() {
+        let contract = RateLimitContract::new(10, 1_000_000_000);
+        let json = serde_json::to_string(&contract).expect("serialize");
+        let back: RateLimitContract = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(contract, back);
+    }
+
+    // ── DecisionReceiptLog ──────────────────────────────────────────────
+
+    #[test]
+    fn decision_receipt_log_append_and_retrieve() {
+        let mut log = DecisionReceiptLog::default();
+        assert!(log.receipts().is_empty());
+        let key = DecisionSigningKey::default();
+        let receipt = CryptographicDecisionReceipt::new_signed(
+            "req-1",
+            DecisionVerdict::Approved {
+                conditions: vec![DeclassificationCondition::new("k", "v")],
+            },
+            vec!["contract-a".to_string()],
+            vec![DeclassificationCondition::new("c", "d")],
+            500_000,
+            1000,
+            &key,
+        );
+        log.append(receipt.clone());
+        assert_eq!(log.receipts().len(), 1);
+        assert_eq!(log.receipts()[0], receipt);
+    }
+
+    // ── CryptographicDecisionReceipt sign/verify ────────────────────────
+
+    #[test]
+    fn cryptographic_decision_receipt_sign_verify_round_trip() {
+        let key = DecisionSigningKey::new([0xDE; 32]);
+        let receipt = CryptographicDecisionReceipt::new_signed(
+            "req-sign-test",
+            DecisionVerdict::Denied {
+                reason: DeclassificationDenialReason::EmptyJustification,
+            },
+            vec!["cap_contract".to_string()],
+            vec![],
+            750_000,
+            2000,
+            &key,
+        );
+        let pubkey = key.public_key();
+        assert!(receipt.verify(&pubkey));
+    }
+
+    #[test]
+    fn cryptographic_decision_receipt_verify_rejects_wrong_key() {
+        let key_a = DecisionSigningKey::new([0xAA; 32]);
+        let key_b = DecisionSigningKey::new([0xBB; 32]);
+        let receipt = CryptographicDecisionReceipt::new_signed(
+            "req-wrong-key",
+            DecisionVerdict::Approved { conditions: vec![] },
+            vec![],
+            vec![],
+            100_000,
+            3000,
+            &key_a,
+        );
+        assert!(!receipt.verify(&key_b.public_key()));
+    }
+
+    // ── LifecycleTransitionRecord ───────────────────────────────────────
+
+    #[test]
+    fn lifecycle_transition_record_serde_round_trip() {
+        let record = LifecycleTransitionRecord {
+            monotonic_timestamp_ns: 42,
+            extension_id: "ext-a".to_string(),
+            from_state: ExtensionState::Running,
+            to_state: ExtensionState::Suspending,
+            transition: LifecycleTransition::Suspend,
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+        };
+        let json = serde_json::to_string(&record).expect("serialize");
+        let back: LifecycleTransitionRecord = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(record, back);
+    }
+
+    // ── LifecycleEvent ──────────────────────────────────────────────────
+
+    #[test]
+    fn lifecycle_event_serde_round_trip() {
+        let event = LifecycleEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "lifecycle_transition".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+            extension_id: "ext".to_string(),
+            from_state: "running".to_string(),
+            to_state: "suspending".to_string(),
+            transition: "suspend".to_string(),
+            timestamp_ns: 100,
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let back: LifecycleEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, back);
+    }
+
+    // ── FlowViolationEvent ──────────────────────────────────────────────
+
+    #[test]
+    fn flow_violation_event_serde_round_trip() {
+        let event = FlowViolationEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "runtime_flow_enforcement".to_string(),
+            event: "hostcall_flow_violation".to_string(),
+            outcome: "blocked".to_string(),
+            error_code: "FE-FLOW-0001".to_string(),
+            extension_id: "ext".to_string(),
+            hostcall_type: HostcallType::NetworkSend,
+            source_label: FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated),
+            sink_clearance: SinkClearance::new(SecrecyLevel::Public, IntegrityLevel::Validated),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let back: FlowViolationEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, back);
+    }
+
+    // ── ExtensionManifest serde round-trip ──────────────────────────────
+
+    #[test]
+    fn extension_manifest_serde_round_trip() {
+        let manifest = ExtensionManifest {
+            name: "test-ext".to_string(),
+            version: "2.0.0".to_string(),
+            entrypoint: "dist/main.js".to_string(),
+            capabilities: [Capability::FsRead, Capability::FsWrite]
+                .into_iter()
+                .collect(),
+            publisher_signature: Some(vec![0xAB, 0xCD]),
+            content_hash: [0x42; 32],
+            trust_chain_ref: Some("chain/test".to_string()),
+            min_engine_version: "0.1.0".to_string(),
+        };
+        let json = serde_json::to_string(&manifest).expect("serialize");
+        let back: ExtensionManifest = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(manifest, back);
+    }
+
+    // ── with_computed_content_hash ──────────────────────────────────────
+
+    #[test]
+    fn with_computed_content_hash_makes_manifest_valid() {
+        let manifest = ExtensionManifest {
+            name: "hash-ext".to_string(),
+            version: "1.0.0".to_string(),
+            entrypoint: "dist/index.js".to_string(),
+            capabilities: [Capability::FsRead].into_iter().collect(),
+            publisher_signature: Some(vec![1, 2, 3]),
+            content_hash: [0; 32],
+            trust_chain_ref: Some("chain/hash".to_string()),
+            min_engine_version: CURRENT_ENGINE_VERSION.to_string(),
+        };
+        let hashed = with_computed_content_hash(manifest).expect("compute hash");
+        assert_ne!(hashed.content_hash, [0; 32]);
+        assert_eq!(validate_manifest(&hashed), Ok(()));
+    }
+
+    // ── CapabilityEscrowReceiptQuery ────────────────────────────────────
+
+    #[test]
+    fn capability_escrow_receipt_query_default_is_unfiltered() {
+        let query = CapabilityEscrowReceiptQuery::default();
+        assert!(query.extension_id.is_none());
+        assert!(query.capability.is_none());
+        assert!(query.decision.is_none());
+        assert!(query.outcome.is_none());
+        assert!(query.timestamp_from_ns.is_none());
+        assert!(query.timestamp_to_ns.is_none());
+    }
+
+    #[test]
+    fn capability_escrow_receipt_query_serde_round_trip() {
+        let query = CapabilityEscrowReceiptQuery {
+            extension_id: Some("ext-a".to_string()),
+            capability: Some(Capability::FsRead),
+            decision: Some(CapabilityEscrowDecisionKind::Approve),
+            outcome: Some("approved".to_string()),
+            timestamp_from_ns: Some(100),
+            timestamp_to_ns: Some(200),
+        };
+        let json = serde_json::to_string(&query).expect("serialize");
+        let back: CapabilityEscrowReceiptQuery = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(query, back);
+    }
+
+    // ── DeclassificationRequest ─────────────────────────────────────────
+
+    #[test]
+    fn declassification_request_serde_round_trip() {
+        let request = DeclassificationRequest {
+            request_id: "dr-1".to_string(),
+            requester: "ext-a".to_string(),
+            data_ref: DataRef::new("ns", "k"),
+            current_label: FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated),
+            target_label: FlowLabel::new(SecrecyLevel::Internal, IntegrityLevel::Validated),
+            purpose: DeclassificationPurpose::UserConsent,
+            justification: "user approved".to_string(),
+            timestamp_ns: 42,
+        };
+        let json = serde_json::to_string(&request).expect("serialize");
+        let back: DeclassificationRequest = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(request, back);
+    }
+
+    // ── DeclassificationChallenge ───────────────────────────────────────
+
+    #[test]
+    fn declassification_challenge_serde_round_trip() {
+        let challenge = DeclassificationChallenge {
+            challenge_type: "operator_approval".to_string(),
+            detail: "requires sign-off".to_string(),
+        };
+        let json = serde_json::to_string(&challenge).expect("serialize");
+        let back: DeclassificationChallenge = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(challenge, back);
+    }
+
+    // ── DecisionVerdict ─────────────────────────────────────────────────
+
+    #[test]
+    fn decision_verdict_serde_round_trip() {
+        let verdicts = [
+            DecisionVerdict::Approved {
+                conditions: vec![DeclassificationCondition::new("k", "v")],
+            },
+            DecisionVerdict::Denied {
+                reason: DeclassificationDenialReason::EmptyJustification,
+            },
+            DecisionVerdict::Deferred {
+                challenge: DeclassificationChallenge {
+                    challenge_type: "review".to_string(),
+                    detail: "pending".to_string(),
+                },
+            },
+        ];
+        for verdict in &verdicts {
+            let json = serde_json::to_string(verdict).expect("serialize");
+            let back: DecisionVerdict = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*verdict, back);
+        }
+    }
+
+    // ── DeclassificationDecisionEvent ───────────────────────────────────
+
+    #[test]
+    fn declassification_decision_event_serde_round_trip() {
+        let event = DeclassificationDecisionEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "declassification_request".to_string(),
+            outcome: "approved".to_string(),
+            error_code: None,
+            request_id: "r".to_string(),
+            requester: "ext".to_string(),
+            receipt_id: "rec".to_string(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let back: DeclassificationDecisionEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, back);
+    }
+
+    // ── DeclassificationDeniedEvidence ──────────────────────────────────
+
+    #[test]
+    fn declassification_denied_evidence_serde_round_trip() {
+        let evidence = DeclassificationDeniedEvidence {
+            request_id: "r".to_string(),
+            requester: "ext".to_string(),
+            reason: DeclassificationDenialReason::EmptyJustification,
+            severity: DeclassificationEvidenceSeverity::High,
+            label_distance: 2,
+            decision_id: "d".to_string(),
+        };
+        let json = serde_json::to_string(&evidence).expect("serialize");
+        let back: DeclassificationDeniedEvidence =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(evidence, back);
+    }
+
+    // ── CapabilityEscrowRecord ──────────────────────────────────────────
+
+    #[test]
+    fn capability_escrow_record_serde_round_trip() {
+        let record = CapabilityEscrowRecord {
+            request_id: "r".to_string(),
+            extension_id: "e".to_string(),
+            hostcall_type: HostcallType::FsWrite,
+            capability: Capability::FsWrite,
+            justification: "needed for log rotation".to_string(),
+            state: CapabilityEscrowState::Challenged,
+            created_at_ns: 100,
+            expires_at_ns: 200,
+            updated_at_ns: 150,
+        };
+        let json = serde_json::to_string(&record).expect("serialize");
+        let back: CapabilityEscrowRecord = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(record, back);
+    }
+
+    // ── EmergencyGrantArtifact ──────────────────────────────────────────
+
+    #[test]
+    fn emergency_grant_artifact_is_expired() {
+        let key = DecisionSigningKey::default();
+        let artifact = EmergencyGrantArtifact::new_signed(
+            "req-1",
+            "ext-a",
+            Capability::ProcessSpawn,
+            "incident response".to_string(),
+            "ops-lead".to_string(),
+            1000,
+            5,
+            true,
+            false,
+            500,
+            &key,
+        );
+        assert!(!artifact.is_expired(999));
+        assert!(artifact.is_expired(1000));
+        assert!(artifact.is_expired(1001));
+    }
+
+    #[test]
+    fn emergency_grant_artifact_sign_verify() {
+        let key = DecisionSigningKey::new([0xCC; 32]);
+        let artifact = EmergencyGrantArtifact::new_signed(
+            "req-2",
+            "ext-b",
+            Capability::FsWrite,
+            "emergency write".to_string(),
+            "admin".to_string(),
+            5000,
+            3,
+            false,
+            true,
+            100,
+            &key,
+        );
+        assert!(artifact.verify(&key.public_key()));
+        let wrong_key = DecisionSigningKey::new([0xDD; 32]);
+        assert!(!artifact.verify(&wrong_key.public_key()));
+    }
+
+    // ── HostcallDispatcher flow enforcement ─────────────────────────────
+
+    #[test]
+    fn hostcall_dispatcher_allows_non_sink_calls() {
+        let mut dispatcher = HostcallDispatcher::new(HostcallSinkPolicy::default());
+        let caps: BTreeSet<Capability> = [Capability::FsRead].into_iter().collect();
+        let context = FlowEnforcementContext::new("t", "d", "p");
+        let outcome = dispatcher.dispatch(
+            "ext-a",
+            HostcallType::FsRead,
+            &caps,
+            Capability::FsRead,
+            Labeled::system_generated("data".to_string()),
+            &context,
+        );
+        assert_eq!(outcome.result, HostcallResult::Success);
+        assert!(outcome.output.is_some());
+    }
+
+    #[test]
+    fn hostcall_dispatcher_blocks_missing_capability() {
+        let mut dispatcher = HostcallDispatcher::new(HostcallSinkPolicy::default());
+        let caps: BTreeSet<Capability> = [Capability::FsRead].into_iter().collect();
+        let context = FlowEnforcementContext::new("t", "d", "p");
+        let outcome = dispatcher.dispatch(
+            "ext-a",
+            HostcallType::FsWrite,
+            &caps,
+            Capability::FsWrite,
+            Labeled::system_generated("data".to_string()),
+            &context,
+        );
+        assert!(matches!(
+            outcome.result,
+            HostcallResult::Denied {
+                reason: DenialReason::CapabilityEscalation { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn hostcall_dispatcher_blocks_flow_violation() {
+        let mut dispatcher = HostcallDispatcher::new(HostcallSinkPolicy::default());
+        let caps: BTreeSet<Capability> = [Capability::FsRead, Capability::NetClient]
+            .into_iter()
+            .collect();
+        let secret_data = Labeled::new(
+            "secret".to_string(),
+            FlowLabel::new(SecrecyLevel::Secret, IntegrityLevel::Validated),
+        );
+        let context = FlowEnforcementContext::new("t", "d", "p");
+        let outcome = dispatcher.dispatch(
+            "ext-a",
+            HostcallType::NetworkSend,
+            &caps,
+            Capability::NetClient,
+            secret_data,
+            &context,
+        );
+        assert!(matches!(
+            outcome.result,
+            HostcallResult::Denied {
+                reason: DenialReason::FlowViolation { .. }
+            }
+        ));
+        assert_eq!(dispatcher.violation_events().len(), 1);
+        assert_eq!(dispatcher.guardplane_evidence().len(), 1);
+    }
+
+    #[test]
+    fn hostcall_dispatcher_allows_flow_compliant_sink() {
+        let mut dispatcher = HostcallDispatcher::new(HostcallSinkPolicy::default());
+        let caps: BTreeSet<Capability> = [Capability::FsRead, Capability::FsWrite]
+            .into_iter()
+            .collect();
+        let internal_data = Labeled::new(
+            "log".to_string(),
+            FlowLabel::new(SecrecyLevel::Public, IntegrityLevel::Validated),
+        );
+        let context = FlowEnforcementContext::new("t", "d", "p");
+        let outcome = dispatcher.dispatch(
+            "ext-a",
+            HostcallType::FsWrite,
+            &caps,
+            Capability::FsWrite,
+            internal_data,
+            &context,
+        );
+        assert_eq!(outcome.result, HostcallResult::Success);
+        assert!(dispatcher.violation_events().is_empty());
+    }
+
+    // ── DeclassificationEvaluationContext ────────────────────────────────
+
+    #[test]
+    fn declassification_eval_context_has_capability() {
+        let caps: BTreeSet<Capability> = [Capability::Declassify, Capability::FsRead]
+            .into_iter()
+            .collect();
+        let ctx = DeclassificationEvaluationContext::new(&caps, None, 1000);
+        assert!(ctx.has_capability(Capability::Declassify));
+        assert!(ctx.has_capability(Capability::FsRead));
+        assert!(!ctx.has_capability(Capability::NetClient));
+    }
+
+    #[test]
+    fn declassification_eval_context_request_count_within_window() {
+        let caps = BTreeSet::new();
+        let history = vec![100, 200, 300, 400, 500];
+        let ctx = DeclassificationEvaluationContext::new(&caps, Some(&history), 500);
+        assert_eq!(ctx.request_count_within_window(200), 3); // 300, 400, 500
+        assert_eq!(ctx.request_count_within_window(500), 5); // all
+        assert_eq!(ctx.request_count_within_window(0), 1); // just 500
+    }
+
+    #[test]
+    fn declassification_eval_context_no_history_returns_zero() {
+        let caps = BTreeSet::new();
+        let ctx = DeclassificationEvaluationContext::new(&caps, None, 1000);
+        assert_eq!(ctx.request_count_within_window(999_999), 0);
+    }
+}
