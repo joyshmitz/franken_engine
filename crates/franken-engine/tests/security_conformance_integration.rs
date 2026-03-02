@@ -888,8 +888,17 @@ fn evaluate_repeated_runs_are_deterministic_within_latency_tolerance() {
     for _ in 0..5 {
         let rerun = evaluate_security_conformance(&records, &observations, &thresholds).unwrap();
         assert_eq!(baseline.summary, rerun.summary);
-        assert_eq!(baseline.observations_by_workload, rerun.observations_by_workload);
-        assert!(rerun.summary.malicious_latency_p95_us.abs_diff(baseline_p95) <= 1_000);
+        assert_eq!(
+            baseline.observations_by_workload,
+            rerun.observations_by_workload
+        );
+        assert!(
+            rerun
+                .summary
+                .malicious_latency_p95_us
+                .abs_diff(baseline_p95)
+                <= 1_000
+        );
     }
 }
 
