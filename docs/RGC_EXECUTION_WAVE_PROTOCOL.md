@@ -27,6 +27,7 @@ This protocol codifies:
 
 Wave gating is strict: `wave_n` cannot enter until the prior wave handoff
 packet is accepted.
+Serialized protocol tags also use `wave_0`/`wave_1`/`wave_2`/`wave_3` exactly.
 
 ## File Reservation Protocol
 
@@ -116,6 +117,7 @@ Protocol + dry-run validation is implemented in:
 
 - `crates/franken-engine/src/rgc_execution_waves.rs`
 - `crates/franken-engine/tests/rgc_execution_waves_integration.rs`
+- `crates/franken-engine/tests/rgc_execution_waves_enrichment_integration.rs`
 
 Run gate (`rch` backed):
 

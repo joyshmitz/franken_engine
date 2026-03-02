@@ -63,6 +63,9 @@ trace count, drift class, and artifact path mappings.
 ```bash
 jq empty docs/rgc_ts_module_resolution_parity_v1.json
 
+./scripts/run_rgc_ts_module_resolution_parity_suite.sh ci
+./scripts/e2e/rgc_ts_module_resolution_parity_replay.sh ci
+
 rch exec -- env RUSTUP_TOOLCHAIN=nightly CARGO_TARGET_DIR=/data/tmp/rch_target_ts_module_resolution_parity \
   cargo test -p frankenengine-engine --test ts_module_resolution_parity
 ```
