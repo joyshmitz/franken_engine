@@ -340,3 +340,73 @@ fn harness_classifies_diagnostics_drift_as_minor() {
 
     let _ = fs::remove_file(fixture_catalog);
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde, display, defaults, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn drift_category_serde_round_trip_all_variants() {
+    for category in [
+        DriftCategory::Semantic,
+        DriftCategory::Diagnostics,
+        DriftCategory::Harness,
+        DriftCategory::Artifact,
+    ] {
+        let json = serde_json::to_string(&category).expect("serialize");
+        let recovered: DriftCategory = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(category, recovered);
+    }
+}
+
+#[test]
+fn drift_severity_serde_round_trip() {
+    for severity in [DriftSeverity::Minor, DriftSeverity::Critical] {
+        let json = serde_json::to_string(&severity).expect("serialize");
+        let recovered: DriftSeverity = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(severity, recovered);
+    }
+}
+
+#[test]
+fn harness_engine_kind_serde_round_trip_all_variants() {
+    for kind in [
+        HarnessEngineKind::FrankenCanonical,
+        HarnessEngineKind::FixtureExpectedHash,
+        HarnessEngineKind::ExternalCommand,
+    ] {
+        let json = serde_json::to_string(&kind).expect("serialize");
+        let recovered: HarnessEngineKind = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(kind, recovered);
+    }
+}
+
+#[test]
+fn harness_engine_spec_franken_canonical_has_stable_engine_id() {
+    let spec = HarnessEngineSpec::franken_canonical("frankenengine-engine@workspace");
+    assert_eq!(spec.kind, HarnessEngineKind::FrankenCanonical);
+    assert!(!spec.engine_id.is_empty());
+    assert!(!spec.display_name.is_empty());
+    let json = serde_json::to_string(&spec).expect("serialize");
+    let recovered: HarnessEngineSpec = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(spec, recovered);
+}
+
+#[test]
+fn multi_engine_harness_config_with_defaults_produces_stable_config() {
+    let a = MultiEngineHarnessConfig::with_defaults(42);
+    let b = MultiEngineHarnessConfig::with_defaults(42);
+    assert_eq!(a.trace_id, b.trace_id);
+    assert_eq!(a.decision_id, b.decision_id);
+    assert!(!a.engines.is_empty());
+}
+
+#[test]
+fn multi_engine_harness_error_display_is_non_empty() {
+    let err = MultiEngineHarnessError::FixtureFilterNotFound {
+        fixture_id: "missing-fixture".to_string(),
+    };
+    let msg = err.to_string();
+    assert!(!msg.is_empty());
+    assert!(msg.contains("missing-fixture"));
+}

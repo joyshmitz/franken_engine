@@ -177,3 +177,152 @@ fn unsupported_semantics_same_input_yields_identical_diagnostic() {
     );
     assert_eq!(d1.error_code, "FE-HOOK-UNSUPPORTED-0006");
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde, display, classification, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn unsupported_semantics_trigger_serde_round_trip_all_variants() {
+    for trigger in [
+        UnsupportedSemanticsTrigger::HookTopologyDrift,
+        UnsupportedSemanticsTrigger::DependencyShapeDrift,
+        UnsupportedSemanticsTrigger::OutOfRenderHookExecution,
+        UnsupportedSemanticsTrigger::SchedulerOrderingAmbiguity,
+        UnsupportedSemanticsTrigger::UnsupportedHookPrimitive,
+        UnsupportedSemanticsTrigger::TransformationProofMissing,
+    ] {
+        let json = serde_json::to_string(&trigger).expect("serialize");
+        let recovered: UnsupportedSemanticsTrigger =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(trigger, recovered);
+    }
+}
+
+#[test]
+fn unsupported_semantics_trigger_stable_error_codes_are_unique() {
+    let triggers = [
+        UnsupportedSemanticsTrigger::HookTopologyDrift,
+        UnsupportedSemanticsTrigger::DependencyShapeDrift,
+        UnsupportedSemanticsTrigger::OutOfRenderHookExecution,
+        UnsupportedSemanticsTrigger::SchedulerOrderingAmbiguity,
+        UnsupportedSemanticsTrigger::UnsupportedHookPrimitive,
+        UnsupportedSemanticsTrigger::TransformationProofMissing,
+    ];
+    let mut codes: Vec<&str> = triggers.iter().map(|t| t.stable_error_code()).collect();
+    let original_len = codes.len();
+    codes.sort_unstable();
+    codes.dedup();
+    assert_eq!(codes.len(), original_len, "error codes must be unique");
+    assert!(codes.iter().all(|c| c.starts_with("FE-HOOK-UNSUPPORTED-")));
+}
+
+#[test]
+fn unsupported_semantics_trigger_rejection_reasons_are_non_empty() {
+    for trigger in [
+        UnsupportedSemanticsTrigger::HookTopologyDrift,
+        UnsupportedSemanticsTrigger::DependencyShapeDrift,
+        UnsupportedSemanticsTrigger::OutOfRenderHookExecution,
+        UnsupportedSemanticsTrigger::SchedulerOrderingAmbiguity,
+        UnsupportedSemanticsTrigger::UnsupportedHookPrimitive,
+        UnsupportedSemanticsTrigger::TransformationProofMissing,
+    ] {
+        assert!(
+            !trigger.rejection_reason().is_empty(),
+            "rejection reason must not be empty for {trigger:?}"
+        );
+    }
+}
+
+#[test]
+fn fallback_execution_route_serde_round_trip_all_variants() {
+    for route in [
+        FallbackExecutionRoute::CompatibilityRuntimeLane,
+        FallbackExecutionRoute::BaselineInterpreterLane,
+        FallbackExecutionRoute::DeterministicSafeModeLane,
+    ] {
+        let json = serde_json::to_string(&route).expect("serialize");
+        let recovered: FallbackExecutionRoute =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(route, recovered);
+    }
+}
+
+#[test]
+fn unsupported_semantics_diagnostic_serde_round_trip() {
+    let diagnostic = build_unsupported_semantics_diagnostic(
+        "TestComponent",
+        UnsupportedSemanticsTrigger::SchedulerOrderingAmbiguity,
+        "trace-serde-rt",
+        "decision-serde-rt",
+    );
+    let json = serde_json::to_string(&diagnostic).expect("serialize");
+    let recovered: frankenengine_engine::hook_effect_contract::UnsupportedSemanticsDiagnostic =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(diagnostic, recovered);
+}
+
+#[test]
+fn every_trigger_maps_to_a_distinct_fallback_route() {
+    let topology = build_unsupported_semantics_diagnostic(
+        "A",
+        UnsupportedSemanticsTrigger::HookTopologyDrift,
+        "t",
+        "d",
+    );
+    let out_of_render = build_unsupported_semantics_diagnostic(
+        "B",
+        UnsupportedSemanticsTrigger::OutOfRenderHookExecution,
+        "t",
+        "d",
+    );
+    let proof_missing = build_unsupported_semantics_diagnostic(
+        "C",
+        UnsupportedSemanticsTrigger::TransformationProofMissing,
+        "t",
+        "d",
+    );
+    assert_eq!(
+        topology.fallback_route,
+        FallbackExecutionRoute::CompatibilityRuntimeLane
+    );
+    assert_eq!(
+        out_of_render.fallback_route,
+        FallbackExecutionRoute::DeterministicSafeModeLane
+    );
+    assert_eq!(
+        proof_missing.fallback_route,
+        FallbackExecutionRoute::BaselineInterpreterLane
+    );
+}
+
+#[test]
+fn classify_unsupported_semantics_handles_kind_order_drift() {
+    let violation = HookRuleViolation::HookKindMismatch {
+        component: "Reorder".to_string(),
+        slot: HookSlotIndex(2),
+        previous_kind: HookKind::State,
+        current_kind: HookKind::Memo,
+    };
+    let trigger = classify_unsupported_semantics(&violation);
+    assert_eq!(trigger, UnsupportedSemanticsTrigger::HookTopologyDrift);
+}
+
+#[test]
+fn scenario_log_event_serde_round_trip() {
+    let event = log_event(LogEventInput {
+        scenario_id: "serde-test",
+        trace_id: "trace-serde",
+        decision_id: "decision-serde",
+        event: "test_event",
+        decision_path: "test->path",
+        trigger: UnsupportedSemanticsTrigger::DependencyShapeDrift,
+        route: FallbackExecutionRoute::CompatibilityRuntimeLane,
+        outcome: "pass",
+        error_code: Some("FE-HOOK-UNSUPPORTED-0002"),
+        hardening_guidance: "test guidance",
+    });
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: ScenarioLogEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(event, recovered);
+}

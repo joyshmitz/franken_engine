@@ -266,3 +266,102 @@ fn commit_during_drain_succeeds_before_finalize() {
     assert_eq!(close.obligations_committed, 1);
     assert!(tracker.detect_leaks(&cell).is_empty());
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde, display, defaults, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn two_phase_category_serde_round_trip_all_variants() {
+    for category in [
+        TwoPhaseCategory::ResourceAlloc,
+        TwoPhaseCategory::PermissionGrant,
+        TwoPhaseCategory::StateMutation,
+        TwoPhaseCategory::EvidenceCommit,
+    ] {
+        let json = serde_json::to_string(&category).expect("serialize");
+        let recovered: TwoPhaseCategory = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(category, recovered);
+    }
+}
+
+#[test]
+fn two_phase_category_display_formats_are_snake_case() {
+    assert_eq!(TwoPhaseCategory::ResourceAlloc.to_string(), "resource_alloc");
+    assert_eq!(
+        TwoPhaseCategory::PermissionGrant.to_string(),
+        "permission_grant"
+    );
+    assert_eq!(TwoPhaseCategory::StateMutation.to_string(), "state_mutation");
+    assert_eq!(
+        TwoPhaseCategory::EvidenceCommit.to_string(),
+        "evidence_commit"
+    );
+}
+
+#[test]
+fn operation_phase_serde_round_trip_all_variants() {
+    for phase in [
+        OperationPhase::Phase1Active,
+        OperationPhase::Committed,
+        OperationPhase::Aborted,
+        OperationPhase::Leaked,
+    ] {
+        let json = serde_json::to_string(&phase).expect("serialize");
+        let recovered: OperationPhase = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(phase, recovered);
+    }
+}
+
+#[test]
+fn operation_phase_display_formats() {
+    assert_eq!(OperationPhase::Phase1Active.to_string(), "phase1_active");
+    assert_eq!(OperationPhase::Committed.to_string(), "committed");
+    assert_eq!(OperationPhase::Aborted.to_string(), "aborted");
+    assert_eq!(OperationPhase::Leaked.to_string(), "leaked");
+}
+
+#[test]
+fn leak_policy_serde_round_trip_all_variants() {
+    for policy in [LeakPolicy::Lab, LeakPolicy::Production] {
+        let json = serde_json::to_string(&policy).expect("serialize");
+        let recovered: LeakPolicy = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(policy, recovered);
+    }
+}
+
+#[test]
+fn obligation_tracker_default_is_production_policy() {
+    let tracker = ObligationTracker::default();
+    assert_eq!(tracker.leak_policy(), LeakPolicy::Production);
+    assert!(!tracker.has_leaks());
+    assert!(!tracker.should_fail_run());
+    assert!(tracker.events().is_empty());
+}
+
+#[test]
+fn obligation_tracker_lab_mode_uses_lab_policy() {
+    let tracker = ObligationTracker::lab();
+    assert_eq!(tracker.leak_policy(), LeakPolicy::Lab);
+}
+
+#[test]
+fn obligation_event_serde_round_trip() {
+    let mut cell = ExecutionCell::new("ext-serde", CellKind::Extension, "trace-serde");
+    let mut tracker = ObligationTracker::default();
+    tracker
+        .begin_operation(
+            &mut cell,
+            "serde-op",
+            TwoPhaseCategory::ResourceAlloc,
+            "allocate for serde test",
+        )
+        .expect("begin");
+    tracker
+        .commit_operation(&mut cell, "serde-op")
+        .expect("commit");
+    let events = tracker.events();
+    assert!(!events.is_empty());
+    let json = serde_json::to_string(&events[0]).expect("serialize");
+    assert!(!json.is_empty());
+}

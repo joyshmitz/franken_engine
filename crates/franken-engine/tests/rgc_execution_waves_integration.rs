@@ -4,7 +4,7 @@
 use frankenengine_engine::rgc_execution_waves::{
     AntiStallAction, CoordinationValidationError, ExecutionWave,
     RGC_COORDINATION_EVENT_SCHEMA_VERSION, RGC_EXECUTION_WAVE_PROTOCOL_SCHEMA_VERSION,
-    RGC_WAVE_HANDOFF_SCHEMA_VERSION, default_rgc_execution_wave_protocol,
+    RGC_WAVE_HANDOFF_SCHEMA_VERSION, WaveHandoffPackage, default_rgc_execution_wave_protocol,
     default_wave_handoff_package, run_coordination_dry_run, validate_execution_wave_protocol,
     validate_wave_handoff_package,
 };
@@ -138,4 +138,90 @@ fn rgc_execution_waves_dry_run_emits_required_coordination_events() {
         assert_eq!(event.outcome, "pass");
         assert!(event.error_code.is_none());
     }
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde, display, defaults, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn execution_wave_all_const_covers_four_waves() {
+    assert_eq!(ExecutionWave::ALL.len(), 4);
+    for wave in ExecutionWave::ALL {
+        let json = serde_json::to_string(&wave).expect("serialize");
+        let recovered: ExecutionWave = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(wave, recovered);
+    }
+}
+
+#[test]
+fn anti_stall_action_serde_round_trip_all_variants() {
+    for action in [
+        AntiStallAction::Healthy,
+        AntiStallAction::Warn,
+        AntiStallAction::Escalate,
+        AntiStallAction::Reassign,
+        AntiStallAction::Split,
+    ] {
+        let json = serde_json::to_string(&action).expect("serialize");
+        let recovered: AntiStallAction = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(action, recovered);
+    }
+}
+
+#[test]
+fn anti_stall_action_as_str_is_non_empty() {
+    for action in [
+        AntiStallAction::Healthy,
+        AntiStallAction::Warn,
+        AntiStallAction::Escalate,
+        AntiStallAction::Reassign,
+        AntiStallAction::Split,
+    ] {
+        assert!(!action.as_str().is_empty());
+    }
+}
+
+#[test]
+fn coordination_validation_error_display_is_non_empty() {
+    let errors: Vec<CoordinationValidationError> = vec![
+        CoordinationValidationError::InvalidSchemaVersion {
+            field: "schema".to_string(),
+            expected: "v1".to_string(),
+            actual: "v2".to_string(),
+        },
+        CoordinationValidationError::EmptyField {
+            field: "from_owner".to_string(),
+        },
+        CoordinationValidationError::DuplicateWaveEntry {
+            wave: "wave_0".to_string(),
+        },
+        CoordinationValidationError::MissingWaveEntry {
+            wave: "wave_3".to_string(),
+        },
+        CoordinationValidationError::UnknownWaveForHandoff {
+            wave: "wave_5".to_string(),
+        },
+    ];
+    for err in &errors {
+        let msg = err.to_string();
+        assert!(!msg.is_empty(), "error display must not be empty: {err:?}");
+    }
+}
+
+#[test]
+fn wave_handoff_package_serde_round_trip() {
+    let handoff = default_wave_handoff_package();
+    let json = serde_json::to_string(&handoff).expect("serialize");
+    let recovered: WaveHandoffPackage = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(handoff, recovered);
+}
+
+#[test]
+fn default_protocol_has_entries_for_all_waves() {
+    let protocol = default_rgc_execution_wave_protocol();
+    assert_eq!(protocol.waves.len(), 4);
+    let json = serde_json::to_string(&protocol).expect("serialize");
+    assert!(json.contains("wave_0"));
+    assert!(json.contains("wave_3"));
 }
