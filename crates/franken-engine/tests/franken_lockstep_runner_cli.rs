@@ -148,6 +148,15 @@ fn write_engine_specs(path: &Path) {
     .expect("engine spec file should write");
 }
 
+fn read_jsonl(path: &Path) -> Vec<serde_json::Value> {
+    let contents = fs::read_to_string(path).expect("jsonl file should exist");
+    contents
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("jsonl line should parse as json"))
+        .collect()
+}
+
 #[test]
 fn lockstep_runner_help_exits_zero() {
     let output = Command::new(env!("CARGO_BIN_EXE_franken_lockstep_runner"))
@@ -161,6 +170,7 @@ fn lockstep_runner_help_exits_zero() {
     assert!(stdout.contains("franken_lockstep_runner"));
     assert!(stdout.contains("--fixture-catalog"));
     assert!(stdout.contains("--runtime-specs"));
+    assert!(stdout.contains("--evidence-jsonl"));
 }
 
 #[test]
@@ -284,6 +294,89 @@ fn lockstep_runner_loads_runtime_specs_as_external_engines() {
     let _ = fs::remove_file(catalog_path);
     let _ = fs::remove_file(runtime_specs_path);
     let _ = fs::remove_file(report_path);
+}
+
+#[test]
+fn lockstep_runner_emits_evidence_jsonl_with_deterministic_runtime_order() {
+    let catalog_path = temp_path("franken_lockstep_runner_evidence_catalog", "json");
+    let runtime_specs_path = temp_path("franken_lockstep_runner_evidence_specs", "toml");
+    let report_path = temp_path("franken_lockstep_runner_evidence_report", "json");
+    let evidence_path = temp_path("franken_lockstep_runner_evidence", "jsonl");
+    let expected_hash = write_fixture_catalog(&catalog_path);
+    write_runtime_specs(&runtime_specs_path, expected_hash.as_str());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken_lockstep_runner"))
+        .args([
+            "--fixture-catalog",
+            catalog_path
+                .to_str()
+                .expect("fixture path should be valid utf8"),
+            "--fixture-limit",
+            "1",
+            "--runtime-specs",
+            runtime_specs_path
+                .to_str()
+                .expect("runtime specs path should be valid utf8"),
+            "--out",
+            report_path
+                .to_str()
+                .expect("report path should be valid utf8"),
+            "--evidence-jsonl",
+            evidence_path
+                .to_str()
+                .expect("evidence path should be valid utf8"),
+        ])
+        .output()
+        .expect("lockstep runner should execute");
+
+    assert!(
+        output.status.success(),
+        "command failed with stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report: serde_json::Value = serde_json::from_slice(
+        &fs::read(&report_path).expect("report should exist for evidence linkage checks"),
+    )
+    .expect("report should parse");
+    let evidence_records = read_jsonl(&evidence_path);
+    assert_eq!(evidence_records.len(), 1);
+    let evidence = &evidence_records[0];
+
+    assert_eq!(
+        evidence["schema_version"].as_str(),
+        Some("franken-engine.lockstep-evidence.v1")
+    );
+    assert_eq!(evidence["run_id"], report["run_id"]);
+    assert_eq!(evidence["trace_id"], report["trace_id"]);
+    assert_eq!(evidence["decision_id"], report["decision_id"]);
+    assert_eq!(evidence["policy_id"], report["policy_id"]);
+    assert_eq!(
+        evidence["fixture_catalog_hash"],
+        report["fixture_catalog_hash"]
+    );
+
+    let runtime_versions = evidence["runtime_versions"]
+        .as_array()
+        .expect("runtime_versions should be an array");
+    let runtime_ids = runtime_versions
+        .iter()
+        .map(|entry| {
+            entry["engine_id"]
+                .as_str()
+                .expect("runtime entry should include engine_id")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        runtime_ids,
+        vec!["bun", "franken_canonical", "node"],
+        "runtime versions must be sorted deterministically by engine_id"
+    );
+
+    let _ = fs::remove_file(catalog_path);
+    let _ = fs::remove_file(runtime_specs_path);
+    let _ = fs::remove_file(report_path);
+    let _ = fs::remove_file(evidence_path);
 }
 
 #[test]

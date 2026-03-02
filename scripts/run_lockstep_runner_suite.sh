@@ -21,6 +21,7 @@ manifest_path="${run_dir}/run_manifest.json"
 events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
 report_path="${run_dir}/report.json"
+evidence_path="${run_dir}/lockstep_evidence.jsonl"
 repro_packs_dir="${run_dir}/repro_packs"
 
 trace_id="trace-lockstep-runner-${timestamp}"
@@ -88,7 +89,8 @@ run_report_step() {
       --policy-id "$policy_id" \
       --locale C \
       --timezone UTC \
-      --out "$report_path"
+      --out "$report_path" \
+      --evidence-jsonl "$evidence_path"
   )
 
   if [[ -n "$fixture_id" ]]; then
@@ -260,12 +262,14 @@ write_manifest() {
     echo "    \"events\": \"${events_path}\","
     echo "    \"commands\": \"${commands_path}\","
     echo "    \"report\": \"${report_path}\","
+    echo "    \"evidence\": \"${evidence_path}\","
     echo "    \"repro_packs_dir\": \"${repro_packs_dir}\""
     echo "  },"
     echo '  "operator_verification": ['
     echo "    \"cat ${manifest_path}\","
     echo "    \"cat ${events_path}\","
     echo "    \"cat ${report_path}\","
+    echo "    \"cat ${evidence_path}\","
     echo "    \"ls ${repro_packs_dir}\","
     echo "    \"${0} report\""
     echo "  ]"

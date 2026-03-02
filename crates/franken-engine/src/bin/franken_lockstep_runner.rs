@@ -9,15 +9,19 @@
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::{collections::BTreeSet, io};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    io::{self, Write},
+};
 
 use frankenengine_engine::parser_multi_engine_harness::{
     DEFAULT_MULTI_ENGINE_FIXTURE_CATALOG_PATH, HarnessEngineKind, HarnessEngineSpec,
     MultiEngineHarnessConfig, MultiEngineHarnessReport, run_multi_engine_harness,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const LOCKSTEP_RUNTIME_SPECS_SCHEMA_VERSION: &str = "franken-engine.lockstep-runtimes.v1";
+const LOCKSTEP_EVIDENCE_SCHEMA_VERSION: &str = "franken-engine.lockstep-evidence.v1";
 const DEFAULT_LOCKSTEP_RUNTIME_SPECS_PATH: &str =
     "crates/franken-engine/tests/fixtures/lockstep_runtimes.toml";
 
@@ -25,6 +29,7 @@ const DEFAULT_LOCKSTEP_RUNTIME_SPECS_PATH: &str =
 struct CliArgs {
     config: MultiEngineHarnessConfig,
     out_path: Option<PathBuf>,
+    evidence_jsonl_path: Option<PathBuf>,
     fail_on_divergence: bool,
     print_help: bool,
 }
@@ -54,6 +59,41 @@ struct LockstepRuntimeSpec {
     enabled: bool,
 }
 
+#[derive(Debug, Serialize)]
+struct LockstepRuntimeVersion {
+    engine_id: String,
+    version_pin: String,
+}
+
+#[derive(Debug, Serialize)]
+struct LockstepCategoryMatchRate {
+    total_fixtures: u64,
+    equivalent_fixtures: u64,
+    match_rate_ppm: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct LockstepEvidenceRecord {
+    schema_version: String,
+    generated_at_utc: String,
+    run_id: String,
+    trace_id: String,
+    decision_id: String,
+    policy_id: String,
+    fixture_catalog_hash: String,
+    parser_mode: String,
+    seed: u64,
+    locale: String,
+    timezone: String,
+    fixture_count: u64,
+    equivalent_fixtures: u64,
+    divergent_fixtures: u64,
+    nondeterministic_fixtures: u64,
+    divergence_class_distribution: BTreeMap<String, u64>,
+    runtime_versions: Vec<LockstepRuntimeVersion>,
+    category_match_rates: BTreeMap<String, LockstepCategoryMatchRate>,
+}
+
 fn default_runtime_enabled() -> bool {
     true
 }
@@ -76,6 +116,9 @@ fn run() -> Result<i32, Box<dyn Error>> {
 
     let mut report = run_multi_engine_harness(&args.config)?;
     rewrite_replay_commands_for_lockstep_runner(&mut report);
+    if let Some(evidence_jsonl_path) = &args.evidence_jsonl_path {
+        append_lockstep_evidence_jsonl(evidence_jsonl_path, &report)?;
+    }
     let json = serde_json::to_string_pretty(&report)?;
 
     if let Some(out_path) = &args.out_path {
@@ -122,6 +165,7 @@ where
     let mut engine_specs = None::<Vec<HarnessEngineSpec>>;
     let mut runtime_specs_path = None::<PathBuf>;
     let mut out_path = None::<PathBuf>;
+    let mut evidence_jsonl_path = None::<PathBuf>;
     let mut fail_on_divergence = false;
     let mut print_help_flag = false;
 
@@ -203,6 +247,12 @@ where
                     .ok_or_else(|| "missing value for --out".to_string())?;
                 out_path = Some(PathBuf::from(value));
             }
+            "--evidence-jsonl" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "missing value for --evidence-jsonl".to_string())?;
+                evidence_jsonl_path = Some(PathBuf::from(value));
+            }
             "--help" | "-h" => {
                 print_help();
                 print_help_flag = true;
@@ -246,6 +296,7 @@ where
     Ok(CliArgs {
         config,
         out_path,
+        evidence_jsonl_path,
         fail_on_divergence,
         print_help: print_help_flag,
     })
@@ -257,6 +308,94 @@ fn parse_fixture_limit(value: &str) -> Result<Option<usize>, Box<dyn Error>> {
     } else {
         Ok(Some(value.parse::<usize>()?))
     }
+}
+
+fn append_lockstep_evidence_jsonl(
+    path: &Path,
+    report: &MultiEngineHarnessReport,
+) -> Result<(), Box<dyn Error>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let evidence = build_lockstep_evidence_record(report);
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    serde_json::to_writer(&mut file, &evidence)?;
+    file.write_all(b"\n")?;
+    Ok(())
+}
+
+fn build_lockstep_evidence_record(report: &MultiEngineHarnessReport) -> LockstepEvidenceRecord {
+    let runtime_versions = collect_runtime_versions(report);
+    let category_match_rates = collect_category_match_rates(report);
+    LockstepEvidenceRecord {
+        schema_version: LOCKSTEP_EVIDENCE_SCHEMA_VERSION.to_string(),
+        generated_at_utc: report.generated_at_utc.clone(),
+        run_id: report.run_id.clone(),
+        trace_id: report.trace_id.clone(),
+        decision_id: report.decision_id.clone(),
+        policy_id: report.policy_id.clone(),
+        fixture_catalog_hash: report.fixture_catalog_hash.clone(),
+        parser_mode: report.parser_mode.clone(),
+        seed: report.seed,
+        locale: report.locale.clone(),
+        timezone: report.timezone.clone(),
+        fixture_count: report.fixture_count,
+        equivalent_fixtures: report.summary.equivalent_fixtures,
+        divergent_fixtures: report.summary.divergent_fixtures,
+        nondeterministic_fixtures: report.summary.fixtures_with_nondeterminism,
+        divergence_class_distribution: report.summary.drift_counts_by_category.clone(),
+        runtime_versions,
+        category_match_rates,
+    }
+}
+
+fn collect_runtime_versions(report: &MultiEngineHarnessReport) -> Vec<LockstepRuntimeVersion> {
+    let mut runtime_versions = report
+        .engine_specs
+        .iter()
+        .map(|engine| LockstepRuntimeVersion {
+            engine_id: engine.engine_id.clone(),
+            version_pin: engine.version_pin.clone(),
+        })
+        .collect::<Vec<_>>();
+    runtime_versions.sort_by(|left, right| left.engine_id.cmp(&right.engine_id));
+    runtime_versions
+}
+
+fn collect_category_match_rates(
+    report: &MultiEngineHarnessReport,
+) -> BTreeMap<String, LockstepCategoryMatchRate> {
+    let mut counts = BTreeMap::<String, (u64, u64)>::new();
+    for fixture in &report.fixture_results {
+        let entry = counts.entry(fixture.family_id.clone()).or_insert((0, 0));
+        entry.0 = entry.0.saturating_add(1);
+        if fixture.equivalent_across_engines {
+            entry.1 = entry.1.saturating_add(1);
+        }
+    }
+
+    counts
+        .into_iter()
+        .map(|(family_id, (total, equivalent))| {
+            let match_rate_ppm = if total == 0 {
+                0
+            } else {
+                ((equivalent as u128 * 1_000_000) / total as u128) as u64
+            };
+            (
+                family_id,
+                LockstepCategoryMatchRate {
+                    total_fixtures: total,
+                    equivalent_fixtures: equivalent,
+                    match_rate_ppm,
+                },
+            )
+        })
+        .collect()
 }
 
 fn load_engine_specs(path: &Path) -> Result<Vec<HarnessEngineSpec>, Box<dyn Error>> {
@@ -406,5 +545,6 @@ fn print_help() {
     println!("  --runtime-specs <path>");
     println!("  --fail-on-divergence");
     println!("  --out <path>");
+    println!("  --evidence-jsonl <path>");
     println!("  default runtime-specs path: {DEFAULT_LOCKSTEP_RUNTIME_SPECS_PATH}");
 }
