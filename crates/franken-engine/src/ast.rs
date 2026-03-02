@@ -148,6 +148,18 @@ pub enum Statement {
     Export(ExportDeclaration),
     VariableDeclaration(VariableDeclaration),
     Expression(ExpressionStatement),
+    Block(BlockStatement),
+    If(IfStatement),
+    For(ForStatement),
+    While(WhileStatement),
+    DoWhile(DoWhileStatement),
+    Return(ReturnStatement),
+    Throw(ThrowStatement),
+    TryCatch(TryCatchStatement),
+    Switch(SwitchStatement),
+    Break(BreakStatement),
+    Continue(ContinueStatement),
+    FunctionDeclaration(FunctionDeclaration),
 }
 
 impl Statement {
@@ -157,6 +169,18 @@ impl Statement {
             Self::Export(v) => &v.span,
             Self::VariableDeclaration(v) => &v.span,
             Self::Expression(v) => &v.span,
+            Self::Block(v) => &v.span,
+            Self::If(v) => &v.span,
+            Self::For(v) => &v.span,
+            Self::While(v) => &v.span,
+            Self::DoWhile(v) => &v.span,
+            Self::Return(v) => &v.span,
+            Self::Throw(v) => &v.span,
+            Self::TryCatch(v) => &v.span,
+            Self::Switch(v) => &v.span,
+            Self::Break(v) => &v.span,
+            Self::Continue(v) => &v.span,
+            Self::FunctionDeclaration(v) => &v.span,
         }
     }
 
@@ -193,6 +217,90 @@ impl Statement {
                     CanonicalValue::String("expression".to_string()),
                 );
                 map.insert("payload".to_string(), expr.canonical_value());
+            }
+            Self::Block(block) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("block".to_string()),
+                );
+                map.insert("payload".to_string(), block.canonical_value());
+            }
+            Self::If(if_stmt) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("if".to_string()),
+                );
+                map.insert("payload".to_string(), if_stmt.canonical_value());
+            }
+            Self::For(for_stmt) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("for".to_string()),
+                );
+                map.insert("payload".to_string(), for_stmt.canonical_value());
+            }
+            Self::While(while_stmt) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("while".to_string()),
+                );
+                map.insert("payload".to_string(), while_stmt.canonical_value());
+            }
+            Self::DoWhile(do_while) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("do_while".to_string()),
+                );
+                map.insert("payload".to_string(), do_while.canonical_value());
+            }
+            Self::Return(ret) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("return".to_string()),
+                );
+                map.insert("payload".to_string(), ret.canonical_value());
+            }
+            Self::Throw(throw) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("throw".to_string()),
+                );
+                map.insert("payload".to_string(), throw.canonical_value());
+            }
+            Self::TryCatch(tc) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("try_catch".to_string()),
+                );
+                map.insert("payload".to_string(), tc.canonical_value());
+            }
+            Self::Switch(sw) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("switch".to_string()),
+                );
+                map.insert("payload".to_string(), sw.canonical_value());
+            }
+            Self::Break(brk) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("break".to_string()),
+                );
+                map.insert("payload".to_string(), brk.canonical_value());
+            }
+            Self::Continue(cont) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("continue".to_string()),
+                );
+                map.insert("payload".to_string(), cont.canonical_value());
+            }
+            Self::FunctionDeclaration(func) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("function_declaration".to_string()),
+                );
+                map.insert("payload".to_string(), func.canonical_value());
             }
         }
         map.insert("span".to_string(), self.span().canonical_value());
@@ -356,6 +464,595 @@ impl ExpressionStatement {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Control flow statement AST nodes
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockStatement {
+    pub body: Vec<Statement>,
+    pub span: SourceSpan,
+}
+
+impl BlockStatement {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "body".to_string(),
+            CanonicalValue::Array(self.body.iter().map(Statement::canonical_value).collect()),
+        );
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IfStatement {
+    pub condition: Expression,
+    pub consequent: Box<Statement>,
+    pub alternate: Option<Box<Statement>>,
+    pub span: SourceSpan,
+}
+
+impl IfStatement {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert("condition".to_string(), self.condition.canonical_value());
+        map.insert(
+            "consequent".to_string(),
+            self.consequent.canonical_value(),
+        );
+        map.insert(
+            "alternate".to_string(),
+            self.alternate
+                .as_ref()
+                .map(|s| s.canonical_value())
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForStatement {
+    pub init: Option<Box<Statement>>,
+    pub condition: Option<Expression>,
+    pub update: Option<Expression>,
+    pub body: Box<Statement>,
+    pub span: SourceSpan,
+}
+
+impl ForStatement {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "init".to_string(),
+            self.init
+                .as_ref()
+                .map(|s| s.canonical_value())
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert(
+            "condition".to_string(),
+            self.condition
+                .as_ref()
+                .map(Expression::canonical_value)
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert(
+            "update".to_string(),
+            self.update
+                .as_ref()
+                .map(Expression::canonical_value)
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert("body".to_string(), self.body.canonical_value());
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WhileStatement {
+    pub condition: Expression,
+    pub body: Box<Statement>,
+    pub span: SourceSpan,
+}
+
+impl WhileStatement {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert("condition".to_string(), self.condition.canonical_value());
+        map.insert("body".to_string(), self.body.canonical_value());
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DoWhileStatement {
+    pub body: Box<Statement>,
+    pub condition: Expression,
+    pub span: SourceSpan,
+}
+
+impl DoWhileStatement {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert("body".to_string(), self.body.canonical_value());
+        map.insert("condition".to_string(), self.condition.canonical_value());
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReturnStatement {
+    pub argument: Option<Expression>,
+    pub span: SourceSpan,
+}
+
+impl ReturnStatement {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "argument".to_string(),
+            self.argument
+                .as_ref()
+                .map(Expression::canonical_value)
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThrowStatement {
+    pub argument: Expression,
+    pub span: SourceSpan,
+}
+
+impl ThrowStatement {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert("argument".to_string(), self.argument.canonical_value());
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatchClause {
+    pub parameter: Option<String>,
+    pub body: BlockStatement,
+    pub span: SourceSpan,
+}
+
+impl CatchClause {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "parameter".to_string(),
+            self.parameter
+                .as_ref()
+                .map(|p| CanonicalValue::String(p.clone()))
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert("body".to_string(), self.body.canonical_value());
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TryCatchStatement {
+    pub block: BlockStatement,
+    pub handler: Option<CatchClause>,
+    pub finalizer: Option<BlockStatement>,
+    pub span: SourceSpan,
+}
+
+impl TryCatchStatement {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert("block".to_string(), self.block.canonical_value());
+        map.insert(
+            "handler".to_string(),
+            self.handler
+                .as_ref()
+                .map(CatchClause::canonical_value)
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert(
+            "finalizer".to_string(),
+            self.finalizer
+                .as_ref()
+                .map(BlockStatement::canonical_value)
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SwitchCase {
+    pub test: Option<Expression>,
+    pub consequent: Vec<Statement>,
+    pub span: SourceSpan,
+}
+
+impl SwitchCase {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "test".to_string(),
+            self.test
+                .as_ref()
+                .map(Expression::canonical_value)
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert(
+            "consequent".to_string(),
+            CanonicalValue::Array(
+                self.consequent
+                    .iter()
+                    .map(Statement::canonical_value)
+                    .collect(),
+            ),
+        );
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SwitchStatement {
+    pub discriminant: Expression,
+    pub cases: Vec<SwitchCase>,
+    pub span: SourceSpan,
+}
+
+impl SwitchStatement {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "discriminant".to_string(),
+            self.discriminant.canonical_value(),
+        );
+        map.insert(
+            "cases".to_string(),
+            CanonicalValue::Array(
+                self.cases
+                    .iter()
+                    .map(SwitchCase::canonical_value)
+                    .collect(),
+            ),
+        );
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BreakStatement {
+    pub label: Option<String>,
+    pub span: SourceSpan,
+}
+
+impl BreakStatement {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "label".to_string(),
+            self.label
+                .as_ref()
+                .map(|l| CanonicalValue::String(l.clone()))
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContinueStatement {
+    pub label: Option<String>,
+    pub span: SourceSpan,
+}
+
+impl ContinueStatement {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "label".to_string(),
+            self.label
+                .as_ref()
+                .map(|l| CanonicalValue::String(l.clone()))
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FunctionParam {
+    pub name: String,
+    pub span: SourceSpan,
+}
+
+impl FunctionParam {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "name".to_string(),
+            CanonicalValue::String(self.name.clone()),
+        );
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FunctionDeclaration {
+    pub name: Option<String>,
+    pub params: Vec<FunctionParam>,
+    pub body: BlockStatement,
+    pub is_async: bool,
+    pub is_generator: bool,
+    pub span: SourceSpan,
+}
+
+impl FunctionDeclaration {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "name".to_string(),
+            self.name
+                .as_ref()
+                .map(|n| CanonicalValue::String(n.clone()))
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert(
+            "params".to_string(),
+            CanonicalValue::Array(
+                self.params
+                    .iter()
+                    .map(FunctionParam::canonical_value)
+                    .collect(),
+            ),
+        );
+        map.insert("body".to_string(), self.body.canonical_value());
+        map.insert("is_async".to_string(), CanonicalValue::Bool(self.is_async));
+        map.insert(
+            "is_generator".to_string(),
+            CanonicalValue::Bool(self.is_generator),
+        );
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Binary operator enumeration
+// ---------------------------------------------------------------------------
+
+/// Binary operator kinds for ES2020 expressions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BinaryOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+    Exponentiate,
+    Equal,
+    NotEqual,
+    StrictEqual,
+    StrictNotEqual,
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
+    LogicalAnd,
+    LogicalOr,
+    NullishCoalescing,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    LeftShift,
+    RightShift,
+    UnsignedRightShift,
+    Instanceof,
+    In,
+}
+
+impl BinaryOperator {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Add => "+",
+            Self::Subtract => "-",
+            Self::Multiply => "*",
+            Self::Divide => "/",
+            Self::Remainder => "%",
+            Self::Exponentiate => "**",
+            Self::Equal => "==",
+            Self::NotEqual => "!=",
+            Self::StrictEqual => "===",
+            Self::StrictNotEqual => "!==",
+            Self::LessThan => "<",
+            Self::LessThanOrEqual => "<=",
+            Self::GreaterThan => ">",
+            Self::GreaterThanOrEqual => ">=",
+            Self::LogicalAnd => "&&",
+            Self::LogicalOr => "||",
+            Self::NullishCoalescing => "??",
+            Self::BitwiseAnd => "&",
+            Self::BitwiseOr => "|",
+            Self::BitwiseXor => "^",
+            Self::LeftShift => "<<",
+            Self::RightShift => ">>",
+            Self::UnsignedRightShift => ">>>",
+            Self::Instanceof => "instanceof",
+            Self::In => "in",
+        }
+    }
+
+    /// Precedence level for Pratt parsing (higher binds tighter).
+    pub fn precedence(self) -> u8 {
+        match self {
+            Self::LogicalOr => 4,
+            Self::LogicalAnd => 5,
+            Self::NullishCoalescing => 4,
+            Self::BitwiseOr => 6,
+            Self::BitwiseXor => 7,
+            Self::BitwiseAnd => 8,
+            Self::Equal | Self::NotEqual | Self::StrictEqual | Self::StrictNotEqual => 9,
+            Self::LessThan
+            | Self::LessThanOrEqual
+            | Self::GreaterThan
+            | Self::GreaterThanOrEqual
+            | Self::Instanceof
+            | Self::In => 10,
+            Self::LeftShift | Self::RightShift | Self::UnsignedRightShift => 11,
+            Self::Add | Self::Subtract => 12,
+            Self::Multiply | Self::Divide | Self::Remainder => 13,
+            Self::Exponentiate => 14,
+        }
+    }
+
+    /// Whether the operator is right-associative.
+    pub fn is_right_associative(self) -> bool {
+        matches!(self, Self::Exponentiate)
+    }
+}
+
+/// Unary operator kinds for ES2020 expressions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UnaryOperator {
+    Negate,
+    BitwiseNot,
+    LogicalNot,
+    Typeof,
+    Void,
+    Delete,
+    UnaryPlus,
+}
+
+impl UnaryOperator {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Negate => "-",
+            Self::BitwiseNot => "~",
+            Self::LogicalNot => "!",
+            Self::Typeof => "typeof",
+            Self::Void => "void",
+            Self::Delete => "delete",
+            Self::UnaryPlus => "+",
+        }
+    }
+}
+
+/// Assignment operator kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AssignmentOperator {
+    Assign,
+    AddAssign,
+    SubtractAssign,
+    MultiplyAssign,
+    DivideAssign,
+    RemainderAssign,
+    ExponentiateAssign,
+    LeftShiftAssign,
+    RightShiftAssign,
+    UnsignedRightShiftAssign,
+    BitwiseAndAssign,
+    BitwiseOrAssign,
+    BitwiseXorAssign,
+    LogicalAndAssign,
+    LogicalOrAssign,
+    NullishCoalescingAssign,
+}
+
+impl AssignmentOperator {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Assign => "=",
+            Self::AddAssign => "+=",
+            Self::SubtractAssign => "-=",
+            Self::MultiplyAssign => "*=",
+            Self::DivideAssign => "/=",
+            Self::RemainderAssign => "%=",
+            Self::ExponentiateAssign => "**=",
+            Self::LeftShiftAssign => "<<=",
+            Self::RightShiftAssign => ">>=",
+            Self::UnsignedRightShiftAssign => ">>>=",
+            Self::BitwiseAndAssign => "&=",
+            Self::BitwiseOrAssign => "|=",
+            Self::BitwiseXorAssign => "^=",
+            Self::LogicalAndAssign => "&&=",
+            Self::LogicalOrAssign => "||=",
+            Self::NullishCoalescingAssign => "??=",
+        }
+    }
+}
+
+/// Property in an object literal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObjectProperty {
+    pub key: Expression,
+    pub value: Expression,
+    pub computed: bool,
+    pub shorthand: bool,
+}
+
+impl ObjectProperty {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert("key".to_string(), self.key.canonical_value());
+        map.insert("value".to_string(), self.value.canonical_value());
+        map.insert("computed".to_string(), CanonicalValue::Bool(self.computed));
+        map.insert(
+            "shorthand".to_string(),
+            CanonicalValue::Bool(self.shorthand),
+        );
+        CanonicalValue::Map(map)
+    }
+}
+
+/// Arrow function body — either an expression or a block.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ArrowBody {
+    Expression(Box<Expression>),
+    Block(BlockStatement),
+}
+
+impl ArrowBody {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        match self {
+            Self::Expression(expr) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("expression".to_string()),
+                );
+                map.insert("value".to_string(), expr.canonical_value());
+            }
+            Self::Block(block) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("block".to_string()),
+                );
+                map.insert("value".to_string(), block.canonical_value());
+            }
+        }
+        CanonicalValue::Map(map)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Expression {
     Identifier(String),
@@ -365,6 +1062,42 @@ pub enum Expression {
     NullLiteral,
     UndefinedLiteral,
     Await(Box<Expression>),
+    Binary {
+        operator: BinaryOperator,
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    Unary {
+        operator: UnaryOperator,
+        argument: Box<Expression>,
+    },
+    Assignment {
+        operator: AssignmentOperator,
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    Conditional {
+        test: Box<Expression>,
+        consequent: Box<Expression>,
+        alternate: Box<Expression>,
+    },
+    Call {
+        callee: Box<Expression>,
+        arguments: Vec<Expression>,
+    },
+    Member {
+        object: Box<Expression>,
+        property: Box<Expression>,
+        computed: bool,
+    },
+    This,
+    ArrayLiteral(Vec<Option<Expression>>),
+    ObjectLiteral(Vec<ObjectProperty>),
+    ArrowFunction {
+        params: Vec<FunctionParam>,
+        body: ArrowBody,
+        is_async: bool,
+    },
     Raw(String),
 }
 
@@ -420,6 +1153,147 @@ impl Expression {
                     CanonicalValue::String("await".to_string()),
                 );
                 map.insert("value".to_string(), value.canonical_value());
+            }
+            Self::Binary {
+                operator,
+                left,
+                right,
+            } => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("binary".to_string()),
+                );
+                map.insert(
+                    "operator".to_string(),
+                    CanonicalValue::String(operator.as_str().to_string()),
+                );
+                map.insert("left".to_string(), left.canonical_value());
+                map.insert("right".to_string(), right.canonical_value());
+            }
+            Self::Unary { operator, argument } => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("unary".to_string()),
+                );
+                map.insert(
+                    "operator".to_string(),
+                    CanonicalValue::String(operator.as_str().to_string()),
+                );
+                map.insert("argument".to_string(), argument.canonical_value());
+            }
+            Self::Assignment {
+                operator,
+                left,
+                right,
+            } => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("assignment".to_string()),
+                );
+                map.insert(
+                    "operator".to_string(),
+                    CanonicalValue::String(operator.as_str().to_string()),
+                );
+                map.insert("left".to_string(), left.canonical_value());
+                map.insert("right".to_string(), right.canonical_value());
+            }
+            Self::Conditional {
+                test,
+                consequent,
+                alternate,
+            } => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("conditional".to_string()),
+                );
+                map.insert("test".to_string(), test.canonical_value());
+                map.insert("consequent".to_string(), consequent.canonical_value());
+                map.insert("alternate".to_string(), alternate.canonical_value());
+            }
+            Self::Call { callee, arguments } => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("call".to_string()),
+                );
+                map.insert("callee".to_string(), callee.canonical_value());
+                map.insert(
+                    "arguments".to_string(),
+                    CanonicalValue::Array(
+                        arguments.iter().map(Expression::canonical_value).collect(),
+                    ),
+                );
+            }
+            Self::Member {
+                object,
+                property,
+                computed,
+            } => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("member".to_string()),
+                );
+                map.insert("object".to_string(), object.canonical_value());
+                map.insert("property".to_string(), property.canonical_value());
+                map.insert("computed".to_string(), CanonicalValue::Bool(*computed));
+            }
+            Self::This => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("this".to_string()),
+                );
+                map.insert("value".to_string(), CanonicalValue::Null);
+            }
+            Self::ArrayLiteral(elements) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("array".to_string()),
+                );
+                map.insert(
+                    "elements".to_string(),
+                    CanonicalValue::Array(
+                        elements
+                            .iter()
+                            .map(|e| {
+                                e.as_ref()
+                                    .map(Expression::canonical_value)
+                                    .unwrap_or(CanonicalValue::Null)
+                            })
+                            .collect(),
+                    ),
+                );
+            }
+            Self::ObjectLiteral(properties) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("object".to_string()),
+                );
+                map.insert(
+                    "properties".to_string(),
+                    CanonicalValue::Array(
+                        properties
+                            .iter()
+                            .map(ObjectProperty::canonical_value)
+                            .collect(),
+                    ),
+                );
+            }
+            Self::ArrowFunction {
+                params,
+                body,
+                is_async,
+            } => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("arrow_function".to_string()),
+                );
+                map.insert(
+                    "params".to_string(),
+                    CanonicalValue::Array(
+                        params.iter().map(FunctionParam::canonical_value).collect(),
+                    ),
+                );
+                map.insert("body".to_string(), body.canonical_value());
+                map.insert("is_async".to_string(), CanonicalValue::Bool(*is_async));
             }
             Self::Raw(value) => {
                 map.insert(

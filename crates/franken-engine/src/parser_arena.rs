@@ -429,7 +429,32 @@ impl ParserArena {
                 let expression = self.alloc_expression(&expression_stmt.expression)?;
                 ArenaNode::ExpressionStatement { expression, span }
             }
-            Statement::VariableDeclaration(_) => unimplemented!(),
+            Statement::VariableDeclaration(variable_declaration) => {
+                let span = self.alloc_span(&variable_declaration.span)?;
+                self.charge_bytes(NODE_BASE_ESTIMATED_BYTES)?;
+
+                let mut declarations = Vec::with_capacity(variable_declaration.declarations.len());
+                for declarator in &variable_declaration.declarations {
+                    let declarator_span = self.alloc_span(&declarator.span)?;
+                    self.charge_bytes(NODE_BASE_ESTIMATED_BYTES)?;
+                    self.charge_bytes(string_bytes(&declarator.name))?;
+                    let initializer = match &declarator.initializer {
+                        Some(expression) => Some(self.alloc_expression(expression)?),
+                        None => None,
+                    };
+                    declarations.push(ArenaVariableDeclarator {
+                        name: declarator.name.clone(),
+                        initializer,
+                        span: declarator_span,
+                    });
+                }
+
+                ArenaNode::VariableDeclaration {
+                    kind: variable_declaration.kind,
+                    declarations,
+                    span,
+                }
+            }
         };
 
         self.nodes.push(node);
@@ -759,6 +784,34 @@ mod tests {
         }
     }
 
+    fn variable_declaration_tree() -> SyntaxTree {
+        SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![Statement::VariableDeclaration(VariableDeclaration {
+                kind: VariableDeclarationKind::Const,
+                declarations: vec![
+                    VariableDeclarator {
+                        name: "answer".to_string(),
+                        initializer: Some(Expression::NumericLiteral(42)),
+                        span: test_span(),
+                    },
+                    VariableDeclarator {
+                        name: "label".to_string(),
+                        initializer: Some(Expression::StringLiteral("ready".to_string())),
+                        span: test_span(),
+                    },
+                    VariableDeclarator {
+                        name: "empty".to_string(),
+                        initializer: None,
+                        span: test_span(),
+                    },
+                ],
+                span: test_span(),
+            })],
+            span: test_span(),
+        }
+    }
+
     // -----------------------------------------------------------------------
     // NodeHandle
     // -----------------------------------------------------------------------
@@ -950,6 +1003,26 @@ mod tests {
     }
 
     #[test]
+    fn from_syntax_tree_variable_declaration() {
+        let tree = variable_declaration_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        assert_eq!(arena.statement_handles().len(), 1);
+        let node = arena.node(arena.statement_handles()[0]).unwrap();
+        match node {
+            ArenaNode::VariableDeclaration {
+                kind, declarations, ..
+            } => {
+                assert_eq!(*kind, VariableDeclarationKind::Const);
+                assert_eq!(declarations.len(), 3);
+                assert_eq!(declarations[0].name, "answer");
+                assert_eq!(declarations[2].name, "empty");
+                assert!(declarations[2].initializer.is_none());
+            }
+            _ => panic!("expected variable declaration node"),
+        }
+    }
+
+    #[test]
     fn from_syntax_tree_empty_body() {
         let tree = SyntaxTree {
             goal: ParseGoal::Script,
@@ -1020,6 +1093,14 @@ mod tests {
     #[test]
     fn roundtrip_export_named() {
         let tree = export_named_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let recovered = arena.to_syntax_tree().unwrap();
+        assert_eq!(recovered, tree);
+    }
+
+    #[test]
+    fn roundtrip_variable_declaration() {
+        let tree = variable_declaration_tree();
         let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
         let recovered = arena.to_syntax_tree().unwrap();
         assert_eq!(recovered, tree);
@@ -1300,6 +1381,30 @@ mod tests {
         };
         let desc = node_audit_descriptor(&node);
         assert!(desc.contains("expression_statement"));
+    }
+
+    #[test]
+    fn node_audit_descriptor_variable_declaration() {
+        let node = ArenaNode::VariableDeclaration {
+            kind: VariableDeclarationKind::Let,
+            declarations: vec![
+                ArenaVariableDeclarator {
+                    name: "x".to_string(),
+                    initializer: Some(ExpressionHandle::new(0)),
+                    span: SpanHandle::new(2),
+                },
+                ArenaVariableDeclarator {
+                    name: "y".to_string(),
+                    initializer: None,
+                    span: SpanHandle::new(3),
+                },
+            ],
+            span: SpanHandle::new(1),
+        };
+        let desc = node_audit_descriptor(&node);
+        assert!(desc.contains("variable_declaration"));
+        assert!(desc.contains("kind=let"));
+        assert!(desc.contains("count=2"));
     }
 
     #[test]

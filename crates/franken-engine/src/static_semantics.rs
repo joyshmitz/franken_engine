@@ -503,6 +503,143 @@ fn analyze_statement(
         Statement::Expression(expr_stmt) => {
             check_await_in_expression(state, &expr_stmt.expression, &expr_stmt.span);
         }
+
+        Statement::Block(block) => {
+            for child in &block.body {
+                analyze_statement(state, child, scope_id, bindings, lexical_names, var_names);
+            }
+        }
+
+        Statement::If(if_stmt) => {
+            check_await_in_expression(state, &if_stmt.condition, &if_stmt.span);
+            analyze_statement(
+                state,
+                &if_stmt.consequent,
+                scope_id,
+                bindings,
+                lexical_names,
+                var_names,
+            );
+            if let Some(ref alt) = if_stmt.alternate {
+                analyze_statement(state, alt, scope_id, bindings, lexical_names, var_names);
+            }
+        }
+
+        Statement::For(for_stmt) => {
+            if let Some(ref init) = for_stmt.init {
+                analyze_statement(state, init, scope_id, bindings, lexical_names, var_names);
+            }
+            if let Some(ref cond) = for_stmt.condition {
+                check_await_in_expression(state, cond, &for_stmt.span);
+            }
+            if let Some(ref update) = for_stmt.update {
+                check_await_in_expression(state, update, &for_stmt.span);
+            }
+            analyze_statement(
+                state,
+                &for_stmt.body,
+                scope_id,
+                bindings,
+                lexical_names,
+                var_names,
+            );
+        }
+
+        Statement::While(while_stmt) => {
+            check_await_in_expression(state, &while_stmt.condition, &while_stmt.span);
+            analyze_statement(
+                state,
+                &while_stmt.body,
+                scope_id,
+                bindings,
+                lexical_names,
+                var_names,
+            );
+        }
+
+        Statement::DoWhile(do_while) => {
+            analyze_statement(
+                state,
+                &do_while.body,
+                scope_id,
+                bindings,
+                lexical_names,
+                var_names,
+            );
+            check_await_in_expression(state, &do_while.condition, &do_while.span);
+        }
+
+        Statement::Return(ret) => {
+            if let Some(ref arg) = ret.argument {
+                check_await_in_expression(state, arg, &ret.span);
+            }
+        }
+
+        Statement::Throw(throw) => {
+            check_await_in_expression(state, &throw.argument, &throw.span);
+        }
+
+        Statement::TryCatch(tc) => {
+            for child in &tc.block.body {
+                analyze_statement(state, child, scope_id, bindings, lexical_names, var_names);
+            }
+            if let Some(ref handler) = tc.handler {
+                for child in &handler.body.body {
+                    analyze_statement(
+                        state, child, scope_id, bindings, lexical_names, var_names,
+                    );
+                }
+            }
+            if let Some(ref finalizer) = tc.finalizer {
+                for child in &finalizer.body {
+                    analyze_statement(
+                        state, child, scope_id, bindings, lexical_names, var_names,
+                    );
+                }
+            }
+        }
+
+        Statement::Switch(sw) => {
+            check_await_in_expression(state, &sw.discriminant, &sw.span);
+            for case in &sw.cases {
+                if let Some(ref test) = case.test {
+                    check_await_in_expression(state, test, &sw.span);
+                }
+                for child in &case.consequent {
+                    analyze_statement(
+                        state, child, scope_id, bindings, lexical_names, var_names,
+                    );
+                }
+            }
+        }
+
+        Statement::Break(_) | Statement::Continue(_) => {
+            // Control flow only — no bindings or expressions to analyze.
+        }
+
+        Statement::FunctionDeclaration(func) => {
+            // Register function name as a binding in the current scope if present.
+            if let Some(ref name) = func.name {
+                check_reserved(state, name, &func.span);
+                let bid = state.alloc_binding_id();
+                bindings.push(ResolvedBinding {
+                    name: name.clone(),
+                    binding_id: bid,
+                    scope: scope_id,
+                    kind: BindingKind::Var,
+                });
+                if let Some(prev_span) = var_names.get(name) {
+                    // Var-scoped function declarations allow re-declaration in sloppy mode;
+                    // we note it without error (ES2020 sloppy-mode semantics).
+                    let _ = prev_span;
+                }
+                var_names.insert(name.clone(), func.span.clone());
+            }
+            // Recurse into function body for nested analysis.
+            for child in &func.body.body {
+                analyze_statement(state, child, scope_id, bindings, lexical_names, var_names);
+            }
+        }
     }
 }
 

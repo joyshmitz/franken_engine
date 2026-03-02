@@ -13,9 +13,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::ast::{
-    ExportDeclaration, ExportKind, Expression, ExpressionStatement, ImportDeclaration, ParseGoal,
-    SourceSpan, Statement, SyntaxTree, VariableDeclaration, VariableDeclarationKind,
-    VariableDeclarator,
+    AssignmentOperator, BinaryOperator, BlockStatement, BreakStatement, CatchClause,
+    ContinueStatement, DoWhileStatement, ExportDeclaration, ExportKind, Expression,
+    ExpressionStatement, ForStatement, FunctionDeclaration, FunctionParam, IfStatement,
+    ImportDeclaration, ObjectProperty, ParseGoal, ReturnStatement, SourceSpan, Statement,
+    SwitchCase, SwitchStatement, SyntaxTree, ThrowStatement, TryCatchStatement, UnaryOperator,
+    VariableDeclaration, VariableDeclarationKind, VariableDeclarator, WhileStatement,
 };
 use crate::deterministic_serde::{self, CanonicalValue};
 
@@ -2083,6 +2086,109 @@ impl<'a> ParseExecutionContext<'a> {
     }
 }
 
+/// A logical line that may span multiple physical lines (for block statements).
+struct LogicalLine {
+    text: String,
+    byte_offset: u64,
+    start_line: u64,
+    end_line: u64,
+}
+
+/// Merge physical lines into logical lines by tracking brace/paren/bracket depth.
+/// When a line ends with unbalanced delimiters, subsequent lines are merged until balance.
+fn merge_logical_lines(text: &str) -> Vec<LogicalLine> {
+    let mut result = Vec::new();
+    let mut current_text = String::new();
+    let mut current_byte_offset: u64 = 0;
+    let mut current_start_line: u64 = 0;
+    let mut byte_offset: u64 = 0;
+    let mut brace_depth: i64 = 0;
+    let mut paren_depth: i64 = 0;
+    let mut bracket_depth: i64 = 0;
+    let mut in_quote: Option<char> = None;
+    let mut escaped = false;
+    let mut accumulating = false;
+
+    for (line_idx, segment) in text.split_inclusive('\n').enumerate() {
+        let line_no = (line_idx as u64).saturating_add(1);
+        let line = segment
+            .strip_suffix('\n')
+            .unwrap_or(segment)
+            .strip_suffix('\r')
+            .unwrap_or(segment.strip_suffix('\n').unwrap_or(segment));
+
+        if !accumulating {
+            current_text.clear();
+            current_byte_offset = byte_offset;
+            current_start_line = line_no;
+        } else {
+            current_text.push(' ');
+        }
+        current_text.push_str(line);
+
+        for ch in line.chars() {
+            if let Some(q) = in_quote {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    escaped = true;
+                    continue;
+                }
+                if ch == q {
+                    in_quote = None;
+                }
+                continue;
+            }
+            match ch {
+                '\'' | '"' | '`' => in_quote = Some(ch),
+                '{' => brace_depth += 1,
+                '}' => brace_depth -= 1,
+                '(' => paren_depth += 1,
+                ')' => paren_depth -= 1,
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth -= 1,
+                _ => {}
+            }
+        }
+
+        byte_offset = byte_offset.saturating_add(segment.len() as u64);
+
+        if brace_depth <= 0 && paren_depth <= 0 && bracket_depth <= 0 && in_quote.is_none() {
+            let trimmed = current_text.trim();
+            if !trimmed.is_empty() {
+                result.push(LogicalLine {
+                    text: trimmed.to_string(),
+                    byte_offset: current_byte_offset,
+                    start_line: current_start_line,
+                    end_line: line_no,
+                });
+            }
+            brace_depth = 0;
+            paren_depth = 0;
+            bracket_depth = 0;
+            accumulating = false;
+        } else {
+            accumulating = true;
+        }
+    }
+
+    if accumulating {
+        let trimmed = current_text.trim();
+        if !trimmed.is_empty() {
+            result.push(LogicalLine {
+                text: trimmed.to_string(),
+                byte_offset: current_byte_offset,
+                start_line: current_start_line,
+                end_line: text.lines().count().max(1) as u64,
+            });
+        }
+    }
+
+    result
+}
+
 fn parse_source(
     text: &str,
     source_label: &str,
@@ -2134,30 +2240,27 @@ fn parse_source(
         ));
     }
 
+    let logical_lines = merge_logical_lines(text);
     let mut statements = Vec::new();
-    let mut offset = 0usize;
 
-    for (line_idx, segment) in text.split_inclusive('\n').enumerate() {
-        let line_no = to_u64(line_idx + 1, source_label, None)?;
-        let line = segment
-            .strip_suffix('\n')
-            .unwrap_or(segment)
-            .strip_suffix('\r')
-            .unwrap_or(segment.strip_suffix('\n').unwrap_or(segment));
-        let line_start_offset = offset;
-
-        for (start_in_line, end_in_line, statement_text) in split_statement_segments(line) {
-            let span = span_for_segment(
-                line_start_offset,
-                line_no,
-                start_in_line,
-                end_in_line,
-                source_label,
-            )?;
+    for logical_line in &logical_lines {
+        for (start_in_line, end_in_line, statement_text) in
+            split_statement_segments(&logical_line.text)
+        {
+            let span = SourceSpan::new(
+                logical_line
+                    .byte_offset
+                    .saturating_add(start_in_line as u64),
+                logical_line
+                    .byte_offset
+                    .saturating_add(end_in_line as u64),
+                logical_line.start_line,
+                start_in_line.saturating_add(1) as u64,
+                logical_line.end_line,
+                end_in_line.saturating_add(1) as u64,
+            );
             statements.push(parse_statement(statement_text, goal, span, &mut context)?);
         }
-
-        offset = offset.saturating_add(segment.len());
     }
 
     let source_len = to_u64(text.len(), source_label, None)?;
@@ -2318,6 +2421,51 @@ fn parse_statement(
     if let Some(kind) = parse_variable_declaration_kind(statement) {
         return parse_variable_declaration(statement, kind, span, context)
             .map(Statement::VariableDeclaration);
+    }
+
+    // Control flow statement dispatch
+    if statement.starts_with("if ") || statement.starts_with("if(") {
+        return parse_if_statement(statement, goal, span, context);
+    }
+    if statement.starts_with("for ") || statement.starts_with("for(") {
+        return parse_for_statement(statement, goal, span, context);
+    }
+    if statement.starts_with("while ") || statement.starts_with("while(") {
+        return parse_while_statement(statement, goal, span, context);
+    }
+    if statement.starts_with("do ") || statement.starts_with("do{") {
+        return parse_do_while_statement(statement, goal, span, context);
+    }
+    if statement == "return" || statement.starts_with("return ") || statement.starts_with("return;")
+    {
+        return parse_return_statement(statement, span, context);
+    }
+    if statement.starts_with("throw ") {
+        return parse_throw_statement(statement, span, context);
+    }
+    if statement.starts_with("try ") || statement.starts_with("try{") {
+        return parse_try_catch_statement(statement, goal, span, context);
+    }
+    if statement.starts_with("switch ") || statement.starts_with("switch(") {
+        return parse_switch_statement(statement, goal, span, context);
+    }
+    if statement == "break" || statement.starts_with("break ") || statement.starts_with("break;") {
+        return parse_break_statement(statement, span);
+    }
+    if statement == "continue"
+        || statement.starts_with("continue ")
+        || statement.starts_with("continue;")
+    {
+        return parse_continue_statement(statement, span);
+    }
+    if statement.starts_with("function ") || statement.starts_with("function*(") {
+        return parse_function_declaration(statement, span, context);
+    }
+    if statement.starts_with("async function ") {
+        return parse_function_declaration(statement, span, context);
+    }
+    if statement.starts_with('{') && statement.ends_with('}') {
+        return parse_block_statement(statement, goal, span, context);
     }
 
     let expression = parse_expression(statement, &span, context, 1)?;
@@ -3564,6 +3712,676 @@ impl Default for SemanticValidationResult {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Control flow statement parsers
+// ---------------------------------------------------------------------------
+
+/// Extract the content between balanced delimiters starting at `open_char`.
+/// Returns (content_inside, rest_after_close). `s` must start with `open_char`.
+fn extract_balanced(s: &str, open_char: char, close_char: char) -> Option<(&str, &str)> {
+    if !s.starts_with(open_char) {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    let mut depth: i64 = 0;
+    let mut in_quote: Option<u8> = None;
+    let mut escaped = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        if let Some(q) = in_quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if b == b'\\' {
+                escaped = true;
+                continue;
+            }
+            if b == q {
+                in_quote = None;
+            }
+            continue;
+        }
+        match b {
+            b'\'' | b'"' | b'`' => in_quote = Some(b),
+            _ if b == open_char as u8 => depth += 1,
+            _ if b == close_char as u8 => {
+                depth -= 1;
+                if depth == 0 {
+                    let inner = &s[1..i];
+                    let rest = &s[i + 1..];
+                    return Some((inner, rest));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Parse a block `{ ... }` body into a list of statements.
+fn parse_body_statements(
+    body_src: &str,
+    goal: ParseGoal,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<Vec<Statement>> {
+    let trimmed = body_src.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let logical_lines = merge_logical_lines(trimmed);
+    let mut stmts = Vec::new();
+    for ll in &logical_lines {
+        for (_start, _end, text) in split_statement_segments(&ll.text) {
+            let inner_span = span.clone();
+            stmts.push(parse_statement(text, goal, inner_span, context)?);
+        }
+    }
+    Ok(stmts)
+}
+
+fn parse_block_statement(
+    statement: &str,
+    goal: ParseGoal,
+    span: SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<Statement> {
+    let (inner, _rest) = extract_balanced(statement, '{', '}').ok_or_else(|| {
+        ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "unbalanced braces in block statement",
+            context.source_label.to_string(),
+            Some(span.clone()),
+        )
+    })?;
+    let body = parse_body_statements(inner, goal, &span, context)?;
+    Ok(Statement::Block(BlockStatement {
+        body,
+        span,
+    }))
+}
+
+fn parse_if_statement(
+    statement: &str,
+    goal: ParseGoal,
+    span: SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<Statement> {
+    // Strip "if" prefix and find the condition in parens.
+    let after_if = statement.strip_prefix("if").unwrap_or(statement).trim_start();
+    let (condition_src, rest) = extract_balanced(after_if, '(', ')').ok_or_else(|| {
+        ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "if statement requires a parenthesized condition",
+            context.source_label.to_string(),
+            Some(span.clone()),
+        )
+    })?;
+    let condition = parse_expression(condition_src.trim(), &span, context, 1)?;
+
+    let rest = rest.trim();
+    // Split consequent from optional else.
+    let (consequent_src, alternate_src) = if rest.starts_with('{') {
+        if let Some((block_inner, after_block)) = extract_balanced(rest, '{', '}') {
+            let after = after_block.trim();
+            (format!("{{{block_inner}}}"), if after.starts_with("else") { Some(after.strip_prefix("else").unwrap_or(after).trim().to_string()) } else { None })
+        } else {
+            (rest.to_string(), None)
+        }
+    } else {
+        // Single-statement consequent: find "else" boundary.
+        if let Some(else_idx) = find_top_level_else(rest) {
+            let cons = rest[..else_idx].trim().to_string();
+            let alt = rest[else_idx + 4..].trim().to_string();
+            (cons, Some(alt))
+        } else {
+            (rest.to_string(), None)
+        }
+    };
+
+    let consequent_stmt = parse_statement(
+        consequent_src.trim(),
+        goal,
+        span.clone(),
+        context,
+    )?;
+
+    let alternate = if let Some(alt_src) = alternate_src {
+        if !alt_src.is_empty() {
+            Some(Box::new(parse_statement(alt_src.trim(), goal, span.clone(), context)?))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok(Statement::If(IfStatement {
+        condition,
+        consequent: Box::new(consequent_stmt),
+        alternate,
+        span,
+    }))
+}
+
+/// Find the index of a top-level "else" keyword (not inside braces/parens/quotes).
+fn find_top_level_else(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut depth_brace: i64 = 0;
+    let mut depth_paren: i64 = 0;
+    let mut in_quote: Option<u8> = None;
+    let mut escaped = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = in_quote {
+            if escaped { escaped = false; i += 1; continue; }
+            if b == b'\\' { escaped = true; i += 1; continue; }
+            if b == q { in_quote = None; }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'\'' | b'"' | b'`' => { in_quote = Some(b); i += 1; continue; }
+            b'{' => { depth_brace += 1; i += 1; continue; }
+            b'}' => { depth_brace -= 1; i += 1; continue; }
+            b'(' => { depth_paren += 1; i += 1; continue; }
+            b')' => { depth_paren -= 1; i += 1; continue; }
+            _ => {}
+        }
+        if depth_brace == 0 && depth_paren == 0 && i + 4 <= bytes.len() && &bytes[i..i + 4] == b"else" {
+            // Ensure "else" is a keyword boundary.
+            let before_ok = i == 0 || !is_identifier_continue(bytes[i - 1] as char);
+            let after_ok = i + 4 >= bytes.len() || !is_identifier_continue(bytes[i + 4] as char);
+            if before_ok && after_ok {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn parse_for_statement(
+    statement: &str,
+    goal: ParseGoal,
+    span: SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<Statement> {
+    let after_for = statement.strip_prefix("for").unwrap_or(statement).trim_start();
+    let (header_src, rest) = extract_balanced(after_for, '(', ')').ok_or_else(|| {
+        ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "for statement requires a parenthesized header",
+            context.source_label.to_string(),
+            Some(span.clone()),
+        )
+    })?;
+
+    // Split header by semicolons: init; condition; update
+    let parts: Vec<&str> = header_src.splitn(3, ';').collect();
+    let (init_src, cond_src, update_src) = match parts.len() {
+        3 => (parts[0].trim(), parts[1].trim(), parts[2].trim()),
+        _ => {
+            return Err(ParseError::new(
+                ParseErrorCode::UnsupportedSyntax,
+                "for statement header must have three semicolon-separated parts",
+                context.source_label.to_string(),
+                Some(span),
+            ));
+        }
+    };
+
+    let init = if init_src.is_empty() {
+        None
+    } else {
+        Some(Box::new(parse_statement(init_src, goal, span.clone(), context)?))
+    };
+    let condition = if cond_src.is_empty() {
+        None
+    } else {
+        Some(parse_expression(cond_src, &span, context, 1)?)
+    };
+    let update = if update_src.is_empty() {
+        None
+    } else {
+        Some(parse_expression(update_src, &span, context, 1)?)
+    };
+
+    let body_src = rest.trim();
+    let body = parse_statement(body_src, goal, span.clone(), context)?;
+
+    Ok(Statement::For(ForStatement {
+        init,
+        condition,
+        update,
+        body: Box::new(body),
+        span,
+    }))
+}
+
+fn parse_while_statement(
+    statement: &str,
+    goal: ParseGoal,
+    span: SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<Statement> {
+    let after_while = statement.strip_prefix("while").unwrap_or(statement).trim_start();
+    let (condition_src, rest) = extract_balanced(after_while, '(', ')').ok_or_else(|| {
+        ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "while statement requires a parenthesized condition",
+            context.source_label.to_string(),
+            Some(span.clone()),
+        )
+    })?;
+    let condition = parse_expression(condition_src.trim(), &span, context, 1)?;
+    let body = parse_statement(rest.trim(), goal, span.clone(), context)?;
+    Ok(Statement::While(WhileStatement {
+        condition,
+        body: Box::new(body),
+        span,
+    }))
+}
+
+fn parse_do_while_statement(
+    statement: &str,
+    goal: ParseGoal,
+    span: SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<Statement> {
+    let after_do = statement.strip_prefix("do").unwrap_or(statement).trim_start();
+    // Body is a block or single statement, followed by "while(condition)"
+    let (body_src, rest) = if after_do.starts_with('{') {
+        let (inner, r) = extract_balanced(after_do, '{', '}').ok_or_else(|| {
+            ParseError::new(
+                ParseErrorCode::UnsupportedSyntax,
+                "do-while body has unbalanced braces",
+                context.source_label.to_string(),
+                Some(span.clone()),
+            )
+        })?;
+        (format!("{{{inner}}}"), r.to_string())
+    } else {
+        // Find "while" keyword at top level.
+        let while_idx = after_do.find("while").ok_or_else(|| {
+            ParseError::new(
+                ParseErrorCode::UnsupportedSyntax,
+                "do-while statement requires 'while' after body",
+                context.source_label.to_string(),
+                Some(span.clone()),
+            )
+        })?;
+        (after_do[..while_idx].trim().to_string(), after_do[while_idx..].to_string())
+    };
+
+    let body = parse_statement(body_src.trim(), goal, span.clone(), context)?;
+
+    let rest = rest.trim();
+    let rest = rest.strip_prefix("while").unwrap_or(rest).trim_start();
+    let (condition_src, _) = extract_balanced(rest, '(', ')').ok_or_else(|| {
+        ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "do-while requires a parenthesized condition after 'while'",
+            context.source_label.to_string(),
+            Some(span.clone()),
+        )
+    })?;
+    let condition = parse_expression(condition_src.trim(), &span, context, 1)?;
+
+    Ok(Statement::DoWhile(DoWhileStatement {
+        body: Box::new(body),
+        condition,
+        span,
+    }))
+}
+
+fn parse_return_statement(
+    statement: &str,
+    span: SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<Statement> {
+    let body = statement.strip_prefix("return").unwrap_or("").trim();
+    let body = body.strip_suffix(';').unwrap_or(body).trim();
+    let argument = if body.is_empty() {
+        None
+    } else {
+        Some(parse_expression(body, &span, context, 1)?)
+    };
+    Ok(Statement::Return(ReturnStatement { argument, span }))
+}
+
+fn parse_throw_statement(
+    statement: &str,
+    span: SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<Statement> {
+    let body = statement.strip_prefix("throw").unwrap_or("").trim();
+    let body = body.strip_suffix(';').unwrap_or(body).trim();
+    if body.is_empty() {
+        return Err(ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "throw statement requires an argument",
+            context.source_label.to_string(),
+            Some(span),
+        ));
+    }
+    let argument = parse_expression(body, &span, context, 1)?;
+    Ok(Statement::Throw(ThrowStatement { argument, span }))
+}
+
+fn parse_try_catch_statement(
+    statement: &str,
+    goal: ParseGoal,
+    span: SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<Statement> {
+    let after_try = statement.strip_prefix("try").unwrap_or(statement).trim_start();
+
+    // Parse the try block.
+    let (try_inner, rest) = extract_balanced(after_try, '{', '}').ok_or_else(|| {
+        ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "try statement requires a braced block",
+            context.source_label.to_string(),
+            Some(span.clone()),
+        )
+    })?;
+    let try_body = parse_body_statements(try_inner, goal, &span, context)?;
+    let try_block = BlockStatement { body: try_body, span: span.clone() };
+
+    let rest = rest.trim();
+
+    // Parse optional catch clause.
+    let (handler, rest) = if rest.starts_with("catch") {
+        let after_catch = rest.strip_prefix("catch").unwrap_or(rest).trim_start();
+        let (param, after_param) = if after_catch.starts_with('(') {
+            let (p, r) = extract_balanced(after_catch, '(', ')').ok_or_else(|| {
+                ParseError::new(
+                    ParseErrorCode::UnsupportedSyntax,
+                    "catch clause has unbalanced parentheses",
+                    context.source_label.to_string(),
+                    Some(span.clone()),
+                )
+            })?;
+            (Some(p.trim().to_string()), r)
+        } else {
+            (None, after_catch)
+        };
+        let after_param = after_param.trim_start();
+        let (catch_inner, rest2) = extract_balanced(after_param, '{', '}').ok_or_else(|| {
+            ParseError::new(
+                ParseErrorCode::UnsupportedSyntax,
+                "catch clause requires a braced block",
+                context.source_label.to_string(),
+                Some(span.clone()),
+            )
+        })?;
+        let catch_body = parse_body_statements(catch_inner, goal, &span, context)?;
+        (
+            Some(CatchClause {
+                parameter: param,
+                body: BlockStatement { body: catch_body, span: span.clone() },
+                span: span.clone(),
+            }),
+            rest2.trim(),
+        )
+    } else {
+        (None, rest)
+    };
+
+    // Parse optional finally clause.
+    let finalizer = if rest.starts_with("finally") {
+        let after_finally = rest.strip_prefix("finally").unwrap_or(rest).trim_start();
+        let (finally_inner, _) = extract_balanced(after_finally, '{', '}').ok_or_else(|| {
+            ParseError::new(
+                ParseErrorCode::UnsupportedSyntax,
+                "finally clause requires a braced block",
+                context.source_label.to_string(),
+                Some(span.clone()),
+            )
+        })?;
+        let finally_body = parse_body_statements(finally_inner, goal, &span, context)?;
+        Some(BlockStatement { body: finally_body, span: span.clone() })
+    } else {
+        None
+    };
+
+    if handler.is_none() && finalizer.is_none() {
+        return Err(ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "try statement requires at least a catch or finally clause",
+            context.source_label.to_string(),
+            Some(span),
+        ));
+    }
+
+    Ok(Statement::TryCatch(TryCatchStatement {
+        block: try_block,
+        handler,
+        finalizer,
+        span,
+    }))
+}
+
+fn parse_switch_statement(
+    statement: &str,
+    goal: ParseGoal,
+    span: SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<Statement> {
+    let after_switch = statement.strip_prefix("switch").unwrap_or(statement).trim_start();
+    let (disc_src, rest) = extract_balanced(after_switch, '(', ')').ok_or_else(|| {
+        ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "switch statement requires a parenthesized discriminant",
+            context.source_label.to_string(),
+            Some(span.clone()),
+        )
+    })?;
+    let discriminant = parse_expression(disc_src.trim(), &span, context, 1)?;
+
+    let rest = rest.trim();
+    let (body_src, _) = extract_balanced(rest, '{', '}').ok_or_else(|| {
+        ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "switch statement requires a braced body",
+            context.source_label.to_string(),
+            Some(span.clone()),
+        )
+    })?;
+
+    // Parse case/default clauses.
+    let mut cases = Vec::new();
+    let mut remaining = body_src.trim();
+    while !remaining.is_empty() {
+        if remaining.starts_with("case ") {
+            let after_case = remaining.strip_prefix("case ").unwrap_or(remaining);
+            let colon_idx = after_case.find(':').ok_or_else(|| {
+                ParseError::new(
+                    ParseErrorCode::UnsupportedSyntax,
+                    "switch case requires a colon after test expression",
+                    context.source_label.to_string(),
+                    Some(span.clone()),
+                )
+            })?;
+            let test_src = after_case[..colon_idx].trim();
+            let test = Some(parse_expression(test_src, &span, context, 1)?);
+            let after_colon = after_case[colon_idx + 1..].trim();
+            let (consequent_src, next) = split_at_next_case(after_colon);
+            let consequent = parse_body_statements(consequent_src.trim(), goal, &span, context)?;
+            cases.push(SwitchCase { test, consequent, span: span.clone() });
+            remaining = next.trim();
+        } else if remaining.starts_with("default") {
+            let after_default = remaining.strip_prefix("default").unwrap_or(remaining).trim_start();
+            let after_default = after_default.strip_prefix(':').unwrap_or(after_default).trim();
+            let (consequent_src, next) = split_at_next_case(after_default);
+            let consequent = parse_body_statements(consequent_src.trim(), goal, &span, context)?;
+            cases.push(SwitchCase { test: None, consequent, span: span.clone() });
+            remaining = next.trim();
+        } else {
+            // Skip whitespace or unexpected content.
+            break;
+        }
+    }
+
+    Ok(Statement::Switch(SwitchStatement {
+        discriminant,
+        cases,
+        span,
+    }))
+}
+
+/// Split switch body at the next `case` or `default` keyword at the top level.
+fn split_at_next_case(s: &str) -> (&str, &str) {
+    let bytes = s.as_bytes();
+    let mut depth_brace: i64 = 0;
+    let mut in_quote: Option<u8> = None;
+    let mut escaped = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = in_quote {
+            if escaped { escaped = false; i += 1; continue; }
+            if b == b'\\' { escaped = true; i += 1; continue; }
+            if b == q { in_quote = None; }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'\'' | b'"' | b'`' => { in_quote = Some(b); i += 1; continue; }
+            b'{' => { depth_brace += 1; i += 1; continue; }
+            b'}' => { depth_brace -= 1; i += 1; continue; }
+            _ => {}
+        }
+        if depth_brace == 0 {
+            // Check for "case " or "default" at keyword boundary.
+            let before_ok = i == 0 || !is_identifier_continue(bytes[i - 1] as char);
+            if before_ok {
+                if i + 5 <= bytes.len() && &bytes[i..i + 5] == b"case " {
+                    return (&s[..i], &s[i..]);
+                }
+                if i + 7 <= bytes.len() && &bytes[i..i + 7] == b"default" {
+                    let after_ok = i + 7 >= bytes.len() || !is_identifier_continue(bytes[i + 7] as char);
+                    if after_ok {
+                        return (&s[..i], &s[i..]);
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    (s, "")
+}
+
+fn parse_break_statement(statement: &str, span: SourceSpan) -> ParseResult<Statement> {
+    let body = statement.strip_prefix("break").unwrap_or("").trim();
+    let body = body.strip_suffix(';').unwrap_or(body).trim();
+    let label = if body.is_empty() || !is_identifier(body) {
+        None
+    } else {
+        Some(body.to_string())
+    };
+    Ok(Statement::Break(BreakStatement { label, span }))
+}
+
+fn parse_continue_statement(statement: &str, span: SourceSpan) -> ParseResult<Statement> {
+    let body = statement.strip_prefix("continue").unwrap_or("").trim();
+    let body = body.strip_suffix(';').unwrap_or(body).trim();
+    let label = if body.is_empty() || !is_identifier(body) {
+        None
+    } else {
+        Some(body.to_string())
+    };
+    Ok(Statement::Continue(ContinueStatement { label, span }))
+}
+
+fn parse_function_declaration(
+    statement: &str,
+    span: SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<Statement> {
+    let is_async = statement.starts_with("async ");
+    let rest = if is_async {
+        statement.strip_prefix("async ").unwrap_or(statement).trim_start()
+    } else {
+        statement
+    };
+    let rest = rest.strip_prefix("function").unwrap_or(rest).trim_start();
+    let is_generator = rest.starts_with('*');
+    let rest = if is_generator { &rest[1..] } else { rest }.trim_start();
+
+    // Parse function name (optional for expressions, required for declarations).
+    let (name, rest) = if rest.starts_with('(') {
+        (None, rest)
+    } else {
+        // Extract name up to '('.
+        let paren_idx = rest.find('(').ok_or_else(|| {
+            ParseError::new(
+                ParseErrorCode::UnsupportedSyntax,
+                "function declaration requires a parameter list",
+                context.source_label.to_string(),
+                Some(span.clone()),
+            )
+        })?;
+        let name = rest[..paren_idx].trim();
+        (
+            if name.is_empty() { None } else { Some(name.to_string()) },
+            &rest[paren_idx..],
+        )
+    };
+
+    // Parse parameters.
+    let (params_src, rest) = extract_balanced(rest, '(', ')').ok_or_else(|| {
+        ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "function declaration has unbalanced parentheses",
+            context.source_label.to_string(),
+            Some(span.clone()),
+        )
+    })?;
+
+    let params: Vec<FunctionParam> = if params_src.trim().is_empty() {
+        Vec::new()
+    } else {
+        params_src
+            .split(',')
+            .map(|p| {
+                let name = p.trim().to_string();
+                FunctionParam {
+                    name,
+                    span: span.clone(),
+                }
+            })
+            .collect()
+    };
+
+    // Parse body.
+    let rest = rest.trim_start();
+    let (body_src, _) = extract_balanced(rest, '{', '}').ok_or_else(|| {
+        ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "function declaration requires a braced body",
+            context.source_label.to_string(),
+            Some(span.clone()),
+        )
+    })?;
+    let goal = ParseGoal::Script; // Function bodies use script goal.
+    let body_stmts = parse_body_statements(body_src, goal, &span, context)?;
+
+    Ok(Statement::FunctionDeclaration(FunctionDeclaration {
+        name,
+        params,
+        body: BlockStatement {
+            body: body_stmts,
+            span: span.clone(),
+        },
+        is_async,
+        is_generator,
+        span,
+    }))
 }
 
 #[cfg(test)]

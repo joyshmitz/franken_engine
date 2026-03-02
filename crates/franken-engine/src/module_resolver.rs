@@ -278,6 +278,8 @@ pub struct ResolvedModule {
     pub canonical_specifier: String,
     pub record: ModuleRecord,
     pub content_hash: ContentHash,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub probe_sequence: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -575,8 +577,9 @@ impl DeterministicModuleResolver {
         &'a self,
         request: &ModuleRequest,
         context: &ResolutionContext,
-    ) -> ResolutionResult<(String, &'a ModuleRecord)> {
+    ) -> ResolutionResult<(String, &'a ModuleRecord, Vec<String>)> {
         let specifier = request.specifier.trim();
+        let mut probe_sequence = Vec::new();
         if specifier.is_empty() {
             return Err(Box::new(ResolutionError::new(
                 ResolutionErrorCode::EmptySpecifier,
@@ -586,7 +589,8 @@ impl DeterministicModuleResolver {
         }
 
         if let Some(record) = self.builtins.get(specifier) {
-            return Ok((specifier.to_string(), record));
+            probe_sequence.push(specifier.to_string());
+            return Ok((specifier.to_string(), record, probe_sequence));
         }
 
         if is_relative_specifier(specifier) {
@@ -602,40 +606,54 @@ impl DeterministicModuleResolver {
             })?;
             let base_dir = self.referrer_directory(referrer, context)?;
             let resolved_base = normalize_absolute_path(&join_paths(&base_dir, specifier));
-            return self
-                .lookup_workspace_candidate(&resolved_base, request.style)
-                .ok_or_else(|| {
-                    Box::new(ResolutionError::new(
+            let (relative_probes, candidate) =
+                self.lookup_workspace_candidate_with_probes(&resolved_base, request.style);
+            probe_sequence.extend(relative_probes);
+            return candidate.map_or_else(
+                || {
+                    Err(Box::new(ResolutionError::new(
                         ResolutionErrorCode::ModuleNotFound,
                         format!(
                             "unable to resolve relative specifier '{}' from '{}'",
                             request.specifier, referrer
                         ),
                         context,
-                    ))
-                });
+                    )))
+                },
+                |(resolved, record)| Ok((resolved, record, probe_sequence)),
+            );
         }
 
         if specifier.starts_with('/') {
             let resolved_base = normalize_absolute_path(specifier);
-            return self
-                .lookup_workspace_candidate(&resolved_base, request.style)
-                .ok_or_else(|| {
-                    Box::new(ResolutionError::new(
+            let (absolute_probes, candidate) =
+                self.lookup_workspace_candidate_with_probes(&resolved_base, request.style);
+            probe_sequence.extend(absolute_probes);
+            return candidate.map_or_else(
+                || {
+                    Err(Box::new(ResolutionError::new(
                         ResolutionErrorCode::ModuleNotFound,
                         format!("unable to resolve absolute specifier '{specifier}'"),
                         context,
-                    ))
-                });
+                    )))
+                },
+                |(resolved, record)| Ok((resolved, record, probe_sequence)),
+            );
         }
 
-        if let Some(candidate) = self.lookup_external_candidate(specifier, request.style) {
-            return Ok(candidate);
+        let (external_probes, external_candidate) =
+            self.lookup_external_candidate_with_probes(specifier, request.style);
+        probe_sequence.extend(external_probes);
+        if let Some((resolved, record)) = external_candidate {
+            return Ok((resolved, record, probe_sequence));
         }
 
         let workspace_base = normalize_absolute_path(&join_paths(&self.root_dir, specifier));
-        if let Some(candidate) = self.lookup_workspace_candidate(&workspace_base, request.style) {
-            return Ok(candidate);
+        let (workspace_probes, workspace_candidate) =
+            self.lookup_workspace_candidate_with_probes(&workspace_base, request.style);
+        probe_sequence.extend(workspace_probes);
+        if let Some((resolved, record)) = workspace_candidate {
+            return Ok((resolved, record, probe_sequence));
         }
 
         Err(Box::new(ResolutionError::new(
@@ -669,36 +687,36 @@ impl DeterministicModuleResolver {
         Ok(parent_directory(&normalized))
     }
 
-    fn lookup_workspace_candidate<'a>(
+    fn lookup_workspace_candidate_with_probes<'a>(
         &'a self,
         resolved_base: &str,
         style: ImportStyle,
-    ) -> Option<(String, &'a ModuleRecord)> {
+    ) -> (Vec<String>, Option<(String, &'a ModuleRecord)>) {
+        let mut probes = Vec::new();
         let candidates = candidate_paths(resolved_base, style);
         for candidate in candidates {
+            probes.push(candidate.clone());
             if let Some(record) = self.workspace_modules.get(&candidate) {
-                return Some((candidate, record));
+                return (probes, Some((candidate, record)));
             }
         }
-        None
+        (probes, None)
     }
 
-    fn lookup_external_candidate<'a>(
+    fn lookup_external_candidate_with_probes<'a>(
         &'a self,
         specifier: &str,
         style: ImportStyle,
-    ) -> Option<(String, &'a ModuleRecord)> {
-        if let Some(record) = self.external_modules.get(specifier) {
-            return Some((specifier.to_string(), record));
-        }
-
+    ) -> (Vec<String>, Option<(String, &'a ModuleRecord)>) {
+        let mut probes = Vec::new();
         let candidates = candidate_paths(specifier, style);
         for candidate in candidates {
+            probes.push(candidate.clone());
             if let Some(record) = self.external_modules.get(&candidate) {
-                return Some((candidate, record));
+                return (probes, Some((candidate, record)));
             }
         }
-        None
+        (probes, None)
     }
 }
 
@@ -709,7 +727,7 @@ impl ModuleResolver for DeterministicModuleResolver {
         context: &ResolutionContext,
         policy: &dyn ModulePolicyHook,
     ) -> ResolutionResult<ResolutionOutcome> {
-        let (canonical_specifier, record) = self.resolve_candidate(request, context)?;
+        let (canonical_specifier, record, probe_sequence) = self.resolve_candidate(request, context)?;
         policy.authorize(request, record, context)?;
 
         let resolved = ResolvedModule {
@@ -717,6 +735,7 @@ impl ModuleResolver for DeterministicModuleResolver {
             canonical_specifier,
             record: record.clone(),
             content_hash: record.canonical_hash(),
+            probe_sequence,
         };
 
         Ok(ResolutionOutcome {
@@ -887,6 +906,8 @@ mod tests {
         assert_eq!(first.event.component, "module_resolver");
         assert_eq!(first.event.outcome, "allow");
         assert_eq!(first.event.error_code, "none");
+        assert_eq!(first.module.probe_sequence, vec!["franken:std/fs"]);
+        assert_eq!(first.module.probe_sequence, second.module.probe_sequence);
     }
 
     #[test]
@@ -917,6 +938,10 @@ mod tests {
             .resolve(&import_request, &context(), &AllowAllPolicy)
             .unwrap();
         assert_eq!(import_outcome.module.canonical_specifier, "/app/lib.mjs");
+        assert_eq!(
+            import_outcome.module.probe_sequence,
+            vec!["/app/lib", "/app/lib.mjs"]
+        );
 
         let require_request =
             ModuleRequest::new("./lib", ImportStyle::Require).with_referrer("/app/main.mjs");
@@ -924,6 +949,10 @@ mod tests {
             .resolve(&require_request, &context(), &AllowAllPolicy)
             .unwrap();
         assert_eq!(require_outcome.module.canonical_specifier, "/app/lib.cjs");
+        assert_eq!(
+            require_outcome.module.probe_sequence,
+            vec!["/app/lib", "/app/lib.cjs"]
+        );
     }
 
     #[test]
@@ -981,6 +1010,7 @@ mod tests {
             outcome.module.record.provenance.origin,
             "registry:npm:left-pad@1.3.0"
         );
+        assert_eq!(outcome.module.probe_sequence, vec!["left-pad"]);
     }
 
     #[test]
@@ -1126,6 +1156,17 @@ mod tests {
             .resolve(&request, &context(), &AllowAllPolicy)
             .unwrap();
         assert_eq!(outcome.module.canonical_specifier, "/app/utils.js");
+        assert_eq!(
+            outcome.module.probe_sequence,
+            vec![
+                "utils",
+                "utils.mjs",
+                "utils.js",
+                "/app/utils",
+                "/app/utils.mjs",
+                "/app/utils.js"
+            ]
+        );
     }
 
     // -----------------------------------------------------------------------
