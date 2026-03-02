@@ -89,6 +89,12 @@ Run the FRX-17 gate script:
 ./scripts/run_observability_information_theoretic_gate.sh ci
 ```
 
+Operational contract:
+
+- heavy Cargo lanes are executed via `rch` only (no local fallback acceptance)
+- default target dir is repo-local `.rch_target/observability_information_theoretic_<timestamp>`
+- `RCH_EXEC_TIMEOUT_SECONDS` can be set to tune remote timeout bounds
+
 Artifacts are emitted under:
 
 - `artifacts/observability_information_theoretic/<timestamp>/run_manifest.json`
