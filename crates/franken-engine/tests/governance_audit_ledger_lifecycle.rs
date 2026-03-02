@@ -139,3 +139,182 @@ fn append_failure_emits_stable_structured_event_fields() {
     assert_eq!(event.outcome, "rejected");
     assert_eq!(event.error_code.as_deref(), Some("FE-GOV-LED-0002"));
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: query, report, chain integrity, serde, actors
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn empty_ledger_has_no_entries_or_checkpoints() {
+    let ledger = ledger();
+    assert!(ledger.entries().is_empty());
+    assert!(ledger.checkpoints().is_empty());
+    assert!(ledger.events().is_empty());
+    assert!(ledger.latest_entry().is_none());
+    assert!(ledger.latest_checkpoint().is_none());
+}
+
+#[test]
+fn empty_ledger_chain_verification_succeeds() {
+    let ledger = ledger();
+    ledger.verify_chain().expect("empty chain should verify");
+}
+
+#[test]
+fn query_all_returns_all_entries() {
+    let mut ledger = ledger();
+
+    let promote = GovernorDecision {
+        decision_id: "auto-q1".to_string(),
+        moonshot_id: "moon-q1".to_string(),
+        kind: GovernorDecisionKind::Promote {
+            from: MoonshotStage::Research,
+            to: MoonshotStage::Shadow,
+        },
+        scorecard: sample_scorecard(),
+        timestamp_ns: 100,
+        epoch: SecurityEpoch::from_raw(3),
+        rationale: "gate met".to_string(),
+    };
+    ledger
+        .append_governor_decision(
+            &promote,
+            GovernanceActor::System("portfolio-governor".to_string()),
+            vec!["artifact://q1".to_string()],
+            Some(10),
+        )
+        .expect("append");
+
+    let all = ledger.query(&GovernanceLedgerQuery::all());
+    assert_eq!(all.len(), 1);
+}
+
+#[test]
+fn query_by_moonshot_id_filters_correctly() {
+    let mut ledger = ledger();
+
+    for (i, moonshot) in ["moon-a", "moon-b"].iter().enumerate() {
+        let decision = GovernorDecision {
+            decision_id: format!("auto-{i}"),
+            moonshot_id: moonshot.to_string(),
+            kind: GovernorDecisionKind::Promote {
+                from: MoonshotStage::Research,
+                to: MoonshotStage::Shadow,
+            },
+            scorecard: sample_scorecard(),
+            timestamp_ns: (100 + i as u64) * 10,
+            epoch: SecurityEpoch::from_raw(3),
+            rationale: "gate met".to_string(),
+        };
+        ledger
+            .append_governor_decision(
+                &decision,
+                GovernanceActor::System("gov".to_string()),
+                vec![],
+                Some(10),
+            )
+            .expect("append");
+    }
+
+    let query = GovernanceLedgerQuery {
+        moonshot_id: Some("moon-b".to_string()),
+        ..GovernanceLedgerQuery::all()
+    };
+    let results = ledger.query(&query);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].moonshot_id, "moon-b");
+}
+
+#[test]
+fn governance_actor_is_human() {
+    let human = GovernanceActor::Human("operator".to_string());
+    assert!(human.is_human());
+    assert_eq!(human.actor_id(), "operator");
+
+    let system = GovernanceActor::System("portfolio-governor".to_string());
+    assert!(!system.is_human());
+    assert_eq!(system.actor_id(), "portfolio-governor");
+}
+
+#[test]
+fn governance_decision_type_serde_round_trip() {
+    for dtype in [
+        GovernanceDecisionType::Promote,
+        GovernanceDecisionType::Override,
+    ] {
+        let json = serde_json::to_string(&dtype).expect("serialize");
+        let recovered: GovernanceDecisionType = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(dtype, recovered);
+    }
+}
+
+#[test]
+fn governance_rationale_for_automatic_decision() {
+    let rationale = GovernanceRationale::for_automatic_decision(
+        "all criteria met",
+        850_000,
+        150_000,
+        vec!["ev_threshold".to_string(), "confidence".to_string()],
+        vec![],
+    );
+    assert_eq!(rationale.summary, "all criteria met");
+    assert_eq!(rationale.passed_criteria.len(), 2);
+    assert!(rationale.failed_criteria.is_empty());
+    assert!(rationale.bypassed_risk_criteria.is_empty());
+    assert!(!rationale.acknowledged_bypass);
+}
+
+#[test]
+fn latest_entry_and_checkpoint_after_appends() {
+    let mut ledger = ledger();
+
+    // Append 3 entries; config has checkpoint_interval=2
+    for i in 0..3 {
+        let decision = GovernorDecision {
+            decision_id: format!("d-{i}"),
+            moonshot_id: "moon-latest".to_string(),
+            kind: GovernorDecisionKind::Promote {
+                from: MoonshotStage::Research,
+                to: MoonshotStage::Shadow,
+            },
+            scorecard: sample_scorecard(),
+            timestamp_ns: 100 + i * 100,
+            epoch: SecurityEpoch::from_raw(3),
+            rationale: "gate met".to_string(),
+        };
+        ledger
+            .append_governor_decision(
+                &decision,
+                GovernanceActor::System("gov".to_string()),
+                vec![],
+                Some(10),
+            )
+            .expect("append");
+    }
+
+    let latest = ledger.latest_entry().expect("should have entries");
+    assert_eq!(latest.decision_id, "d-2");
+
+    // With checkpoint_interval=2 and 3 entries, at least 1 checkpoint
+    assert!(!ledger.checkpoints().is_empty());
+    assert!(ledger.latest_checkpoint().is_some());
+}
+
+#[test]
+fn governance_report_on_empty_ledger() {
+    let ledger = ledger();
+    let report = ledger
+        .governance_report(0, 1_000, 500)
+        .expect("report on empty");
+    assert_eq!(report.total_decisions, 0);
+    assert_eq!(report.override_count, 0);
+}
+
+#[test]
+fn scorecard_snapshot_from_scorecard() {
+    let sc = sample_scorecard();
+    let snap = ScorecardSnapshot::from(&sc);
+    assert_eq!(snap.ev_millionths, sc.ev_millionths);
+    assert_eq!(snap.confidence_millionths, sc.confidence_millionths);
+    assert_eq!(snap.risk_of_harm_millionths, sc.risk_of_harm_millionths);
+}

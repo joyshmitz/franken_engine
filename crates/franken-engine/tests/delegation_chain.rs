@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use frankenengine_engine::capability::RuntimeCapability;
 use frankenengine_engine::capability_token::{
-    CheckpointRef, PrincipalId, RevocationFreshnessRef, TokenBuilder, TokenId,
+    CheckpointRef, PrincipalId, RevocationFreshnessRef, TokenBuilder, TokenError, TokenId,
 };
 use frankenengine_engine::delegation_chain::{
     ChainError, DelegationChain, DelegationVerificationContext, NoRevocationOracle,
@@ -157,4 +157,560 @@ fn revoking_middle_link_invalidates_downstream_authorization() {
     .expect_err("revoked middle link must invalidate authorization");
 
     assert!(matches!(err, ChainError::RevokedLink { index: 1, .. }));
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: error paths, edge cases, serde, Display
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn empty_chain_is_rejected() {
+    let root_sk = make_sk(1);
+    let chain = DelegationChain::new(vec![]);
+    let ctx = make_ctx(&root_sk);
+    let leaf = make_principal(99);
+
+    let err = verify_chain(
+        &chain,
+        RuntimeCapability::VmDispatch,
+        &leaf,
+        &ctx,
+        &NoRevocationOracle,
+    )
+    .expect_err("empty chain must fail");
+
+    assert!(matches!(err, ChainError::EmptyChain));
+    assert!(err.to_string().contains("empty"));
+}
+
+#[test]
+fn depth_exceeded_is_rejected() {
+    let root_sk = make_sk(1);
+    let issuer_sk = make_sk(2);
+    let delegate_sk = make_sk(3);
+    let leaf_delegate = make_principal(42);
+
+    let link0 = make_bound_token(
+        &root_sk,
+        principal_id_from_verification_key(&issuer_sk.verification_key()),
+        &[RuntimeCapability::VmDispatch],
+    );
+    let link1 = make_bound_token(
+        &issuer_sk,
+        principal_id_from_verification_key(&delegate_sk.verification_key()),
+        &[RuntimeCapability::VmDispatch],
+    );
+    let link2 = make_bound_token(
+        &delegate_sk,
+        leaf_delegate.clone(),
+        &[RuntimeCapability::VmDispatch],
+    );
+
+    let chain = DelegationChain::new(vec![link0, link1, link2]);
+    let mut ctx = make_ctx(&root_sk);
+    ctx.max_chain_depth = 2; // 3 links exceeds depth=2
+
+    let err = verify_chain(
+        &chain,
+        RuntimeCapability::VmDispatch,
+        &leaf_delegate,
+        &ctx,
+        &NoRevocationOracle,
+    )
+    .expect_err("depth exceeded must fail");
+
+    assert!(matches!(
+        err,
+        ChainError::DepthExceeded {
+            max_depth: 2,
+            actual_depth: 3
+        }
+    ));
+    assert!(err.to_string().contains("depth exceeded"));
+}
+
+#[test]
+fn unauthorized_root_issuer_is_rejected() {
+    let root_sk = make_sk(1);
+    let unauthorized_sk = make_sk(99);
+    let leaf = make_principal(10);
+
+    let link0 = make_bound_token(
+        &unauthorized_sk,
+        leaf.clone(),
+        &[RuntimeCapability::VmDispatch],
+    );
+
+    let chain = DelegationChain::new(vec![link0]);
+    let ctx = make_ctx(&root_sk); // root_sk != unauthorized_sk
+
+    let err = verify_chain(
+        &chain,
+        RuntimeCapability::VmDispatch,
+        &leaf,
+        &ctx,
+        &NoRevocationOracle,
+    )
+    .expect_err("unauthorized root must fail");
+
+    assert!(matches!(err, ChainError::UnauthorizedRoot { .. }));
+    assert!(err.to_string().contains("unauthorized root"));
+}
+
+#[test]
+fn single_link_chain_authorizes_direct_grant() {
+    let root_sk = make_sk(1);
+    let leaf = make_principal(50);
+
+    let link0 = make_bound_token(
+        &root_sk,
+        leaf.clone(),
+        &[
+            RuntimeCapability::VmDispatch,
+            RuntimeCapability::NetworkEgress,
+        ],
+    );
+
+    let chain = DelegationChain::new(vec![link0]);
+    let ctx = make_ctx(&root_sk);
+
+    let proof = verify_chain(
+        &chain,
+        RuntimeCapability::VmDispatch,
+        &leaf,
+        &ctx,
+        &NoRevocationOracle,
+    )
+    .expect("single-link chain should succeed");
+
+    assert_eq!(proof.chain_summary.len(), 1);
+    assert_eq!(proof.authorized_capability, RuntimeCapability::VmDispatch);
+    assert_eq!(proof.leaf_delegate, leaf);
+}
+
+#[test]
+fn missing_capability_at_leaf_is_rejected() {
+    let root_sk = make_sk(1);
+    let leaf = make_principal(60);
+
+    let link0 = make_bound_token(
+        &root_sk,
+        leaf.clone(),
+        &[RuntimeCapability::NetworkEgress], // does not include VmDispatch
+    );
+
+    let chain = DelegationChain::new(vec![link0]);
+    let ctx = make_ctx(&root_sk);
+
+    let err = verify_chain(
+        &chain,
+        RuntimeCapability::VmDispatch, // request capability not in leaf
+        &leaf,
+        &ctx,
+        &NoRevocationOracle,
+    )
+    .expect_err("missing capability at leaf must fail");
+
+    assert!(matches!(err, ChainError::MissingCapabilityAtLeaf { .. }));
+    assert!(err.to_string().contains("capability"));
+}
+
+#[test]
+fn zone_mismatch_is_rejected() {
+    let root_sk = make_sk(1);
+    let delegate_sk = make_sk(2);
+    let leaf = make_principal(70);
+
+    let link0 = make_bound_token(
+        &root_sk,
+        principal_id_from_verification_key(&delegate_sk.verification_key()),
+        &[RuntimeCapability::VmDispatch],
+    );
+    // Build a token in a different zone
+    let link1 = {
+        let builder = TokenBuilder::new(
+            delegate_sk.clone(),
+            DeterministicTimestamp(100),
+            DeterministicTimestamp(1_000),
+            SecurityEpoch::GENESIS,
+            "zone-b", // different from "zone-a" in make_ctx
+        )
+        .add_audience(leaf.clone())
+        .bind_checkpoint(CheckpointRef {
+            min_checkpoint_seq: 5,
+            checkpoint_id: EngineObjectId([7; 32]),
+        })
+        .bind_revocation_freshness(RevocationFreshnessRef {
+            min_revocation_seq: 3,
+            revocation_head_hash: ContentHash::compute(b"rev-head"),
+        })
+        .add_capability(RuntimeCapability::VmDispatch);
+        builder.build().expect("token should build")
+    };
+
+    let chain = DelegationChain::new(vec![link0, link1]);
+    let ctx = make_ctx(&root_sk);
+
+    let err = verify_chain(
+        &chain,
+        RuntimeCapability::VmDispatch,
+        &leaf,
+        &ctx,
+        &NoRevocationOracle,
+    )
+    .expect_err("zone mismatch must fail");
+
+    assert!(matches!(err, ChainError::ZoneMismatch { index: 1, .. }));
+    assert!(err.to_string().contains("zone"));
+}
+
+#[test]
+fn attenuation_violation_is_detected_when_child_amplifies_capabilities() {
+    let root_sk = make_sk(1);
+    let issuer_sk = make_sk(2);
+    let leaf = make_principal(80);
+
+    // Root grants only VmDispatch
+    let link0 = make_bound_token(
+        &root_sk,
+        principal_id_from_verification_key(&issuer_sk.verification_key()),
+        &[RuntimeCapability::VmDispatch],
+    );
+    // Child attempts VmDispatch + NetworkEgress (amplification)
+    let link1 = make_bound_token(
+        &issuer_sk,
+        leaf.clone(),
+        &[
+            RuntimeCapability::VmDispatch,
+            RuntimeCapability::NetworkEgress,
+        ],
+    );
+
+    let chain = DelegationChain::new(vec![link0, link1]);
+    let ctx = make_ctx(&root_sk);
+
+    let err = verify_chain(
+        &chain,
+        RuntimeCapability::VmDispatch,
+        &leaf,
+        &ctx,
+        &NoRevocationOracle,
+    )
+    .expect_err("attenuation violation must fail");
+
+    assert!(matches!(
+        err,
+        ChainError::AttenuationViolation { index: 1, .. }
+    ));
+    assert!(err.to_string().contains("amplif"));
+}
+
+#[test]
+fn revoking_root_link_invalidates_chain() {
+    let root_sk = make_sk(1);
+    let leaf = make_principal(90);
+
+    let link0 = make_bound_token(&root_sk, leaf.clone(), &[RuntimeCapability::VmDispatch]);
+
+    let chain = DelegationChain::new(vec![link0]);
+    let ctx = make_ctx(&root_sk);
+    let mut revoked = BTreeSet::new();
+    revoked.insert(chain.links[0].jti.clone());
+    let oracle = SetRevocationOracle { revoked };
+
+    let err = verify_chain(&chain, RuntimeCapability::VmDispatch, &leaf, &ctx, &oracle)
+        .expect_err("revoked root link must invalidate chain");
+
+    assert!(matches!(err, ChainError::RevokedLink { index: 0, .. }));
+}
+
+#[test]
+fn chain_hash_is_deterministic() {
+    let root_sk = make_sk(1);
+    let leaf = make_principal(40);
+
+    let link0 = make_bound_token(&root_sk, leaf.clone(), &[RuntimeCapability::VmDispatch]);
+
+    let chain = DelegationChain::new(vec![link0]);
+    let ctx = make_ctx(&root_sk);
+
+    let proof1 = verify_chain(
+        &chain,
+        RuntimeCapability::VmDispatch,
+        &leaf,
+        &ctx,
+        &NoRevocationOracle,
+    )
+    .expect("first verify");
+
+    let proof2 = verify_chain(
+        &chain,
+        RuntimeCapability::VmDispatch,
+        &leaf,
+        &ctx,
+        &NoRevocationOracle,
+    )
+    .expect("second verify");
+
+    assert_eq!(proof1.chain_hash, proof2.chain_hash);
+}
+
+#[test]
+fn authorization_proof_serde_round_trip() {
+    let root_sk = make_sk(1);
+    let leaf = make_principal(55);
+
+    let link0 = make_bound_token(&root_sk, leaf.clone(), &[RuntimeCapability::VmDispatch]);
+
+    let chain = DelegationChain::new(vec![link0]);
+    let ctx = make_ctx(&root_sk);
+
+    let proof = verify_chain(
+        &chain,
+        RuntimeCapability::VmDispatch,
+        &leaf,
+        &ctx,
+        &NoRevocationOracle,
+    )
+    .expect("verify should succeed");
+
+    let json = serde_json::to_string(&proof).expect("serialize proof");
+    let recovered: frankenengine_engine::delegation_chain::AuthorizationProof =
+        serde_json::from_str(&json).expect("deserialize proof");
+
+    assert_eq!(proof.chain_hash, recovered.chain_hash);
+    assert_eq!(proof.authorized_capability, recovered.authorized_capability);
+    assert_eq!(proof.leaf_delegate, recovered.leaf_delegate);
+    assert_eq!(proof.root_issuer, recovered.root_issuer);
+    assert_eq!(proof.chain_summary.len(), recovered.chain_summary.len());
+}
+
+#[test]
+fn delegation_chain_serde_round_trip() {
+    let root_sk = make_sk(1);
+    let leaf = make_principal(65);
+
+    let link0 = make_bound_token(&root_sk, leaf.clone(), &[RuntimeCapability::VmDispatch]);
+
+    let chain = DelegationChain::new(vec![link0]);
+    let json = serde_json::to_string(&chain).expect("serialize chain");
+    let recovered: DelegationChain = serde_json::from_str(&json).expect("deserialize chain");
+
+    assert_eq!(chain.links.len(), recovered.links.len());
+    assert_eq!(chain.links[0].jti, recovered.links[0].jti);
+    assert_eq!(chain.links[0].zone, recovered.links[0].zone);
+}
+
+#[test]
+fn chain_error_display_covers_all_variants() {
+    // Exhaustive display test for ChainError
+    let errors: Vec<ChainError> = vec![
+        ChainError::EmptyChain,
+        ChainError::DepthExceeded {
+            max_depth: 5,
+            actual_depth: 10,
+        },
+        ChainError::UnauthorizedRoot {
+            root_issuer: make_sk(1).verification_key(),
+        },
+        ChainError::MissingCheckpointBinding { index: 2 },
+        ChainError::MissingRevocationFreshnessBinding { index: 3 },
+        ChainError::TokenVerificationFailed {
+            index: 0,
+            error: TokenError::Expired {
+                current_tick: 2000,
+                expiry: 1000,
+            },
+        },
+        ChainError::AttenuationViolation {
+            index: 1,
+            parent_capability_count: 1,
+            child_capability_count: 2,
+            amplified_capabilities: BTreeSet::from([RuntimeCapability::NetworkEgress]),
+        },
+        ChainError::ZoneMismatch {
+            index: 1,
+            expected_zone: "zone-a".to_string(),
+            actual_zone: "zone-b".to_string(),
+        },
+        ChainError::RevokedLink {
+            index: 0,
+            token_id: EngineObjectId([1; 32]),
+        },
+        ChainError::MissingCapabilityAtLeaf {
+            required: RuntimeCapability::VmDispatch,
+            leaf_capabilities: BTreeSet::new(),
+        },
+    ];
+
+    for err in &errors {
+        let msg = err.to_string();
+        assert!(!msg.is_empty(), "Display for {err:?} must not be empty");
+    }
+}
+
+#[test]
+fn no_revocation_oracle_never_revokes() {
+    let oracle = NoRevocationOracle;
+    let token_id = EngineObjectId([42; 32]);
+    assert!(!oracle.is_revoked(&token_id));
+}
+
+#[test]
+fn set_revocation_oracle_revokes_only_registered_tokens() {
+    let revoked_id = EngineObjectId([10; 32]);
+    let clean_id = EngineObjectId([20; 32]);
+    let mut revoked = BTreeSet::new();
+    revoked.insert(revoked_id.clone());
+    let oracle = SetRevocationOracle { revoked };
+
+    assert!(oracle.is_revoked(&revoked_id));
+    assert!(!oracle.is_revoked(&clean_id));
+}
+
+#[test]
+fn delegation_link_summary_contains_expected_fields() {
+    let root_sk = make_sk(1);
+    let issuer_sk = make_sk(2);
+    let leaf = make_principal(33);
+
+    let link0 = make_bound_token(
+        &root_sk,
+        principal_id_from_verification_key(&issuer_sk.verification_key()),
+        &[
+            RuntimeCapability::VmDispatch,
+            RuntimeCapability::NetworkEgress,
+        ],
+    );
+    let link1 = make_bound_token(&issuer_sk, leaf.clone(), &[RuntimeCapability::VmDispatch]);
+
+    let chain = DelegationChain::new(vec![link0, link1]);
+    let ctx = make_ctx(&root_sk);
+
+    let proof = verify_chain(
+        &chain,
+        RuntimeCapability::VmDispatch,
+        &leaf,
+        &ctx,
+        &NoRevocationOracle,
+    )
+    .expect("verify chain");
+
+    assert_eq!(proof.chain_summary.len(), 2);
+    assert_eq!(proof.chain_summary[0].index, 0);
+    assert_eq!(proof.chain_summary[0].capability_count, 2);
+    assert_eq!(proof.chain_summary[0].zone, "zone-a");
+    assert_eq!(proof.chain_summary[1].index, 1);
+    assert_eq!(proof.chain_summary[1].capability_count, 1);
+    assert_eq!(proof.chain_summary[1].delegate, leaf);
+}
+
+#[test]
+fn principal_id_from_verification_key_is_deterministic() {
+    let sk = make_sk(42);
+    let vk = sk.verification_key();
+    let p1 = principal_id_from_verification_key(&vk);
+    let p2 = principal_id_from_verification_key(&vk);
+    assert_eq!(p1, p2);
+}
+
+#[test]
+fn verified_at_tick_matches_context_current_tick() {
+    let root_sk = make_sk(1);
+    let leaf = make_principal(77);
+
+    let link0 = make_bound_token(&root_sk, leaf.clone(), &[RuntimeCapability::VmDispatch]);
+
+    let chain = DelegationChain::new(vec![link0]);
+    let ctx = make_ctx(&root_sk);
+
+    let proof = verify_chain(
+        &chain,
+        RuntimeCapability::VmDispatch,
+        &leaf,
+        &ctx,
+        &NoRevocationOracle,
+    )
+    .expect("verify chain");
+
+    assert_eq!(proof.verified_at_tick, ctx.current_tick);
+}
+
+#[test]
+fn attenuation_preserving_subset_passes() {
+    let root_sk = make_sk(1);
+    let issuer_sk = make_sk(2);
+    let leaf = make_principal(85);
+
+    // Root grants VmDispatch + NetworkEgress
+    let link0 = make_bound_token(
+        &root_sk,
+        principal_id_from_verification_key(&issuer_sk.verification_key()),
+        &[
+            RuntimeCapability::VmDispatch,
+            RuntimeCapability::NetworkEgress,
+        ],
+    );
+    // Child grants only VmDispatch (strict subset, OK)
+    let link1 = make_bound_token(&issuer_sk, leaf.clone(), &[RuntimeCapability::VmDispatch]);
+
+    let chain = DelegationChain::new(vec![link0, link1]);
+    let ctx = make_ctx(&root_sk);
+
+    let proof = verify_chain(
+        &chain,
+        RuntimeCapability::VmDispatch,
+        &leaf,
+        &ctx,
+        &NoRevocationOracle,
+    )
+    .expect("attenuation-preserving subset should pass");
+
+    assert_eq!(proof.authorized_capability, RuntimeCapability::VmDispatch);
+}
+
+#[test]
+fn chain_error_attenuation_violation_lists_amplified_capabilities() {
+    let root_sk = make_sk(1);
+    let issuer_sk = make_sk(2);
+    let leaf = make_principal(90);
+
+    let link0 = make_bound_token(
+        &root_sk,
+        principal_id_from_verification_key(&issuer_sk.verification_key()),
+        &[RuntimeCapability::VmDispatch],
+    );
+    let link1 = make_bound_token(
+        &issuer_sk,
+        leaf.clone(),
+        &[
+            RuntimeCapability::VmDispatch,
+            RuntimeCapability::NetworkEgress,
+            RuntimeCapability::GcInvoke,
+        ],
+    );
+
+    let chain = DelegationChain::new(vec![link0, link1]);
+    let ctx = make_ctx(&root_sk);
+
+    let err = verify_chain(
+        &chain,
+        RuntimeCapability::VmDispatch,
+        &leaf,
+        &ctx,
+        &NoRevocationOracle,
+    )
+    .expect_err("amplification must fail");
+
+    if let ChainError::AttenuationViolation {
+        amplified_capabilities,
+        ..
+    } = &err
+    {
+        assert!(amplified_capabilities.contains(&RuntimeCapability::NetworkEgress));
+        assert!(amplified_capabilities.contains(&RuntimeCapability::GcInvoke));
+        assert!(!amplified_capabilities.contains(&RuntimeCapability::VmDispatch));
+    } else {
+        panic!("expected AttenuationViolation, got {err:?}");
+    }
 }

@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::controller_interference_guard::{
-    ConflictResolutionMode, ControllerRegistration, InterferenceConfig, InterferenceFailureCode,
-    InterferenceScenario, MetricReadRequest, MetricSubscription, MetricWriteRequest,
-    TimescaleSeparationStatement, evaluate_controller_interference,
+    ConflictResolutionMode, ControllerRegistration, InterferenceConfig, InterferenceEvaluation,
+    InterferenceFailureCode, InterferenceScenario, MetricReadRequest, MetricSubscription,
+    MetricWriteRequest, TimescaleSeparationStatement, evaluate_controller_interference,
 };
 
 fn registration(
@@ -308,4 +308,404 @@ fn log_events_keep_required_stable_fields() {
             && !event.event.is_empty()
             && !event.outcome.is_empty()
     }));
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: error paths, serde, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn empty_registrations_and_writes_produce_passing_evaluation() {
+    let registrations: Vec<ControllerRegistration> = vec![];
+    let config = InterferenceConfig::default();
+    let read_requests: [MetricReadRequest; 0] = [];
+    let write_requests: [MetricWriteRequest; 0] = [];
+    let subscriptions: [MetricSubscription; 0] = [];
+    let metrics = BTreeMap::new();
+
+    let evaluation = evaluate_controller_interference(&scenario(
+        "trace-empty",
+        "policy-empty",
+        &config,
+        &registrations,
+        (&read_requests, &write_requests, &subscriptions),
+        &metrics,
+    ));
+
+    assert!(evaluation.pass);
+    assert!(!evaluation.rollback_required);
+    assert!(evaluation.applied_writes.is_empty());
+    assert!(evaluation.rejected_writes.is_empty());
+    assert!(evaluation.findings.is_empty());
+}
+
+#[test]
+fn single_writer_no_conflict_passes() {
+    let registrations = vec![registration(
+        "solo",
+        &["cpu"],
+        &["cpu"],
+        1_000_000,
+        1_000_000,
+        "writes every 1s",
+    )];
+
+    let config = InterferenceConfig::default();
+    let read_requests: [MetricReadRequest; 0] = [];
+    let write_requests = [MetricWriteRequest {
+        controller_id: "solo".to_string(),
+        metric: "cpu".to_string(),
+        value: 42,
+    }];
+    let subscriptions: [MetricSubscription; 0] = [];
+    let metrics = initial_metrics();
+
+    let evaluation = evaluate_controller_interference(&scenario(
+        "trace-solo",
+        "policy-solo",
+        &config,
+        &registrations,
+        (&read_requests, &write_requests, &subscriptions),
+        &metrics,
+    ));
+
+    assert!(evaluation.pass);
+    assert_eq!(evaluation.applied_writes.len(), 1);
+    assert_eq!(evaluation.final_metrics.get("cpu"), Some(&42));
+}
+
+#[test]
+fn unknown_controller_write_is_rejected() {
+    let registrations = vec![registration(
+        "known",
+        &["cpu"],
+        &["cpu"],
+        1_000_000,
+        1_000_000,
+        "writes every 1s",
+    )];
+
+    let config = InterferenceConfig::default();
+    let read_requests: [MetricReadRequest; 0] = [];
+    let write_requests = [MetricWriteRequest {
+        controller_id: "unknown-ctrl".to_string(),
+        metric: "cpu".to_string(),
+        value: 99,
+    }];
+    let subscriptions: [MetricSubscription; 0] = [];
+    let metrics = initial_metrics();
+
+    let evaluation = evaluate_controller_interference(&scenario(
+        "trace-unknown",
+        "policy-unknown",
+        &config,
+        &registrations,
+        (&read_requests, &write_requests, &subscriptions),
+        &metrics,
+    ));
+
+    assert!(!evaluation.pass);
+    assert!(
+        evaluation
+            .findings
+            .iter()
+            .any(|f| { f.code == InterferenceFailureCode::UnknownController })
+    );
+}
+
+#[test]
+fn unauthorized_write_metric_is_rejected() {
+    let registrations = vec![registration(
+        "reader-only",
+        &["cpu"],
+        &[], // no write metrics
+        1_000_000,
+        1_000_000,
+        "reads only",
+    )];
+
+    let config = InterferenceConfig::default();
+    let read_requests: [MetricReadRequest; 0] = [];
+    let write_requests = [MetricWriteRequest {
+        controller_id: "reader-only".to_string(),
+        metric: "cpu".to_string(),
+        value: 99,
+    }];
+    let subscriptions: [MetricSubscription; 0] = [];
+    let metrics = initial_metrics();
+
+    let evaluation = evaluate_controller_interference(&scenario(
+        "trace-unauth-write",
+        "policy-unauth-write",
+        &config,
+        &registrations,
+        (&read_requests, &write_requests, &subscriptions),
+        &metrics,
+    ));
+
+    assert!(!evaluation.pass);
+    assert!(
+        evaluation
+            .findings
+            .iter()
+            .any(|f| { f.code == InterferenceFailureCode::UnauthorizedWrite })
+    );
+}
+
+#[test]
+fn unauthorized_read_metric_is_rejected() {
+    let registrations = vec![registration(
+        "other-ctrl",
+        &["throughput"], // only authorized for throughput
+        &["throughput"],
+        1_000_000,
+        1_000_000,
+        "reads/writes throughput only",
+    )];
+
+    let config = InterferenceConfig::default();
+    let read_requests = [MetricReadRequest {
+        controller_id: "other-ctrl".to_string(),
+        metric: "cpu".to_string(), // NOT in read_metrics or write_metrics
+    }];
+    let write_requests: [MetricWriteRequest; 0] = [];
+    let subscriptions: [MetricSubscription; 0] = [];
+    let metrics = initial_metrics();
+
+    let evaluation = evaluate_controller_interference(&scenario(
+        "trace-unauth-read",
+        "policy-unauth-read",
+        &config,
+        &registrations,
+        (&read_requests, &write_requests, &subscriptions),
+        &metrics,
+    ));
+
+    assert!(!evaluation.pass);
+    assert!(
+        evaluation
+            .findings
+            .iter()
+            .any(|f| { f.code == InterferenceFailureCode::UnauthorizedRead })
+    );
+}
+
+#[test]
+fn duplicate_controller_registration_is_rejected() {
+    let registrations = vec![
+        registration(
+            "dup-ctrl",
+            &["cpu"],
+            &["cpu"],
+            1_000_000,
+            1_000_000,
+            "first",
+        ),
+        registration(
+            "dup-ctrl",
+            &["cpu"],
+            &["cpu"],
+            1_000_000,
+            1_000_000,
+            "second",
+        ),
+    ];
+
+    let config = InterferenceConfig::default();
+    let read_requests: [MetricReadRequest; 0] = [];
+    let write_requests: [MetricWriteRequest; 0] = [];
+    let subscriptions: [MetricSubscription; 0] = [];
+    let metrics = initial_metrics();
+
+    let evaluation = evaluate_controller_interference(&scenario(
+        "trace-dup",
+        "policy-dup",
+        &config,
+        &registrations,
+        (&read_requests, &write_requests, &subscriptions),
+        &metrics,
+    ));
+
+    assert!(!evaluation.pass);
+    assert!(
+        evaluation
+            .findings
+            .iter()
+            .any(|f| { f.code == InterferenceFailureCode::DuplicateController })
+    );
+}
+
+#[test]
+fn read_snapshot_captures_initial_metric_value() {
+    let registrations = vec![registration(
+        "reader",
+        &["latency"],
+        &[],
+        1_000_000,
+        2_000_000,
+        "reads only",
+    )];
+
+    let config = InterferenceConfig::default();
+    let read_requests = [MetricReadRequest {
+        controller_id: "reader".to_string(),
+        metric: "latency".to_string(),
+    }];
+    let write_requests: [MetricWriteRequest; 0] = [];
+    let subscriptions: [MetricSubscription; 0] = [];
+    let metrics = initial_metrics();
+
+    let evaluation = evaluate_controller_interference(&scenario(
+        "trace-read-snap",
+        "policy-read-snap",
+        &config,
+        &registrations,
+        (&read_requests, &write_requests, &subscriptions),
+        &metrics,
+    ));
+
+    assert!(evaluation.pass);
+    assert_eq!(evaluation.read_snapshots.get("reader:latency"), Some(&100));
+}
+
+#[test]
+fn conflict_resolution_mode_display() {
+    assert_eq!(ConflictResolutionMode::Serialize.to_string(), "serialize");
+    assert_eq!(ConflictResolutionMode::Reject.to_string(), "reject");
+}
+
+#[test]
+fn interference_failure_code_display_covers_all_variants() {
+    let codes = [
+        InterferenceFailureCode::DuplicateController,
+        InterferenceFailureCode::MissingTimescaleStatement,
+        InterferenceFailureCode::InvalidTimescaleInterval,
+        InterferenceFailureCode::UnknownController,
+        InterferenceFailureCode::UnauthorizedRead,
+        InterferenceFailureCode::UnauthorizedWrite,
+        InterferenceFailureCode::TimescaleConflict,
+    ];
+    for code in &codes {
+        let s = code.to_string();
+        assert!(!s.is_empty(), "Display for {code:?} must not be empty");
+    }
+}
+
+#[test]
+fn interference_config_default_values() {
+    let config = InterferenceConfig::default();
+    assert_eq!(config.min_timescale_separation_millionths, 100_000);
+    assert_eq!(
+        config.conflict_resolution_mode,
+        ConflictResolutionMode::Reject
+    );
+}
+
+#[test]
+fn interference_evaluation_serde_round_trip() {
+    let registrations = vec![registration(
+        "ctrl",
+        &["cpu"],
+        &["cpu"],
+        1_000_000,
+        1_000_000,
+        "writes every 1s",
+    )];
+    let config = InterferenceConfig::default();
+    let read_requests: [MetricReadRequest; 0] = [];
+    let write_requests = [MetricWriteRequest {
+        controller_id: "ctrl".to_string(),
+        metric: "cpu".to_string(),
+        value: 15,
+    }];
+    let subscriptions: [MetricSubscription; 0] = [];
+    let metrics = initial_metrics();
+
+    let evaluation = evaluate_controller_interference(&scenario(
+        "trace-serde",
+        "policy-serde",
+        &config,
+        &registrations,
+        (&read_requests, &write_requests, &subscriptions),
+        &metrics,
+    ));
+
+    let json = serde_json::to_string(&evaluation).expect("serialize");
+    let recovered: InterferenceEvaluation = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(evaluation.pass, recovered.pass);
+    assert_eq!(evaluation.decision_id, recovered.decision_id);
+    assert_eq!(evaluation.final_metrics, recovered.final_metrics);
+}
+
+#[test]
+fn multiple_independent_metrics_no_conflict() {
+    let registrations = vec![
+        registration(
+            "cpu-ctrl",
+            &["cpu"],
+            &["cpu"],
+            1_000_000,
+            1_000_000,
+            "writes cpu",
+        ),
+        registration(
+            "latency-ctrl",
+            &["latency"],
+            &["latency"],
+            1_000_000,
+            1_000_000,
+            "writes latency",
+        ),
+    ];
+
+    let config = InterferenceConfig::default();
+    let read_requests: [MetricReadRequest; 0] = [];
+    let write_requests = [
+        MetricWriteRequest {
+            controller_id: "cpu-ctrl".to_string(),
+            metric: "cpu".to_string(),
+            value: 50,
+        },
+        MetricWriteRequest {
+            controller_id: "latency-ctrl".to_string(),
+            metric: "latency".to_string(),
+            value: 200,
+        },
+    ];
+    let subscriptions: [MetricSubscription; 0] = [];
+    let metrics = initial_metrics();
+
+    let evaluation = evaluate_controller_interference(&scenario(
+        "trace-multi-metric",
+        "policy-multi-metric",
+        &config,
+        &registrations,
+        (&read_requests, &write_requests, &subscriptions),
+        &metrics,
+    ));
+
+    assert!(evaluation.pass);
+    assert_eq!(evaluation.final_metrics.get("cpu"), Some(&50));
+    assert_eq!(evaluation.final_metrics.get("latency"), Some(&200));
+}
+
+#[test]
+fn controller_registration_serde_round_trip() {
+    let reg = registration(
+        "ctrl-serde",
+        &["cpu", "latency"],
+        &["cpu"],
+        100_000,
+        200_000,
+        "test registration",
+    );
+    let json = serde_json::to_string(&reg).expect("serialize");
+    let recovered: ControllerRegistration = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(reg.controller_id, recovered.controller_id);
+    assert_eq!(reg.read_metrics, recovered.read_metrics);
+    assert_eq!(reg.write_metrics, recovered.write_metrics);
+    assert_eq!(
+        reg.timescale.observation_interval_millionths,
+        recovered.timescale.observation_interval_millionths
+    );
 }

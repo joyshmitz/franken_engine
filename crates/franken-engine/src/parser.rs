@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::ast::{
-    AssignmentOperator, BinaryOperator, BlockStatement, BreakStatement, CatchClause,
+    ArrowBody, AssignmentOperator, BinaryOperator, BlockStatement, BreakStatement, CatchClause,
     ContinueStatement, DoWhileStatement, ExportDeclaration, ExportKind, Expression,
     ExpressionStatement, ForStatement, FunctionDeclaration, FunctionParam, IfStatement,
     ImportDeclaration, ObjectProperty, ParseGoal, ReturnStatement, SourceSpan, Statement,
@@ -1756,34 +1756,34 @@ impl GrammarCompletenessMatrix {
                 GrammarFamilyCoverage {
                     family_id: "statement.function_declaration".to_string(),
                     es2020_clause: "ECMA-262 §14.1".to_string(),
-                    script_goal: GrammarCoverageStatus::Partial,
-                    module_goal: GrammarCoverageStatus::Partial,
-                    notes: "Function declaration surface is retained deterministically via raw expression fallback; declaration-structured AST/lowering semantics remain pending."
+                    script_goal: GrammarCoverageStatus::Supported,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes: "Function declarations with async/generator flags, params, and body."
                         .to_string(),
                 },
                 GrammarFamilyCoverage {
                     family_id: "expression.binary_precedence".to_string(),
                     es2020_clause: "ECMA-262 §13.15".to_string(),
-                    script_goal: GrammarCoverageStatus::Unsupported,
-                    module_goal: GrammarCoverageStatus::Unsupported,
-                    notes: "Binary operators currently preserved as raw canonical expressions."
+                    script_goal: GrammarCoverageStatus::Supported,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes: "Full precedence scanning for 25 binary operators."
                         .to_string(),
                 },
                 GrammarFamilyCoverage {
                     family_id: "expression.call_member_chain".to_string(),
                     es2020_clause: "ECMA-262 §13.3".to_string(),
-                    script_goal: GrammarCoverageStatus::Partial,
-                    module_goal: GrammarCoverageStatus::Partial,
-                    notes:
-                        "Call/member surface retained as raw fallback without full parse structure."
-                            .to_string(),
+                    script_goal: GrammarCoverageStatus::Supported,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes: "Call expressions, dot member access, computed member access."
+                        .to_string(),
                 },
                 GrammarFamilyCoverage {
                     family_id: "expression.object_array_literal".to_string(),
                     es2020_clause: "ECMA-262 §13.2".to_string(),
-                    script_goal: GrammarCoverageStatus::Unsupported,
-                    module_goal: GrammarCoverageStatus::Unsupported,
-                    notes: "Object/array literal structure not yet represented in AST.".to_string(),
+                    script_goal: GrammarCoverageStatus::Supported,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes: "Array literals with holes, object literals with shorthand."
+                        .to_string(),
                 },
                 GrammarFamilyCoverage {
                     family_id: "expression.template_literal".to_string(),
@@ -1797,14 +1797,16 @@ impl GrammarCompletenessMatrix {
                     es2020_clause: "ECMA-262 §14.2".to_string(),
                     script_goal: GrammarCoverageStatus::Unsupported,
                     module_goal: GrammarCoverageStatus::Unsupported,
-                    notes: "Arrow/function expressions are pending.".to_string(),
+                    notes: "Arrow function AST type defined but parser support pending."
+                        .to_string(),
                 },
                 GrammarFamilyCoverage {
                     family_id: "statement.control_flow".to_string(),
                     es2020_clause: "ECMA-262 §14".to_string(),
-                    script_goal: GrammarCoverageStatus::Unsupported,
-                    module_goal: GrammarCoverageStatus::Unsupported,
-                    notes: "if/for/while/switch/try grammar families are pending.".to_string(),
+                    script_goal: GrammarCoverageStatus::Supported,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes: "if/else, for, while, do-while, switch/case, try/catch/finally, break, continue, return, throw."
+                        .to_string(),
                 },
             ],
         }
@@ -2357,6 +2359,7 @@ fn push_segment<'a>(
     out.push((trimmed_start, trimmed_end, trimmed));
 }
 
+#[allow(dead_code)]
 fn span_for_segment(
     line_start_offset: usize,
     line_no: u64,
@@ -2974,31 +2977,36 @@ fn parse_primary_expression(
         return Ok(Expression::Await(Box::new(nested)));
     }
 
+    // Arrow function: (params) => body  or  ident => body  or  async variants.
+    if let Some(result) = try_parse_arrow_function(expression, span, context, recursion_depth) {
+        return result;
+    }
+
     // Parenthesized expression.
-    if expression.starts_with('(') && expression.ends_with(')') {
-        if let Some((inner, rest)) = extract_balanced(expression, '(', ')') {
-            if rest.trim().is_empty() {
-                return parse_expression(inner.trim(), span, context, recursion_depth + 1);
-            }
-        }
+    if expression.starts_with('(')
+        && expression.ends_with(')')
+        && let Some((inner, rest)) = extract_balanced(expression, '(', ')')
+        && rest.trim().is_empty()
+    {
+        return parse_expression(inner.trim(), span, context, recursion_depth + 1);
     }
 
     // Array literal: [a, b, c]
-    if expression.starts_with('[') && expression.ends_with(']') {
-        if let Some((inner, rest)) = extract_balanced(expression, '[', ']') {
-            if rest.trim().is_empty() {
-                return parse_array_literal(inner, span, context, recursion_depth);
-            }
-        }
+    if expression.starts_with('[')
+        && expression.ends_with(']')
+        && let Some((inner, rest)) = extract_balanced(expression, '[', ']')
+        && rest.trim().is_empty()
+    {
+        return parse_array_literal(inner, span, context, recursion_depth);
     }
 
     // Object literal: {a: 1, b: 2}
-    if expression.starts_with('{') && expression.ends_with('}') {
-        if let Some((inner, rest)) = extract_balanced(expression, '{', '}') {
-            if rest.trim().is_empty() {
-                return parse_object_literal(inner, span, context, recursion_depth);
-            }
-        }
+    if expression.starts_with('{')
+        && expression.ends_with('}')
+        && let Some((inner, rest)) = extract_balanced(expression, '{', '}')
+        && rest.trim().is_empty()
+    {
+        return parse_object_literal(inner, span, context, recursion_depth);
     }
 
     // Call expression: callee(args) or callee(args).member etc.
@@ -3011,6 +3019,185 @@ fn parse_primary_expression(
     }
 
     Ok(Expression::Raw(canonicalize_whitespace(expression)))
+}
+
+// ---------------------------------------------------------------------------
+// Arrow function parsing
+// ---------------------------------------------------------------------------
+
+/// Try to parse an arrow function expression.
+///
+/// Handles:
+///   `(params) => expr`
+///   `(params) => { stmts }`
+///   `ident => expr`
+///   `ident => { stmts }`
+///   `async (params) => expr`
+///   `async ident => expr`
+fn try_parse_arrow_function(
+    expr: &str,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+    recursion_depth: u64,
+) -> Option<ParseResult<Expression>> {
+    let (is_async, rest) = if let Some(after_async) = expr.strip_prefix("async") {
+        let trimmed = after_async.trim_start();
+        let starts_with_identifier =
+            matches!(trimmed.chars().next(), Some(ch) if is_identifier_start(ch));
+        // `async(` could be a call, so require whitespace before `(`.
+        if after_async.starts_with(|c: char| c.is_ascii_whitespace())
+            && (trimmed.starts_with('(') || starts_with_identifier)
+        {
+            (true, trimmed)
+        } else {
+            return None;
+        }
+    } else {
+        (false, expr)
+    };
+
+    if rest.starts_with('(') {
+        // (params) => body
+        let (params_src, after_params) = extract_balanced(rest, '(', ')')?;
+        let after = after_params.trim_start();
+        let body_src = after.strip_prefix("=>")?;
+        let body_src = body_src.trim();
+
+        let params = parse_arrow_params(params_src, span);
+        Some(parse_arrow_body(
+            body_src,
+            params,
+            is_async,
+            span,
+            context,
+            recursion_depth,
+        ))
+    } else {
+        // ident => body (single param, no parens)
+        // Find `=>` that isn't inside quotes/brackets.
+        let arrow_pos = find_top_level_arrow(rest)?;
+        let param_name = rest[..arrow_pos].trim();
+        if !is_identifier(param_name) {
+            return None;
+        }
+        let body_src = rest[arrow_pos + 2..].trim();
+        let params = vec![FunctionParam {
+            name: param_name.to_string(),
+            span: span.clone(),
+        }];
+        Some(parse_arrow_body(
+            body_src,
+            params,
+            is_async,
+            span,
+            context,
+            recursion_depth,
+        ))
+    }
+}
+
+/// Parse comma-separated arrow function parameters.
+fn parse_arrow_params(params_src: &str, span: &SourceSpan) -> Vec<FunctionParam> {
+    if params_src.trim().is_empty() {
+        return Vec::new();
+    }
+    params_src
+        .split(',')
+        .map(|p| FunctionParam {
+            name: p.trim().to_string(),
+            span: span.clone(),
+        })
+        .collect()
+}
+
+/// Parse the body of an arrow function — either `{ block }` or expression.
+fn parse_arrow_body(
+    body_src: &str,
+    params: Vec<FunctionParam>,
+    is_async: bool,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+    recursion_depth: u64,
+) -> ParseResult<Expression> {
+    let body = if body_src.starts_with('{') {
+        if let Some((block_src, _)) = extract_balanced(body_src, '{', '}') {
+            let stmts = parse_body_statements(block_src, ParseGoal::Script, span, context)?;
+            ArrowBody::Block(BlockStatement {
+                body: stmts,
+                span: span.clone(),
+            })
+        } else {
+            return Err(ParseError::new(
+                ParseErrorCode::UnsupportedSyntax,
+                "arrow function block has unbalanced braces",
+                context.source_label.to_string(),
+                Some(span.clone()),
+            ));
+        }
+    } else {
+        let expr = parse_expression(body_src, span, context, recursion_depth + 1)?;
+        ArrowBody::Expression(Box::new(expr))
+    };
+    Ok(Expression::ArrowFunction {
+        params,
+        body,
+        is_async,
+    })
+}
+
+/// Find `=>` at the top level (not inside quotes/brackets/parens).
+fn find_top_level_arrow(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut depth_paren: i32 = 0;
+    let mut depth_bracket: i32 = 0;
+    let mut depth_brace: i32 = 0;
+    let mut in_quote: Option<u8> = None;
+    let mut escaped = false;
+    let mut i = 0usize;
+
+    while i + 1 < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = in_quote {
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+            if b == b'\\' {
+                escaped = true;
+                i += 1;
+                continue;
+            }
+            if b == q {
+                in_quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'\'' | b'"' | b'`' => {
+                in_quote = Some(b);
+                i += 1;
+                continue;
+            }
+            b'(' => depth_paren += 1,
+            b')' => depth_paren -= 1,
+            b'[' => depth_bracket += 1,
+            b']' => depth_bracket -= 1,
+            b'{' => depth_brace += 1,
+            b'}' => depth_brace -= 1,
+            b'=' if depth_paren == 0
+                && depth_bracket == 0
+                && depth_brace == 0
+                && bytes[i + 1] == b'>' =>
+            {
+                return Some(i);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -3125,7 +3312,11 @@ fn try_parse_assignment(
 /// Match an assignment operator at byte position `i`. Returns (operator, byte_length).
 fn match_assignment_operator_at(bytes: &[u8], i: usize) -> Option<(AssignmentOperator, usize)> {
     let remaining = bytes.len() - i;
-    // 4-char: >>>=, **=  (>>>= is 4, **= is 3 but we check 4-char first)
+
+    // Never match `=` that is preceded by another operator character (part of ==, !=, <=, >=, ===, !==).
+    let prev_is_operator = i > 0 && matches!(bytes[i - 1], b'=' | b'!' | b'<' | b'>');
+
+    // 4-char: >>>=
     if remaining >= 4 && &bytes[i..i + 4] == b">>>=" {
         return Some((AssignmentOperator::UnsignedRightShiftAssign, 4));
     }
@@ -3160,16 +3351,15 @@ fn match_assignment_operator_at(bytes: &[u8], i: usize) -> Option<(AssignmentOpe
             _ => None,
         };
         if let Some(op) = op {
-            // Make sure this isn't ==, !=, <=, >= (not assignments).
             return Some((op, 2));
         }
-        // Check for plain `=` that is NOT `==` or `=>`.
-        if bytes[i] == b'=' && bytes[i + 1] != b'=' && bytes[i + 1] != b'>' {
+        // Check for plain `=` that is NOT part of ==, ===, !=, !==, <=, >=, =>.
+        if bytes[i] == b'=' && bytes[i + 1] != b'=' && bytes[i + 1] != b'>' && !prev_is_operator {
             return Some((AssignmentOperator::Assign, 1));
         }
     }
     // 1-char: plain `=` at end of string
-    if remaining == 1 && bytes[i] == b'=' {
+    if remaining == 1 && bytes[i] == b'=' && !prev_is_operator {
         return Some((AssignmentOperator::Assign, 1));
     }
     None
@@ -3686,54 +3876,47 @@ fn try_parse_postfix(
     }
 
     // Call expression: ends with `)`
-    if bytes[bytes.len() - 1] == b')' {
-        // Find matching open paren at top level.
-        if let Some(open_paren) = find_matching_open_paren(expr) {
-            if open_paren > 0 {
-                let callee_src = expr[..open_paren].trim();
-                let args_src = &expr[open_paren + 1..expr.len() - 1]; // between ( and )
-                let callee = match parse_expression(callee_src, span, context, recursion_depth + 1)
-                {
-                    Ok(e) => e,
-                    Err(e) => return Some(Err(e)),
-                };
-                let arguments =
-                    match parse_comma_separated_exprs(args_src, span, context, recursion_depth + 1)
-                    {
-                        Ok(a) => a,
-                        Err(e) => return Some(Err(e)),
-                    };
-                return Some(Ok(Expression::Call {
-                    callee: Box::new(callee),
-                    arguments,
-                }));
-            }
-        }
+    if bytes[bytes.len() - 1] == b')'
+        && let Some(open_paren) = find_matching_open_paren(expr)
+        && open_paren > 0
+    {
+        let callee_src = expr[..open_paren].trim();
+        let args_src = &expr[open_paren + 1..expr.len() - 1]; // between ( and )
+        let callee = match parse_expression(callee_src, span, context, recursion_depth + 1) {
+            Ok(e) => e,
+            Err(e) => return Some(Err(e)),
+        };
+        let arguments =
+            match parse_comma_separated_exprs(args_src, span, context, recursion_depth + 1) {
+                Ok(a) => a,
+                Err(e) => return Some(Err(e)),
+            };
+        return Some(Ok(Expression::Call {
+            callee: Box::new(callee),
+            arguments,
+        }));
     }
 
     // Computed member: ends with `]`
-    if bytes[bytes.len() - 1] == b']' {
-        if let Some(open_bracket) = find_matching_open_bracket(expr) {
-            if open_bracket > 0 {
-                let object_src = expr[..open_bracket].trim();
-                let prop_src = &expr[open_bracket + 1..expr.len() - 1];
-                let object = match parse_expression(object_src, span, context, recursion_depth + 1)
-                {
-                    Ok(e) => e,
-                    Err(e) => return Some(Err(e)),
-                };
-                let property =
-                    match parse_expression(prop_src.trim(), span, context, recursion_depth + 1) {
-                        Ok(e) => e,
-                        Err(e) => return Some(Err(e)),
-                    };
-                return Some(Ok(Expression::Member {
-                    object: Box::new(object),
-                    property: Box::new(property),
-                    computed: true,
-                }));
-            }
-        }
+    if bytes[bytes.len() - 1] == b']'
+        && let Some(open_bracket) = find_matching_open_bracket(expr)
+        && open_bracket > 0
+    {
+        let object_src = expr[..open_bracket].trim();
+        let prop_src = &expr[open_bracket + 1..expr.len() - 1];
+        let object = match parse_expression(object_src, span, context, recursion_depth + 1) {
+            Ok(e) => e,
+            Err(e) => return Some(Err(e)),
+        };
+        let property = match parse_expression(prop_src.trim(), span, context, recursion_depth + 1) {
+            Ok(e) => e,
+            Err(e) => return Some(Err(e)),
+        };
+        return Some(Ok(Expression::Member {
+            object: Box::new(object),
+            property: Box::new(property),
+            computed: true,
+        }));
     }
 
     // Dot member access: a.b
@@ -5920,45 +6103,46 @@ mod tests {
     }
 
     #[test]
-    fn complex_expression_parses_as_raw() {
+    fn complex_expression_parses_as_binary() {
         let parser = CanonicalEs2020Parser;
         let tree = parser.parse("a + b * c", ParseGoal::Script).expect("parse");
         match &tree.body[0] {
-            Statement::Expression(expr) => match &expr.expression {
-                Expression::Raw(s) => assert_eq!(s, "a + b * c"),
-                _ => panic!("expected raw expression"),
-            },
+            Statement::Expression(expr) => {
+                assert!(
+                    matches!(&expr.expression, Expression::Binary { .. }),
+                    "expected binary expression, got {:?}",
+                    expr.expression
+                );
+            }
             _ => panic!("expected expression statement"),
         }
     }
 
     #[test]
-    fn function_declaration_surface_is_preserved_as_raw_expression_in_script_goal() {
+    fn function_declaration_surface_in_script_goal() {
         let parser = CanonicalEs2020Parser;
         let tree = parser
             .parse("function foo() {}", ParseGoal::Script)
             .expect("parse");
         match &tree.body[0] {
-            Statement::Expression(expr) => match &expr.expression {
-                Expression::Raw(raw) => assert_eq!(raw, "function foo() {}"),
-                _ => panic!("expected raw expression fallback"),
-            },
-            _ => panic!("expected expression statement"),
+            Statement::FunctionDeclaration(func) => {
+                assert_eq!(func.name.as_deref(), Some("foo"));
+            }
+            _ => panic!("expected function declaration"),
         }
     }
 
     #[test]
-    fn function_declaration_surface_is_preserved_as_raw_expression_in_module_goal() {
+    fn function_declaration_surface_in_module_goal() {
         let parser = CanonicalEs2020Parser;
         let tree = parser
             .parse("function foo() {}", ParseGoal::Module)
             .expect("parse");
         match &tree.body[0] {
-            Statement::Expression(expr) => match &expr.expression {
-                Expression::Raw(raw) => assert_eq!(raw, "function foo() {}"),
-                _ => panic!("expected raw expression fallback"),
-            },
-            _ => panic!("expected expression statement"),
+            Statement::FunctionDeclaration(func) => {
+                assert_eq!(func.name.as_deref(), Some("foo"));
+            }
+            _ => panic!("expected function declaration"),
         }
     }
 
@@ -8330,5 +8514,714 @@ mod tests {
         let back: MaterializedSyntaxTree = serde_json::from_str(&json).unwrap();
         assert_eq!(tree, back);
         assert_eq!(back.statement_nodes.len(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: binary expression parsing (PearlTower 2026-03-02)
+    // -----------------------------------------------------------------------
+
+    fn parse_script(source: &str) -> SyntaxTree {
+        let parser = CanonicalEs2020Parser;
+        parser
+            .parse(source, ParseGoal::Script)
+            .expect("parse should succeed")
+    }
+
+    fn first_expr(tree: &SyntaxTree) -> &Expression {
+        match &tree.body[0] {
+            Statement::Expression(es) => &es.expression,
+            other => panic!("expected Expression statement, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn binary_addition() {
+        let tree = parse_script("a + b");
+        match first_expr(&tree) {
+            Expression::Binary {
+                operator,
+                left,
+                right,
+            } => {
+                assert_eq!(*operator, BinaryOperator::Add);
+                assert!(matches!(left.as_ref(), Expression::Identifier(n) if n == "a"));
+                assert!(matches!(right.as_ref(), Expression::Identifier(n) if n == "b"));
+            }
+            other => panic!("expected Binary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn binary_precedence_mul_over_add() {
+        // a + b * c should parse as a + (b * c)
+        let tree = parse_script("a + b * c");
+        match first_expr(&tree) {
+            Expression::Binary {
+                operator,
+                left,
+                right,
+            } => {
+                assert_eq!(*operator, BinaryOperator::Add);
+                assert!(matches!(left.as_ref(), Expression::Identifier(n) if n == "a"));
+                match right.as_ref() {
+                    Expression::Binary {
+                        operator: inner_op, ..
+                    } => {
+                        assert_eq!(*inner_op, BinaryOperator::Multiply);
+                    }
+                    other => panic!("expected Binary for rhs, got {other:?}"),
+                }
+            }
+            other => panic!("expected Binary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn binary_strict_equality() {
+        let tree = parse_script("x === y");
+        match first_expr(&tree) {
+            Expression::Binary { operator, .. } => {
+                assert_eq!(*operator, BinaryOperator::StrictEqual);
+            }
+            other => panic!("expected Binary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn binary_logical_and() {
+        let tree = parse_script("a && b");
+        match first_expr(&tree) {
+            Expression::Binary { operator, .. } => {
+                assert_eq!(*operator, BinaryOperator::LogicalAnd);
+            }
+            other => panic!("expected Binary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn binary_logical_or() {
+        let tree = parse_script("a || b");
+        match first_expr(&tree) {
+            Expression::Binary { operator, .. } => {
+                assert_eq!(*operator, BinaryOperator::LogicalOr);
+            }
+            other => panic!("expected Binary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn binary_nullish_coalescing() {
+        let tree = parse_script("a ?? b");
+        match first_expr(&tree) {
+            Expression::Binary { operator, .. } => {
+                assert_eq!(*operator, BinaryOperator::NullishCoalescing);
+            }
+            other => panic!("expected Binary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn binary_comparison_operators() {
+        for (src, expected_op) in [
+            ("a < b", BinaryOperator::LessThan),
+            ("a > b", BinaryOperator::GreaterThan),
+            ("a <= b", BinaryOperator::LessThanOrEqual),
+            ("a >= b", BinaryOperator::GreaterThanOrEqual),
+            ("a == b", BinaryOperator::Equal),
+            ("a != b", BinaryOperator::NotEqual),
+            ("a !== b", BinaryOperator::StrictNotEqual),
+        ] {
+            let tree = parse_script(src);
+            match first_expr(&tree) {
+                Expression::Binary { operator, .. } => {
+                    assert_eq!(*operator, expected_op, "failed for: {src}");
+                }
+                other => panic!("expected Binary for {src}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn binary_bitwise_operators() {
+        for (src, expected_op) in [
+            ("a & b", BinaryOperator::BitwiseAnd),
+            ("a | b", BinaryOperator::BitwiseOr),
+            ("a ^ b", BinaryOperator::BitwiseXor),
+            ("a << b", BinaryOperator::LeftShift),
+            ("a >> b", BinaryOperator::RightShift),
+            ("a >>> b", BinaryOperator::UnsignedRightShift),
+        ] {
+            let tree = parse_script(src);
+            match first_expr(&tree) {
+                Expression::Binary { operator, .. } => {
+                    assert_eq!(*operator, expected_op, "failed for: {src}");
+                }
+                other => panic!("expected Binary for {src}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn unary_logical_not() {
+        let tree = parse_script("!x");
+        match first_expr(&tree) {
+            Expression::Unary { operator, argument } => {
+                assert_eq!(*operator, UnaryOperator::LogicalNot);
+                assert!(matches!(argument.as_ref(), Expression::Identifier(n) if n == "x"));
+            }
+            other => panic!("expected Unary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unary_bitwise_not() {
+        let tree = parse_script("~x");
+        match first_expr(&tree) {
+            Expression::Unary { operator, .. } => {
+                assert_eq!(*operator, UnaryOperator::BitwiseNot);
+            }
+            other => panic!("expected Unary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unary_typeof() {
+        let tree = parse_script("typeof x");
+        match first_expr(&tree) {
+            Expression::Unary { operator, argument } => {
+                assert_eq!(*operator, UnaryOperator::Typeof);
+                assert!(matches!(argument.as_ref(), Expression::Identifier(n) if n == "x"));
+            }
+            other => panic!("expected Unary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unary_void() {
+        let tree = parse_script("void 0");
+        match first_expr(&tree) {
+            Expression::Unary { operator, argument } => {
+                assert_eq!(*operator, UnaryOperator::Void);
+                assert!(matches!(argument.as_ref(), Expression::NumericLiteral(0)));
+            }
+            other => panic!("expected Unary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unary_delete() {
+        let tree = parse_script("delete obj");
+        match first_expr(&tree) {
+            Expression::Unary { operator, .. } => {
+                assert_eq!(*operator, UnaryOperator::Delete);
+            }
+            other => panic!("expected Unary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assignment_simple() {
+        let tree = parse_script("x = 42");
+        match first_expr(&tree) {
+            Expression::Assignment {
+                operator,
+                left,
+                right,
+            } => {
+                assert_eq!(*operator, AssignmentOperator::Assign);
+                assert!(matches!(left.as_ref(), Expression::Identifier(n) if n == "x"));
+                assert!(matches!(right.as_ref(), Expression::NumericLiteral(42)));
+            }
+            other => panic!("expected Assignment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assignment_add_assign() {
+        let tree = parse_script("x += 1");
+        match first_expr(&tree) {
+            Expression::Assignment { operator, .. } => {
+                assert_eq!(*operator, AssignmentOperator::AddAssign);
+            }
+            other => panic!("expected Assignment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ternary_conditional() {
+        let tree = parse_script("a ? b : c");
+        match first_expr(&tree) {
+            Expression::Conditional {
+                test,
+                consequent,
+                alternate,
+            } => {
+                assert!(matches!(test.as_ref(), Expression::Identifier(n) if n == "a"));
+                assert!(matches!(consequent.as_ref(), Expression::Identifier(n) if n == "b"));
+                assert!(matches!(alternate.as_ref(), Expression::Identifier(n) if n == "c"));
+            }
+            other => panic!("expected Conditional, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn call_expression_no_args() {
+        let tree = parse_script("foo()");
+        match first_expr(&tree) {
+            Expression::Call { callee, arguments } => {
+                assert!(matches!(callee.as_ref(), Expression::Identifier(n) if n == "foo"));
+                assert!(arguments.is_empty());
+            }
+            other => panic!("expected Call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn call_expression_with_args() {
+        let tree = parse_script("foo(1, 2)");
+        match first_expr(&tree) {
+            Expression::Call { callee, arguments } => {
+                assert!(matches!(callee.as_ref(), Expression::Identifier(n) if n == "foo"));
+                assert_eq!(arguments.len(), 2);
+                assert!(matches!(&arguments[0], Expression::NumericLiteral(1)));
+                assert!(matches!(&arguments[1], Expression::NumericLiteral(2)));
+            }
+            other => panic!("expected Call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn member_expression_dot() {
+        let tree = parse_script("obj.prop");
+        match first_expr(&tree) {
+            Expression::Member {
+                object,
+                property,
+                computed,
+            } => {
+                assert!(matches!(object.as_ref(), Expression::Identifier(n) if n == "obj"));
+                assert!(matches!(property.as_ref(), Expression::Identifier(n) if n == "prop"));
+                assert!(!computed);
+            }
+            other => panic!("expected Member, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn member_expression_computed() {
+        let tree = parse_script("arr[0]");
+        match first_expr(&tree) {
+            Expression::Member {
+                object,
+                property,
+                computed,
+            } => {
+                assert!(matches!(object.as_ref(), Expression::Identifier(n) if n == "arr"));
+                assert!(matches!(property.as_ref(), Expression::NumericLiteral(0)));
+                assert!(computed);
+            }
+            other => panic!("expected Member, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn this_expression() {
+        let tree = parse_script("this");
+        assert!(matches!(first_expr(&tree), Expression::This));
+    }
+
+    #[test]
+    fn array_literal_empty() {
+        let tree = parse_script("[]");
+        match first_expr(&tree) {
+            Expression::ArrayLiteral(elements) => {
+                assert!(elements.is_empty());
+            }
+            other => panic!("expected ArrayLiteral, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn array_literal_with_elements() {
+        let tree = parse_script("[1, 2, 3]");
+        match first_expr(&tree) {
+            Expression::ArrayLiteral(elements) => {
+                assert_eq!(elements.len(), 3);
+            }
+            other => panic!("expected ArrayLiteral, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn object_literal_empty() {
+        let tree = parse_script("({})");
+        match first_expr(&tree) {
+            Expression::ObjectLiteral(properties) => {
+                assert!(properties.is_empty());
+            }
+            other => panic!("expected ObjectLiteral, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parenthesized_expression() {
+        let tree = parse_script("(42)");
+        assert!(matches!(first_expr(&tree), Expression::NumericLiteral(42)));
+    }
+
+    #[test]
+    fn chained_member_access() {
+        let tree = parse_script("a.b.c");
+        match first_expr(&tree) {
+            Expression::Member {
+                object,
+                property,
+                computed,
+            } => {
+                assert!(!computed);
+                assert!(matches!(property.as_ref(), Expression::Identifier(n) if n == "c"));
+                match object.as_ref() {
+                    Expression::Member {
+                        object: inner_obj,
+                        property: inner_prop,
+                        computed: inner_computed,
+                    } => {
+                        assert!(!inner_computed);
+                        assert!(
+                            matches!(inner_obj.as_ref(), Expression::Identifier(n) if n == "a")
+                        );
+                        assert!(
+                            matches!(inner_prop.as_ref(), Expression::Identifier(n) if n == "b")
+                        );
+                    }
+                    other => panic!("expected inner Member, got {other:?}"),
+                }
+            }
+            other => panic!("expected Member, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Control flow statement parsing (PearlTower 2026-03-02)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn if_statement_simple() {
+        let tree = parse_script("if (true) { x }");
+        assert!(matches!(&tree.body[0], Statement::If(_)));
+    }
+
+    #[test]
+    fn if_else_statement() {
+        let tree = parse_script("if (x) { a } else { b }");
+        match &tree.body[0] {
+            Statement::If(s) => {
+                assert!(s.alternate.is_some());
+            }
+            other => panic!("expected If, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn for_loop() {
+        let tree = parse_script("for (let i = 0; i < 10; i) { x }");
+        match &tree.body[0] {
+            Statement::For(s) => {
+                assert!(s.init.is_some());
+                assert!(s.condition.is_some());
+                assert!(s.update.is_some());
+            }
+            other => panic!("expected For, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn while_loop() {
+        let tree = parse_script("while (true) { x }");
+        assert!(matches!(&tree.body[0], Statement::While(_)));
+    }
+
+    #[test]
+    fn do_while_loop() {
+        let tree = parse_script("do { x } while (true)");
+        assert!(matches!(&tree.body[0], Statement::DoWhile(_)));
+    }
+
+    #[test]
+    fn return_statement_no_value() {
+        let tree = parse_script("return");
+        match &tree.body[0] {
+            Statement::Return(r) => assert!(r.argument.is_none()),
+            other => panic!("expected Return, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn return_statement_with_value() {
+        let tree = parse_script("return 42");
+        match &tree.body[0] {
+            Statement::Return(r) => {
+                assert!(r.argument.is_some());
+            }
+            other => panic!("expected Return, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn throw_statement() {
+        let tree = parse_script("throw err");
+        assert!(matches!(&tree.body[0], Statement::Throw(_)));
+    }
+
+    #[test]
+    fn try_catch_statement() {
+        let tree = parse_script("try { x } catch (e) { y }");
+        match &tree.body[0] {
+            Statement::TryCatch(s) => {
+                assert!(s.handler.is_some());
+                assert!(s.finalizer.is_none());
+            }
+            other => panic!("expected TryCatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn try_catch_finally() {
+        let tree = parse_script("try { x } catch (e) { y } finally { z }");
+        match &tree.body[0] {
+            Statement::TryCatch(s) => {
+                assert!(s.handler.is_some());
+                assert!(s.finalizer.is_some());
+            }
+            other => panic!("expected TryCatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn switch_statement() {
+        let tree = parse_script("switch (x) { case 1: y }");
+        match &tree.body[0] {
+            Statement::Switch(s) => {
+                assert_eq!(s.cases.len(), 1);
+                assert!(s.cases[0].test.is_some());
+            }
+            other => panic!("expected Switch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn break_statement() {
+        let tree = parse_script("break");
+        match &tree.body[0] {
+            Statement::Break(b) => assert!(b.label.is_none()),
+            other => panic!("expected Break, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn break_with_label() {
+        let tree = parse_script("break outer");
+        match &tree.body[0] {
+            Statement::Break(b) => assert_eq!(b.label.as_deref(), Some("outer")),
+            other => panic!("expected Break, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn continue_statement() {
+        let tree = parse_script("continue");
+        match &tree.body[0] {
+            Statement::Continue(c) => assert!(c.label.is_none()),
+            other => panic!("expected Continue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn function_declaration_simple() {
+        let tree = parse_script("function foo(a, b) { return a }");
+        match &tree.body[0] {
+            Statement::FunctionDeclaration(f) => {
+                assert_eq!(f.name.as_deref(), Some("foo"));
+                assert_eq!(f.params.len(), 2);
+                assert!(!f.is_async);
+                assert!(!f.is_generator);
+            }
+            other => panic!("expected FunctionDeclaration, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn async_function_declaration() {
+        let tree = parse_script("async function bar() { return 1 }");
+        match &tree.body[0] {
+            Statement::FunctionDeclaration(f) => {
+                assert!(f.is_async);
+                assert_eq!(f.name.as_deref(), Some("bar"));
+            }
+            other => panic!("expected FunctionDeclaration, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn block_statement() {
+        let tree = parse_script("{ let x = 1 }");
+        assert!(matches!(&tree.body[0], Statement::Block(_)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Binary operator precedence matrix (PearlTower 2026-03-02)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn precedence_mul_over_add_right() {
+        // a * b + c should parse as (a * b) + c
+        let tree = parse_script("a * b + c");
+        match first_expr(&tree) {
+            Expression::Binary { operator, left, .. } => {
+                assert_eq!(*operator, BinaryOperator::Add);
+                assert!(matches!(
+                    left.as_ref(),
+                    Expression::Binary {
+                        operator: BinaryOperator::Multiply,
+                        ..
+                    }
+                ));
+            }
+            other => panic!("expected Binary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn precedence_comparison_over_logical() {
+        // a > b && c < d should parse as (a > b) && (c < d)
+        let tree = parse_script("a > b && c < d");
+        match first_expr(&tree) {
+            Expression::Binary {
+                operator,
+                left,
+                right,
+            } => {
+                assert_eq!(*operator, BinaryOperator::LogicalAnd);
+                assert!(matches!(
+                    left.as_ref(),
+                    Expression::Binary {
+                        operator: BinaryOperator::GreaterThan,
+                        ..
+                    }
+                ));
+                assert!(matches!(
+                    right.as_ref(),
+                    Expression::Binary {
+                        operator: BinaryOperator::LessThan,
+                        ..
+                    }
+                ));
+            }
+            other => panic!("expected Binary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn binary_instanceof() {
+        let tree = parse_script("x instanceof Array");
+        match first_expr(&tree) {
+            Expression::Binary { operator, .. } => {
+                assert_eq!(*operator, BinaryOperator::Instanceof);
+            }
+            other => panic!("expected Binary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn binary_exponentiation() {
+        let tree = parse_script("2 ** 3");
+        match first_expr(&tree) {
+            Expression::Binary { operator, .. } => {
+                assert_eq!(*operator, BinaryOperator::Exponentiate);
+            }
+            other => panic!("expected Binary, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Merge logical lines (PearlTower 2026-03-02)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn merge_logical_lines_simple() {
+        let lines = merge_logical_lines("a;\nb;");
+        assert_eq!(lines.len(), 2);
+    }
+
+    #[test]
+    fn merge_logical_lines_block() {
+        // A block spanning multiple lines should be merged into one logical line.
+        let lines = merge_logical_lines("if (x) {\n  y;\n}");
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].text.contains("if (x) {"));
+    }
+
+    // -----------------------------------------------------------------------
+    // extract_balanced helper (PearlTower 2026-03-02)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn extract_balanced_simple_parens() {
+        let (inner, rest) = extract_balanced("(abc)def", '(', ')').unwrap();
+        assert_eq!(inner, "abc");
+        assert_eq!(rest, "def");
+    }
+
+    #[test]
+    fn extract_balanced_nested() {
+        let (inner, rest) = extract_balanced("((a))", '(', ')').unwrap();
+        assert_eq!(inner, "(a)");
+        assert_eq!(rest, "");
+    }
+
+    #[test]
+    fn extract_balanced_not_starting_with_open() {
+        assert!(extract_balanced("abc()", '(', ')').is_none());
+    }
+
+    #[test]
+    fn extract_balanced_unmatched() {
+        assert!(extract_balanced("(abc", '(', ')').is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // split_top_level_commas (PearlTower 2026-03-02)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn split_top_level_commas_basic() {
+        let parts = split_top_level_commas("a, b, c");
+        assert_eq!(parts, vec!["a", " b", " c"]);
+    }
+
+    #[test]
+    fn split_top_level_commas_nested() {
+        let parts = split_top_level_commas("f(a, b), c");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0], "f(a, b)");
+    }
+
+    // -----------------------------------------------------------------------
+    // find_top_level_colon (PearlTower 2026-03-02)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn find_top_level_colon_basic() {
+        assert_eq!(find_top_level_colon("a: b"), Some(1));
+    }
+
+    #[test]
+    fn find_top_level_colon_nested() {
+        assert_eq!(find_top_level_colon("f(a: b): c"), Some(7));
+    }
+
+    #[test]
+    fn find_top_level_colon_none() {
+        assert_eq!(find_top_level_colon("abc"), None);
     }
 }

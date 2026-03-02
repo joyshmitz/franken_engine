@@ -127,6 +127,18 @@ fn semantic_signature(tree: &SyntaxTree) -> Vec<String> {
                 ExportKind::NamedClause(clause) => format!("export_named:{clause}"),
             },
             Statement::VariableDeclaration(_) => format!("variable_decl"),
+            Statement::Block(_) => format!("block"),
+            Statement::If(_) => format!("if"),
+            Statement::For(_) => format!("for"),
+            Statement::While(_) => format!("while"),
+            Statement::DoWhile(_) => format!("do_while"),
+            Statement::Return(_) => format!("return"),
+            Statement::Throw(_) => format!("throw"),
+            Statement::TryCatch(_) => format!("try_catch"),
+            Statement::Switch(_) => format!("switch"),
+            Statement::Break(_) => format!("break"),
+            Statement::Continue(_) => format!("continue"),
+            Statement::FunctionDeclaration(_) => format!("function_decl"),
         })
         .collect()
 }

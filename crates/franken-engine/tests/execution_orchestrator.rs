@@ -138,3 +138,110 @@ fn multiple_executions_accumulate_evidence() {
     assert_eq!(orch.execution_count(), 3);
     assert!(orch.ledger().len() >= 3);
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: config variants, error display, serde, determinism
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn conservative_preset_produces_valid_execution() {
+    let config = OrchestratorConfig {
+        loss_matrix_preset: LossMatrixPreset::Conservative,
+        ..OrchestratorConfig::default()
+    };
+    let mut orch = ExecutionOrchestrator::new(config);
+    let pkg = simple_package("ext-cons", "42");
+    let result = orch.execute(&pkg).expect("execute should succeed");
+    assert_eq!(result.extension_id, "ext-cons");
+    assert!(result.posterior.is_valid());
+}
+
+#[test]
+fn permissive_preset_produces_valid_execution() {
+    let config = OrchestratorConfig {
+        loss_matrix_preset: LossMatrixPreset::Permissive,
+        ..OrchestratorConfig::default()
+    };
+    let mut orch = ExecutionOrchestrator::new(config);
+    let pkg = simple_package("ext-perm", "42");
+    let result = orch.execute(&pkg).expect("execute should succeed");
+    assert_eq!(result.extension_id, "ext-perm");
+    assert!(result.posterior.is_valid());
+}
+
+#[test]
+fn deterministic_execution_produces_consistent_results() {
+    let mut orch1 = ExecutionOrchestrator::with_defaults();
+    let mut orch2 = ExecutionOrchestrator::with_defaults();
+
+    let pkg = simple_package("ext-det", "42");
+    let r1 = orch1.execute(&pkg).expect("first");
+    let r2 = orch2.execute(&pkg).expect("second");
+
+    assert_eq!(r1.extension_id, r2.extension_id);
+    assert_eq!(r1.execution_value, r2.execution_value);
+    assert_eq!(r1.instructions_executed, r2.instructions_executed);
+}
+
+#[test]
+fn orchestrator_error_display_is_non_empty() {
+    let err = OrchestratorError::EmptySource;
+    assert!(!err.to_string().is_empty());
+
+    let err2 = OrchestratorError::EmptyExtensionId;
+    assert!(!err2.to_string().is_empty());
+}
+
+#[test]
+fn extension_package_serde_round_trip() {
+    let pkg = simple_package("ext-serde", "1 + 2");
+    let json = serde_json::to_string(&pkg).expect("serialize");
+    let recovered: ExtensionPackage = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(pkg.extension_id, recovered.extension_id);
+    assert_eq!(pkg.source, recovered.source);
+    assert_eq!(pkg.version, recovered.version);
+}
+
+#[test]
+fn execution_count_starts_at_zero() {
+    let orch = ExecutionOrchestrator::with_defaults();
+    assert_eq!(orch.execution_count(), 0);
+}
+
+#[test]
+fn ledger_starts_empty() {
+    let orch = ExecutionOrchestrator::with_defaults();
+    assert!(orch.ledger().is_empty());
+}
+
+#[test]
+fn custom_epoch_propagates_to_result() {
+    let config = OrchestratorConfig {
+        epoch: SecurityEpoch::from_raw(42),
+        ..OrchestratorConfig::default()
+    };
+    let mut orch = ExecutionOrchestrator::new(config);
+    let pkg = simple_package("ext-epoch", "42");
+    let result = orch.execute(&pkg).expect("execute");
+    assert_eq!(result.epoch, SecurityEpoch::from_raw(42));
+}
+
+#[test]
+fn metadata_in_package_is_preserved() {
+    let mut metadata = BTreeMap::new();
+    metadata.insert("author".to_string(), "test".to_string());
+    metadata.insert("license".to_string(), "MIT".to_string());
+
+    let pkg = ExtensionPackage {
+        extension_id: "ext-meta".to_string(),
+        source: "42".to_string(),
+        capabilities: vec!["cap_a".to_string()],
+        version: "1.0.0".to_string(),
+        metadata: metadata.clone(),
+    };
+
+    let json = serde_json::to_string(&pkg).expect("serialize");
+    let recovered: ExtensionPackage = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.metadata, metadata);
+    assert_eq!(recovered.capabilities, vec!["cap_a"]);
+}
