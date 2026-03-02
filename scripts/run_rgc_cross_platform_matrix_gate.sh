@@ -252,7 +252,7 @@ run_step_expect_exit() {
   local command_text="$1"
   local expected_exit="$2"
   local log_path remote_exit_code run_status attempt
-  local fallback_detected
+  local fallback_detected lock_contention non_compilation_marker
   shift 2
 
   commands_run+=("$command_text")
@@ -289,6 +289,15 @@ run_step_expect_exit() {
       return 1
     fi
 
+    lock_contention=false
+    if rg -qi 'Blocking waiting for file lock on artifact directory|waiting for file lock on artifact directory' "$log_path"; then
+      lock_contention=true
+    fi
+    non_compilation_marker=false
+    if rg -q 'exec called with non-compilation command' "$log_path"; then
+      non_compilation_marker=true
+    fi
+
     if [[ "$run_status" -ne 0 ]]; then
       if rg -q "Remote command finished: exit=${expected_exit}" "$log_path"; then
         echo "==> recovered: remote execution produced expected exit=${expected_exit}" \
@@ -300,6 +309,18 @@ run_step_expect_exit() {
         echo "==> info: accepted rch process exit=${run_status} (daemon output omitted remote-exit marker)" \
           | tee -a "$log_path"
       else
+        if [[ "$attempt" -lt "$rch_step_retry_attempts" ]]; then
+          if [[ "$lock_contention" == true ]]; then
+            echo "==> warning: cargo artifact-directory lock contention detected (attempt ${attempt}/${rch_step_retry_attempts}); retrying" \
+              | tee -a "$log_path"
+          else
+            echo "==> warning: rch command exited ${run_status} without acceptable remote marker (attempt ${attempt}/${rch_step_retry_attempts}); retrying" \
+              | tee -a "$log_path"
+          fi
+          rch daemon start >/dev/null 2>&1 || true
+          sleep "${rch_step_retry_sleep_seconds}"
+          continue
+        fi
         failed_command="$command_text"
         return 1
       fi
@@ -308,15 +329,38 @@ run_step_expect_exit() {
     remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
     if [[ -z "$remote_exit_code" ]]; then
       if [[ "$run_status" -eq "$expected_exit" ]]; then
+        if [[ "$non_compilation_marker" == true ]]; then
+          echo "==> info: remote exit marker missing for non-compilation command; accepted rch process exit=${run_status}" \
+            | tee -a "$log_path"
+          return 0
+        fi
+        if [[ "$attempt" -lt "$rch_step_retry_attempts" ]]; then
+          echo "==> warning: remote exit marker missing with process exit=${run_status} (attempt ${attempt}/${rch_step_retry_attempts}); retrying for deterministic provenance" \
+            | tee -a "$log_path"
+          sleep "${rch_step_retry_sleep_seconds}"
+          continue
+        fi
         echo "==> info: remote exit marker missing; accepted rch process exit=${run_status}" \
           | tee -a "$log_path"
         return 0
+      fi
+      if [[ "$attempt" -lt "$rch_step_retry_attempts" ]]; then
+        echo "==> warning: remote exit marker missing with unexpected process exit=${run_status} (attempt ${attempt}/${rch_step_retry_attempts}); retrying" \
+          | tee -a "$log_path"
+        sleep "${rch_step_retry_sleep_seconds}"
+        continue
       fi
       failed_command="${command_text} (remote-exit=missing, expected=${expected_exit})"
       return 1
     fi
 
     if [[ "$remote_exit_code" != "$expected_exit" ]]; then
+      if [[ "$attempt" -lt "$rch_step_retry_attempts" ]]; then
+        echo "==> warning: remote exit ${remote_exit_code} != expected ${expected_exit} (attempt ${attempt}/${rch_step_retry_attempts}); retrying" \
+          | tee -a "$log_path"
+        sleep "${rch_step_retry_sleep_seconds}"
+        continue
+      fi
       failed_command="${command_text} (remote-exit=${remote_exit_code:-missing}, expected=${expected_exit})"
       return 1
     fi

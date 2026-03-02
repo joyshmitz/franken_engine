@@ -96,6 +96,7 @@ declare -a commands_run=()
 declare -a step_logs=()
 failed_command=""
 manifest_written=false
+last_step_log_path=""
 
 ensure_rch_ready() {
   local attempts="${1:-5}"
@@ -110,11 +111,16 @@ ensure_rch_ready() {
   return 1
 }
 
+rch_detect_file_lock_contention() {
+  local log_path="$1"
+  rg -qi 'Blocking waiting for file lock on artifact directory|waiting for file lock on artifact directory' "$log_path"
+}
+
 run_step_expect_exit() {
   local command_text="$1"
   local expected_exit="$2"
   local log_path remote_exit_code run_status attempt
-  local fallback_detected
+  local fallback_detected lock_contention
   shift 2
 
   commands_run+=("$command_text")
@@ -122,6 +128,7 @@ run_step_expect_exit() {
   for ((attempt = 1; attempt <= rch_step_retry_attempts; attempt++)); do
     log_path="$(mktemp "${run_dir}/rch-log.XXXXXX")"
     step_logs+=("$log_path")
+    last_step_log_path="$log_path"
 
     if ! ensure_rch_ready "${rch_ready_attempts}" "${rch_ready_sleep_seconds}"; then
       echo "==> warning: rch check not ready after ${rch_ready_attempts} attempts; attempting remote execution anyway" \
@@ -151,6 +158,11 @@ run_step_expect_exit() {
       return 1
     fi
 
+    lock_contention=false
+    if rch_detect_file_lock_contention "$log_path"; then
+      lock_contention=true
+    fi
+
     if [[ "$run_status" -ne 0 ]]; then
       if rg -q "Remote command finished: exit=${expected_exit}" "$log_path"; then
         echo "==> recovered: remote execution produced expected exit=${expected_exit}" | tee -a "$log_path"
@@ -159,6 +171,18 @@ run_step_expect_exit() {
       elif [[ "$run_status" -eq "$expected_exit" ]]; then
         echo "==> info: accepted rch process exit=${run_status} without explicit remote marker" | tee -a "$log_path"
       else
+        if [[ "$attempt" -lt "$rch_step_retry_attempts" ]]; then
+          if [[ "$lock_contention" == true ]]; then
+            echo "==> warning: cargo artifact-directory lock contention detected (attempt ${attempt}/${rch_step_retry_attempts}); retrying" \
+              | tee -a "$log_path"
+          else
+            echo "==> warning: rch command exited ${run_status} without acceptable remote marker (attempt ${attempt}/${rch_step_retry_attempts}); retrying" \
+              | tee -a "$log_path"
+          fi
+          rch daemon start >/dev/null 2>&1 || true
+          sleep "${rch_step_retry_sleep_seconds}"
+          continue
+        fi
         failed_command="$command_text"
         return 1
       fi
@@ -167,14 +191,32 @@ run_step_expect_exit() {
     remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
     if [[ -z "$remote_exit_code" ]]; then
       if [[ "$run_status" -eq "$expected_exit" ]]; then
+        if [[ "$attempt" -lt "$rch_step_retry_attempts" ]]; then
+          echo "==> warning: remote exit marker missing with process exit=${run_status} (attempt ${attempt}/${rch_step_retry_attempts}); retrying for deterministic provenance" \
+            | tee -a "$log_path"
+          sleep "${rch_step_retry_sleep_seconds}"
+          continue
+        fi
         echo "==> info: remote exit marker missing; accepted rch process exit=${run_status}" | tee -a "$log_path"
         return 0
+      fi
+      if [[ "$attempt" -lt "$rch_step_retry_attempts" ]]; then
+        echo "==> warning: remote exit marker missing with unexpected process exit=${run_status} (attempt ${attempt}/${rch_step_retry_attempts}); retrying" \
+          | tee -a "$log_path"
+        sleep "${rch_step_retry_sleep_seconds}"
+        continue
       fi
       failed_command="${command_text} (remote-exit=missing, expected=${expected_exit})"
       return 1
     fi
 
     if [[ "$remote_exit_code" != "$expected_exit" ]]; then
+      if [[ "$attempt" -lt "$rch_step_retry_attempts" ]]; then
+        echo "==> warning: remote exit ${remote_exit_code} != expected ${expected_exit} (attempt ${attempt}/${rch_step_retry_attempts}); retrying" \
+          | tee -a "$log_path"
+        sleep "${rch_step_retry_sleep_seconds}"
+        continue
+      fi
       failed_command="${command_text} (remote-exit=${remote_exit_code:-missing}, expected=${expected_exit})"
       return 1
     fi
@@ -187,6 +229,98 @@ run_step() {
   local command_text="$1"
   shift
   run_step_expect_exit "$command_text" 0 "$@"
+}
+
+extract_json_report_from_log() {
+  local source_path="$1"
+  local destination_path="$2"
+
+  awk '
+    function strip_strings(line,    ch, i, in_string, escaped, result) {
+      result = ""
+      in_string = 0
+      escaped = 0
+      for (i = 1; i <= length(line); i++) {
+        ch = substr(line, i, 1)
+        if (in_string) {
+          if (escaped) {
+            escaped = 0
+            continue
+          }
+          if (ch == "\\") {
+            escaped = 1
+            continue
+          }
+          if (ch == "\"") {
+            in_string = 0
+          }
+          continue
+        }
+        if (ch == "\"") {
+          in_string = 1
+          continue
+        }
+        result = result ch
+      }
+      return result
+    }
+
+    BEGIN {
+      capture = 0
+      depth = 0
+    }
+
+    {
+      line = $0
+      if (!capture) {
+        if (line ~ /^[[:space:]]*\{[[:space:]]*$/) {
+          capture = 1
+        } else {
+          next
+        }
+      }
+
+      if (capture) {
+        print line
+        stripped = strip_strings(line)
+        opens = gsub(/\{/, "&", stripped)
+        closes = gsub(/\}/, "&", stripped)
+        depth += opens - closes
+        if (depth == 0) {
+          exit
+        }
+      }
+    }
+  ' "$source_path" >"$destination_path"
+}
+
+materialize_report_from_step_log_if_needed() {
+  local report_path="$1"
+  local log_path="$2"
+  local extracted_path
+
+  if [[ -f "$report_path" ]]; then
+    return 0
+  fi
+
+  extracted_path="$(mktemp "${run_dir}/report.extract.XXXXXX.json")"
+  commands_run+=("extract report JSON from ${log_path} -> ${report_path}")
+  extract_json_report_from_log "$log_path" "$extracted_path"
+  if [[ ! -s "$extracted_path" ]]; then
+    rm -f "$extracted_path"
+    failed_command="extract report JSON from ${log_path} -> ${report_path} (empty extraction)"
+    return 1
+  fi
+
+  if ! jq -e '.report_kind == "bundle" and (.report | type == "object")' "$extracted_path" >/dev/null 2>&1; then
+    rm -f "$extracted_path"
+    failed_command="extract report JSON from ${log_path} -> ${report_path} (invalid report payload)"
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$report_path")"
+  cp "$extracted_path" "$report_path"
+  rm -f "$extracted_path"
 }
 
 compute_ids() {
@@ -307,11 +441,15 @@ run_mode() {
       run_step "cargo run -p frankenengine-engine --bin rgc_artifact_validator -- --bundle-dir ${valid_bundle_dir} --required-lanes runtime,security,e2e --out ${valid_report_path} --pretty" \
         cargo run -p frankenengine-engine --bin rgc_artifact_validator -- --bundle-dir "${valid_bundle_dir}" --required-lanes runtime,security,e2e --out "${valid_report_path}" --pretty \
         || return $?
+      materialize_report_from_step_log_if_needed "${valid_report_path}" "${last_step_log_path}" \
+        || return $?
 
       run_step_expect_exit \
         "cargo run -p frankenengine-engine --bin rgc_artifact_validator -- --bundle-dir ${invalid_bundle_dir} --required-lanes runtime,security --out ${invalid_report_path} --pretty (expect exit 2)" \
         2 \
         cargo run -p frankenengine-engine --bin rgc_artifact_validator -- --bundle-dir "${invalid_bundle_dir}" --required-lanes runtime,security --out "${invalid_report_path}" --pretty \
+        || return $?
+      materialize_report_from_step_log_if_needed "${invalid_report_path}" "${last_step_log_path}" \
         || return $?
 
       validate_reports_locally || return $?
