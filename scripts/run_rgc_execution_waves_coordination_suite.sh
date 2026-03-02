@@ -11,7 +11,7 @@ mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-target_dir="${CARGO_TARGET_DIR:-/data/tmp/rch_target_franken_engine_rgc_execution_waves_${timestamp}}"
+target_dir="${CARGO_TARGET_DIR:-${root_dir}/.rch_target/rgc_execution_waves_${timestamp}}"
 artifact_root="${RGC_EXECUTION_WAVES_ARTIFACT_ROOT:-artifacts/rgc_execution_waves_coordination}"
 run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
@@ -114,29 +114,41 @@ run_mode() {
   case "$mode" in
     check)
       run_step "cargo check -p frankenengine-engine --test rgc_execution_waves_integration" \
-        cargo check -p frankenengine-engine --test rgc_execution_waves_integration
+        cargo check -p frankenengine-engine --test rgc_execution_waves_integration || return $?
+      run_step "cargo check -p frankenengine-engine --test rgc_execution_waves_enrichment_integration" \
+        cargo check -p frankenengine-engine --test rgc_execution_waves_enrichment_integration || return $?
       ;;
     test)
       run_step "cargo test -p frankenengine-engine --test rgc_execution_waves_integration" \
-        cargo test -p frankenengine-engine --test rgc_execution_waves_integration
+        cargo test -p frankenengine-engine --test rgc_execution_waves_integration || return $?
+      run_step "cargo test -p frankenengine-engine --test rgc_execution_waves_enrichment_integration" \
+        cargo test -p frankenengine-engine --test rgc_execution_waves_enrichment_integration || return $?
       ;;
     clippy)
       run_step "cargo clippy -p frankenengine-engine --test rgc_execution_waves_integration -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test rgc_execution_waves_integration -- -D warnings
+        cargo clippy -p frankenengine-engine --test rgc_execution_waves_integration -- -D warnings || return $?
+      run_step "cargo clippy -p frankenengine-engine --test rgc_execution_waves_enrichment_integration -- -D warnings" \
+        cargo clippy -p frankenengine-engine --test rgc_execution_waves_enrichment_integration -- -D warnings || return $?
       ;;
     dry-run)
       run_step "cargo test -p frankenengine-engine --test rgc_execution_waves_integration -- --exact rgc_execution_waves_dry_run_emits_required_coordination_events" \
-        cargo test -p frankenengine-engine --test rgc_execution_waves_integration -- --exact rgc_execution_waves_dry_run_emits_required_coordination_events
+        cargo test -p frankenengine-engine --test rgc_execution_waves_integration -- --exact rgc_execution_waves_dry_run_emits_required_coordination_events || return $?
       ;;
     ci)
       run_step "cargo check -p frankenengine-engine --test rgc_execution_waves_integration" \
-        cargo check -p frankenengine-engine --test rgc_execution_waves_integration
+        cargo check -p frankenengine-engine --test rgc_execution_waves_integration || return $?
+      run_step "cargo check -p frankenengine-engine --test rgc_execution_waves_enrichment_integration" \
+        cargo check -p frankenengine-engine --test rgc_execution_waves_enrichment_integration || return $?
       run_step "cargo test -p frankenengine-engine --test rgc_execution_waves_integration" \
-        cargo test -p frankenengine-engine --test rgc_execution_waves_integration
+        cargo test -p frankenengine-engine --test rgc_execution_waves_integration || return $?
+      run_step "cargo test -p frankenengine-engine --test rgc_execution_waves_enrichment_integration" \
+        cargo test -p frankenengine-engine --test rgc_execution_waves_enrichment_integration || return $?
       run_step "cargo clippy -p frankenengine-engine --test rgc_execution_waves_integration -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test rgc_execution_waves_integration -- -D warnings
+        cargo clippy -p frankenengine-engine --test rgc_execution_waves_integration -- -D warnings || return $?
+      run_step "cargo clippy -p frankenengine-engine --test rgc_execution_waves_enrichment_integration -- -D warnings" \
+        cargo clippy -p frankenengine-engine --test rgc_execution_waves_enrichment_integration -- -D warnings || return $?
       run_step "cargo test -p frankenengine-engine --test rgc_execution_waves_integration -- --exact rgc_execution_waves_dry_run_emits_required_coordination_events" \
-        cargo test -p frankenengine-engine --test rgc_execution_waves_integration -- --exact rgc_execution_waves_dry_run_emits_required_coordination_events
+        cargo test -p frankenengine-engine --test rgc_execution_waves_integration -- --exact rgc_execution_waves_dry_run_emits_required_coordination_events || return $?
       ;;
     *)
       echo "usage: $0 [check|test|clippy|dry-run|ci]" >&2
@@ -218,6 +230,7 @@ write_manifest() {
     echo '    "protocol_doc": "docs/RGC_EXECUTION_WAVE_PROTOCOL.md",'
     echo '    "module": "crates/franken-engine/src/rgc_execution_waves.rs",'
     echo '    "integration_tests": "crates/franken-engine/tests/rgc_execution_waves_integration.rs",'
+    echo '    "enrichment_tests": "crates/franken-engine/tests/rgc_execution_waves_enrichment_integration.rs",'
     echo '    "replay_wrapper": "scripts/e2e/rgc_execution_waves_coordination_replay.sh"'
     echo "  },"
     echo '  "operator_verification": ['

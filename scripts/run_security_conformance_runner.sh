@@ -25,6 +25,7 @@ rch_ready_attempts="${RCH_READY_ATTEMPTS:-12}"
 rch_ready_sleep_seconds="${RCH_READY_SLEEP_SECONDS:-2}"
 rch_step_retry_attempts="${RCH_STEP_RETRY_ATTEMPTS:-3}"
 rch_step_retry_sleep_seconds="${RCH_STEP_RETRY_SLEEP_SECONDS:-2}"
+rch_retry_on_transient="${RCH_RETRY_ON_TRANSIENT:-1}"
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_dir="${artifact_root}/${timestamp}"
@@ -76,6 +77,28 @@ rch_remote_exit_code() {
   fi
 
   printf '%s\n' "$remote_exit_code"
+}
+
+rch_selected_worker_id() {
+  local log_path="$1"
+  rch_strip_ansi "$log_path" | sed -n 's/.*Selected worker: \([^ ]*\).*/\1/p' | tail -n1
+}
+
+rch_transient_infra_failure() {
+  local log_path="$1"
+  local run_status="${2:-0}"
+  local remote_exit_code="${3:-}"
+
+  if [[ "$run_status" -eq 15 && -z "$remote_exit_code" ]]; then
+    return 0
+  fi
+
+  if rch_strip_ansi "$log_path" | grep -Eiq \
+    'No space left on device|StorageFull|SSH command timed out|transport failure|repo_updater .* failed|connection reset by peer|connection timed out|broken pipe|network is unreachable'; then
+    return 0
+  fi
+
+  return 1
 }
 
 rch_reject_local_fallback() {
@@ -169,7 +192,7 @@ run_step_core() {
   local command_text="$1"
   local expected_exit="$2"
   local capture_path="${3:-}"
-  local log_path remote_exit_code run_status attempt
+  local log_path remote_exit_code run_status attempt selected_worker_id
   local fallback_detected command_index command_log_path
   shift 3
 
@@ -197,6 +220,8 @@ run_step_core() {
       fallback_detected=true
     fi
 
+    selected_worker_id="$(rch_selected_worker_id "$log_path" || true)"
+
     if [[ "$fallback_detected" == true ]]; then
       cp "$log_path" "$command_log_path"
       if [[ -n "$capture_path" ]]; then
@@ -217,21 +242,47 @@ run_step_core() {
     remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
     if [[ -n "$remote_exit_code" ]]; then
       if [[ "$remote_exit_code" != "$expected_exit" ]]; then
+        if [[ "$rch_retry_on_transient" == "1" ]] && rch_transient_infra_failure "$log_path" "$run_status" "$remote_exit_code"; then
+          cp "$log_path" "$command_log_path"
+          if [[ -n "$capture_path" ]]; then
+            cp "$log_path" "$capture_path"
+          fi
+          if [[ "$attempt" -lt "$rch_step_retry_attempts" ]]; then
+            echo "==> warning: transient rch infrastructure failure detected (attempt ${attempt}/${rch_step_retry_attempts}, worker=${selected_worker_id:-unknown}, remote-exit=${remote_exit_code}); retrying step" | tee -a "$log_path"
+            rch daemon restart -y >/dev/null 2>&1 || rch daemon start >/dev/null 2>&1 || true
+            sleep "${rch_step_retry_sleep_seconds}"
+            rm -f "$log_path"
+            continue
+          fi
+        fi
         cp "$log_path" "$command_log_path"
         if [[ -n "$capture_path" ]]; then
           cp "$log_path" "$capture_path"
         fi
         rm -f "$log_path"
-        failed_command="${command_text} (remote-exit=${remote_exit_code}, expected=${expected_exit})"
+        failed_command="${command_text} (remote-exit=${remote_exit_code}, expected=${expected_exit}, worker=${selected_worker_id:-unknown})"
         return 1
       fi
     elif [[ "$run_status" != "$expected_exit" ]]; then
+      if [[ "$rch_retry_on_transient" == "1" ]] && rch_transient_infra_failure "$log_path" "$run_status" ""; then
+        cp "$log_path" "$command_log_path"
+        if [[ -n "$capture_path" ]]; then
+          cp "$log_path" "$capture_path"
+        fi
+        if [[ "$attempt" -lt "$rch_step_retry_attempts" ]]; then
+          echo "==> warning: transient rch process interruption detected (attempt ${attempt}/${rch_step_retry_attempts}, worker=${selected_worker_id:-unknown}, process-exit=${run_status}); retrying step" | tee -a "$log_path"
+          rch daemon restart -y >/dev/null 2>&1 || rch daemon start >/dev/null 2>&1 || true
+          sleep "${rch_step_retry_sleep_seconds}"
+          rm -f "$log_path"
+          continue
+        fi
+      fi
       cp "$log_path" "$command_log_path"
       if [[ -n "$capture_path" ]]; then
         cp "$log_path" "$capture_path"
       fi
       rm -f "$log_path"
-      failed_command="${command_text} (remote-exit=missing, expected=${expected_exit}, process-exit=${run_status})"
+      failed_command="${command_text} (remote-exit=missing, expected=${expected_exit}, process-exit=${run_status}, worker=${selected_worker_id:-unknown})"
       return 1
     fi
 
