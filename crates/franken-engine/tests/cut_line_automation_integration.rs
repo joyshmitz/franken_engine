@@ -246,6 +246,151 @@ fn make_c3_inputs(ts: u64) -> Vec<GateInput> {
     ]
 }
 
+fn make_c4_inputs(ts: u64) -> Vec<GateInput> {
+    fn with_c4_metadata(mut input: GateInput) -> GateInput {
+        match input.category {
+            GateCategory::RuntimeParity => {
+                input.metadata.insert(
+                    "claim_repro_bundle_manifest_ref".to_string(),
+                    "artifacts/frx_claim_repro_bundle/latest/run_manifest.json".to_string(),
+                );
+                input.metadata.insert(
+                    "frx20_3_e2e_manifest_ref".to_string(),
+                    "artifacts/frx_end_to_end_scenario_matrix/latest/run_manifest.json".to_string(),
+                );
+            }
+            GateCategory::PerformanceBenchmark => {
+                input.metadata.insert(
+                    "latency_memory_budget_report_ref".to_string(),
+                    "artifacts/frx_ga_latency_memory_budget/latest/budget_report.json".to_string(),
+                );
+            }
+            GateCategory::SecuritySurvival => {
+                input.metadata.insert(
+                    "incident_rollback_drill_report_ref".to_string(),
+                    "artifacts/frx_ga_incident_rollback_drills/latest/report.json".to_string(),
+                );
+                input.metadata.insert(
+                    "catastrophic_tail_tournament_manifest_ref".to_string(),
+                    "artifacts/frx_catastrophic_tail_tournament/latest/run_manifest.json"
+                        .to_string(),
+                );
+            }
+            GateCategory::DeterministicReplay => {
+                input.metadata.insert(
+                    "semantic_twin_rollback_synthesis_manifest_ref".to_string(),
+                    "artifacts/frx_semantic_twin_rollback_synthesis/latest/run_manifest.json"
+                        .to_string(),
+                );
+            }
+            GateCategory::ObservabilityIntegrity => {
+                input.metadata.insert(
+                    "observability_quality_sentinel_report_ref".to_string(),
+                    "artifacts/frx_observability_quality_sentinel/latest/report.json".to_string(),
+                );
+            }
+            GateCategory::GovernanceCompliance => {
+                input.metadata.insert(
+                    "proof_carrying_ci_gate_manifest_ref".to_string(),
+                    "artifacts/frx_ci_proof_gate/latest/run_manifest.json".to_string(),
+                );
+                input.metadata.insert(
+                    "frx20_6_test_evidence_integrator_manifest_ref".to_string(),
+                    "artifacts/frx_milestone_release_test_evidence_integrator/latest/run_manifest.json".to_string(),
+                );
+                input.metadata.insert(
+                    "public_claim_registry_ref".to_string(),
+                    "artifacts/frx_public_claim_registry/latest/claims.json".to_string(),
+                );
+            }
+            _ => {}
+        }
+        input
+    }
+
+    vec![
+        with_c4_metadata(make_passing_input(GateCategory::RuntimeParity, ts)),
+        with_c4_metadata(make_passing_input(GateCategory::PerformanceBenchmark, ts)),
+        with_c4_metadata(make_passing_input(GateCategory::SecuritySurvival, ts)),
+        with_c4_metadata(make_passing_input(GateCategory::DeterministicReplay, ts)),
+        with_c4_metadata(make_passing_input(GateCategory::ObservabilityIntegrity, ts)),
+        with_c4_metadata(make_passing_input(GateCategory::GovernanceCompliance, ts)),
+    ]
+}
+
+fn make_c5_inputs(ts: u64) -> Vec<GateInput> {
+    fn with_c5_metadata(mut input: GateInput) -> GateInput {
+        match input.category {
+            GateCategory::HandoffReadiness => {
+                input.metadata.insert(
+                    "browser_embedding_boundary_manifest_ref".to_string(),
+                    "artifacts/frx_browser_embedding_boundaries/latest/run_manifest.json"
+                        .to_string(),
+                );
+                input.metadata.insert(
+                    "sidecar_to_subsystem_migration_plan_ref".to_string(),
+                    "docs/FRX_BROWSER_SIDECAR_TO_SUBSYSTEM_MIGRATION_PLAN_V1.md".to_string(),
+                );
+            }
+            GateCategory::RuntimeParity => {
+                input.metadata.insert(
+                    "scheduler_embedding_compatibility_manifest_ref".to_string(),
+                    "artifacts/frx_browser_scheduler_embedding_compat/latest/run_manifest.json"
+                        .to_string(),
+                );
+                input.metadata.insert(
+                    "frx20_3_e2e_manifest_ref".to_string(),
+                    "artifacts/frx_end_to_end_scenario_matrix/latest/run_manifest.json".to_string(),
+                );
+            }
+            GateCategory::SecuritySurvival => {
+                input.metadata.insert(
+                    "browser_security_boundary_report_ref".to_string(),
+                    "artifacts/frx_browser_security_boundaries/latest/report.json".to_string(),
+                );
+                input.metadata.insert(
+                    "browser_rollback_drill_report_ref".to_string(),
+                    "artifacts/frx_browser_integration_rollback_drills/latest/report.json"
+                        .to_string(),
+                );
+            }
+            GateCategory::DeterministicReplay => {
+                input.metadata.insert(
+                    "browser_runtime_replay_manifest_ref".to_string(),
+                    "artifacts/frx_browser_runtime_replay/latest/run_manifest.json".to_string(),
+                );
+            }
+            GateCategory::ObservabilityIntegrity => {
+                input.metadata.insert(
+                    "browser_embedded_logging_correlation_ref".to_string(),
+                    "artifacts/frx_browser_embedded_logging_correlation/latest/correlation_manifest.json".to_string(),
+                );
+            }
+            GateCategory::GovernanceCompliance => {
+                input.metadata.insert(
+                    "frx20_6_test_evidence_integrator_manifest_ref".to_string(),
+                    "artifacts/frx_milestone_release_test_evidence_integrator/latest/run_manifest.json".to_string(),
+                );
+                input.metadata.insert(
+                    "proof_carrying_ci_gate_manifest_ref".to_string(),
+                    "artifacts/frx_ci_proof_gate/latest/run_manifest.json".to_string(),
+                );
+            }
+            _ => {}
+        }
+        input
+    }
+
+    vec![
+        with_c5_metadata(make_passing_input(GateCategory::HandoffReadiness, ts)),
+        with_c5_metadata(make_passing_input(GateCategory::RuntimeParity, ts)),
+        with_c5_metadata(make_passing_input(GateCategory::SecuritySurvival, ts)),
+        with_c5_metadata(make_passing_input(GateCategory::DeterministicReplay, ts)),
+        with_c5_metadata(make_passing_input(GateCategory::ObservabilityIntegrity, ts)),
+        with_c5_metadata(make_passing_input(GateCategory::GovernanceCompliance, ts)),
+    ]
+}
+
 // =========================================================================
 // CutLine enum
 // =========================================================================
@@ -456,6 +601,24 @@ fn default_c3_spec_properties() {
 }
 
 #[test]
+fn default_c4_spec_properties() {
+    let spec = CutLineSpec::default_c4();
+    assert_eq!(spec.cut_line, CutLine::C4);
+    assert!(spec.requires_predecessor);
+    assert_eq!(spec.requirements.len(), 6);
+    assert_eq!(spec.mandatory_count(), 6);
+}
+
+#[test]
+fn default_c5_spec_properties() {
+    let spec = CutLineSpec::default_c5();
+    assert_eq!(spec.cut_line, CutLine::C5);
+    assert!(spec.requires_predecessor);
+    assert_eq!(spec.requirements.len(), 6);
+    assert_eq!(spec.mandatory_count(), 6);
+}
+
+#[test]
 fn cut_line_spec_serde_roundtrip() {
     let spec = CutLineSpec::default_c0();
     let json = serde_json::to_string(&spec).unwrap();
@@ -549,6 +712,8 @@ fn evaluator_with_defaults() {
     assert!(!eval.is_promoted(CutLine::C1));
     assert!(!eval.is_promoted(CutLine::C2));
     assert!(!eval.is_promoted(CutLine::C3));
+    assert!(!eval.is_promoted(CutLine::C4));
+    assert!(!eval.is_promoted(CutLine::C5));
     assert_eq!(eval.history_len(), 0);
 }
 
@@ -1121,6 +1286,294 @@ fn evaluate_c3_missing_wasm_parity_metadata_denied() {
         .expect("runtime parity evaluation must exist");
     assert!(matches!(
         runtime_eval.input_validity,
+        InputValidity::Incompatible { .. }
+    ));
+}
+
+#[test]
+fn evaluate_c4_without_predecessor_denied() {
+    let mut eval = CutLineEvaluator::with_defaults();
+    let record = eval
+        .evaluate(GateEvaluationInput {
+            cut_line: CutLine::C4,
+            now_ns: now_ns(),
+            epoch: epoch(),
+            inputs: make_c4_inputs(now_ns()),
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        })
+        .unwrap();
+
+    assert_eq!(record.verdict, GateVerdict::Denied);
+    assert_eq!(record.risk_level, RiskLevel::Critical);
+}
+
+#[test]
+fn evaluate_c4_after_c3_promoted() {
+    let mut eval = CutLineEvaluator::with_defaults();
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C0,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c0_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C1,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c1_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C2,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c2_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C3,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c3_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+
+    let record = eval
+        .evaluate(GateEvaluationInput {
+            cut_line: CutLine::C4,
+            now_ns: now_ns(),
+            epoch: epoch(),
+            inputs: make_c4_inputs(now_ns()),
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        })
+        .unwrap();
+
+    assert_eq!(record.verdict, GateVerdict::Approved);
+    assert!(eval.is_promoted(CutLine::C4));
+}
+
+#[test]
+fn evaluate_c4_missing_proof_ci_gate_metadata_denied() {
+    let mut eval = CutLineEvaluator::with_defaults();
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C0,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c0_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C1,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c1_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C2,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c2_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C3,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c3_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+
+    let mut c4_inputs = make_c4_inputs(now_ns());
+    c4_inputs
+        .iter_mut()
+        .find(|input| input.category == GateCategory::GovernanceCompliance)
+        .expect("governance compliance input must exist")
+        .metadata
+        .remove("proof_carrying_ci_gate_manifest_ref");
+
+    let record = eval
+        .evaluate(GateEvaluationInput {
+            cut_line: CutLine::C4,
+            now_ns: now_ns(),
+            epoch: epoch(),
+            inputs: c4_inputs,
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        })
+        .unwrap();
+
+    assert_eq!(record.verdict, GateVerdict::Denied);
+    let governance_eval = record
+        .evaluations
+        .iter()
+        .find(|evaluation| evaluation.category == GateCategory::GovernanceCompliance)
+        .expect("governance compliance evaluation must exist");
+    assert!(matches!(
+        governance_eval.input_validity,
+        InputValidity::Incompatible { .. }
+    ));
+}
+
+#[test]
+fn evaluate_c5_without_predecessor_denied() {
+    let mut eval = CutLineEvaluator::with_defaults();
+    let record = eval
+        .evaluate(GateEvaluationInput {
+            cut_line: CutLine::C5,
+            now_ns: now_ns(),
+            epoch: epoch(),
+            inputs: make_c5_inputs(now_ns()),
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        })
+        .unwrap();
+
+    assert_eq!(record.verdict, GateVerdict::Denied);
+    assert_eq!(record.risk_level, RiskLevel::Critical);
+}
+
+#[test]
+fn evaluate_c5_after_c4_promoted() {
+    let mut eval = CutLineEvaluator::with_defaults();
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C0,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c0_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C1,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c1_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C2,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c2_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C3,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c3_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C4,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c4_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+
+    let record = eval
+        .evaluate(GateEvaluationInput {
+            cut_line: CutLine::C5,
+            now_ns: now_ns(),
+            epoch: epoch(),
+            inputs: make_c5_inputs(now_ns()),
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        })
+        .unwrap();
+
+    assert_eq!(record.verdict, GateVerdict::Approved);
+    assert!(eval.is_promoted(CutLine::C5));
+}
+
+#[test]
+fn evaluate_c5_missing_embedding_boundary_metadata_denied() {
+    let mut eval = CutLineEvaluator::with_defaults();
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C0,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c0_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C1,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c1_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C2,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c2_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C3,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c3_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C4,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c4_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+
+    let mut c5_inputs = make_c5_inputs(now_ns());
+    c5_inputs
+        .iter_mut()
+        .find(|input| input.category == GateCategory::HandoffReadiness)
+        .expect("handoff readiness input must exist")
+        .metadata
+        .remove("browser_embedding_boundary_manifest_ref");
+
+    let record = eval
+        .evaluate(GateEvaluationInput {
+            cut_line: CutLine::C5,
+            now_ns: now_ns(),
+            epoch: epoch(),
+            inputs: c5_inputs,
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        })
+        .unwrap();
+
+    assert_eq!(record.verdict, GateVerdict::Denied);
+    let handoff_eval = record
+        .evaluations
+        .iter()
+        .find(|evaluation| evaluation.category == GateCategory::HandoffReadiness)
+        .expect("handoff readiness evaluation must exist");
+    assert!(matches!(
+        handoff_eval.input_validity,
         InputValidity::Incompatible { .. }
     ));
 }
