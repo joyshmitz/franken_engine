@@ -1741,9 +1741,10 @@ impl GrammarCompletenessMatrix {
                 GrammarFamilyCoverage {
                     family_id: "statement.function_declaration".to_string(),
                     es2020_clause: "ECMA-262 §14.1".to_string(),
-                    script_goal: GrammarCoverageStatus::Unsupported,
-                    module_goal: GrammarCoverageStatus::Unsupported,
-                    notes: "Function/class declaration families remain unimplemented.".to_string(),
+                    script_goal: GrammarCoverageStatus::Partial,
+                    module_goal: GrammarCoverageStatus::Partial,
+                    notes: "Function declaration surface is retained deterministically via raw expression fallback; declaration-structured AST/lowering semantics remain pending."
+                        .to_string(),
                 },
                 GrammarFamilyCoverage {
                     family_id: "expression.binary_precedence".to_string(),
@@ -3845,6 +3846,36 @@ mod tests {
             Statement::Expression(expr) => match &expr.expression {
                 Expression::Raw(s) => assert_eq!(s, "a + b * c"),
                 _ => panic!("expected raw expression"),
+            },
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn function_declaration_surface_is_preserved_as_raw_expression_in_script_goal() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("function foo() {}", ParseGoal::Script)
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => match &expr.expression {
+                Expression::Raw(raw) => assert_eq!(raw, "function foo() {}"),
+                _ => panic!("expected raw expression fallback"),
+            },
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn function_declaration_surface_is_preserved_as_raw_expression_in_module_goal() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("function foo() {}", ParseGoal::Module)
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::Expression(expr) => match &expr.expression {
+                Expression::Raw(raw) => assert_eq!(raw, "function foo() {}"),
+                _ => panic!("expected raw expression fallback"),
             },
             _ => panic!("expected expression statement"),
         }

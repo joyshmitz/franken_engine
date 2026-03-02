@@ -202,7 +202,7 @@
     {
       "family_id": "statement.function_declaration",
       "es2020_clause": "ECMA-262 §14.1",
-      "current_status": "unsupported",
+      "current_status": "partial",
       "implementation_slice": "phase2-statement-lowering",
       "owner": "parser-frontier",
       "fixture_ids": ["script_function_declaration_raw"],

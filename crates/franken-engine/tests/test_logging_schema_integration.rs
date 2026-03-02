@@ -1067,7 +1067,7 @@ fn validate_events_empty_batch_fails() {
 #[test]
 fn validate_events_report_uses_first_event_ids() {
     let event = baseline_event();
-    let report = validate_events(&[event.clone()]);
+    let report = validate_events(std::slice::from_ref(&event));
     assert_eq!(report.trace_id, event.trace_id);
     assert_eq!(report.decision_id, event.decision_id);
     assert_eq!(report.policy_id, event.policy_id);

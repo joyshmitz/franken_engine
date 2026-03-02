@@ -102,6 +102,31 @@ fn parser_rejects_keyword_module_import_bindings() {
 }
 
 #[test]
+fn parser_preserves_function_declaration_family_as_deterministic_raw_surface() {
+    let parser = CanonicalEs2020Parser;
+    let source = "function foo() {}";
+    let script_tree = parser
+        .parse(source, ParseGoal::Script)
+        .expect("script parse should succeed");
+    let module_tree = parser
+        .parse(source, ParseGoal::Module)
+        .expect("module parse should succeed");
+
+    assert!(matches!(
+        &script_tree.body[0],
+        Statement::Expression(expr)
+            if matches!(&expr.expression, Expression::Raw(raw) if raw == "function foo() {}")
+    ));
+    assert!(matches!(
+        &module_tree.body[0],
+        Statement::Expression(expr)
+            if matches!(&expr.expression, Expression::Raw(raw) if raw == "function foo() {}")
+    ));
+    assert_eq!(script_tree.canonical_bytes(), module_tree.canonical_bytes());
+    assert_eq!(script_tree.canonical_hash(), module_tree.canonical_hash());
+}
+
+#[test]
 fn parser_accepts_stream_and_file_inputs_with_equal_canonical_hash() {
     let parser = CanonicalEs2020Parser;
     let source = "import dep from \"pkg\";\nexport default dep;\n";

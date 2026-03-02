@@ -2299,7 +2299,7 @@ mod tests {
         let unsigned = build_unsigned_view(&token);
         // The unsigned view should contain the sentinel, not the actual signature.
         if let CanonicalValue::Map(ref map) = unsigned {
-            if let Some(CanonicalValue::Bytes(ref sig_bytes)) = map.get("signature") {
+            if let Some(CanonicalValue::Bytes(sig_bytes)) = map.get("signature") {
                 assert_eq!(
                     sig_bytes.as_slice(),
                     SIGNATURE_SENTINEL,
