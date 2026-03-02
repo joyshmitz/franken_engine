@@ -33,6 +33,7 @@ declare -a validation_errors=()
 declare -a uncovered_beads=()
 declare -a critical_gaps=()
 declare -a active_beads=()
+declare -a snapshot_scope_beads=()
 declare -a critical_beads=()
 declare -a required_log_fields=()
 declare -a required_artifact_triad=()
@@ -131,7 +132,7 @@ validate_harness_entrypoint() {
 }
 
 load_matrix_contract() {
-  local schema_ok
+  local schema_ok bead previous_bead
 
   if [[ ! -f "$matrix_json" ]]; then
     record_error "missing matrix JSON: ${matrix_json}"
@@ -161,6 +162,23 @@ load_matrix_contract() {
   if (( ${#required_artifact_triad[@]} == 0 )); then
     record_error "matrix missing required_artifact_triad"
   fi
+
+  mapfile -t snapshot_scope_beads < <(jq -r '(.scope.open_bead_ids // [])[]' "$matrix_json")
+  if (( ${#snapshot_scope_beads[@]} == 0 )); then
+    record_error "matrix missing scope.open_bead_ids snapshot"
+  fi
+  previous_bead=""
+  for bead in "${snapshot_scope_beads[@]}"; do
+    if [[ -n "$previous_bead" && "$bead" < "$previous_bead" ]]; then
+      record_error "scope.open_bead_ids must be sorted lexicographically"
+      break
+    fi
+    if [[ -n "$previous_bead" && "$bead" == "$previous_bead" ]]; then
+      record_error "scope.open_bead_ids must not contain duplicates (${bead})"
+      break
+    fi
+    previous_bead="$bead"
+  done
 
   mapfile -t critical_beads < <(jq -r '(.critical_behavior_bead_ids // [])[]' "$matrix_json")
 
@@ -216,11 +234,13 @@ validate_rows() {
 
 compute_coverage() {
   local bead row kind bead_kinds kind_found
+  local -a only_in_snapshot=()
+  local -a only_in_live=()
 
   mapfile -t active_beads < <(
-    br list --json | jq -r '
+    br list --json --limit 0 | jq -r '
       .[]
-      | select((.id | startswith("bd-1lsy")) and (.status == "open" or .status == "in_progress"))
+      | select((.id | startswith("bd-1lsy")) and (.status != "closed"))
       | .id
     ' | sort -u
   )
@@ -229,6 +249,23 @@ compute_coverage() {
   if (( total_active_beads == 0 )); then
     record_error "no active RGC beads found in status scope"
     return
+  fi
+
+  if (( ${#snapshot_scope_beads[@]} > 0 )); then
+    mapfile -t only_in_snapshot < <(
+      comm -23 \
+        <(printf '%s\n' "${snapshot_scope_beads[@]}" | sort -u) \
+        <(printf '%s\n' "${active_beads[@]}" | sort -u)
+    )
+    mapfile -t only_in_live < <(
+      comm -13 \
+        <(printf '%s\n' "${snapshot_scope_beads[@]}" | sort -u) \
+        <(printf '%s\n' "${active_beads[@]}" | sort -u)
+    )
+
+    if (( ${#only_in_snapshot[@]} > 0 || ${#only_in_live[@]} > 0 )); then
+      record_error "scope.open_bead_ids snapshot drift: stale=[${only_in_snapshot[*]}] missing=[${only_in_live[*]}]"
+    fi
   fi
 
   for bead in "${active_beads[@]}"; do

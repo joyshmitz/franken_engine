@@ -14,6 +14,8 @@ The contract is fail-closed:
 
 - every open RGC bead must match at least one row,
 - critical-behavior beads must match `unit` + `integration` + `e2e`,
+- `scope.open_bead_ids` must match live non-closed `bd-1lsy*` beads from
+  `br list --json --limit 0`,
 - every row must declare deterministic seed policy, required log fields, and
   artifact triad paths,
 - operator replay commands are first-class contract fields.

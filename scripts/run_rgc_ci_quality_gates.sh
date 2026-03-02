@@ -53,11 +53,16 @@ run_rch() {
     "$@"
 }
 
+rch_strip_ansi() {
+  local input="$1"
+  sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' "$input"
+}
+
 rch_remote_exit_code() {
   local log_path="$1"
   local remote_exit_line remote_exit_code
 
-  remote_exit_line="$(rg -o 'Remote command finished: exit=[0-9]+' "$log_path" | tail -n 1 || true)"
+  remote_exit_line="$(rch_strip_ansi "$log_path" | rg -o 'Remote command finished: exit=[0-9]+' | tail -n 1 || true)"
   if [[ -z "$remote_exit_line" ]]; then
     return 1
   fi
@@ -72,7 +77,7 @@ rch_remote_exit_code() {
 
 rch_reject_local_fallback() {
   local log_path="$1"
-  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|running locally|\[RCH\] local \(|Remote execution failed: .*running locally' "$log_path"; then
+  if rch_strip_ansi "$log_path" | grep -Eiq 'Remote execution failed: .*running locally|Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|running locally|\[RCH\] local \(|Failed to query daemon:.*running locally|Dependency preflight blocked remote execution|RCH-E326'; then
     echo "rch reported local fallback; refusing local execution for heavy command" >&2
     return 1
   fi
@@ -135,7 +140,7 @@ run_step_rch() {
   log_path="$(mktemp)"
 
   if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
-    if rg -q "Remote command finished: exit=0" "$log_path"; then
+    if rch_strip_ansi "$log_path" | rg -q "Remote command finished: exit=0"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
     else
       rm -f "$log_path"

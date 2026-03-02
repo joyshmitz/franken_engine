@@ -317,8 +317,10 @@ run_mode() {
 
   case "$selected_mode" in
     check)
-      run_step "cargo check -p frankenengine-engine --lib --bin franken_security_conformance_runner" \
-        cargo check -p frankenengine-engine --lib --bin franken_security_conformance_runner
+      # Use test compilation without execution so rch applies the longer
+      # cargo-test timeout envelope instead of the shorter cargo-check cap.
+      run_step "cargo test -p frankenengine-engine --bin franken_security_conformance_runner --test security_conformance_integration --no-run" \
+        cargo test -p frankenengine-engine --bin franken_security_conformance_runner --test security_conformance_integration --no-run
       ;;
     test)
       run_step "cargo test -p frankenengine-engine --bin franken_security_conformance_runner --test security_conformance_integration" \

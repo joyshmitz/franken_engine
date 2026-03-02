@@ -107,11 +107,15 @@ fn matched_row_ids<'a>(matrix: &'a VerificationCoverageMatrix, bead_id: &str) ->
         .collect()
 }
 
-fn load_live_open_rgc_beads() -> Vec<String> {
-    let output = Command::new("br")
-        .args(["list", "--json"])
+fn load_live_open_rgc_beads() -> Option<Vec<String>> {
+    let output = match Command::new("br")
+        .args(["list", "--json", "--limit", "0"])
         .output()
-        .expect("failed to execute `br list --json`");
+    {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => panic!("failed to execute `br list --json`: {error}"),
+    };
 
     assert!(
         output.status.success(),
@@ -129,7 +133,7 @@ fn load_live_open_rgc_beads() -> Vec<String> {
         .collect();
     beads.sort();
     beads.dedup();
-    beads
+    Some(beads)
 }
 
 #[test]
@@ -172,7 +176,7 @@ fn rgc_051_matrix_is_versioned_and_track_bound() {
         matrix
             .scope
             .snapshot_source
-            .contains("br list --json filtered")
+            .contains("br list --json --limit 0 filtered")
     );
 }
 
@@ -245,6 +249,25 @@ fn rgc_051_critical_behavior_beads_have_unit_integration_and_e2e_rows() {
                 "critical bead {bead_id} missing required {required} coverage kind"
             );
         }
+    }
+}
+
+#[test]
+fn rgc_051_critical_behavior_beads_are_within_open_scope_snapshot() {
+    let matrix = parse_matrix();
+    let open_scope: BTreeSet<&str> = matrix
+        .scope
+        .open_bead_ids
+        .iter()
+        .map(String::as_str)
+        .collect();
+
+    for bead_id in &matrix.critical_behavior_bead_ids {
+        assert!(
+            open_scope.contains(bead_id.as_str()),
+            "critical behavior bead {} must be present in scope.open_bead_ids",
+            bead_id
+        );
     }
 }
 
@@ -406,7 +429,10 @@ fn rgc_051_operator_verification_commands_are_present() {
 #[test]
 fn rgc_051_snapshot_matches_live_beads_state() {
     let matrix = parse_matrix();
-    let live = load_live_open_rgc_beads();
+    let Some(live) = load_live_open_rgc_beads() else {
+        eprintln!("skipping live-bead snapshot assertion: `br` not available in this environment");
+        return;
+    };
 
     assert_eq!(
         matrix.scope.open_bead_ids, live,
