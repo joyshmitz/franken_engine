@@ -1618,6 +1618,18 @@ fn statement_kind_label(statement: &Statement) -> &'static str {
         Statement::Export(_) => "export",
         Statement::VariableDeclaration(_) => "variable_declaration",
         Statement::Expression(_) => "expression",
+        Statement::Block(_) => "block",
+        Statement::If(_) => "if",
+        Statement::For(_) => "for",
+        Statement::While(_) => "while",
+        Statement::DoWhile(_) => "do_while",
+        Statement::Return(_) => "return",
+        Statement::Throw(_) => "throw",
+        Statement::TryCatch(_) => "try_catch",
+        Statement::Switch(_) => "switch",
+        Statement::Break(_) => "break",
+        Statement::Continue(_) => "continue",
+        Statement::FunctionDeclaration(_) => "function_declaration",
     }
 }
 
@@ -2251,9 +2263,7 @@ fn parse_source(
                 logical_line
                     .byte_offset
                     .saturating_add(start_in_line as u64),
-                logical_line
-                    .byte_offset
-                    .saturating_add(end_in_line as u64),
+                logical_line.byte_offset.saturating_add(end_in_line as u64),
                 logical_line.start_line,
                 start_in_line.saturating_add(1) as u64,
                 logical_line.end_line,
@@ -2425,47 +2435,47 @@ fn parse_statement(
 
     // Control flow statement dispatch
     if statement.starts_with("if ") || statement.starts_with("if(") {
-        return parse_if_statement(statement, goal, span, context);
+        return self::parse_if_statement(statement, goal, span, context);
     }
     if statement.starts_with("for ") || statement.starts_with("for(") {
-        return parse_for_statement(statement, goal, span, context);
+        return self::parse_for_statement(statement, goal, span, context);
     }
     if statement.starts_with("while ") || statement.starts_with("while(") {
-        return parse_while_statement(statement, goal, span, context);
+        return self::parse_while_statement(statement, goal, span, context);
     }
     if statement.starts_with("do ") || statement.starts_with("do{") {
-        return parse_do_while_statement(statement, goal, span, context);
+        return self::parse_do_while_statement(statement, goal, span, context);
     }
     if statement == "return" || statement.starts_with("return ") || statement.starts_with("return;")
     {
-        return parse_return_statement(statement, span, context);
+        return self::parse_return_statement(statement, span, context);
     }
     if statement.starts_with("throw ") {
-        return parse_throw_statement(statement, span, context);
+        return self::parse_throw_statement(statement, span, context);
     }
     if statement.starts_with("try ") || statement.starts_with("try{") {
-        return parse_try_catch_statement(statement, goal, span, context);
+        return self::parse_try_catch_statement(statement, goal, span, context);
     }
     if statement.starts_with("switch ") || statement.starts_with("switch(") {
-        return parse_switch_statement(statement, goal, span, context);
+        return self::parse_switch_statement(statement, goal, span, context);
     }
     if statement == "break" || statement.starts_with("break ") || statement.starts_with("break;") {
-        return parse_break_statement(statement, span);
+        return self::parse_break_statement(statement, span);
     }
     if statement == "continue"
         || statement.starts_with("continue ")
         || statement.starts_with("continue;")
     {
-        return parse_continue_statement(statement, span);
+        return self::parse_continue_statement(statement, span);
     }
     if statement.starts_with("function ") || statement.starts_with("function*(") {
-        return parse_function_declaration(statement, span, context);
+        return self::parse_function_declaration(statement, span, context);
     }
     if statement.starts_with("async function ") {
-        return parse_function_declaration(statement, span, context);
+        return self::parse_function_declaration(statement, span, context);
     }
     if statement.starts_with('{') && statement.ends_with('}') {
-        return parse_block_statement(statement, goal, span, context);
+        return self::parse_block_statement(statement, goal, span, context);
     }
 
     let expression = parse_expression(statement, &span, context, 1)?;
@@ -2901,6 +2911,40 @@ fn parse_expression(
         ));
     }
 
+    // Try assignment first (lowest precedence apart from comma).
+    if let Some(result) = try_parse_assignment(expression, span, context, recursion_depth) {
+        return result;
+    }
+
+    // Try ternary conditional: expr ? expr : expr
+    if let Some(result) = try_parse_conditional(expression, span, context, recursion_depth) {
+        return result;
+    }
+
+    // Try binary expression with precedence scanning.
+    if let Some(result) = try_parse_binary(expression, span, context, recursion_depth) {
+        return result;
+    }
+
+    // Unary prefix operators.
+    if let Some(result) = try_parse_unary_prefix(expression, span, context, recursion_depth) {
+        return result;
+    }
+
+    // Postfix: call and member access on a primary expression.
+    let primary = parse_primary_expression(expression, span, context, recursion_depth)?;
+    Ok(primary)
+}
+
+/// Parse a primary (atomic) expression — literals, identifiers, grouping, etc.
+fn parse_primary_expression(
+    expression: &str,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+    recursion_depth: u64,
+) -> ParseResult<Expression> {
+    let expression = expression.trim();
+
     if let Some(value) = parse_quoted_string(expression) {
         return Ok(Expression::StringLiteral(value));
     }
@@ -2921,15 +2965,1111 @@ fn parse_expression(
     if expression == "undefined" {
         return Ok(Expression::UndefinedLiteral);
     }
+    if expression == "this" {
+        return Ok(Expression::This);
+    }
 
     if let Some(rest) = expression.strip_prefix("await ") {
         let nested = parse_expression(rest.trim(), span, context, recursion_depth + 1)?;
         return Ok(Expression::Await(Box::new(nested)));
     }
+
+    // Parenthesized expression.
+    if expression.starts_with('(') && expression.ends_with(')') {
+        if let Some((inner, rest)) = extract_balanced(expression, '(', ')') {
+            if rest.trim().is_empty() {
+                return parse_expression(inner.trim(), span, context, recursion_depth + 1);
+            }
+        }
+    }
+
+    // Array literal: [a, b, c]
+    if expression.starts_with('[') && expression.ends_with(']') {
+        if let Some((inner, rest)) = extract_balanced(expression, '[', ']') {
+            if rest.trim().is_empty() {
+                return parse_array_literal(inner, span, context, recursion_depth);
+            }
+        }
+    }
+
+    // Object literal: {a: 1, b: 2}
+    if expression.starts_with('{') && expression.ends_with('}') {
+        if let Some((inner, rest)) = extract_balanced(expression, '{', '}') {
+            if rest.trim().is_empty() {
+                return parse_object_literal(inner, span, context, recursion_depth);
+            }
+        }
+    }
+
+    // Call expression: callee(args) or callee(args).member etc.
+    if let Some(result) = try_parse_postfix(expression, span, context, recursion_depth) {
+        return result;
+    }
+
     if is_identifier(expression) {
         return Ok(Expression::Identifier(expression.to_string()));
     }
+
     Ok(Expression::Raw(canonicalize_whitespace(expression)))
+}
+
+// ---------------------------------------------------------------------------
+// Assignment parsing
+// ---------------------------------------------------------------------------
+
+/// Try to parse an assignment expression: lhs op= rhs
+fn try_parse_assignment(
+    expr: &str,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+    recursion_depth: u64,
+) -> Option<ParseResult<Expression>> {
+    // Scan for assignment operators at top-level (depth 0).
+    let bytes = expr.as_bytes();
+    let mut depth_paren: i64 = 0;
+    let mut depth_bracket: i64 = 0;
+    let mut depth_brace: i64 = 0;
+    let mut in_quote: Option<u8> = None;
+    let mut escaped = false;
+    let mut i: usize = 0;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = in_quote {
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+            if b == b'\\' {
+                escaped = true;
+                i += 1;
+                continue;
+            }
+            if b == q {
+                in_quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'\'' | b'"' | b'`' => {
+                in_quote = Some(b);
+                i += 1;
+                continue;
+            }
+            b'(' => {
+                depth_paren += 1;
+                i += 1;
+                continue;
+            }
+            b')' => {
+                depth_paren -= 1;
+                i += 1;
+                continue;
+            }
+            b'[' => {
+                depth_bracket += 1;
+                i += 1;
+                continue;
+            }
+            b']' => {
+                depth_bracket -= 1;
+                i += 1;
+                continue;
+            }
+            b'{' => {
+                depth_brace += 1;
+                i += 1;
+                continue;
+            }
+            b'}' => {
+                depth_brace -= 1;
+                i += 1;
+                continue;
+            }
+            _ => {}
+        }
+        if depth_paren != 0 || depth_bracket != 0 || depth_brace != 0 {
+            i += 1;
+            continue;
+        }
+        // Try matching assignment operators (must check longer ones first).
+        if let Some((op, len)) = match_assignment_operator_at(bytes, i) {
+            // Avoid matching == or === as assignment.
+            let lhs = expr[..i].trim();
+            let rhs = expr[i + len..].trim();
+            if lhs.is_empty() || rhs.is_empty() {
+                i += 1;
+                continue;
+            }
+            let left = match parse_expression(lhs, span, context, recursion_depth + 1) {
+                Ok(e) => e,
+                Err(e) => return Some(Err(e)),
+            };
+            let right = match parse_expression(rhs, span, context, recursion_depth + 1) {
+                Ok(e) => e,
+                Err(e) => return Some(Err(e)),
+            };
+            return Some(Ok(Expression::Assignment {
+                operator: op,
+                left: Box::new(left),
+                right: Box::new(right),
+            }));
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Match an assignment operator at byte position `i`. Returns (operator, byte_length).
+fn match_assignment_operator_at(bytes: &[u8], i: usize) -> Option<(AssignmentOperator, usize)> {
+    let remaining = bytes.len() - i;
+    // 4-char: >>>=, **=  (>>>= is 4, **= is 3 but we check 4-char first)
+    if remaining >= 4 && &bytes[i..i + 4] == b">>>=" {
+        return Some((AssignmentOperator::UnsignedRightShiftAssign, 4));
+    }
+    // 3-char compound assignments
+    if remaining >= 3 {
+        let three = &bytes[i..i + 3];
+        let op = match three {
+            b"<<=" => Some(AssignmentOperator::LeftShiftAssign),
+            b">>=" => Some(AssignmentOperator::RightShiftAssign),
+            b"**=" => Some(AssignmentOperator::ExponentiateAssign),
+            b"&&=" => Some(AssignmentOperator::LogicalAndAssign),
+            b"||=" => Some(AssignmentOperator::LogicalOrAssign),
+            b"??=" => Some(AssignmentOperator::NullishCoalescingAssign),
+            _ => None,
+        };
+        if let Some(op) = op {
+            return Some((op, 3));
+        }
+    }
+    // 2-char compound assignments
+    if remaining >= 2 {
+        let two = &bytes[i..i + 2];
+        let op = match two {
+            b"+=" => Some(AssignmentOperator::AddAssign),
+            b"-=" => Some(AssignmentOperator::SubtractAssign),
+            b"*=" => Some(AssignmentOperator::MultiplyAssign),
+            b"/=" => Some(AssignmentOperator::DivideAssign),
+            b"%=" => Some(AssignmentOperator::RemainderAssign),
+            b"&=" => Some(AssignmentOperator::BitwiseAndAssign),
+            b"|=" => Some(AssignmentOperator::BitwiseOrAssign),
+            b"^=" => Some(AssignmentOperator::BitwiseXorAssign),
+            _ => None,
+        };
+        if let Some(op) = op {
+            // Make sure this isn't ==, !=, <=, >= (not assignments).
+            return Some((op, 2));
+        }
+        // Check for plain `=` that is NOT `==` or `=>`.
+        if bytes[i] == b'=' && bytes[i + 1] != b'=' && bytes[i + 1] != b'>' {
+            return Some((AssignmentOperator::Assign, 1));
+        }
+    }
+    // 1-char: plain `=` at end of string
+    if remaining == 1 && bytes[i] == b'=' {
+        return Some((AssignmentOperator::Assign, 1));
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Conditional (ternary) parsing
+// ---------------------------------------------------------------------------
+
+fn try_parse_conditional(
+    expr: &str,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+    recursion_depth: u64,
+) -> Option<ParseResult<Expression>> {
+    // Find top-level `?` that is not `?.` (optional chaining) or `??` (nullish).
+    let bytes = expr.as_bytes();
+    let mut depth_paren: i64 = 0;
+    let mut depth_bracket: i64 = 0;
+    let mut depth_brace: i64 = 0;
+    let mut in_quote: Option<u8> = None;
+    let mut escaped = false;
+    let mut i: usize = 0;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = in_quote {
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+            if b == b'\\' {
+                escaped = true;
+                i += 1;
+                continue;
+            }
+            if b == q {
+                in_quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'\'' | b'"' | b'`' => {
+                in_quote = Some(b);
+                i += 1;
+                continue;
+            }
+            b'(' => {
+                depth_paren += 1;
+                i += 1;
+                continue;
+            }
+            b')' => {
+                depth_paren -= 1;
+                i += 1;
+                continue;
+            }
+            b'[' => {
+                depth_bracket += 1;
+                i += 1;
+                continue;
+            }
+            b']' => {
+                depth_bracket -= 1;
+                i += 1;
+                continue;
+            }
+            b'{' => {
+                depth_brace += 1;
+                i += 1;
+                continue;
+            }
+            b'}' => {
+                depth_brace -= 1;
+                i += 1;
+                continue;
+            }
+            _ => {}
+        }
+        if depth_paren != 0 || depth_bracket != 0 || depth_brace != 0 {
+            i += 1;
+            continue;
+        }
+        if b == b'?' && i + 1 < bytes.len() && bytes[i + 1] != b'.' && bytes[i + 1] != b'?' {
+            // Found ternary `?`. Now find the matching `:` at the same depth.
+            let test_src = expr[..i].trim();
+            let rest = &expr[i + 1..];
+            if let Some(colon_idx) = find_top_level_colon(rest) {
+                let consequent_src = rest[..colon_idx].trim();
+                let alternate_src = rest[colon_idx + 1..].trim();
+                if test_src.is_empty() || consequent_src.is_empty() || alternate_src.is_empty() {
+                    i += 1;
+                    continue;
+                }
+                let test = match parse_expression(test_src, span, context, recursion_depth + 1) {
+                    Ok(e) => e,
+                    Err(e) => return Some(Err(e)),
+                };
+                let consequent =
+                    match parse_expression(consequent_src, span, context, recursion_depth + 1) {
+                        Ok(e) => e,
+                        Err(e) => return Some(Err(e)),
+                    };
+                let alternate =
+                    match parse_expression(alternate_src, span, context, recursion_depth + 1) {
+                        Ok(e) => e,
+                        Err(e) => return Some(Err(e)),
+                    };
+                return Some(Ok(Expression::Conditional {
+                    test: Box::new(test),
+                    consequent: Box::new(consequent),
+                    alternate: Box::new(alternate),
+                }));
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Find the index of a top-level `:` (not inside nested delimiters or quotes).
+fn find_top_level_colon(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut depth_paren: i64 = 0;
+    let mut depth_bracket: i64 = 0;
+    let mut depth_brace: i64 = 0;
+    let mut in_quote: Option<u8> = None;
+    let mut escaped = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        if let Some(q) = in_quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if b == b'\\' {
+                escaped = true;
+                continue;
+            }
+            if b == q {
+                in_quote = None;
+            }
+            continue;
+        }
+        match b {
+            b'\'' | b'"' | b'`' => {
+                in_quote = Some(b);
+                continue;
+            }
+            b'(' => {
+                depth_paren += 1;
+                continue;
+            }
+            b')' => {
+                depth_paren -= 1;
+                continue;
+            }
+            b'[' => {
+                depth_bracket += 1;
+                continue;
+            }
+            b']' => {
+                depth_bracket -= 1;
+                continue;
+            }
+            b'{' => {
+                depth_brace += 1;
+                continue;
+            }
+            b'}' => {
+                depth_brace -= 1;
+                continue;
+            }
+            _ => {}
+        }
+        if depth_paren == 0 && depth_bracket == 0 && depth_brace == 0 && b == b':' {
+            return Some(i);
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Binary expression parsing with precedence scanning
+// ---------------------------------------------------------------------------
+
+/// Try to find and parse a binary expression by locating the lowest-precedence
+/// top-level operator and recursively parsing left and right operands.
+fn try_parse_binary(
+    expr: &str,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+    recursion_depth: u64,
+) -> Option<ParseResult<Expression>> {
+    let bytes = expr.as_bytes();
+    let mut depth_paren: i64 = 0;
+    let mut depth_bracket: i64 = 0;
+    let mut depth_brace: i64 = 0;
+    let mut in_quote: Option<u8> = None;
+    let mut escaped = false;
+
+    // Track the lowest-precedence operator found at top level.
+    let mut best_op: Option<BinaryOperator> = None;
+    let mut best_pos: usize = 0;
+    let mut best_len: usize = 0;
+
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = in_quote {
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+            if b == b'\\' {
+                escaped = true;
+                i += 1;
+                continue;
+            }
+            if b == q {
+                in_quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'\'' | b'"' | b'`' => {
+                in_quote = Some(b);
+                i += 1;
+                continue;
+            }
+            b'(' => {
+                depth_paren += 1;
+                i += 1;
+                continue;
+            }
+            b')' => {
+                depth_paren -= 1;
+                i += 1;
+                continue;
+            }
+            b'[' => {
+                depth_bracket += 1;
+                i += 1;
+                continue;
+            }
+            b']' => {
+                depth_bracket -= 1;
+                i += 1;
+                continue;
+            }
+            b'{' => {
+                depth_brace += 1;
+                i += 1;
+                continue;
+            }
+            b'}' => {
+                depth_brace -= 1;
+                i += 1;
+                continue;
+            }
+            _ => {}
+        }
+        if depth_paren != 0 || depth_bracket != 0 || depth_brace != 0 {
+            i += 1;
+            continue;
+        }
+        if let Some((op, len)) = match_binary_operator_at(bytes, i) {
+            // For the same precedence, prefer the rightmost for right-associative,
+            // leftmost for left-associative.
+            let dominated = if let Some(ref prev) = best_op {
+                let prev_prec = prev.precedence();
+                let new_prec = op.precedence();
+                if new_prec < prev_prec {
+                    true
+                } else if new_prec == prev_prec {
+                    // Left-associative: split at the rightmost occurrence.
+                    !op.is_right_associative()
+                } else {
+                    false
+                }
+            } else {
+                true
+            };
+            if dominated {
+                // Make sure we have non-empty operands on both sides.
+                let lhs = expr[..i].trim();
+                let rhs = expr[i + len..].trim();
+                if !lhs.is_empty() && !rhs.is_empty() {
+                    best_op = Some(op);
+                    best_pos = i;
+                    best_len = len;
+                }
+            }
+            i += len;
+            continue;
+        }
+        i += 1;
+    }
+
+    let op = best_op?;
+    let lhs_src = expr[..best_pos].trim();
+    let rhs_src = expr[best_pos + best_len..].trim();
+    let left = match parse_expression(lhs_src, span, context, recursion_depth + 1) {
+        Ok(e) => e,
+        Err(e) => return Some(Err(e)),
+    };
+    let right = match parse_expression(rhs_src, span, context, recursion_depth + 1) {
+        Ok(e) => e,
+        Err(e) => return Some(Err(e)),
+    };
+    Some(Ok(Expression::Binary {
+        operator: op,
+        left: Box::new(left),
+        right: Box::new(right),
+    }))
+}
+
+/// Match a binary operator at byte position `i`. Returns (operator, byte_length).
+fn match_binary_operator_at(bytes: &[u8], i: usize) -> Option<(BinaryOperator, usize)> {
+    let remaining = bytes.len() - i;
+
+    // Check for keyword operators first (instanceof, in).
+    if remaining >= 10 && &bytes[i..i + 10] == b"instanceof" {
+        let before_ok = i == 0 || !is_identifier_continue(bytes[i - 1] as char);
+        let after_ok = i + 10 >= bytes.len() || !is_identifier_continue(bytes[i + 10] as char);
+        if before_ok && after_ok {
+            return Some((BinaryOperator::Instanceof, 10));
+        }
+    }
+    if remaining >= 2 && &bytes[i..i + 2] == b"in" {
+        let before_ok = i == 0 || !is_identifier_continue(bytes[i - 1] as char);
+        let after_ok = i + 2 >= bytes.len() || !is_identifier_continue(bytes[i + 2] as char);
+        if before_ok && after_ok {
+            return Some((BinaryOperator::In, 2));
+        }
+    }
+
+    // 3-char operators
+    if remaining >= 3 {
+        let three = &bytes[i..i + 3];
+        let op = match three {
+            b"===" => Some(BinaryOperator::StrictEqual),
+            b"!==" => Some(BinaryOperator::StrictNotEqual),
+            b">>>" => Some(BinaryOperator::UnsignedRightShift),
+            b"**=" | b"<<=" | b">>=" | b"&&=" | b"||=" | b"??=" => return None, // assignment, not binary
+            _ => None,
+        };
+        if let Some(op) = op {
+            return Some((op, 3));
+        }
+    }
+
+    // 2-char operators
+    if remaining >= 2 {
+        let two = &bytes[i..i + 2];
+        let op = match two {
+            b"==" => Some(BinaryOperator::Equal),
+            b"!=" => Some(BinaryOperator::NotEqual),
+            b"<=" => Some(BinaryOperator::LessThanOrEqual),
+            b">=" => Some(BinaryOperator::GreaterThanOrEqual),
+            b"&&" => Some(BinaryOperator::LogicalAnd),
+            b"||" => Some(BinaryOperator::LogicalOr),
+            b"??" => Some(BinaryOperator::NullishCoalescing),
+            b"**" => Some(BinaryOperator::Exponentiate),
+            b"<<" => Some(BinaryOperator::LeftShift),
+            b">>" => Some(BinaryOperator::RightShift),
+            // Skip assignment operators.
+            b"+=" | b"-=" | b"*=" | b"/=" | b"%=" | b"&=" | b"|=" | b"^=" => return None,
+            b"=>" => return None, // arrow
+            _ => None,
+        };
+        if let Some(op) = op {
+            return Some((op, 2));
+        }
+    }
+
+    // 1-char operators (avoid matching unary-only or assignment-only chars).
+    if remaining >= 1 {
+        let op = match bytes[i] {
+            b'+' => Some(BinaryOperator::Add),
+            b'-' => Some(BinaryOperator::Subtract),
+            b'*' => {
+                // Avoid matching ** (already handled above).
+                if remaining >= 2 && bytes[i + 1] == b'*' {
+                    return None;
+                }
+                Some(BinaryOperator::Multiply)
+            }
+            b'/' => Some(BinaryOperator::Divide),
+            b'%' => Some(BinaryOperator::Remainder),
+            b'<' => {
+                if remaining >= 2 && bytes[i + 1] == b'<' {
+                    return None;
+                } // already matched
+                if remaining >= 2 && bytes[i + 1] == b'=' {
+                    return None;
+                }
+                Some(BinaryOperator::LessThan)
+            }
+            b'>' => {
+                if remaining >= 2 && bytes[i + 1] == b'>' {
+                    return None;
+                }
+                if remaining >= 2 && bytes[i + 1] == b'=' {
+                    return None;
+                }
+                Some(BinaryOperator::GreaterThan)
+            }
+            b'&' => {
+                if remaining >= 2 && bytes[i + 1] == b'&' {
+                    return None;
+                }
+                if remaining >= 2 && bytes[i + 1] == b'=' {
+                    return None;
+                }
+                Some(BinaryOperator::BitwiseAnd)
+            }
+            b'|' => {
+                if remaining >= 2 && bytes[i + 1] == b'|' {
+                    return None;
+                }
+                if remaining >= 2 && bytes[i + 1] == b'=' {
+                    return None;
+                }
+                Some(BinaryOperator::BitwiseOr)
+            }
+            b'^' => {
+                if remaining >= 2 && bytes[i + 1] == b'=' {
+                    return None;
+                }
+                Some(BinaryOperator::BitwiseXor)
+            }
+            b'=' => return None, // assignment, not binary
+            _ => None,
+        };
+        if let Some(op) = op {
+            return Some((op, 1));
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Unary prefix parsing
+// ---------------------------------------------------------------------------
+
+fn try_parse_unary_prefix(
+    expr: &str,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+    recursion_depth: u64,
+) -> Option<ParseResult<Expression>> {
+    // Keyword-style unary: typeof, void, delete
+    for (prefix, op) in [
+        ("typeof ", UnaryOperator::Typeof),
+        ("void ", UnaryOperator::Void),
+        ("delete ", UnaryOperator::Delete),
+    ] {
+        if let Some(rest) = expr.strip_prefix(prefix) {
+            let arg = match parse_expression(rest.trim(), span, context, recursion_depth + 1) {
+                Ok(e) => e,
+                Err(e) => return Some(Err(e)),
+            };
+            return Some(Ok(Expression::Unary {
+                operator: op,
+                argument: Box::new(arg),
+            }));
+        }
+    }
+
+    // Symbol-style unary: !, ~, +, -
+    if expr.len() >= 2 {
+        let (op, rest) = match expr.as_bytes()[0] {
+            b'!' if expr.as_bytes()[1] != b'=' => (Some(UnaryOperator::LogicalNot), &expr[1..]),
+            b'~' => (Some(UnaryOperator::BitwiseNot), &expr[1..]),
+            _ => (None, expr),
+        };
+        if let Some(op) = op {
+            let arg = match parse_expression(rest.trim(), span, context, recursion_depth + 1) {
+                Ok(e) => e,
+                Err(e) => return Some(Err(e)),
+            };
+            return Some(Ok(Expression::Unary {
+                operator: op,
+                argument: Box::new(arg),
+            }));
+        }
+    }
+
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Postfix: call, member access
+// ---------------------------------------------------------------------------
+
+/// Try to parse postfix operations (call, member access) on a primary expression.
+fn try_parse_postfix(
+    expr: &str,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+    recursion_depth: u64,
+) -> Option<ParseResult<Expression>> {
+    // Look for the last top-level `.` or `(` or `[` to split callee/object from access.
+    // For `a.b.c(d)`, we need to find the right split point.
+
+    // Strategy: find if the expression ends with `)` or `]`, suggesting call/member.
+    let bytes = expr.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+
+    // Call expression: ends with `)`
+    if bytes[bytes.len() - 1] == b')' {
+        // Find matching open paren at top level.
+        if let Some(open_paren) = find_matching_open_paren(expr) {
+            if open_paren > 0 {
+                let callee_src = expr[..open_paren].trim();
+                let args_src = &expr[open_paren + 1..expr.len() - 1]; // between ( and )
+                let callee = match parse_expression(callee_src, span, context, recursion_depth + 1)
+                {
+                    Ok(e) => e,
+                    Err(e) => return Some(Err(e)),
+                };
+                let arguments =
+                    match parse_comma_separated_exprs(args_src, span, context, recursion_depth + 1)
+                    {
+                        Ok(a) => a,
+                        Err(e) => return Some(Err(e)),
+                    };
+                return Some(Ok(Expression::Call {
+                    callee: Box::new(callee),
+                    arguments,
+                }));
+            }
+        }
+    }
+
+    // Computed member: ends with `]`
+    if bytes[bytes.len() - 1] == b']' {
+        if let Some(open_bracket) = find_matching_open_bracket(expr) {
+            if open_bracket > 0 {
+                let object_src = expr[..open_bracket].trim();
+                let prop_src = &expr[open_bracket + 1..expr.len() - 1];
+                let object = match parse_expression(object_src, span, context, recursion_depth + 1)
+                {
+                    Ok(e) => e,
+                    Err(e) => return Some(Err(e)),
+                };
+                let property =
+                    match parse_expression(prop_src.trim(), span, context, recursion_depth + 1) {
+                        Ok(e) => e,
+                        Err(e) => return Some(Err(e)),
+                    };
+                return Some(Ok(Expression::Member {
+                    object: Box::new(object),
+                    property: Box::new(property),
+                    computed: true,
+                }));
+            }
+        }
+    }
+
+    // Dot member access: a.b
+    if let Some(dot_pos) = find_last_top_level_dot(expr) {
+        let object_src = expr[..dot_pos].trim();
+        let property_src = expr[dot_pos + 1..].trim();
+        if !object_src.is_empty() && is_identifier(property_src) {
+            let object = match parse_expression(object_src, span, context, recursion_depth + 1) {
+                Ok(e) => e,
+                Err(e) => return Some(Err(e)),
+            };
+            return Some(Ok(Expression::Member {
+                object: Box::new(object),
+                property: Box::new(Expression::Identifier(property_src.to_string())),
+                computed: false,
+            }));
+        }
+    }
+
+    None
+}
+
+/// Find the position of the opening `(` that matches the final `)`.
+fn find_matching_open_paren(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut depth: i64 = 0;
+    let mut in_quote: Option<u8> = None;
+    let mut escaped = false;
+    let mut i = bytes.len();
+    while i > 0 {
+        i -= 1;
+        let b = bytes[i];
+        if let Some(q) = in_quote {
+            if i > 0 && bytes[i - 1] == b'\\' && !escaped {
+                escaped = true;
+                continue;
+            }
+            escaped = false;
+            if b == q {
+                in_quote = None;
+            }
+            continue;
+        }
+        match b {
+            b'\'' | b'"' | b'`' => {
+                in_quote = Some(b);
+                continue;
+            }
+            b')' => depth += 1,
+            b'(' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Find the position of the opening `[` that matches the final `]`.
+fn find_matching_open_bracket(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut depth: i64 = 0;
+    let mut in_quote: Option<u8> = None;
+    let mut escaped = false;
+    let mut i = bytes.len();
+    while i > 0 {
+        i -= 1;
+        let b = bytes[i];
+        if let Some(q) = in_quote {
+            if i > 0 && bytes[i - 1] == b'\\' && !escaped {
+                escaped = true;
+                continue;
+            }
+            escaped = false;
+            if b == q {
+                in_quote = None;
+            }
+            continue;
+        }
+        match b {
+            b'\'' | b'"' | b'`' => {
+                in_quote = Some(b);
+                continue;
+            }
+            b']' => depth += 1,
+            b'[' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Find the last top-level `.` (not inside delimiters, quotes, or numeric literals).
+fn find_last_top_level_dot(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut depth_paren: i64 = 0;
+    let mut depth_bracket: i64 = 0;
+    let mut depth_brace: i64 = 0;
+    let mut in_quote: Option<u8> = None;
+    let mut escaped = false;
+    let mut last_dot: Option<usize> = None;
+
+    for (i, &b) in bytes.iter().enumerate() {
+        if let Some(q) = in_quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if b == b'\\' {
+                escaped = true;
+                continue;
+            }
+            if b == q {
+                in_quote = None;
+            }
+            continue;
+        }
+        match b {
+            b'\'' | b'"' | b'`' => {
+                in_quote = Some(b);
+                continue;
+            }
+            b'(' => {
+                depth_paren += 1;
+                continue;
+            }
+            b')' => {
+                depth_paren -= 1;
+                continue;
+            }
+            b'[' => {
+                depth_bracket += 1;
+                continue;
+            }
+            b']' => {
+                depth_bracket -= 1;
+                continue;
+            }
+            b'{' => {
+                depth_brace += 1;
+                continue;
+            }
+            b'}' => {
+                depth_brace -= 1;
+                continue;
+            }
+            _ => {}
+        }
+        if depth_paren == 0 && depth_bracket == 0 && depth_brace == 0 && b == b'.' {
+            // Make sure this isn't a numeric dot (e.g., "3.14").
+            let before_digit = i > 0 && bytes[i - 1].is_ascii_digit();
+            let after_digit = i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit();
+            if !(before_digit && after_digit) {
+                last_dot = Some(i);
+            }
+        }
+    }
+    last_dot
+}
+
+// ---------------------------------------------------------------------------
+// Array/object literal parsing
+// ---------------------------------------------------------------------------
+
+fn parse_array_literal(
+    inner: &str,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+    recursion_depth: u64,
+) -> ParseResult<Expression> {
+    let trimmed = inner.trim();
+    if trimmed.is_empty() {
+        return Ok(Expression::ArrayLiteral(Vec::new()));
+    }
+    let parts = split_top_level_commas(trimmed);
+    let mut elements = Vec::new();
+    for part in &parts {
+        let p = part.trim();
+        if p.is_empty() {
+            elements.push(None);
+        } else {
+            elements.push(Some(parse_expression(
+                p,
+                span,
+                context,
+                recursion_depth + 1,
+            )?));
+        }
+    }
+    Ok(Expression::ArrayLiteral(elements))
+}
+
+fn parse_object_literal(
+    inner: &str,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+    recursion_depth: u64,
+) -> ParseResult<Expression> {
+    let trimmed = inner.trim();
+    if trimmed.is_empty() {
+        return Ok(Expression::ObjectLiteral(Vec::new()));
+    }
+    let parts = split_top_level_commas(trimmed);
+    let mut properties = Vec::new();
+    for part in &parts {
+        let p = part.trim();
+        if p.is_empty() {
+            continue;
+        }
+        // Split on first top-level colon for key:value.
+        if let Some(colon_idx) = find_top_level_colon(p) {
+            let key_src = p[..colon_idx].trim();
+            let value_src = p[colon_idx + 1..].trim();
+            let key = parse_expression(key_src, span, context, recursion_depth + 1)?;
+            let value = parse_expression(value_src, span, context, recursion_depth + 1)?;
+            let computed = key_src.starts_with('[');
+            properties.push(ObjectProperty {
+                key,
+                value,
+                computed,
+                shorthand: false,
+            });
+        } else {
+            // Shorthand property: { x } means { x: x }
+            let key = Expression::Identifier(p.to_string());
+            let value = Expression::Identifier(p.to_string());
+            properties.push(ObjectProperty {
+                key,
+                value,
+                computed: false,
+                shorthand: true,
+            });
+        }
+    }
+    Ok(Expression::ObjectLiteral(properties))
+}
+
+// ---------------------------------------------------------------------------
+// Comma splitting for argument lists and array/object literals
+// ---------------------------------------------------------------------------
+
+/// Split a string by top-level commas (not inside delimiters or quotes).
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let bytes = s.as_bytes();
+    let mut depth_paren: i64 = 0;
+    let mut depth_bracket: i64 = 0;
+    let mut depth_brace: i64 = 0;
+    let mut in_quote: Option<u8> = None;
+    let mut escaped = false;
+    let mut parts = Vec::new();
+    let mut start = 0;
+
+    for (i, &b) in bytes.iter().enumerate() {
+        if let Some(q) = in_quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if b == b'\\' {
+                escaped = true;
+                continue;
+            }
+            if b == q {
+                in_quote = None;
+            }
+            continue;
+        }
+        match b {
+            b'\'' | b'"' | b'`' => {
+                in_quote = Some(b);
+                continue;
+            }
+            b'(' => {
+                depth_paren += 1;
+                continue;
+            }
+            b')' => {
+                depth_paren -= 1;
+                continue;
+            }
+            b'[' => {
+                depth_bracket += 1;
+                continue;
+            }
+            b']' => {
+                depth_bracket -= 1;
+                continue;
+            }
+            b'{' => {
+                depth_brace += 1;
+                continue;
+            }
+            b'}' => {
+                depth_brace -= 1;
+                continue;
+            }
+            _ => {}
+        }
+        if depth_paren == 0 && depth_bracket == 0 && depth_brace == 0 && b == b',' {
+            parts.push(&s[start..i]);
+            start = i + 1;
+        }
+    }
+    parts.push(&s[start..]);
+    parts
+}
+
+/// Parse a comma-separated list of expressions (for function call arguments).
+fn parse_comma_separated_exprs(
+    s: &str,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+    recursion_depth: u64,
+) -> ParseResult<Vec<Expression>> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let parts = split_top_level_commas(trimmed);
+    let mut exprs = Vec::new();
+    for part in &parts {
+        let p = part.trim();
+        if p.is_empty() {
+            continue;
+        }
+        exprs.push(parse_expression(p, span, context, recursion_depth + 1)?);
+    }
+    Ok(exprs)
 }
 
 fn parse_i64_numeric_literal(input: &str) -> Option<i64> {
@@ -3797,10 +4937,7 @@ fn parse_block_statement(
         )
     })?;
     let body = parse_body_statements(inner, goal, &span, context)?;
-    Ok(Statement::Block(BlockStatement {
-        body,
-        span,
-    }))
+    Ok(Statement::Block(BlockStatement { body, span }))
 }
 
 fn parse_if_statement(
@@ -3810,7 +4947,10 @@ fn parse_if_statement(
     context: &mut ParseExecutionContext<'_>,
 ) -> ParseResult<Statement> {
     // Strip "if" prefix and find the condition in parens.
-    let after_if = statement.strip_prefix("if").unwrap_or(statement).trim_start();
+    let after_if = statement
+        .strip_prefix("if")
+        .unwrap_or(statement)
+        .trim_start();
     let (condition_src, rest) = extract_balanced(after_if, '(', ')').ok_or_else(|| {
         ParseError::new(
             ParseErrorCode::UnsupportedSyntax,
@@ -3826,7 +4966,20 @@ fn parse_if_statement(
     let (consequent_src, alternate_src) = if rest.starts_with('{') {
         if let Some((block_inner, after_block)) = extract_balanced(rest, '{', '}') {
             let after = after_block.trim();
-            (format!("{{{block_inner}}}"), if after.starts_with("else") { Some(after.strip_prefix("else").unwrap_or(after).trim().to_string()) } else { None })
+            (
+                format!("{{{block_inner}}}"),
+                if after.starts_with("else") {
+                    Some(
+                        after
+                            .strip_prefix("else")
+                            .unwrap_or(after)
+                            .trim()
+                            .to_string(),
+                    )
+                } else {
+                    None
+                },
+            )
         } else {
             (rest.to_string(), None)
         }
@@ -3841,16 +4994,16 @@ fn parse_if_statement(
         }
     };
 
-    let consequent_stmt = parse_statement(
-        consequent_src.trim(),
-        goal,
-        span.clone(),
-        context,
-    )?;
+    let consequent_stmt = parse_statement(consequent_src.trim(), goal, span.clone(), context)?;
 
     let alternate = if let Some(alt_src) = alternate_src {
         if !alt_src.is_empty() {
-            Some(Box::new(parse_statement(alt_src.trim(), goal, span.clone(), context)?))
+            Some(Box::new(parse_statement(
+                alt_src.trim(),
+                goal,
+                span.clone(),
+                context,
+            )?))
         } else {
             None
         }
@@ -3877,21 +5030,55 @@ fn find_top_level_else(s: &str) -> Option<usize> {
     while i < bytes.len() {
         let b = bytes[i];
         if let Some(q) = in_quote {
-            if escaped { escaped = false; i += 1; continue; }
-            if b == b'\\' { escaped = true; i += 1; continue; }
-            if b == q { in_quote = None; }
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+            if b == b'\\' {
+                escaped = true;
+                i += 1;
+                continue;
+            }
+            if b == q {
+                in_quote = None;
+            }
             i += 1;
             continue;
         }
         match b {
-            b'\'' | b'"' | b'`' => { in_quote = Some(b); i += 1; continue; }
-            b'{' => { depth_brace += 1; i += 1; continue; }
-            b'}' => { depth_brace -= 1; i += 1; continue; }
-            b'(' => { depth_paren += 1; i += 1; continue; }
-            b')' => { depth_paren -= 1; i += 1; continue; }
+            b'\'' | b'"' | b'`' => {
+                in_quote = Some(b);
+                i += 1;
+                continue;
+            }
+            b'{' => {
+                depth_brace += 1;
+                i += 1;
+                continue;
+            }
+            b'}' => {
+                depth_brace -= 1;
+                i += 1;
+                continue;
+            }
+            b'(' => {
+                depth_paren += 1;
+                i += 1;
+                continue;
+            }
+            b')' => {
+                depth_paren -= 1;
+                i += 1;
+                continue;
+            }
             _ => {}
         }
-        if depth_brace == 0 && depth_paren == 0 && i + 4 <= bytes.len() && &bytes[i..i + 4] == b"else" {
+        if depth_brace == 0
+            && depth_paren == 0
+            && i + 4 <= bytes.len()
+            && &bytes[i..i + 4] == b"else"
+        {
             // Ensure "else" is a keyword boundary.
             let before_ok = i == 0 || !is_identifier_continue(bytes[i - 1] as char);
             let after_ok = i + 4 >= bytes.len() || !is_identifier_continue(bytes[i + 4] as char);
@@ -3910,7 +5097,10 @@ fn parse_for_statement(
     span: SourceSpan,
     context: &mut ParseExecutionContext<'_>,
 ) -> ParseResult<Statement> {
-    let after_for = statement.strip_prefix("for").unwrap_or(statement).trim_start();
+    let after_for = statement
+        .strip_prefix("for")
+        .unwrap_or(statement)
+        .trim_start();
     let (header_src, rest) = extract_balanced(after_for, '(', ')').ok_or_else(|| {
         ParseError::new(
             ParseErrorCode::UnsupportedSyntax,
@@ -3937,7 +5127,12 @@ fn parse_for_statement(
     let init = if init_src.is_empty() {
         None
     } else {
-        Some(Box::new(parse_statement(init_src, goal, span.clone(), context)?))
+        Some(Box::new(parse_statement(
+            init_src,
+            goal,
+            span.clone(),
+            context,
+        )?))
     };
     let condition = if cond_src.is_empty() {
         None
@@ -3968,7 +5163,10 @@ fn parse_while_statement(
     span: SourceSpan,
     context: &mut ParseExecutionContext<'_>,
 ) -> ParseResult<Statement> {
-    let after_while = statement.strip_prefix("while").unwrap_or(statement).trim_start();
+    let after_while = statement
+        .strip_prefix("while")
+        .unwrap_or(statement)
+        .trim_start();
     let (condition_src, rest) = extract_balanced(after_while, '(', ')').ok_or_else(|| {
         ParseError::new(
             ParseErrorCode::UnsupportedSyntax,
@@ -3992,7 +5190,10 @@ fn parse_do_while_statement(
     span: SourceSpan,
     context: &mut ParseExecutionContext<'_>,
 ) -> ParseResult<Statement> {
-    let after_do = statement.strip_prefix("do").unwrap_or(statement).trim_start();
+    let after_do = statement
+        .strip_prefix("do")
+        .unwrap_or(statement)
+        .trim_start();
     // Body is a block or single statement, followed by "while(condition)"
     let (body_src, rest) = if after_do.starts_with('{') {
         let (inner, r) = extract_balanced(after_do, '{', '}').ok_or_else(|| {
@@ -4014,7 +5215,10 @@ fn parse_do_while_statement(
                 Some(span.clone()),
             )
         })?;
-        (after_do[..while_idx].trim().to_string(), after_do[while_idx..].to_string())
+        (
+            after_do[..while_idx].trim().to_string(),
+            after_do[while_idx..].to_string(),
+        )
     };
 
     let body = parse_statement(body_src.trim(), goal, span.clone(), context)?;
@@ -4078,7 +5282,10 @@ fn parse_try_catch_statement(
     span: SourceSpan,
     context: &mut ParseExecutionContext<'_>,
 ) -> ParseResult<Statement> {
-    let after_try = statement.strip_prefix("try").unwrap_or(statement).trim_start();
+    let after_try = statement
+        .strip_prefix("try")
+        .unwrap_or(statement)
+        .trim_start();
 
     // Parse the try block.
     let (try_inner, rest) = extract_balanced(after_try, '{', '}').ok_or_else(|| {
@@ -4090,7 +5297,10 @@ fn parse_try_catch_statement(
         )
     })?;
     let try_body = parse_body_statements(try_inner, goal, &span, context)?;
-    let try_block = BlockStatement { body: try_body, span: span.clone() };
+    let try_block = BlockStatement {
+        body: try_body,
+        span: span.clone(),
+    };
 
     let rest = rest.trim();
 
@@ -4123,7 +5333,10 @@ fn parse_try_catch_statement(
         (
             Some(CatchClause {
                 parameter: param,
-                body: BlockStatement { body: catch_body, span: span.clone() },
+                body: BlockStatement {
+                    body: catch_body,
+                    span: span.clone(),
+                },
                 span: span.clone(),
             }),
             rest2.trim(),
@@ -4144,7 +5357,10 @@ fn parse_try_catch_statement(
             )
         })?;
         let finally_body = parse_body_statements(finally_inner, goal, &span, context)?;
-        Some(BlockStatement { body: finally_body, span: span.clone() })
+        Some(BlockStatement {
+            body: finally_body,
+            span: span.clone(),
+        })
     } else {
         None
     };
@@ -4172,7 +5388,10 @@ fn parse_switch_statement(
     span: SourceSpan,
     context: &mut ParseExecutionContext<'_>,
 ) -> ParseResult<Statement> {
-    let after_switch = statement.strip_prefix("switch").unwrap_or(statement).trim_start();
+    let after_switch = statement
+        .strip_prefix("switch")
+        .unwrap_or(statement)
+        .trim_start();
     let (disc_src, rest) = extract_balanced(after_switch, '(', ')').ok_or_else(|| {
         ParseError::new(
             ParseErrorCode::UnsupportedSyntax,
@@ -4212,14 +5431,28 @@ fn parse_switch_statement(
             let after_colon = after_case[colon_idx + 1..].trim();
             let (consequent_src, next) = split_at_next_case(after_colon);
             let consequent = parse_body_statements(consequent_src.trim(), goal, &span, context)?;
-            cases.push(SwitchCase { test, consequent, span: span.clone() });
+            cases.push(SwitchCase {
+                test,
+                consequent,
+                span: span.clone(),
+            });
             remaining = next.trim();
         } else if remaining.starts_with("default") {
-            let after_default = remaining.strip_prefix("default").unwrap_or(remaining).trim_start();
-            let after_default = after_default.strip_prefix(':').unwrap_or(after_default).trim();
+            let after_default = remaining
+                .strip_prefix("default")
+                .unwrap_or(remaining)
+                .trim_start();
+            let after_default = after_default
+                .strip_prefix(':')
+                .unwrap_or(after_default)
+                .trim();
             let (consequent_src, next) = split_at_next_case(after_default);
             let consequent = parse_body_statements(consequent_src.trim(), goal, &span, context)?;
-            cases.push(SwitchCase { test: None, consequent, span: span.clone() });
+            cases.push(SwitchCase {
+                test: None,
+                consequent,
+                span: span.clone(),
+            });
             remaining = next.trim();
         } else {
             // Skip whitespace or unexpected content.
@@ -4244,16 +5477,38 @@ fn split_at_next_case(s: &str) -> (&str, &str) {
     while i < bytes.len() {
         let b = bytes[i];
         if let Some(q) = in_quote {
-            if escaped { escaped = false; i += 1; continue; }
-            if b == b'\\' { escaped = true; i += 1; continue; }
-            if b == q { in_quote = None; }
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+            if b == b'\\' {
+                escaped = true;
+                i += 1;
+                continue;
+            }
+            if b == q {
+                in_quote = None;
+            }
             i += 1;
             continue;
         }
         match b {
-            b'\'' | b'"' | b'`' => { in_quote = Some(b); i += 1; continue; }
-            b'{' => { depth_brace += 1; i += 1; continue; }
-            b'}' => { depth_brace -= 1; i += 1; continue; }
+            b'\'' | b'"' | b'`' => {
+                in_quote = Some(b);
+                i += 1;
+                continue;
+            }
+            b'{' => {
+                depth_brace += 1;
+                i += 1;
+                continue;
+            }
+            b'}' => {
+                depth_brace -= 1;
+                i += 1;
+                continue;
+            }
             _ => {}
         }
         if depth_brace == 0 {
@@ -4264,7 +5519,8 @@ fn split_at_next_case(s: &str) -> (&str, &str) {
                     return (&s[..i], &s[i..]);
                 }
                 if i + 7 <= bytes.len() && &bytes[i..i + 7] == b"default" {
-                    let after_ok = i + 7 >= bytes.len() || !is_identifier_continue(bytes[i + 7] as char);
+                    let after_ok =
+                        i + 7 >= bytes.len() || !is_identifier_continue(bytes[i + 7] as char);
                     if after_ok {
                         return (&s[..i], &s[i..]);
                     }
@@ -4305,7 +5561,10 @@ fn parse_function_declaration(
 ) -> ParseResult<Statement> {
     let is_async = statement.starts_with("async ");
     let rest = if is_async {
-        statement.strip_prefix("async ").unwrap_or(statement).trim_start()
+        statement
+            .strip_prefix("async ")
+            .unwrap_or(statement)
+            .trim_start()
     } else {
         statement
     };
@@ -4328,7 +5587,11 @@ fn parse_function_declaration(
         })?;
         let name = rest[..paren_idx].trim();
         (
-            if name.is_empty() { None } else { Some(name.to_string()) },
+            if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            },
             &rest[paren_idx..],
         )
     };

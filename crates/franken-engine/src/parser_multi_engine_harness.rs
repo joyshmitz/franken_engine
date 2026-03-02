@@ -1822,7 +1822,115 @@ fn estimate_statement_allocation_count(statement: &Statement) -> u64 {
             }
             total
         }
+        Statement::Block(block) => {
+            1_u64.saturating_add(estimate_statement_vec_allocation_count(&block.body))
+        }
+        Statement::If(if_stmt) => {
+            let mut total = 1_u64
+                .saturating_add(estimate_expression_allocation_count(&if_stmt.condition))
+                .saturating_add(estimate_statement_allocation_count(
+                    if_stmt.consequent.as_ref(),
+                ));
+            if let Some(alternate) = &if_stmt.alternate {
+                total =
+                    total.saturating_add(estimate_statement_allocation_count(alternate.as_ref()));
+            }
+            total
+        }
+        Statement::For(for_stmt) => {
+            let mut total = 1_u64;
+            if let Some(init) = &for_stmt.init {
+                total = total.saturating_add(estimate_statement_allocation_count(init.as_ref()));
+            }
+            if let Some(condition) = &for_stmt.condition {
+                total = total.saturating_add(estimate_expression_allocation_count(condition));
+            }
+            if let Some(update) = &for_stmt.update {
+                total = total.saturating_add(estimate_expression_allocation_count(update));
+            }
+            total.saturating_add(estimate_statement_allocation_count(for_stmt.body.as_ref()))
+        }
+        Statement::While(while_stmt) => 1_u64
+            .saturating_add(estimate_expression_allocation_count(&while_stmt.condition))
+            .saturating_add(estimate_statement_allocation_count(
+                while_stmt.body.as_ref(),
+            )),
+        Statement::DoWhile(do_while_stmt) => 1_u64
+            .saturating_add(estimate_statement_allocation_count(
+                do_while_stmt.body.as_ref(),
+            ))
+            .saturating_add(estimate_expression_allocation_count(
+                &do_while_stmt.condition,
+            )),
+        Statement::Return(return_stmt) => {
+            let mut total = 1_u64;
+            if let Some(argument) = &return_stmt.argument {
+                total = total.saturating_add(estimate_expression_allocation_count(argument));
+            }
+            total
+        }
+        Statement::Throw(throw_stmt) => {
+            1_u64.saturating_add(estimate_expression_allocation_count(&throw_stmt.argument))
+        }
+        Statement::TryCatch(try_catch_stmt) => {
+            let mut total = 1_u64.saturating_add(estimate_statement_vec_allocation_count(
+                &try_catch_stmt.block.body,
+            ));
+            if let Some(handler) = &try_catch_stmt.handler {
+                total = total.saturating_add(1);
+                if handler.parameter.is_some() {
+                    total = total.saturating_add(1);
+                }
+                total = total
+                    .saturating_add(estimate_statement_vec_allocation_count(&handler.body.body));
+            }
+            if let Some(finalizer) = &try_catch_stmt.finalizer {
+                total = total.saturating_add(1);
+                total =
+                    total.saturating_add(estimate_statement_vec_allocation_count(&finalizer.body));
+            }
+            total
+        }
+        Statement::Switch(switch_stmt) => {
+            let mut total = 1_u64.saturating_add(estimate_expression_allocation_count(
+                &switch_stmt.discriminant,
+            ));
+            for case in &switch_stmt.cases {
+                total = total.saturating_add(1);
+                if let Some(test) = &case.test {
+                    total = total.saturating_add(estimate_expression_allocation_count(test));
+                }
+                total =
+                    total.saturating_add(estimate_statement_vec_allocation_count(&case.consequent));
+            }
+            total
+        }
+        Statement::Break(break_stmt) => {
+            let mut total = 1_u64;
+            if break_stmt.label.is_some() {
+                total = total.saturating_add(1);
+            }
+            total
+        }
+        Statement::Continue(continue_stmt) => {
+            let mut total = 1_u64;
+            if continue_stmt.label.is_some() {
+                total = total.saturating_add(1);
+            }
+            total
+        }
+        Statement::FunctionDeclaration(function_decl) => 2_u64
+            .saturating_add(function_decl.params.len() as u64)
+            .saturating_add(estimate_statement_vec_allocation_count(
+                &function_decl.body.body,
+            )),
     }
+}
+
+fn estimate_statement_vec_allocation_count(statements: &[Statement]) -> u64 {
+    statements.iter().fold(0_u64, |acc, statement| {
+        acc.saturating_add(estimate_statement_allocation_count(statement))
+    })
 }
 
 fn estimate_expression_allocation_count(expression: &Expression) -> u64 {

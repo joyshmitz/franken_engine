@@ -144,6 +144,12 @@ pub enum ArenaError {
     MissingSpan {
         index: u32,
     },
+    UnsupportedStatement {
+        kind: &'static str,
+    },
+    UnsupportedExpression {
+        kind: &'static str,
+    },
     HandleAuditSerialization,
 }
 
@@ -177,6 +183,16 @@ impl fmt::Display for ArenaError {
             }
             Self::MissingSpan { index } => {
                 write!(f, "span handle points to missing index {}", index)
+            }
+            Self::UnsupportedStatement { kind } => {
+                write!(f, "parser arena does not support statement kind '{}'", kind)
+            }
+            Self::UnsupportedExpression { kind } => {
+                write!(
+                    f,
+                    "parser arena does not support expression kind '{}'",
+                    kind
+                )
             }
             Self::HandleAuditSerialization => {
                 write!(f, "failed to serialize parser arena handle-audit entry")
@@ -455,6 +471,22 @@ impl ParserArena {
                     span,
                 }
             }
+            Statement::Block(_)
+            | Statement::If(_)
+            | Statement::For(_)
+            | Statement::While(_)
+            | Statement::DoWhile(_)
+            | Statement::Return(_)
+            | Statement::Throw(_)
+            | Statement::TryCatch(_)
+            | Statement::Switch(_)
+            | Statement::Break(_)
+            | Statement::Continue(_)
+            | Statement::FunctionDeclaration(_) => {
+                return Err(ArenaError::UnsupportedStatement {
+                    kind: statement_kind_name(statement),
+                });
+            }
         };
 
         self.nodes.push(node);
@@ -501,6 +533,20 @@ impl ParserArena {
                 self.charge_bytes(EXPR_BASE_ESTIMATED_BYTES)?;
                 self.charge_bytes(string_bytes(value))?;
                 ArenaExpression::Raw(value.clone())
+            }
+            Expression::Binary { .. }
+            | Expression::Unary { .. }
+            | Expression::Assignment { .. }
+            | Expression::Conditional { .. }
+            | Expression::Call { .. }
+            | Expression::Member { .. }
+            | Expression::This
+            | Expression::ArrayLiteral(_)
+            | Expression::ObjectLiteral(_)
+            | Expression::ArrowFunction { .. } => {
+                return Err(ArenaError::UnsupportedExpression {
+                    kind: expression_kind_name(expression),
+                });
             }
         };
 
@@ -662,6 +708,50 @@ const fn index_to_usize(value: u32) -> usize {
 
 fn string_bytes(value: &str) -> u64 {
     u64::try_from(value.len()).unwrap_or(u64::MAX)
+}
+
+fn statement_kind_name(statement: &Statement) -> &'static str {
+    match statement {
+        Statement::Import(_) => "import",
+        Statement::Export(_) => "export",
+        Statement::VariableDeclaration(_) => "variable_declaration",
+        Statement::Expression(_) => "expression",
+        Statement::Block(_) => "block",
+        Statement::If(_) => "if",
+        Statement::For(_) => "for",
+        Statement::While(_) => "while",
+        Statement::DoWhile(_) => "do_while",
+        Statement::Return(_) => "return",
+        Statement::Throw(_) => "throw",
+        Statement::TryCatch(_) => "try_catch",
+        Statement::Switch(_) => "switch",
+        Statement::Break(_) => "break",
+        Statement::Continue(_) => "continue",
+        Statement::FunctionDeclaration(_) => "function_declaration",
+    }
+}
+
+fn expression_kind_name(expression: &Expression) -> &'static str {
+    match expression {
+        Expression::Identifier(_) => "identifier",
+        Expression::StringLiteral(_) => "string",
+        Expression::NumericLiteral(_) => "numeric",
+        Expression::BooleanLiteral(_) => "boolean",
+        Expression::NullLiteral => "null",
+        Expression::UndefinedLiteral => "undefined",
+        Expression::Await(_) => "await",
+        Expression::Binary { .. } => "binary",
+        Expression::Unary { .. } => "unary",
+        Expression::Assignment { .. } => "assignment",
+        Expression::Conditional { .. } => "conditional",
+        Expression::Call { .. } => "call",
+        Expression::Member { .. } => "member",
+        Expression::This => "this",
+        Expression::ArrayLiteral(_) => "array_literal",
+        Expression::ObjectLiteral(_) => "object_literal",
+        Expression::ArrowFunction { .. } => "arrow_function",
+        Expression::Raw(_) => "raw",
+    }
 }
 
 fn node_audit_descriptor(node: &ArenaNode) -> String {
