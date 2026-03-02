@@ -405,6 +405,7 @@ pub fn default_wave_handoff_package() -> WaveHandoffPackage {
             "artifacts/rgc_execution_waves_coordination/20260228T000000Z/run_manifest.json"
                 .to_string(),
             "artifacts/rgc_execution_waves_coordination/20260228T000000Z/events.jsonl".to_string(),
+            "artifacts/rgc_execution_waves_coordination/20260228T000000Z/commands.txt".to_string(),
         ],
         open_risks: vec!["No active blockers at handoff time".to_string()],
         next_steps: vec![

@@ -195,6 +195,7 @@ pub mod runtime_comparison_gate;
 pub mod runtime_decision_core;
 pub mod runtime_decision_theory;
 pub mod runtime_diagnostics_cli;
+pub mod runtime_hotspot_optimization_campaign;
 pub mod runtime_kernel_lane_charter;
 pub mod runtime_observability;
 pub mod safe_mode_fallback;
