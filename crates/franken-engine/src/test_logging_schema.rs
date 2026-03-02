@@ -1508,7 +1508,10 @@ mod tests {
                 "payload.user_email".to_string(),
                 "roundtrip@example.com".to_string(),
             ),
-            ("payload.auth_token".to_string(), "secret-inline".to_string()),
+            (
+                "payload.auth_token".to_string(),
+                "secret-inline".to_string(),
+            ),
             ("payload.ip_address".to_string(), "192.0.2.10".to_string()),
         ]);
         let spec = TestLoggingSchemaSpec::default();

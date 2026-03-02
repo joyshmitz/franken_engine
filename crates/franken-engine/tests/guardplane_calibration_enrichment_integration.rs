@@ -400,9 +400,11 @@ fn serde_roundtrip_defense_effectiveness_summary() {
 
 #[test]
 fn effectiveness_trend_ordering_stable() {
-    let mut trends = [EffectivenessTrend::Degrading,
+    let mut trends = [
+        EffectivenessTrend::Degrading,
         EffectivenessTrend::Improving,
-        EffectivenessTrend::Stable];
+        EffectivenessTrend::Stable,
+    ];
     trends.sort();
     assert_eq!(trends[0], EffectivenessTrend::Improving);
     assert_eq!(trends[1], EffectivenessTrend::Stable);

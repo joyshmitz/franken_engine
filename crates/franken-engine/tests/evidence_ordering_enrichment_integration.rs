@@ -104,7 +104,10 @@ fn truncation_marker_display_format() {
         retained_count: 64,
         policy: "top-K by action_name".to_string(),
     };
-    assert_eq!(tm.to_string(), "candidates: 100 -> 64 (top-K by action_name)");
+    assert_eq!(
+        tm.to_string(),
+        "candidates: 100 -> 64 (top-K by action_name)"
+    );
 }
 
 #[test]
@@ -141,37 +144,51 @@ fn truncation_marker_serde_roundtrip() {
 
 #[test]
 fn ordering_violation_display_candidates_not_sorted() {
-    let ov = OrderingViolation::CandidatesNotSorted { first_unsorted_index: 3 };
+    let ov = OrderingViolation::CandidatesNotSorted {
+        first_unsorted_index: 3,
+    };
     assert_eq!(ov.to_string(), "candidates not sorted at index 3");
 }
 
 #[test]
 fn ordering_violation_display_witnesses_not_sorted() {
-    let ov = OrderingViolation::WitnessesNotSorted { first_unsorted_index: 7 };
+    let ov = OrderingViolation::WitnessesNotSorted {
+        first_unsorted_index: 7,
+    };
     assert_eq!(ov.to_string(), "witnesses not sorted at index 7");
 }
 
 #[test]
 fn ordering_violation_display_constraints_not_sorted() {
-    let ov = OrderingViolation::ConstraintsNotSorted { first_unsorted_index: 0 };
+    let ov = OrderingViolation::ConstraintsNotSorted {
+        first_unsorted_index: 0,
+    };
     assert_eq!(ov.to_string(), "constraints not sorted at index 0");
 }
 
 #[test]
 fn ordering_violation_display_duplicate_witness() {
-    let ov = OrderingViolation::DuplicateWitnessId { witness_id: "w-42".to_string() };
+    let ov = OrderingViolation::DuplicateWitnessId {
+        witness_id: "w-42".to_string(),
+    };
     assert_eq!(ov.to_string(), "duplicate witness id: w-42");
 }
 
 #[test]
 fn ordering_violation_display_candidates_exceed() {
-    let ov = OrderingViolation::CandidatesExceedBound { count: 100, max: 64 };
+    let ov = OrderingViolation::CandidatesExceedBound {
+        count: 100,
+        max: 64,
+    };
     assert_eq!(ov.to_string(), "candidates exceed bound: 100 > 64");
 }
 
 #[test]
 fn ordering_violation_display_witnesses_exceed() {
-    let ov = OrderingViolation::WitnessesExceedBound { count: 300, max: 256 };
+    let ov = OrderingViolation::WitnessesExceedBound {
+        count: 300,
+        max: 256,
+    };
     assert_eq!(ov.to_string(), "witnesses exceed bound: 300 > 256");
 }
 
@@ -183,7 +200,9 @@ fn ordering_violation_display_constraints_exceed() {
 
 #[test]
 fn ordering_violation_is_std_error() {
-    let ov = OrderingViolation::CandidatesNotSorted { first_unsorted_index: 0 };
+    let ov = OrderingViolation::CandidatesNotSorted {
+        first_unsorted_index: 0,
+    };
     let e: &dyn std::error::Error = &ov;
     assert!(!e.to_string().is_empty());
 }
@@ -191,10 +210,18 @@ fn ordering_violation_is_std_error() {
 #[test]
 fn ordering_violation_debug_all_distinct() {
     let variants: Vec<OrderingViolation> = vec![
-        OrderingViolation::CandidatesNotSorted { first_unsorted_index: 0 },
-        OrderingViolation::WitnessesNotSorted { first_unsorted_index: 0 },
-        OrderingViolation::ConstraintsNotSorted { first_unsorted_index: 0 },
-        OrderingViolation::DuplicateWitnessId { witness_id: "x".to_string() },
+        OrderingViolation::CandidatesNotSorted {
+            first_unsorted_index: 0,
+        },
+        OrderingViolation::WitnessesNotSorted {
+            first_unsorted_index: 0,
+        },
+        OrderingViolation::ConstraintsNotSorted {
+            first_unsorted_index: 0,
+        },
+        OrderingViolation::DuplicateWitnessId {
+            witness_id: "x".to_string(),
+        },
         OrderingViolation::CandidatesExceedBound { count: 1, max: 0 },
         OrderingViolation::WitnessesExceedBound { count: 1, max: 0 },
         OrderingViolation::ConstraintsExceedBound { count: 1, max: 0 },
@@ -207,12 +234,23 @@ fn ordering_violation_debug_all_distinct() {
 #[test]
 fn ordering_violation_serde_roundtrip_all() {
     let variants = vec![
-        OrderingViolation::CandidatesNotSorted { first_unsorted_index: 5 },
-        OrderingViolation::WitnessesNotSorted { first_unsorted_index: 2 },
-        OrderingViolation::ConstraintsNotSorted { first_unsorted_index: 1 },
-        OrderingViolation::DuplicateWitnessId { witness_id: "w".to_string() },
+        OrderingViolation::CandidatesNotSorted {
+            first_unsorted_index: 5,
+        },
+        OrderingViolation::WitnessesNotSorted {
+            first_unsorted_index: 2,
+        },
+        OrderingViolation::ConstraintsNotSorted {
+            first_unsorted_index: 1,
+        },
+        OrderingViolation::DuplicateWitnessId {
+            witness_id: "w".to_string(),
+        },
         OrderingViolation::CandidatesExceedBound { count: 70, max: 64 },
-        OrderingViolation::WitnessesExceedBound { count: 300, max: 256 },
+        OrderingViolation::WitnessesExceedBound {
+            count: 300,
+            max: 256,
+        },
         OrderingViolation::ConstraintsExceedBound { count: 40, max: 32 },
     ];
     for v in &variants {
@@ -300,8 +338,16 @@ fn sort_constraints_lexicographic() {
 #[test]
 fn dedup_witnesses_keeps_first() {
     let mut ws = vec![
-        Witness { witness_id: "a".to_string(), witness_type: "t".to_string(), value: "first".to_string() },
-        Witness { witness_id: "a".to_string(), witness_type: "t".to_string(), value: "second".to_string() },
+        Witness {
+            witness_id: "a".to_string(),
+            witness_type: "t".to_string(),
+            value: "first".to_string(),
+        },
+        Witness {
+            witness_id: "a".to_string(),
+            witness_type: "t".to_string(),
+            value: "second".to_string(),
+        },
     ];
     dedup_witnesses(&mut ws);
     assert_eq!(ws.len(), 1);
@@ -335,7 +381,10 @@ fn normalize_empty_entry() {
 #[test]
 fn normalize_sorts_candidates_and_witnesses() {
     let mut entry = make_entry(
-        vec![CandidateAction::new("z", 100), CandidateAction::new("a", 200)],
+        vec![
+            CandidateAction::new("z", 100),
+            CandidateAction::new("a", 200),
+        ],
         vec![w("z-w"), w("a-w")],
         vec![c("z-c"), c("a-c")],
     );
@@ -347,11 +396,7 @@ fn normalize_sorts_candidates_and_witnesses() {
 
 #[test]
 fn normalize_deduplicates_witnesses() {
-    let mut entry = make_entry(
-        vec![],
-        vec![w("dup"), w("dup"), w("unique")],
-        vec![],
-    );
+    let mut entry = make_entry(vec![], vec![w("dup"), w("dup"), w("unique")], vec![]);
     let result = normalize_entry(&mut entry, &SizeBounds::default());
     assert_eq!(result.duplicates_removed, 1);
     assert_eq!(entry.witnesses.len(), 2);
@@ -363,7 +408,11 @@ fn normalize_truncates_candidates() {
         .map(|i| CandidateAction::new(format!("act-{i:03}"), i))
         .collect();
     let mut entry = make_entry(cands, vec![], vec![]);
-    let bounds = SizeBounds { max_candidates: 3, max_witnesses: 256, max_constraints: 32 };
+    let bounds = SizeBounds {
+        max_candidates: 3,
+        max_witnesses: 256,
+        max_constraints: 32,
+    };
     let result = normalize_entry(&mut entry, &bounds);
     assert_eq!(result.truncations.len(), 1);
     assert_eq!(result.truncations[0].list_name, "candidates");
@@ -376,7 +425,11 @@ fn normalize_truncates_candidates() {
 fn normalize_truncates_witnesses() {
     let ws: Vec<Witness> = (0..10).map(|i| w(&format!("w-{i:03}"))).collect();
     let mut entry = make_entry(vec![], ws, vec![]);
-    let bounds = SizeBounds { max_candidates: 64, max_witnesses: 5, max_constraints: 32 };
+    let bounds = SizeBounds {
+        max_candidates: 64,
+        max_witnesses: 5,
+        max_constraints: 32,
+    };
     let result = normalize_entry(&mut entry, &bounds);
     assert_eq!(result.truncations.len(), 1);
     assert_eq!(result.truncations[0].list_name, "witnesses");
@@ -387,7 +440,11 @@ fn normalize_truncates_witnesses() {
 fn normalize_truncates_constraints() {
     let cs: Vec<Constraint> = (0..10).map(|i| c(&format!("c-{i:03}"))).collect();
     let mut entry = make_entry(vec![], vec![], cs);
-    let bounds = SizeBounds { max_candidates: 64, max_witnesses: 256, max_constraints: 4 };
+    let bounds = SizeBounds {
+        max_candidates: 64,
+        max_witnesses: 256,
+        max_constraints: 4,
+    };
     let result = normalize_entry(&mut entry, &bounds);
     assert_eq!(result.truncations.len(), 1);
     assert_eq!(result.truncations[0].list_name, "constraints");
@@ -396,11 +453,17 @@ fn normalize_truncates_constraints() {
 
 #[test]
 fn normalize_multiple_truncations() {
-    let cands: Vec<CandidateAction> = (0..5).map(|i| CandidateAction::new(format!("a-{i}"), i)).collect();
+    let cands: Vec<CandidateAction> = (0..5)
+        .map(|i| CandidateAction::new(format!("a-{i}"), i))
+        .collect();
     let ws: Vec<Witness> = (0..5).map(|i| w(&format!("w-{i}"))).collect();
     let cs: Vec<Constraint> = (0..5).map(|i| c(&format!("c-{i}"))).collect();
     let mut entry = make_entry(cands, ws, cs);
-    let bounds = SizeBounds { max_candidates: 2, max_witnesses: 2, max_constraints: 2 };
+    let bounds = SizeBounds {
+        max_candidates: 2,
+        max_witnesses: 2,
+        max_constraints: 2,
+    };
     let result = normalize_entry(&mut entry, &bounds);
     assert_eq!(result.truncations.len(), 3);
     assert_eq!(entry.candidates.len(), 2);
@@ -413,7 +476,10 @@ fn normalize_multiple_truncations() {
 #[test]
 fn validate_ok_for_normalized_entry() {
     let mut entry = make_entry(
-        vec![CandidateAction::new("a", 100), CandidateAction::new("b", 200)],
+        vec![
+            CandidateAction::new("a", 100),
+            CandidateAction::new("b", 200),
+        ],
         vec![w("w-a"), w("w-b")],
         vec![c("c-a"), c("c-b")],
     );
@@ -424,72 +490,98 @@ fn validate_ok_for_normalized_entry() {
 #[test]
 fn validate_detects_unsorted_candidates() {
     let entry = make_entry(
-        vec![CandidateAction::new("z", 100), CandidateAction::new("a", 200)],
+        vec![
+            CandidateAction::new("z", 100),
+            CandidateAction::new("a", 200),
+        ],
         vec![],
         vec![],
     );
     let errs = validate_entry_ordering(&entry, &SizeBounds::default()).unwrap_err();
-    assert!(errs.iter().any(|e| matches!(e, OrderingViolation::CandidatesNotSorted { .. })));
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, OrderingViolation::CandidatesNotSorted { .. }))
+    );
 }
 
 #[test]
 fn validate_detects_unsorted_witnesses() {
-    let entry = make_entry(
-        vec![],
-        vec![w("z"), w("a")],
-        vec![],
-    );
+    let entry = make_entry(vec![], vec![w("z"), w("a")], vec![]);
     let errs = validate_entry_ordering(&entry, &SizeBounds::default()).unwrap_err();
-    assert!(errs.iter().any(|e| matches!(e, OrderingViolation::WitnessesNotSorted { .. })));
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, OrderingViolation::WitnessesNotSorted { .. }))
+    );
 }
 
 #[test]
 fn validate_detects_unsorted_constraints() {
-    let entry = make_entry(
-        vec![],
-        vec![],
-        vec![c("z"), c("a")],
-    );
+    let entry = make_entry(vec![], vec![], vec![c("z"), c("a")]);
     let errs = validate_entry_ordering(&entry, &SizeBounds::default()).unwrap_err();
-    assert!(errs.iter().any(|e| matches!(e, OrderingViolation::ConstraintsNotSorted { .. })));
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, OrderingViolation::ConstraintsNotSorted { .. }))
+    );
 }
 
 #[test]
 fn validate_detects_duplicate_witness_ids() {
-    let entry = make_entry(
-        vec![],
-        vec![w("same"), w("same")],
-        vec![],
-    );
+    let entry = make_entry(vec![], vec![w("same"), w("same")], vec![]);
     let errs = validate_entry_ordering(&entry, &SizeBounds::default()).unwrap_err();
-    assert!(errs.iter().any(|e| matches!(e, OrderingViolation::DuplicateWitnessId { .. })));
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, OrderingViolation::DuplicateWitnessId { .. }))
+    );
 }
 
 #[test]
 fn validate_detects_candidates_exceed_bound() {
-    let cands: Vec<CandidateAction> = (0..5).map(|i| CandidateAction::new(format!("a-{i:03}"), i)).collect();
+    let cands: Vec<CandidateAction> = (0..5)
+        .map(|i| CandidateAction::new(format!("a-{i:03}"), i))
+        .collect();
     let entry = make_entry(cands, vec![], vec![]);
-    let bounds = SizeBounds { max_candidates: 3, max_witnesses: 256, max_constraints: 32 };
+    let bounds = SizeBounds {
+        max_candidates: 3,
+        max_witnesses: 256,
+        max_constraints: 32,
+    };
     let errs = validate_entry_ordering(&entry, &bounds).unwrap_err();
-    assert!(errs.iter().any(|e| matches!(e, OrderingViolation::CandidatesExceedBound { .. })));
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, OrderingViolation::CandidatesExceedBound { .. }))
+    );
 }
 
 #[test]
 fn validate_detects_witnesses_exceed_bound() {
     let ws: Vec<Witness> = (0..10).map(|i| w(&format!("w-{i:03}"))).collect();
     let entry = make_entry(vec![], ws, vec![]);
-    let bounds = SizeBounds { max_candidates: 64, max_witnesses: 5, max_constraints: 32 };
+    let bounds = SizeBounds {
+        max_candidates: 64,
+        max_witnesses: 5,
+        max_constraints: 32,
+    };
     let errs = validate_entry_ordering(&entry, &bounds).unwrap_err();
-    assert!(errs.iter().any(|e| matches!(e, OrderingViolation::WitnessesExceedBound { .. })));
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, OrderingViolation::WitnessesExceedBound { .. }))
+    );
 }
 
 #[test]
 fn validate_detects_constraints_exceed_bound() {
     let cs: Vec<Constraint> = (0..10).map(|i| c(&format!("c-{i:03}"))).collect();
     let entry = make_entry(vec![], vec![], cs);
-    let bounds = SizeBounds { max_candidates: 64, max_witnesses: 256, max_constraints: 3 };
+    let bounds = SizeBounds {
+        max_candidates: 64,
+        max_witnesses: 256,
+        max_constraints: 3,
+    };
     let errs = validate_entry_ordering(&entry, &bounds).unwrap_err();
-    assert!(errs.iter().any(|e| matches!(e, OrderingViolation::ConstraintsExceedBound { .. })));
+    assert!(
+        errs.iter()
+            .any(|e| matches!(e, OrderingViolation::ConstraintsExceedBound { .. }))
+    );
 }
 
 #[test]
@@ -505,7 +597,11 @@ fn validate_after_normalize_always_passes() {
         .collect();
     let ws: Vec<Witness> = (0..20).map(|i| w(&format!("w-{}", (20 - i)))).collect();
     let mut entry = make_entry(cands, ws, vec![]);
-    let bounds = SizeBounds { max_candidates: 10, max_witnesses: 10, max_constraints: 32 };
+    let bounds = SizeBounds {
+        max_candidates: 10,
+        max_witnesses: 10,
+        max_constraints: 32,
+    };
     normalize_entry(&mut entry, &bounds);
     assert!(validate_entry_ordering(&entry, &bounds).is_ok());
 }
@@ -519,7 +615,11 @@ fn normalize_is_idempotent() {
         .collect();
     let ws: Vec<Witness> = (0..5).map(|i| w(&format!("w-{}", (5 - i)))).collect();
     let mut entry = make_entry(cands, ws, vec![]);
-    let bounds = SizeBounds { max_candidates: 5, max_witnesses: 3, max_constraints: 32 };
+    let bounds = SizeBounds {
+        max_candidates: 5,
+        max_witnesses: 3,
+        max_constraints: 32,
+    };
 
     normalize_entry(&mut entry, &bounds);
     let json_after_first = serde_json::to_vec(&entry).unwrap();

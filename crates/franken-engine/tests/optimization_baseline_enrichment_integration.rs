@@ -140,8 +140,16 @@ fn percentile_stats_from_empty_returns_none() {
 #[test]
 fn percentile_stats_from_warmup_only_returns_none() {
     let samples = vec![
-        LatencySample { latency_ns: 100, iteration: 0, is_warmup: true },
-        LatencySample { latency_ns: 200, iteration: 1, is_warmup: true },
+        LatencySample {
+            latency_ns: 100,
+            iteration: 0,
+            is_warmup: true,
+        },
+        LatencySample {
+            latency_ns: 200,
+            iteration: 1,
+            is_warmup: true,
+        },
     ];
     assert!(PercentileStats::from_samples(&samples).is_none());
 }
@@ -169,9 +177,21 @@ fn percentile_stats_from_samples_basic() {
 #[test]
 fn percentile_stats_filters_warmup() {
     let samples = vec![
-        LatencySample { latency_ns: 999_999, iteration: 0, is_warmup: true },
-        LatencySample { latency_ns: 100, iteration: 1, is_warmup: false },
-        LatencySample { latency_ns: 200, iteration: 2, is_warmup: false },
+        LatencySample {
+            latency_ns: 999_999,
+            iteration: 0,
+            is_warmup: true,
+        },
+        LatencySample {
+            latency_ns: 100,
+            iteration: 1,
+            is_warmup: false,
+        },
+        LatencySample {
+            latency_ns: 200,
+            iteration: 2,
+            is_warmup: false,
+        },
     ];
     let stats = PercentileStats::from_samples(&samples).unwrap();
     assert_eq!(stats.sample_count, 2);
@@ -215,8 +235,15 @@ fn percentile_stats_cv_millionths() {
 #[test]
 fn percentile_stats_cv_zero_mean() {
     let stats = PercentileStats {
-        p50_ns: 0, p90_ns: 0, p95_ns: 0, p99_ns: 0, p999_ns: 0,
-        min_ns: 0, max_ns: 0, mean_ns: 0, sample_count: 1,
+        p50_ns: 0,
+        p90_ns: 0,
+        p95_ns: 0,
+        p99_ns: 0,
+        p999_ns: 0,
+        min_ns: 0,
+        max_ns: 0,
+        mean_ns: 0,
+        sample_count: 1,
     };
     assert_eq!(stats.cv_millionths(), 0);
 }
@@ -224,8 +251,15 @@ fn percentile_stats_cv_zero_mean() {
 #[test]
 fn percentile_stats_derive_id_deterministic() {
     let stats = PercentileStats {
-        p50_ns: 500, p90_ns: 800, p95_ns: 900, p99_ns: 1000, p999_ns: 1100,
-        min_ns: 100, max_ns: 1200, mean_ns: 600, sample_count: 50,
+        p50_ns: 500,
+        p90_ns: 800,
+        p95_ns: 900,
+        p99_ns: 1000,
+        p999_ns: 1100,
+        min_ns: 100,
+        max_ns: 1200,
+        mean_ns: 600,
+        sample_count: 50,
     };
     assert_eq!(stats.derive_id(), stats.derive_id());
 }
@@ -233,8 +267,15 @@ fn percentile_stats_derive_id_deterministic() {
 #[test]
 fn percentile_stats_json_fields() {
     let stats = PercentileStats {
-        p50_ns: 100, p90_ns: 200, p95_ns: 300, p99_ns: 400, p999_ns: 500,
-        min_ns: 50, max_ns: 600, mean_ns: 250, sample_count: 10,
+        p50_ns: 100,
+        p90_ns: 200,
+        p95_ns: 300,
+        p99_ns: 400,
+        p999_ns: 500,
+        min_ns: 50,
+        max_ns: 600,
+        mean_ns: 250,
+        sample_count: 10,
     };
     let v: serde_json::Value = serde_json::to_value(&stats).unwrap();
     let obj = v.as_object().unwrap();
@@ -252,8 +293,15 @@ fn percentile_stats_json_fields() {
 #[test]
 fn percentile_stats_serde_roundtrip() {
     let stats = PercentileStats {
-        p50_ns: 100, p90_ns: 200, p95_ns: 300, p99_ns: 400, p999_ns: 500,
-        min_ns: 50, max_ns: 600, mean_ns: 250, sample_count: 10,
+        p50_ns: 100,
+        p90_ns: 200,
+        p95_ns: 300,
+        p99_ns: 400,
+        p999_ns: 500,
+        min_ns: 50,
+        max_ns: 600,
+        mean_ns: 250,
+        sample_count: 10,
     };
     let json = serde_json::to_vec(&stats).unwrap();
     let back: PercentileStats = serde_json::from_slice(&json).unwrap();
@@ -376,10 +424,16 @@ fn memory_snapshot_serde_roundtrip() {
 #[test]
 fn profile_kind_as_str_exact() {
     assert_eq!(ProfileKind::CpuFlamegraph.as_str(), "cpu_flamegraph");
-    assert_eq!(ProfileKind::AllocationFlamegraph.as_str(), "allocation_flamegraph");
+    assert_eq!(
+        ProfileKind::AllocationFlamegraph.as_str(),
+        "allocation_flamegraph"
+    );
     assert_eq!(ProfileKind::SyscallTrace.as_str(), "syscall_trace");
     assert_eq!(ProfileKind::CacheMissProfile.as_str(), "cache_miss_profile");
-    assert_eq!(ProfileKind::BranchMispredictionProfile.as_str(), "branch_misprediction_profile");
+    assert_eq!(
+        ProfileKind::BranchMispredictionProfile.as_str(),
+        "branch_misprediction_profile"
+    );
 }
 
 #[test]
@@ -448,13 +502,12 @@ fn profile_artifact_new() {
 
 #[test]
 fn profile_artifact_with_hotspot() {
-    let pa = ProfileArtifact::new(ProfileKind::SyscallTrace, "bench-2")
-        .with_hotspot(Hotspot {
-            symbol: "syscall".to_string(),
-            percentage_millionths: 300_000,
-            samples: 2000,
-            module_path: "kernel".to_string(),
-        });
+    let pa = ProfileArtifact::new(ProfileKind::SyscallTrace, "bench-2").with_hotspot(Hotspot {
+        symbol: "syscall".to_string(),
+        percentage_millionths: 300_000,
+        samples: 2000,
+        module_path: "kernel".to_string(),
+    });
     assert_eq!(pa.hotspots.len(), 1);
 }
 
@@ -466,8 +519,8 @@ fn profile_artifact_derive_id_deterministic() {
 
 #[test]
 fn profile_artifact_serde_roundtrip() {
-    let pa = ProfileArtifact::new(ProfileKind::AllocationFlamegraph, "bench-rt")
-        .with_hotspot(Hotspot {
+    let pa =
+        ProfileArtifact::new(ProfileKind::AllocationFlamegraph, "bench-rt").with_hotspot(Hotspot {
             symbol: "malloc".to_string(),
             percentage_millionths: 150_000,
             samples: 800,
@@ -702,8 +755,15 @@ fn benchmark_result_new_empty() {
 fn benchmark_result_with_latency() {
     let env = BenchmarkEnvironment::default_env("bench-1");
     let stats = PercentileStats {
-        p50_ns: 100, p90_ns: 200, p95_ns: 300, p99_ns: 400, p999_ns: 500,
-        min_ns: 50, max_ns: 600, mean_ns: 250, sample_count: 10,
+        p50_ns: 100,
+        p90_ns: 200,
+        p95_ns: 300,
+        p99_ns: 400,
+        p999_ns: 500,
+        min_ns: 50,
+        max_ns: 600,
+        mean_ns: 250,
+        sample_count: 10,
     };
     let br = BenchmarkResult::new("result-lat", env).with_latency(stats);
     assert!(br.latency.is_some());

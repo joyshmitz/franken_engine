@@ -56,10 +56,7 @@ fn make_multi_hostcall_module(caps: &[&str]) -> Ir3Module {
     }
     instrs.push(Ir3Instruction::Halt);
     m.instructions = instrs;
-    m.required_capabilities = caps
-        .iter()
-        .map(|c| CapabilityTag(c.to_string()))
-        .collect();
+    m.required_capabilities = caps.iter().map(|c| CapabilityTag(c.to_string())).collect();
     m
 }
 
@@ -302,9 +299,7 @@ fn both_lanes_grant_authorized_capability() {
     let qjs = QuickJsLane::with_config(config.clone())
         .execute(&m, "trace-qjs")
         .unwrap();
-    let v8 = V8Lane::with_config(config)
-        .execute(&m, "trace-v8")
-        .unwrap();
+    let v8 = V8Lane::with_config(config).execute(&m, "trace-v8").unwrap();
 
     assert_eq!(
         qjs.value.to_string(),

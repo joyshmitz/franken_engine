@@ -127,9 +127,11 @@ fn backend_id_debug() {
 
 #[test]
 fn backend_id_ordering_deterministic() {
-    let mut ids = [BackendId::oxc(),
+    let mut ids = [
+        BackendId::oxc(),
         BackendId::swc(),
-        BackendId::franken_canonical()];
+        BackendId::franken_canonical(),
+    ];
     ids.sort();
     assert_eq!(ids[0], BackendId::franken_canonical());
     assert_eq!(ids[1], BackendId::oxc());

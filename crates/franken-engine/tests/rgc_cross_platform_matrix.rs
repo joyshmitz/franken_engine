@@ -168,10 +168,7 @@ fn rgc_063_doc_contains_required_sections() {
     ];
 
     for section in required_sections {
-        assert!(
-            doc.contains(section),
-            "missing required section: {section}"
-        );
+        assert!(doc.contains(section), "missing required section: {section}");
     }
 }
 
@@ -183,7 +180,11 @@ fn rgc_063_contract_is_versioned_and_target_complete() {
     assert_eq!(contract.bead_id, "bd-1lsy.11.13");
     assert_eq!(contract.policy_id, "policy-rgc-cross-platform-matrix-v1");
 
-    let target_ids: BTreeSet<_> = contract.targets.iter().map(|t| t.target_id.as_str()).collect();
+    let target_ids: BTreeSet<_> = contract
+        .targets
+        .iter()
+        .map(|t| t.target_id.as_str())
+        .collect();
     let expected_target_ids: BTreeSet<_> = [
         "linux-x64",
         "linux-arm64",
@@ -217,7 +218,11 @@ fn rgc_063_contract_is_versioned_and_target_complete() {
 fn rgc_063_contract_declares_required_logs_artifacts_and_drift_classes() {
     let contract = parse_contract();
 
-    let required_logs: BTreeSet<_> = contract.required_log_keys.iter().map(String::as_str).collect();
+    let required_logs: BTreeSet<_> = contract
+        .required_log_keys
+        .iter()
+        .map(String::as_str)
+        .collect();
     for field in [
         "trace_id",
         "decision_id",
@@ -228,7 +233,10 @@ fn rgc_063_contract_declares_required_logs_artifacts_and_drift_classes() {
         "outcome",
         "error_code",
     ] {
-        assert!(required_logs.contains(field), "missing required log key {field}");
+        assert!(
+            required_logs.contains(field),
+            "missing required log key {field}"
+        );
     }
 
     let required_artifacts: BTreeSet<_> = contract
@@ -263,7 +271,11 @@ fn rgc_063_contract_declares_required_logs_artifacts_and_drift_classes() {
         ("missing_target_input", "critical"),
         ("missing_baseline_input", "critical"),
     ] {
-        assert!(drift_classes.contains(&entry), "missing drift class {:?}", entry);
+        assert!(
+            drift_classes.contains(&entry),
+            "missing drift class {:?}",
+            entry
+        );
     }
 }
 
@@ -277,7 +289,8 @@ fn rgc_063_targets_reference_expected_env_vars_and_replay_script() {
             target.target_id
         );
         assert!(
-            target.replay_command
+            target
+                .replay_command
                 .starts_with("./scripts/e2e/rgc_cross_platform_matrix_replay.sh"),
             "unexpected replay command for {}",
             target.target_id
@@ -416,7 +429,10 @@ fn rgc_063_gate_runner_and_operator_commands_are_wired() {
         "scripts/e2e/rgc_cross_platform_matrix_replay.sh"
     );
     assert!(
-        contract.gate_runner.strict_mode.contains("RGC_CROSS_PLATFORM_REQUIRE_MATRIX")
+        contract
+            .gate_runner
+            .strict_mode
+            .contains("RGC_CROSS_PLATFORM_REQUIRE_MATRIX")
     );
     assert_eq!(
         contract.gate_runner.manifest_schema_version,

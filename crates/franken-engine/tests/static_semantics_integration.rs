@@ -11,8 +11,8 @@ use frankenengine_engine::ast::{
 use frankenengine_engine::ir_contract::{BindingKind, ScopeKind};
 use frankenengine_engine::parser::{CanonicalEs2020Parser, ParserOptions};
 use frankenengine_engine::static_semantics::{
-    analyze, StaticAnalysisResult, StaticError, StaticErrorKind, StaticSemanticsEvent,
     STATIC_SEMANTICS_BEAD_ID, STATIC_SEMANTICS_COMPONENT, STATIC_SEMANTICS_CONTRACT_VERSION,
+    StaticAnalysisResult, StaticError, StaticErrorKind, StaticSemanticsEvent, analyze,
 };
 
 // ---------------------------------------------------------------------------
@@ -394,7 +394,13 @@ fn tdz_self_reference_in_initializer() {
     // statement index so idx < decl_idx is false. This is actually valid per our
     // simplified check (the real TDZ would catch this at runtime).
     // Our static check only catches cross-statement references.
-    assert!(result.passed() || result.errors.iter().any(|e| e.kind == StaticErrorKind::TemporalDeadZone));
+    assert!(
+        result.passed()
+            || result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::TemporalDeadZone)
+    );
 }
 
 // ===========================================================================
@@ -549,10 +555,42 @@ fn scope_bindings_match_result_bindings() {
 #[test]
 fn all_keywords_rejected_as_bindings() {
     let keywords = [
-        "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete",
-        "do", "else", "enum", "export", "extends", "false", "finally", "for", "function", "if",
-        "import", "in", "instanceof", "new", "null", "return", "super", "switch", "this",
-        "throw", "true", "try", "typeof", "var", "void", "while", "with",
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "debugger",
+        "default",
+        "delete",
+        "do",
+        "else",
+        "enum",
+        "export",
+        "extends",
+        "false",
+        "finally",
+        "for",
+        "function",
+        "if",
+        "import",
+        "in",
+        "instanceof",
+        "new",
+        "null",
+        "return",
+        "super",
+        "switch",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typeof",
+        "var",
+        "void",
+        "while",
+        "with",
     ];
 
     for keyword in keywords {
@@ -579,7 +617,17 @@ fn all_keywords_rejected_as_bindings() {
 
 #[test]
 fn strict_reserved_words_in_module() {
-    let strict_reserved = ["implements", "interface", "let", "package", "private", "protected", "public", "static", "yield"];
+    let strict_reserved = [
+        "implements",
+        "interface",
+        "let",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "static",
+        "yield",
+    ];
 
     for word in strict_reserved {
         let tree = make_tree(
@@ -606,8 +654,16 @@ fn strict_reserved_words_in_module() {
 #[test]
 fn normal_identifiers_pass() {
     let names = [
-        "foo", "bar", "myVar", "camelCase", "snake_case", "PascalCase", "_private", "$dollar",
-        "x1", "longVariableName",
+        "foo",
+        "bar",
+        "myVar",
+        "camelCase",
+        "snake_case",
+        "PascalCase",
+        "_private",
+        "$dollar",
+        "x1",
+        "longVariableName",
     ];
 
     for name in names {
@@ -854,10 +910,12 @@ fn multi_declarator_with_duplicate() {
     );
     let result = analyze(&tree);
     assert!(!result.passed());
-    assert!(result
-        .errors
-        .iter()
-        .any(|e| e.kind == StaticErrorKind::DuplicateBinding));
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.kind == StaticErrorKind::DuplicateBinding)
+    );
 }
 
 // ===========================================================================

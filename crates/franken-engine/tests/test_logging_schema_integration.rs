@@ -8,11 +8,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use frankenengine_engine::test_logging_schema::{
-    DataSensitivity, FailureTaxonomy, RGC_STRUCTURED_LOGGING_BEAD_ID,
-    RGC_STRUCTURED_LOGGING_COMPONENT, RGC_STRUCTURED_LOGGING_CONTRACT_SCHEMA_VERSION,
-    RGC_STRUCTURED_LOGGING_FAILURE_CODE, RGC_SECRET_REDACTION_AUDIT_BEAD_ID,
+    DataSensitivity, FailureTaxonomy, RGC_SECRET_REDACTION_AUDIT_BEAD_ID,
     RGC_SECRET_REDACTION_AUDIT_COMPONENT, RGC_SECRET_REDACTION_AUDIT_EVENT,
-    RGC_SECRET_REDACTION_AUDIT_SCHEMA_VERSION, RedactionAction, RedactionRule, RetentionPolicy,
+    RGC_SECRET_REDACTION_AUDIT_SCHEMA_VERSION, RGC_STRUCTURED_LOGGING_BEAD_ID,
+    RGC_STRUCTURED_LOGGING_COMPONENT, RGC_STRUCTURED_LOGGING_CONTRACT_SCHEMA_VERSION,
+    RGC_STRUCTURED_LOGGING_FAILURE_CODE, RedactionAction, RedactionRule, RetentionPolicy,
     TEST_LOG_EVENT_SCHEMA_VERSION, TEST_LOGGING_COMPONENT, TEST_LOGGING_CONTRACT_SCHEMA_VERSION,
     TEST_LOGGING_FAILURE_CODE, TestLane, TestLogEvent, TestLoggingSchemaSpec, ValidationErrorCode,
     ValidationFailure, ValidationReport, apply_redaction, apply_redaction_with_audit,
@@ -914,14 +914,16 @@ fn serialize_redaction_audit_report_roundtrip_is_lossless() {
             "payload.user_email".to_string(),
             "roundtrip@example.com".to_string(),
         ),
-        ("payload.auth_token".to_string(), "secret-inline".to_string()),
+        (
+            "payload.auth_token".to_string(),
+            "secret-inline".to_string(),
+        ),
         ("payload.ip_address".to_string(), "192.0.2.10".to_string()),
     ]);
     let spec = TestLoggingSchemaSpec::default();
 
     let report = apply_redaction_with_audit(&record, &spec);
-    let serialized =
-        serialize_redaction_audit_report(&report).expect("report should serialize");
+    let serialized = serialize_redaction_audit_report(&report).expect("report should serialize");
     let decoded =
         deserialize_redaction_audit_report(&serialized).expect("report should deserialize");
 

@@ -6,11 +6,10 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenengine_engine::rgc_test_harness::{
-    BaselineScenarioDomain, BaselineScenarioOutcome,
-    DeterministicTestContext, EventInput, HarnessLane, HarnessRunManifest,
-    RGC_TEST_HARNESS_EVENT_SCHEMA_VERSION, RGC_TEST_HARNESS_MANIFEST_SCHEMA_VERSION,
-    baseline_e2e_scenario_registry, load_json_fixture, select_baseline_e2e_scenarios,
-    validate_artifact_triad, write_artifact_triad,
+    BaselineScenarioDomain, BaselineScenarioOutcome, DeterministicTestContext, EventInput,
+    HarnessLane, HarnessRunManifest, RGC_TEST_HARNESS_EVENT_SCHEMA_VERSION,
+    RGC_TEST_HARNESS_MANIFEST_SCHEMA_VERSION, baseline_e2e_scenario_registry, load_json_fixture,
+    select_baseline_e2e_scenarios, validate_artifact_triad, write_artifact_triad,
 };
 use serde::{Deserialize, Serialize};
 
@@ -156,7 +155,11 @@ fn rgc_harness_fixture_loader_rejects_escape_paths() {
 #[test]
 fn rgc_baseline_registry_selection_and_validator_cover_representative_lanes() {
     let registry = baseline_e2e_scenario_registry();
-    assert_eq!(registry.len(), 6, "expected runtime/module/security happy+failure");
+    assert_eq!(
+        registry.len(),
+        6,
+        "expected runtime/module/security happy+failure"
+    );
     assert!(registry.iter().any(|scenario| {
         scenario.domain == BaselineScenarioDomain::Runtime
             && scenario.outcome == BaselineScenarioOutcome::CanonicalFailure
@@ -171,15 +174,24 @@ fn rgc_baseline_registry_selection_and_validator_cover_representative_lanes() {
     }));
 
     let selected = select_baseline_e2e_scenarios(
-        &[BaselineScenarioDomain::Runtime, BaselineScenarioDomain::Security],
+        &[
+            BaselineScenarioDomain::Runtime,
+            BaselineScenarioDomain::Security,
+        ],
         true,
     );
     assert_eq!(selected.len(), 4);
     let selected_repeat = select_baseline_e2e_scenarios(
-        &[BaselineScenarioDomain::Runtime, BaselineScenarioDomain::Security],
+        &[
+            BaselineScenarioDomain::Runtime,
+            BaselineScenarioDomain::Security,
+        ],
         true,
     );
-    assert_eq!(selected, selected_repeat, "selection order must be deterministic");
+    assert_eq!(
+        selected, selected_repeat,
+        "selection order must be deterministic"
+    );
 
     let root = temp_dir("rgc_baseline_validator");
     for (lane, scenario_id, fixture_id, component, event, error_code) in [

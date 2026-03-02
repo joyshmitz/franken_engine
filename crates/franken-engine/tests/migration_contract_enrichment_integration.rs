@@ -49,22 +49,36 @@ fn passing_verification(id: &str) -> VerificationResult {
 // ── CutoverType ────────────────────────────────────────────────────────
 
 #[test]
-fn cutover_type_display_hard() { assert_eq!(CutoverType::HardCutover.to_string(), "hard_cutover"); }
+fn cutover_type_display_hard() {
+    assert_eq!(CutoverType::HardCutover.to_string(), "hard_cutover");
+}
 #[test]
-fn cutover_type_display_soft() { assert_eq!(CutoverType::SoftMigration.to_string(), "soft_migration"); }
+fn cutover_type_display_soft() {
+    assert_eq!(CutoverType::SoftMigration.to_string(), "soft_migration");
+}
 #[test]
-fn cutover_type_display_parallel() { assert_eq!(CutoverType::ParallelRun.to_string(), "parallel_run"); }
+fn cutover_type_display_parallel() {
+    assert_eq!(CutoverType::ParallelRun.to_string(), "parallel_run");
+}
 
 #[test]
 fn cutover_type_debug_distinct() {
-    let variants = [CutoverType::HardCutover, CutoverType::SoftMigration, CutoverType::ParallelRun];
+    let variants = [
+        CutoverType::HardCutover,
+        CutoverType::SoftMigration,
+        CutoverType::ParallelRun,
+    ];
     let dbgs: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
     assert_eq!(dbgs.len(), 3);
 }
 
 #[test]
 fn cutover_type_serde_roundtrip() {
-    for ct in [CutoverType::HardCutover, CutoverType::SoftMigration, CutoverType::ParallelRun] {
+    for ct in [
+        CutoverType::HardCutover,
+        CutoverType::SoftMigration,
+        CutoverType::ParallelRun,
+    ] {
         let json = serde_json::to_vec(&ct).unwrap();
         let back: CutoverType = serde_json::from_slice(&json).unwrap();
         assert_eq!(ct, back);
@@ -75,14 +89,26 @@ fn cutover_type_serde_roundtrip() {
 
 #[test]
 fn object_class_display_exact() {
-    assert_eq!(ObjectClass::SerializationSchema.to_string(), "serialization_schema");
+    assert_eq!(
+        ObjectClass::SerializationSchema.to_string(),
+        "serialization_schema"
+    );
     assert_eq!(ObjectClass::KeyFormat.to_string(), "key_format");
     assert_eq!(ObjectClass::TokenFormat.to_string(), "token_format");
-    assert_eq!(ObjectClass::CheckpointFormat.to_string(), "checkpoint_format");
-    assert_eq!(ObjectClass::RevocationFormat.to_string(), "revocation_format");
+    assert_eq!(
+        ObjectClass::CheckpointFormat.to_string(),
+        "checkpoint_format"
+    );
+    assert_eq!(
+        ObjectClass::RevocationFormat.to_string(),
+        "revocation_format"
+    );
     assert_eq!(ObjectClass::PolicyStructure.to_string(), "policy_structure");
     assert_eq!(ObjectClass::EvidenceFormat.to_string(), "evidence_format");
-    assert_eq!(ObjectClass::AttestationFormat.to_string(), "attestation_format");
+    assert_eq!(
+        ObjectClass::AttestationFormat.to_string(),
+        "attestation_format"
+    );
 }
 
 #[test]
@@ -115,8 +141,14 @@ fn migration_step_display_exact() {
 
 #[test]
 fn migration_step_next_pipeline() {
-    assert_eq!(MigrationStep::PreMigration.next(), Some(MigrationStep::Checkpoint));
-    assert_eq!(MigrationStep::Checkpoint.next(), Some(MigrationStep::Execute));
+    assert_eq!(
+        MigrationStep::PreMigration.next(),
+        Some(MigrationStep::Checkpoint)
+    );
+    assert_eq!(
+        MigrationStep::Checkpoint.next(),
+        Some(MigrationStep::Execute)
+    );
     assert_eq!(MigrationStep::Execute.next(), Some(MigrationStep::Verify));
     assert_eq!(MigrationStep::Verify.next(), Some(MigrationStep::Commit));
     assert_eq!(MigrationStep::Commit.next(), None);
@@ -172,10 +204,17 @@ fn migration_state_terminal() {
 #[test]
 fn migration_state_serde_roundtrip() {
     let states = [
-        MigrationState::Declared, MigrationState::DryRunning, MigrationState::DryRunPassed,
-        MigrationState::DryRunFailed, MigrationState::Executing, MigrationState::Verifying,
-        MigrationState::Verified, MigrationState::VerificationFailed,
-        MigrationState::Committed, MigrationState::RollingBack, MigrationState::RolledBack,
+        MigrationState::Declared,
+        MigrationState::DryRunning,
+        MigrationState::DryRunPassed,
+        MigrationState::DryRunFailed,
+        MigrationState::Executing,
+        MigrationState::Verifying,
+        MigrationState::Verified,
+        MigrationState::VerificationFailed,
+        MigrationState::Committed,
+        MigrationState::RollingBack,
+        MigrationState::RolledBack,
     ];
     for s in states {
         let json = serde_json::to_vec(&s).unwrap();
@@ -188,7 +227,9 @@ fn migration_state_serde_roundtrip() {
 
 #[test]
 fn error_display_not_found() {
-    let e = MigrationContractError::MigrationNotFound { migration_id: "m1".to_string() };
+    let e = MigrationContractError::MigrationNotFound {
+        migration_id: "m1".to_string(),
+    };
     assert_eq!(e.to_string(), "migration not found: m1");
 }
 
@@ -208,7 +249,10 @@ fn error_display_dry_run_failed() {
         unconvertible_count: 5,
         detail: "bad data".to_string(),
     };
-    assert_eq!(e.to_string(), "dry run failed for m1: 5 unconvertible: bad data");
+    assert_eq!(
+        e.to_string(),
+        "dry run failed for m1: 5 unconvertible: bad data"
+    );
 }
 
 #[test]
@@ -218,7 +262,10 @@ fn error_display_verification_failed() {
         discrepancy_count: 3,
         detail: "mismatch".to_string(),
     };
-    assert_eq!(e.to_string(), "verification failed for m1: 3 discrepancies: mismatch");
+    assert_eq!(
+        e.to_string(),
+        "verification failed for m1: 3 discrepancies: mismatch"
+    );
 }
 
 #[test]
@@ -228,12 +275,17 @@ fn error_display_old_format_rejected() {
         object_class: ObjectClass::KeyFormat,
         detail: "old".to_string(),
     };
-    assert_eq!(e.to_string(), "old format key_format rejected after m1: old");
+    assert_eq!(
+        e.to_string(),
+        "old format key_format rejected after m1: old"
+    );
 }
 
 #[test]
 fn error_display_duplicate() {
-    let e = MigrationContractError::DuplicateMigration { migration_id: "m1".to_string() };
+    let e = MigrationContractError::DuplicateMigration {
+        migration_id: "m1".to_string(),
+    };
     assert_eq!(e.to_string(), "duplicate migration: m1");
 }
 
@@ -257,7 +309,9 @@ fn error_display_parallel_discrepancy() {
 
 #[test]
 fn error_is_std_error() {
-    let e = MigrationContractError::MigrationNotFound { migration_id: "x".to_string() };
+    let e = MigrationContractError::MigrationNotFound {
+        migration_id: "x".to_string(),
+    };
     let err: &dyn std::error::Error = &e;
     assert!(!err.to_string().is_empty());
 }
@@ -265,7 +319,9 @@ fn error_is_std_error() {
 #[test]
 fn error_serde_roundtrip_all() {
     let variants = vec![
-        MigrationContractError::MigrationNotFound { migration_id: "a".to_string() },
+        MigrationContractError::MigrationNotFound {
+            migration_id: "a".to_string(),
+        },
         MigrationContractError::InvalidTransition {
             from: MigrationState::Declared,
             to: MigrationState::Executing,
@@ -285,7 +341,9 @@ fn error_serde_roundtrip_all() {
             object_class: ObjectClass::TokenFormat,
             detail: "z".to_string(),
         },
-        MigrationContractError::DuplicateMigration { migration_id: "e".to_string() },
+        MigrationContractError::DuplicateMigration {
+            migration_id: "e".to_string(),
+        },
         MigrationContractError::RollbackFailed {
             migration_id: "f".to_string(),
             detail: "w".to_string(),
@@ -306,23 +364,79 @@ fn error_serde_roundtrip_all() {
 
 #[test]
 fn error_code_all_stable() {
-    assert_eq!(error_code(&MigrationContractError::MigrationNotFound { migration_id: "x".to_string() }), "MC_MIGRATION_NOT_FOUND");
-    assert_eq!(error_code(&MigrationContractError::InvalidTransition { from: MigrationState::Declared, to: MigrationState::Executing }), "MC_INVALID_TRANSITION");
-    assert_eq!(error_code(&MigrationContractError::DryRunFailed { migration_id: "x".to_string(), unconvertible_count: 0, detail: "".to_string() }), "MC_DRY_RUN_FAILED");
-    assert_eq!(error_code(&MigrationContractError::VerificationFailed { migration_id: "x".to_string(), discrepancy_count: 0, detail: "".to_string() }), "MC_VERIFICATION_FAILED");
-    assert_eq!(error_code(&MigrationContractError::OldFormatRejected { migration_id: "x".to_string(), object_class: ObjectClass::KeyFormat, detail: "".to_string() }), "MC_OLD_FORMAT_REJECTED");
-    assert_eq!(error_code(&MigrationContractError::DuplicateMigration { migration_id: "x".to_string() }), "MC_DUPLICATE_MIGRATION");
-    assert_eq!(error_code(&MigrationContractError::RollbackFailed { migration_id: "x".to_string(), detail: "".to_string() }), "MC_ROLLBACK_FAILED");
-    assert_eq!(error_code(&MigrationContractError::ParallelRunDiscrepancy { migration_id: "x".to_string(), discrepancy_count: 0 }), "MC_PARALLEL_DISCREPANCY");
+    assert_eq!(
+        error_code(&MigrationContractError::MigrationNotFound {
+            migration_id: "x".to_string()
+        }),
+        "MC_MIGRATION_NOT_FOUND"
+    );
+    assert_eq!(
+        error_code(&MigrationContractError::InvalidTransition {
+            from: MigrationState::Declared,
+            to: MigrationState::Executing
+        }),
+        "MC_INVALID_TRANSITION"
+    );
+    assert_eq!(
+        error_code(&MigrationContractError::DryRunFailed {
+            migration_id: "x".to_string(),
+            unconvertible_count: 0,
+            detail: "".to_string()
+        }),
+        "MC_DRY_RUN_FAILED"
+    );
+    assert_eq!(
+        error_code(&MigrationContractError::VerificationFailed {
+            migration_id: "x".to_string(),
+            discrepancy_count: 0,
+            detail: "".to_string()
+        }),
+        "MC_VERIFICATION_FAILED"
+    );
+    assert_eq!(
+        error_code(&MigrationContractError::OldFormatRejected {
+            migration_id: "x".to_string(),
+            object_class: ObjectClass::KeyFormat,
+            detail: "".to_string()
+        }),
+        "MC_OLD_FORMAT_REJECTED"
+    );
+    assert_eq!(
+        error_code(&MigrationContractError::DuplicateMigration {
+            migration_id: "x".to_string()
+        }),
+        "MC_DUPLICATE_MIGRATION"
+    );
+    assert_eq!(
+        error_code(&MigrationContractError::RollbackFailed {
+            migration_id: "x".to_string(),
+            detail: "".to_string()
+        }),
+        "MC_ROLLBACK_FAILED"
+    );
+    assert_eq!(
+        error_code(&MigrationContractError::ParallelRunDiscrepancy {
+            migration_id: "x".to_string(),
+            discrepancy_count: 0
+        }),
+        "MC_PARALLEL_DISCREPANCY"
+    );
 }
 
 #[test]
 fn error_codes_all_unique() {
     let codes: BTreeSet<&str> = vec![
-        "MC_MIGRATION_NOT_FOUND", "MC_INVALID_TRANSITION", "MC_DRY_RUN_FAILED",
-        "MC_VERIFICATION_FAILED", "MC_OLD_FORMAT_REJECTED", "MC_DUPLICATE_MIGRATION",
-        "MC_ROLLBACK_FAILED", "MC_PARALLEL_DISCREPANCY",
-    ].into_iter().collect();
+        "MC_MIGRATION_NOT_FOUND",
+        "MC_INVALID_TRANSITION",
+        "MC_DRY_RUN_FAILED",
+        "MC_VERIFICATION_FAILED",
+        "MC_OLD_FORMAT_REJECTED",
+        "MC_DUPLICATE_MIGRATION",
+        "MC_ROLLBACK_FAILED",
+        "MC_PARALLEL_DISCREPANCY",
+    ]
+    .into_iter()
+    .collect();
     assert_eq!(codes.len(), 8);
 }
 
@@ -429,7 +543,10 @@ fn runner_declare_duplicate_error() {
     let mut runner = MigrationRunner::new();
     runner.declare(test_declaration("m1"), "t1").unwrap();
     let err = runner.declare(test_declaration("m1"), "t2").unwrap_err();
-    assert!(matches!(err, MigrationContractError::DuplicateMigration { .. }));
+    assert!(matches!(
+        err,
+        MigrationContractError::DuplicateMigration { .. }
+    ));
 }
 
 #[test]
@@ -443,7 +560,9 @@ fn runner_full_success_pipeline() {
     assert_eq!(runner.state("m1"), Some(MigrationState::Executing));
     runner.complete_execution("m1", 100, "t4").unwrap();
     assert_eq!(runner.state("m1"), Some(MigrationState::Verifying));
-    runner.verify("m1", passing_verification("m1"), "t5").unwrap();
+    runner
+        .verify("m1", passing_verification("m1"), "t5")
+        .unwrap();
     assert_eq!(runner.state("m1"), Some(MigrationState::Verified));
     runner.commit("m1", "t6").unwrap();
     assert_eq!(runner.state("m1"), Some(MigrationState::Committed));
@@ -480,7 +599,10 @@ fn runner_verification_failure() {
         details: vec!["off".to_string()],
     };
     let err = runner.verify("m1", result, "t5").unwrap_err();
-    assert!(matches!(err, MigrationContractError::VerificationFailed { .. }));
+    assert!(matches!(
+        err,
+        MigrationContractError::VerificationFailed { .. }
+    ));
     assert_eq!(runner.state("m1"), Some(MigrationState::VerificationFailed));
 }
 
@@ -501,10 +623,15 @@ fn runner_rollback_from_terminal_fails() {
     runner.dry_run("m1", passing_dry_run("m1"), "t2").unwrap();
     runner.create_checkpoint("m1", 1, "t3").unwrap();
     runner.complete_execution("m1", 100, "t4").unwrap();
-    runner.verify("m1", passing_verification("m1"), "t5").unwrap();
+    runner
+        .verify("m1", passing_verification("m1"), "t5")
+        .unwrap();
     runner.commit("m1", "t6").unwrap();
     let err = runner.rollback("m1", "t7").unwrap_err();
-    assert!(matches!(err, MigrationContractError::InvalidTransition { .. }));
+    assert!(matches!(
+        err,
+        MigrationContractError::InvalidTransition { .. }
+    ));
 }
 
 #[test]
@@ -513,14 +640,22 @@ fn runner_invalid_step_order() {
     runner.declare(test_declaration("m1"), "t1").unwrap();
     // Can't checkpoint before dry run
     let err = runner.create_checkpoint("m1", 1, "t2").unwrap_err();
-    assert!(matches!(err, MigrationContractError::InvalidTransition { .. }));
+    assert!(matches!(
+        err,
+        MigrationContractError::InvalidTransition { .. }
+    ));
 }
 
 #[test]
 fn runner_not_found() {
     let mut runner = MigrationRunner::new();
-    let err = runner.dry_run("nonexistent", passing_dry_run("x"), "t1").unwrap_err();
-    assert!(matches!(err, MigrationContractError::MigrationNotFound { .. }));
+    let err = runner
+        .dry_run("nonexistent", passing_dry_run("x"), "t1")
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        MigrationContractError::MigrationNotFound { .. }
+    ));
 }
 
 // ── Format acceptance ──────────────────────────────────────────────────
@@ -532,15 +667,30 @@ fn format_acceptance_after_hard_cutover() {
     runner.dry_run("m1", passing_dry_run("m1"), "t2").unwrap();
     runner.create_checkpoint("m1", 1, "t3").unwrap();
     runner.complete_execution("m1", 100, "t4").unwrap();
-    runner.verify("m1", passing_verification("m1"), "t5").unwrap();
+    runner
+        .verify("m1", passing_verification("m1"), "t5")
+        .unwrap();
     runner.commit("m1", "t6").unwrap();
     // Old format (v1 key_format) should be rejected
-    let err = runner.check_format_acceptance(ObjectClass::KeyFormat, "v1").unwrap_err();
-    assert!(matches!(err, MigrationContractError::OldFormatRejected { .. }));
+    let err = runner
+        .check_format_acceptance(ObjectClass::KeyFormat, "v1")
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        MigrationContractError::OldFormatRejected { .. }
+    ));
     // Different object class is fine
-    assert!(runner.check_format_acceptance(ObjectClass::TokenFormat, "v1").is_ok());
+    assert!(
+        runner
+            .check_format_acceptance(ObjectClass::TokenFormat, "v1")
+            .is_ok()
+    );
     // New version is fine
-    assert!(runner.check_format_acceptance(ObjectClass::KeyFormat, "v2").is_ok());
+    assert!(
+        runner
+            .check_format_acceptance(ObjectClass::KeyFormat, "v2")
+            .is_ok()
+    );
 }
 
 #[test]
@@ -553,10 +703,14 @@ fn soft_migration_window() {
     // Before commit: window is open
     assert_eq!(runner.check_soft_migration_window("soft-m1"), Some(true));
     // Complete the pipeline
-    runner.dry_run("soft-m1", passing_dry_run("soft-m1"), "t2").unwrap();
+    runner
+        .dry_run("soft-m1", passing_dry_run("soft-m1"), "t2")
+        .unwrap();
     runner.create_checkpoint("soft-m1", 1, "t3").unwrap();
     runner.complete_execution("soft-m1", 50, "t4").unwrap();
-    runner.verify("soft-m1", passing_verification("soft-m1"), "t5").unwrap();
+    runner
+        .verify("soft-m1", passing_verification("soft-m1"), "t5")
+        .unwrap();
     runner.set_tick(100);
     runner.commit("soft-m1", "t6").unwrap();
     // After commit, tick < end_tick: window still open
@@ -643,7 +797,9 @@ fn applied_record_serde_roundtrip() {
     runner.dry_run("m1", passing_dry_run("m1"), "t2").unwrap();
     runner.create_checkpoint("m1", 7, "t3").unwrap();
     runner.complete_execution("m1", 100, "t4").unwrap();
-    runner.verify("m1", passing_verification("m1"), "t5").unwrap();
+    runner
+        .verify("m1", passing_verification("m1"), "t5")
+        .unwrap();
     runner.commit("m1", "t6").unwrap();
     let records = runner.applied_migrations();
     assert_eq!(records.len(), 1);

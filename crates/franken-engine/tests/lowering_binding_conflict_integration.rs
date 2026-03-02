@@ -16,7 +16,7 @@ use frankenengine_engine::ast::{
 };
 use frankenengine_engine::ir_contract::Ir0Module;
 use frankenengine_engine::lowering_pipeline::{
-    lower_ir0_to_ir1, lower_ir0_to_ir3, LoweringContext, LoweringPipelineError,
+    LoweringContext, LoweringPipelineError, lower_ir0_to_ir1, lower_ir0_to_ir3,
 };
 use frankenengine_engine::parser::{
     SemanticDiagnosticCategory, SemanticError, SemanticErrorCode, SemanticValidationResult,
@@ -160,8 +160,16 @@ fn duplicate_let_same_scope() {
     let result = lower(
         ParseGoal::Script,
         vec![
-            var_decl(VariableDeclarationKind::Let, "x", Some(Expression::NumericLiteral(1))),
-            var_decl(VariableDeclarationKind::Let, "x", Some(Expression::NumericLiteral(2))),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "x",
+                Some(Expression::NumericLiteral(1)),
+            ),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "x",
+                Some(Expression::NumericLiteral(2)),
+            ),
         ],
         "dup_let.js",
     );
@@ -176,8 +184,16 @@ fn duplicate_const_same_scope() {
     let result = lower(
         ParseGoal::Script,
         vec![
-            var_decl(VariableDeclarationKind::Const, "k", Some(Expression::NumericLiteral(1))),
-            var_decl(VariableDeclarationKind::Const, "k", Some(Expression::NumericLiteral(2))),
+            var_decl(
+                VariableDeclarationKind::Const,
+                "k",
+                Some(Expression::NumericLiteral(1)),
+            ),
+            var_decl(
+                VariableDeclarationKind::Const,
+                "k",
+                Some(Expression::NumericLiteral(2)),
+            ),
         ],
         "dup_const.js",
     );
@@ -189,8 +205,16 @@ fn let_then_const_same_name() {
     let result = lower(
         ParseGoal::Script,
         vec![
-            var_decl(VariableDeclarationKind::Let, "x", Some(Expression::NumericLiteral(1))),
-            var_decl(VariableDeclarationKind::Const, "x", Some(Expression::NumericLiteral(2))),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "x",
+                Some(Expression::NumericLiteral(1)),
+            ),
+            var_decl(
+                VariableDeclarationKind::Const,
+                "x",
+                Some(Expression::NumericLiteral(2)),
+            ),
         ],
         "let_then_const.js",
     );
@@ -202,8 +226,16 @@ fn const_then_let_same_name() {
     let result = lower(
         ParseGoal::Script,
         vec![
-            var_decl(VariableDeclarationKind::Const, "x", Some(Expression::NumericLiteral(1))),
-            var_decl(VariableDeclarationKind::Let, "x", Some(Expression::NumericLiteral(2))),
+            var_decl(
+                VariableDeclarationKind::Const,
+                "x",
+                Some(Expression::NumericLiteral(1)),
+            ),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "x",
+                Some(Expression::NumericLiteral(2)),
+            ),
         ],
         "const_then_let.js",
     );
@@ -219,8 +251,16 @@ fn var_redeclaration_is_legal() {
     let result = lower(
         ParseGoal::Script,
         vec![
-            var_decl(VariableDeclarationKind::Var, "x", Some(Expression::NumericLiteral(1))),
-            var_decl(VariableDeclarationKind::Var, "x", Some(Expression::NumericLiteral(2))),
+            var_decl(
+                VariableDeclarationKind::Var,
+                "x",
+                Some(Expression::NumericLiteral(1)),
+            ),
+            var_decl(
+                VariableDeclarationKind::Var,
+                "x",
+                Some(Expression::NumericLiteral(2)),
+            ),
         ],
         "var_reuse.js",
     );
@@ -232,9 +272,21 @@ fn var_triple_redeclaration_is_legal() {
     let result = lower(
         ParseGoal::Script,
         vec![
-            var_decl(VariableDeclarationKind::Var, "v", Some(Expression::NumericLiteral(1))),
-            var_decl(VariableDeclarationKind::Var, "v", Some(Expression::NumericLiteral(2))),
-            var_decl(VariableDeclarationKind::Var, "v", Some(Expression::NumericLiteral(3))),
+            var_decl(
+                VariableDeclarationKind::Var,
+                "v",
+                Some(Expression::NumericLiteral(1)),
+            ),
+            var_decl(
+                VariableDeclarationKind::Var,
+                "v",
+                Some(Expression::NumericLiteral(2)),
+            ),
+            var_decl(
+                VariableDeclarationKind::Var,
+                "v",
+                Some(Expression::NumericLiteral(3)),
+            ),
         ],
         "var_triple.js",
     );
@@ -250,8 +302,16 @@ fn let_then_var_collision() {
     let result = lower(
         ParseGoal::Script,
         vec![
-            var_decl(VariableDeclarationKind::Let, "x", Some(Expression::NumericLiteral(1))),
-            var_decl(VariableDeclarationKind::Var, "x", Some(Expression::NumericLiteral(2))),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "x",
+                Some(Expression::NumericLiteral(1)),
+            ),
+            var_decl(
+                VariableDeclarationKind::Var,
+                "x",
+                Some(Expression::NumericLiteral(2)),
+            ),
         ],
         "let_var.js",
     );
@@ -266,8 +326,16 @@ fn var_then_let_collision() {
     let result = lower(
         ParseGoal::Script,
         vec![
-            var_decl(VariableDeclarationKind::Var, "x", Some(Expression::NumericLiteral(1))),
-            var_decl(VariableDeclarationKind::Let, "x", Some(Expression::NumericLiteral(2))),
+            var_decl(
+                VariableDeclarationKind::Var,
+                "x",
+                Some(Expression::NumericLiteral(1)),
+            ),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "x",
+                Some(Expression::NumericLiteral(2)),
+            ),
         ],
         "var_let.js",
     );
@@ -282,8 +350,16 @@ fn const_then_var_collision() {
     let result = lower(
         ParseGoal::Script,
         vec![
-            var_decl(VariableDeclarationKind::Const, "x", Some(Expression::NumericLiteral(1))),
-            var_decl(VariableDeclarationKind::Var, "x", Some(Expression::NumericLiteral(2))),
+            var_decl(
+                VariableDeclarationKind::Const,
+                "x",
+                Some(Expression::NumericLiteral(1)),
+            ),
+            var_decl(
+                VariableDeclarationKind::Var,
+                "x",
+                Some(Expression::NumericLiteral(2)),
+            ),
         ],
         "const_var.js",
     );
@@ -295,8 +371,16 @@ fn var_then_const_collision() {
     let result = lower(
         ParseGoal::Script,
         vec![
-            var_decl(VariableDeclarationKind::Var, "x", Some(Expression::NumericLiteral(1))),
-            var_decl(VariableDeclarationKind::Const, "x", Some(Expression::NumericLiteral(2))),
+            var_decl(
+                VariableDeclarationKind::Var,
+                "x",
+                Some(Expression::NumericLiteral(1)),
+            ),
+            var_decl(
+                VariableDeclarationKind::Const,
+                "x",
+                Some(Expression::NumericLiteral(2)),
+            ),
         ],
         "var_const.js",
     );
@@ -329,7 +413,11 @@ fn import_then_let_same_name() {
         ParseGoal::Module,
         vec![
             import_stmt(Some("x"), "mod"),
-            var_decl(VariableDeclarationKind::Let, "x", Some(Expression::NumericLiteral(1))),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "x",
+                Some(Expression::NumericLiteral(1)),
+            ),
         ],
         "import_let.mjs",
     );
@@ -342,7 +430,11 @@ fn import_then_var_same_name() {
         ParseGoal::Module,
         vec![
             import_stmt(Some("x"), "mod"),
-            var_decl(VariableDeclarationKind::Var, "x", Some(Expression::NumericLiteral(1))),
+            var_decl(
+                VariableDeclarationKind::Var,
+                "x",
+                Some(Expression::NumericLiteral(1)),
+            ),
         ],
         "import_var.mjs",
     );
@@ -363,7 +455,10 @@ fn identifier_ref_does_not_conflict_with_import() {
         ],
         "import_ref.mjs",
     );
-    assert!(result.is_ok(), "referencing imported binding must not conflict: {result:?}");
+    assert!(
+        result.is_ok(),
+        "referencing imported binding must not conflict: {result:?}"
+    );
 }
 
 #[test]
@@ -371,12 +466,19 @@ fn identifier_ref_does_not_conflict_with_let() {
     let result = lower(
         ParseGoal::Script,
         vec![
-            var_decl(VariableDeclarationKind::Let, "x", Some(Expression::NumericLiteral(1))),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "x",
+                Some(Expression::NumericLiteral(1)),
+            ),
             expr_stmt(Expression::Identifier("x".to_string())),
         ],
         "let_ref.js",
     );
-    assert!(result.is_ok(), "referencing let binding must not conflict: {result:?}");
+    assert!(
+        result.is_ok(),
+        "referencing let binding must not conflict: {result:?}"
+    );
 }
 
 #[test]
@@ -384,12 +486,19 @@ fn identifier_ref_does_not_conflict_with_var() {
     let result = lower(
         ParseGoal::Script,
         vec![
-            var_decl(VariableDeclarationKind::Var, "x", Some(Expression::NumericLiteral(1))),
+            var_decl(
+                VariableDeclarationKind::Var,
+                "x",
+                Some(Expression::NumericLiteral(1)),
+            ),
             expr_stmt(Expression::Identifier("x".to_string())),
         ],
         "var_ref.js",
     );
-    assert!(result.is_ok(), "referencing var binding must not conflict: {result:?}");
+    assert!(
+        result.is_ok(),
+        "referencing var binding must not conflict: {result:?}"
+    );
 }
 
 #[test]
@@ -398,7 +507,11 @@ fn forward_reference_before_var_declaration() {
         ParseGoal::Script,
         vec![
             expr_stmt(Expression::Identifier("x".to_string())),
-            var_decl(VariableDeclarationKind::Var, "x", Some(Expression::NumericLiteral(1))),
+            var_decl(
+                VariableDeclarationKind::Var,
+                "x",
+                Some(Expression::NumericLiteral(1)),
+            ),
         ],
         "forward_ref.js",
     );
@@ -413,14 +526,21 @@ fn multiple_references_to_same_binding() {
     let result = lower(
         ParseGoal::Script,
         vec![
-            var_decl(VariableDeclarationKind::Let, "x", Some(Expression::NumericLiteral(1))),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "x",
+                Some(Expression::NumericLiteral(1)),
+            ),
             expr_stmt(Expression::Identifier("x".to_string())),
             expr_stmt(Expression::Identifier("x".to_string())),
             expr_stmt(Expression::Identifier("x".to_string())),
         ],
         "multi_ref.js",
     );
-    assert!(result.is_ok(), "multiple references to same binding should succeed");
+    assert!(
+        result.is_ok(),
+        "multiple references to same binding should succeed"
+    );
 }
 
 // =========================================================================
@@ -501,8 +621,16 @@ fn full_pipeline_rejects_semantic_error() {
     let tree = make_tree(
         ParseGoal::Script,
         vec![
-            var_decl(VariableDeclarationKind::Let, "x", Some(Expression::NumericLiteral(1))),
-            var_decl(VariableDeclarationKind::Let, "x", Some(Expression::NumericLiteral(2))),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "x",
+                Some(Expression::NumericLiteral(1)),
+            ),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "x",
+                Some(Expression::NumericLiteral(2)),
+            ),
         ],
     );
     let ir0 = Ir0Module::from_syntax_tree(tree, "dup_let_pipeline.js");
@@ -516,11 +644,31 @@ fn full_pipeline_script_with_all_literal_types() {
     let tree = make_tree(
         ParseGoal::Script,
         vec![
-            var_decl(VariableDeclarationKind::Let, "s", Some(Expression::StringLiteral("hi".to_string()))),
-            var_decl(VariableDeclarationKind::Let, "n", Some(Expression::NumericLiteral(42))),
-            var_decl(VariableDeclarationKind::Let, "b", Some(Expression::BooleanLiteral(true))),
-            var_decl(VariableDeclarationKind::Let, "u", Some(Expression::UndefinedLiteral)),
-            var_decl(VariableDeclarationKind::Let, "z", Some(Expression::NullLiteral)),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "s",
+                Some(Expression::StringLiteral("hi".to_string())),
+            ),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "n",
+                Some(Expression::NumericLiteral(42)),
+            ),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "b",
+                Some(Expression::BooleanLiteral(true)),
+            ),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "u",
+                Some(Expression::UndefinedLiteral),
+            ),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "z",
+                Some(Expression::NullLiteral),
+            ),
         ],
     );
     let ir0 = Ir0Module::from_syntax_tree(tree, "all_literals.js");
@@ -545,11 +693,18 @@ fn semantic_error_code_serde_roundtrip_all_variants() {
 
 #[test]
 fn semantic_error_codes_have_distinct_display_values() {
-    let displays: Vec<String> = SemanticErrorCode::ALL.iter().map(|c| format!("{c}")).collect();
+    let displays: Vec<String> = SemanticErrorCode::ALL
+        .iter()
+        .map(|c| format!("{c}"))
+        .collect();
     let mut sorted = displays.clone();
     sorted.sort();
     sorted.dedup();
-    assert_eq!(displays.len(), sorted.len(), "all display values must be distinct");
+    assert_eq!(
+        displays.len(),
+        sorted.len(),
+        "all display values must be distinct"
+    );
 }
 
 #[test]
@@ -638,7 +793,11 @@ fn named_export_of_declared_binding() {
     let result = lower(
         ParseGoal::Module,
         vec![
-            var_decl(VariableDeclarationKind::Let, "x", Some(Expression::NumericLiteral(42))),
+            var_decl(
+                VariableDeclarationKind::Let,
+                "x",
+                Some(Expression::NumericLiteral(42)),
+            ),
             export_named("x"),
         ],
         "named_export.mjs",
@@ -648,7 +807,11 @@ fn named_export_of_declared_binding() {
 
 #[test]
 fn named_export_of_undeclared_creates_synthetic() {
-    let result = lower(ParseGoal::Module, vec![export_named("unknown")], "synth_export.mjs");
+    let result = lower(
+        ParseGoal::Module,
+        vec![export_named("unknown")],
+        "synth_export.mjs",
+    );
     assert!(result.is_ok());
 }
 
@@ -656,7 +819,9 @@ fn named_export_of_undeclared_creates_synthetic() {
 fn default_export_with_string_literal() {
     let result = lower(
         ParseGoal::Module,
-        vec![export_default(Expression::StringLiteral("exported".to_string()))],
+        vec![export_default(Expression::StringLiteral(
+            "exported".to_string(),
+        ))],
         "default_str_export.mjs",
     );
     assert!(result.is_ok());
@@ -690,7 +855,10 @@ fn var_hoisting_forward_reference_in_initializer() {
     );
     let ir0 = Ir0Module::from_syntax_tree(tree, "var_hoist.js");
     let result = lower_ir0_to_ir1(&ir0);
-    assert!(result.is_ok(), "var hoisting forward ref should succeed: {result:?}");
+    assert!(
+        result.is_ok(),
+        "var hoisting forward ref should succeed: {result:?}"
+    );
 }
 
 #[test]
@@ -705,5 +873,8 @@ fn mixed_imports_and_exports_with_references() {
         ],
         "mixed.mjs",
     );
-    assert!(result.is_ok(), "mixed import/export/ref should succeed: {result:?}");
+    assert!(
+        result.is_ok(),
+        "mixed import/export/ref should succeed: {result:?}"
+    );
 }

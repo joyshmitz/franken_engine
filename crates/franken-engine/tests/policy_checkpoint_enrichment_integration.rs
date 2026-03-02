@@ -33,12 +33,18 @@ fn test_signing_keys(n: usize) -> Vec<SigningKey> {
 
 #[test]
 fn policy_type_display_exact_runtime_execution() {
-    assert_eq!(PolicyType::RuntimeExecution.to_string(), "runtime_execution");
+    assert_eq!(
+        PolicyType::RuntimeExecution.to_string(),
+        "runtime_execution"
+    );
 }
 
 #[test]
 fn policy_type_display_exact_capability_lattice() {
-    assert_eq!(PolicyType::CapabilityLattice.to_string(), "capability_lattice");
+    assert_eq!(
+        PolicyType::CapabilityLattice.to_string(),
+        "capability_lattice"
+    );
 }
 
 #[test]
@@ -48,12 +54,18 @@ fn policy_type_display_exact_extension_trust() {
 
 #[test]
 fn policy_type_display_exact_evidence_retention() {
-    assert_eq!(PolicyType::EvidenceRetention.to_string(), "evidence_retention");
+    assert_eq!(
+        PolicyType::EvidenceRetention.to_string(),
+        "evidence_retention"
+    );
 }
 
 #[test]
 fn policy_type_display_exact_revocation_governance() {
-    assert_eq!(PolicyType::RevocationGovernance.to_string(), "revocation_governance");
+    assert_eq!(
+        PolicyType::RevocationGovernance.to_string(),
+        "revocation_governance"
+    );
 }
 
 #[test]
@@ -177,12 +189,18 @@ fn error_display_genesis_no_predecessor() {
 #[test]
 fn error_display_missing_predecessor() {
     let e = CheckpointError::MissingPredecessor;
-    assert_eq!(e.to_string(), "non-genesis checkpoint must have a predecessor");
+    assert_eq!(
+        e.to_string(),
+        "non-genesis checkpoint must have a predecessor"
+    );
 }
 
 #[test]
 fn error_display_non_monotonic() {
-    let e = CheckpointError::NonMonotonicSequence { prev_seq: 5, current_seq: 3 };
+    let e = CheckpointError::NonMonotonicSequence {
+        prev_seq: 5,
+        current_seq: 3,
+    };
     let s = e.to_string();
     assert!(s.contains("non-monotonic"));
     assert!(s.contains('5'));
@@ -205,7 +223,10 @@ fn error_display_empty_policy_heads() {
 
 #[test]
 fn error_display_quorum_not_met() {
-    let e = CheckpointError::QuorumNotMet { required: 3, provided: 1 };
+    let e = CheckpointError::QuorumNotMet {
+        required: 3,
+        provided: 1,
+    };
     let s = e.to_string();
     assert!(s.contains("quorum"));
     assert!(s.contains("1/3"));
@@ -213,7 +234,9 @@ fn error_display_quorum_not_met() {
 
 #[test]
 fn error_display_duplicate_policy_type() {
-    let e = CheckpointError::DuplicatePolicyType { policy_type: PolicyType::ExtensionTrust };
+    let e = CheckpointError::DuplicatePolicyType {
+        policy_type: PolicyType::ExtensionTrust,
+    };
     let s = e.to_string();
     assert!(s.contains("duplicate"));
     assert!(s.contains("extension_trust"));
@@ -221,7 +244,9 @@ fn error_display_duplicate_policy_type() {
 
 #[test]
 fn error_display_id_derivation() {
-    let e = CheckpointError::IdDerivationFailed { detail: "bad input".to_string() };
+    let e = CheckpointError::IdDerivationFailed {
+        detail: "bad input".to_string(),
+    };
     let s = e.to_string();
     assert!(s.contains("ID derivation"));
     assert!(s.contains("bad input"));
@@ -229,7 +254,9 @@ fn error_display_id_derivation() {
 
 #[test]
 fn error_display_signature_invalid() {
-    let e = CheckpointError::SignatureInvalid { detail: "bad sig".to_string() };
+    let e = CheckpointError::SignatureInvalid {
+        detail: "bad sig".to_string(),
+    };
     let s = e.to_string();
     assert!(s.contains("signature invalid"));
     assert!(s.contains("bad sig"));
@@ -258,18 +285,34 @@ fn error_debug_distinct() {
         "test",
         &checkpoint_schema_id(),
         b"test-data",
-    ).unwrap();
+    )
+    .unwrap();
     let errors: Vec<CheckpointError> = vec![
         CheckpointError::GenesisMustHaveNoPredecessor,
         CheckpointError::MissingPredecessor,
-        CheckpointError::NonMonotonicSequence { prev_seq: 1, current_seq: 0 },
+        CheckpointError::NonMonotonicSequence {
+            prev_seq: 1,
+            current_seq: 0,
+        },
         CheckpointError::GenesisSequenceNotZero { actual: 1 },
-        CheckpointError::ChainLinkageBroken { expected: id.clone(), actual: id.clone() },
+        CheckpointError::ChainLinkageBroken {
+            expected: id.clone(),
+            actual: id.clone(),
+        },
         CheckpointError::EmptyPolicyHeads,
-        CheckpointError::QuorumNotMet { required: 2, provided: 1 },
-        CheckpointError::DuplicatePolicyType { policy_type: PolicyType::RuntimeExecution },
-        CheckpointError::IdDerivationFailed { detail: "x".to_string() },
-        CheckpointError::SignatureInvalid { detail: "y".to_string() },
+        CheckpointError::QuorumNotMet {
+            required: 2,
+            provided: 1,
+        },
+        CheckpointError::DuplicatePolicyType {
+            policy_type: PolicyType::RuntimeExecution,
+        },
+        CheckpointError::IdDerivationFailed {
+            detail: "x".to_string(),
+        },
+        CheckpointError::SignatureInvalid {
+            detail: "y".to_string(),
+        },
         CheckpointError::EpochRegression {
             prev_epoch: SecurityEpoch::from_raw(2),
             current_epoch: SecurityEpoch::from_raw(1),
@@ -376,7 +419,10 @@ fn builder_chained_checkpoint() {
     .build(&keys)
     .unwrap();
 
-    assert_eq!(chained.prev_checkpoint.as_ref().unwrap(), &genesis.checkpoint_id);
+    assert_eq!(
+        chained.prev_checkpoint.as_ref().unwrap(),
+        &genesis.checkpoint_id
+    );
     assert_eq!(chained.checkpoint_seq, 1);
 }
 
@@ -402,7 +448,10 @@ fn builder_chained_non_monotonic_seq_error() {
     .add_policy_head(test_policy_head(PolicyType::RuntimeExecution, 2))
     .build(&keys);
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), CheckpointError::NonMonotonicSequence { .. }));
+    assert!(matches!(
+        result.unwrap_err(),
+        CheckpointError::NonMonotonicSequence { .. }
+    ));
 }
 
 #[test]
@@ -427,7 +476,10 @@ fn builder_chained_epoch_regression_error() {
     .add_policy_head(test_policy_head(PolicyType::RuntimeExecution, 2))
     .build(&keys);
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), CheckpointError::EpochRegression { .. }));
+    assert!(matches!(
+        result.unwrap_err(),
+        CheckpointError::EpochRegression { .. }
+    ));
 }
 
 // ── Chain linkage verification ─────────────────────────────────────────
@@ -491,7 +543,10 @@ fn quorum_verification_insufficient() {
     let vks: Vec<_> = keys.iter().map(|k| k.verification_key()).collect();
     let result = verify_checkpoint_quorum(&checkpoint, 2, &vks);
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), CheckpointError::QuorumNotMet { .. }));
+    assert!(matches!(
+        result.unwrap_err(),
+        CheckpointError::QuorumNotMet { .. }
+    ));
 }
 
 // ── PolicyCheckpoint serde ─────────────────────────────────────────────

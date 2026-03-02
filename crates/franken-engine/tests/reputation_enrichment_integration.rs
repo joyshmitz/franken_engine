@@ -34,10 +34,12 @@ fn trust_level_all_has_seven() {
 
 #[test]
 fn trust_level_ordering_stable() {
-    let mut levels = [TrustLevel::Revoked,
+    let mut levels = [
+        TrustLevel::Revoked,
         TrustLevel::Unknown,
         TrustLevel::Trusted,
-        TrustLevel::Provisional];
+        TrustLevel::Provisional,
+    ];
     levels.sort();
     // Ordering should be deterministic
     let first = levels[0];

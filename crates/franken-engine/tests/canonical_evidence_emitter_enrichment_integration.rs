@@ -36,45 +36,121 @@ fn test_chosen() -> ChosenAction {
 // ── HighImpactAction Display ───────────────────────────────────────────
 
 #[test]
-fn high_impact_action_display_sandbox() { assert_eq!(HighImpactAction::Sandbox.to_string(), "sandbox"); }
+fn high_impact_action_display_sandbox() {
+    assert_eq!(HighImpactAction::Sandbox.to_string(), "sandbox");
+}
 #[test]
-fn high_impact_action_display_suspend() { assert_eq!(HighImpactAction::Suspend.to_string(), "suspend"); }
+fn high_impact_action_display_suspend() {
+    assert_eq!(HighImpactAction::Suspend.to_string(), "suspend");
+}
 #[test]
-fn high_impact_action_display_terminate() { assert_eq!(HighImpactAction::Terminate.to_string(), "terminate"); }
+fn high_impact_action_display_terminate() {
+    assert_eq!(HighImpactAction::Terminate.to_string(), "terminate");
+}
 #[test]
-fn high_impact_action_display_quarantine() { assert_eq!(HighImpactAction::Quarantine.to_string(), "quarantine"); }
+fn high_impact_action_display_quarantine() {
+    assert_eq!(HighImpactAction::Quarantine.to_string(), "quarantine");
+}
 #[test]
-fn high_impact_action_display_extension_load() { assert_eq!(HighImpactAction::ExtensionLoad.to_string(), "extension_load"); }
+fn high_impact_action_display_extension_load() {
+    assert_eq!(
+        HighImpactAction::ExtensionLoad.to_string(),
+        "extension_load"
+    );
+}
 #[test]
-fn high_impact_action_display_extension_unload() { assert_eq!(HighImpactAction::ExtensionUnload.to_string(), "extension_unload"); }
+fn high_impact_action_display_extension_unload() {
+    assert_eq!(
+        HighImpactAction::ExtensionUnload.to_string(),
+        "extension_unload"
+    );
+}
 #[test]
-fn high_impact_action_display_extension_start() { assert_eq!(HighImpactAction::ExtensionStart.to_string(), "extension_start"); }
+fn high_impact_action_display_extension_start() {
+    assert_eq!(
+        HighImpactAction::ExtensionStart.to_string(),
+        "extension_start"
+    );
+}
 #[test]
-fn high_impact_action_display_extension_stop() { assert_eq!(HighImpactAction::ExtensionStop.to_string(), "extension_stop"); }
+fn high_impact_action_display_extension_stop() {
+    assert_eq!(
+        HighImpactAction::ExtensionStop.to_string(),
+        "extension_stop"
+    );
+}
 #[test]
-fn high_impact_action_display_policy_update() { assert_eq!(HighImpactAction::PolicyUpdate.to_string(), "policy_update"); }
+fn high_impact_action_display_policy_update() {
+    assert_eq!(HighImpactAction::PolicyUpdate.to_string(), "policy_update");
+}
 #[test]
-fn high_impact_action_display_epoch_transition() { assert_eq!(HighImpactAction::EpochTransition.to_string(), "epoch_transition"); }
+fn high_impact_action_display_epoch_transition() {
+    assert_eq!(
+        HighImpactAction::EpochTransition.to_string(),
+        "epoch_transition"
+    );
+}
 #[test]
-fn high_impact_action_display_capability_grant() { assert_eq!(HighImpactAction::CapabilityGrant.to_string(), "capability_grant"); }
+fn high_impact_action_display_capability_grant() {
+    assert_eq!(
+        HighImpactAction::CapabilityGrant.to_string(),
+        "capability_grant"
+    );
+}
 #[test]
-fn high_impact_action_display_revocation() { assert_eq!(HighImpactAction::Revocation.to_string(), "revocation"); }
+fn high_impact_action_display_revocation() {
+    assert_eq!(HighImpactAction::Revocation.to_string(), "revocation");
+}
 #[test]
-fn high_impact_action_display_obligation_create() { assert_eq!(HighImpactAction::ObligationCreate.to_string(), "obligation_create"); }
+fn high_impact_action_display_obligation_create() {
+    assert_eq!(
+        HighImpactAction::ObligationCreate.to_string(),
+        "obligation_create"
+    );
+}
 #[test]
-fn high_impact_action_display_obligation_fulfill() { assert_eq!(HighImpactAction::ObligationFulfill.to_string(), "obligation_fulfill"); }
+fn high_impact_action_display_obligation_fulfill() {
+    assert_eq!(
+        HighImpactAction::ObligationFulfill.to_string(),
+        "obligation_fulfill"
+    );
+}
 #[test]
-fn high_impact_action_display_obligation_failure() { assert_eq!(HighImpactAction::ObligationFailure.to_string(), "obligation_failure"); }
+fn high_impact_action_display_obligation_failure() {
+    assert_eq!(
+        HighImpactAction::ObligationFailure.to_string(),
+        "obligation_failure"
+    );
+}
 #[test]
-fn high_impact_action_display_region_create() { assert_eq!(HighImpactAction::RegionCreate.to_string(), "region_create"); }
+fn high_impact_action_display_region_create() {
+    assert_eq!(HighImpactAction::RegionCreate.to_string(), "region_create");
+}
 #[test]
-fn high_impact_action_display_region_destroy() { assert_eq!(HighImpactAction::RegionDestroy.to_string(), "region_destroy"); }
+fn high_impact_action_display_region_destroy() {
+    assert_eq!(
+        HighImpactAction::RegionDestroy.to_string(),
+        "region_destroy"
+    );
+}
 #[test]
-fn high_impact_action_display_cancellation() { assert_eq!(HighImpactAction::Cancellation.to_string(), "cancellation"); }
+fn high_impact_action_display_cancellation() {
+    assert_eq!(HighImpactAction::Cancellation.to_string(), "cancellation");
+}
 #[test]
-fn high_impact_action_display_contract_evaluation() { assert_eq!(HighImpactAction::ContractEvaluation.to_string(), "contract_evaluation"); }
+fn high_impact_action_display_contract_evaluation() {
+    assert_eq!(
+        HighImpactAction::ContractEvaluation.to_string(),
+        "contract_evaluation"
+    );
+}
 #[test]
-fn high_impact_action_display_remote_authorization() { assert_eq!(HighImpactAction::RemoteAuthorization.to_string(), "remote_authorization"); }
+fn high_impact_action_display_remote_authorization() {
+    assert_eq!(
+        HighImpactAction::RemoteAuthorization.to_string(),
+        "remote_authorization"
+    );
+}
 
 #[test]
 fn high_impact_action_all_has_20() {
@@ -112,39 +188,66 @@ fn high_impact_action_serde_roundtrip_all() {
 
 #[test]
 fn action_decision_type_security() {
-    assert_eq!(HighImpactAction::Sandbox.decision_type(), DecisionType::SecurityAction);
-    assert_eq!(HighImpactAction::Terminate.decision_type(), DecisionType::SecurityAction);
+    assert_eq!(
+        HighImpactAction::Sandbox.decision_type(),
+        DecisionType::SecurityAction
+    );
+    assert_eq!(
+        HighImpactAction::Terminate.decision_type(),
+        DecisionType::SecurityAction
+    );
 }
 
 #[test]
 fn action_decision_type_lifecycle() {
-    assert_eq!(HighImpactAction::ExtensionLoad.decision_type(), DecisionType::ExtensionLifecycle);
-    assert_eq!(HighImpactAction::ExtensionStop.decision_type(), DecisionType::ExtensionLifecycle);
+    assert_eq!(
+        HighImpactAction::ExtensionLoad.decision_type(),
+        DecisionType::ExtensionLifecycle
+    );
+    assert_eq!(
+        HighImpactAction::ExtensionStop.decision_type(),
+        DecisionType::ExtensionLifecycle
+    );
 }
 
 #[test]
 fn action_decision_type_policy_update() {
-    assert_eq!(HighImpactAction::PolicyUpdate.decision_type(), DecisionType::PolicyUpdate);
+    assert_eq!(
+        HighImpactAction::PolicyUpdate.decision_type(),
+        DecisionType::PolicyUpdate
+    );
 }
 
 #[test]
 fn action_decision_type_epoch() {
-    assert_eq!(HighImpactAction::EpochTransition.decision_type(), DecisionType::EpochTransition);
+    assert_eq!(
+        HighImpactAction::EpochTransition.decision_type(),
+        DecisionType::EpochTransition
+    );
 }
 
 #[test]
 fn action_decision_type_capability() {
-    assert_eq!(HighImpactAction::CapabilityGrant.decision_type(), DecisionType::CapabilityDecision);
+    assert_eq!(
+        HighImpactAction::CapabilityGrant.decision_type(),
+        DecisionType::CapabilityDecision
+    );
 }
 
 #[test]
 fn action_decision_type_revocation() {
-    assert_eq!(HighImpactAction::Revocation.decision_type(), DecisionType::Revocation);
+    assert_eq!(
+        HighImpactAction::Revocation.decision_type(),
+        DecisionType::Revocation
+    );
 }
 
 #[test]
 fn action_decision_type_remote_auth() {
-    assert_eq!(HighImpactAction::RemoteAuthorization.decision_type(), DecisionType::RemoteAuthorization);
+    assert_eq!(
+        HighImpactAction::RemoteAuthorization.decision_type(),
+        DecisionType::RemoteAuthorization
+    );
 }
 
 // ── HighImpactAction component mapping ─────────────────────────────────
@@ -181,19 +284,25 @@ fn action_component_all_nonempty() {
 
 #[test]
 fn emission_error_display_missing_field() {
-    let e = EmissionError::MissingField { field: "trace_id".to_string() };
+    let e = EmissionError::MissingField {
+        field: "trace_id".to_string(),
+    };
     assert_eq!(e.to_string(), "missing required field: trace_id");
 }
 
 #[test]
 fn emission_error_display_ledger_write() {
-    let e = EmissionError::LedgerWriteFailure { reason: "disk full".to_string() };
+    let e = EmissionError::LedgerWriteFailure {
+        reason: "disk full".to_string(),
+    };
     assert_eq!(e.to_string(), "ledger write failure: disk full");
 }
 
 #[test]
 fn emission_error_display_validation() {
-    let e = EmissionError::ValidationFailure { reason: "bad entry".to_string() };
+    let e = EmissionError::ValidationFailure {
+        reason: "bad entry".to_string(),
+    };
     assert_eq!(e.to_string(), "validation failure: bad entry");
 }
 
@@ -205,7 +314,9 @@ fn emission_error_display_buffer_full() {
 
 #[test]
 fn emission_error_display_not_required() {
-    let e = EmissionError::NotRequired { action: HighImpactAction::Sandbox };
+    let e = EmissionError::NotRequired {
+        action: HighImpactAction::Sandbox,
+    };
     let s = e.to_string();
     assert!(s.contains("not required"));
     assert!(s.contains("sandbox"));
@@ -213,18 +324,28 @@ fn emission_error_display_not_required() {
 
 #[test]
 fn emission_error_is_std_error() {
-    let e = EmissionError::MissingField { field: "x".to_string() };
+    let e = EmissionError::MissingField {
+        field: "x".to_string(),
+    };
     let _: &dyn std::error::Error = &e;
 }
 
 #[test]
 fn emission_error_debug_distinct() {
     let errors = [
-        EmissionError::MissingField { field: "f".to_string() },
-        EmissionError::LedgerWriteFailure { reason: "r".to_string() },
-        EmissionError::ValidationFailure { reason: "v".to_string() },
+        EmissionError::MissingField {
+            field: "f".to_string(),
+        },
+        EmissionError::LedgerWriteFailure {
+            reason: "r".to_string(),
+        },
+        EmissionError::ValidationFailure {
+            reason: "v".to_string(),
+        },
         EmissionError::BufferFull { capacity: 1 },
-        EmissionError::NotRequired { action: HighImpactAction::Sandbox },
+        EmissionError::NotRequired {
+            action: HighImpactAction::Sandbox,
+        },
     ];
     let mut dbgs = BTreeSet::new();
     for e in &errors {
@@ -236,11 +357,19 @@ fn emission_error_debug_distinct() {
 #[test]
 fn emission_error_serde_roundtrip_all() {
     let errors = [
-        EmissionError::MissingField { field: "f".to_string() },
-        EmissionError::LedgerWriteFailure { reason: "r".to_string() },
-        EmissionError::ValidationFailure { reason: "v".to_string() },
+        EmissionError::MissingField {
+            field: "f".to_string(),
+        },
+        EmissionError::LedgerWriteFailure {
+            reason: "r".to_string(),
+        },
+        EmissionError::ValidationFailure {
+            reason: "v".to_string(),
+        },
         EmissionError::BufferFull { capacity: 1024 },
-        EmissionError::NotRequired { action: HighImpactAction::Terminate },
+        EmissionError::NotRequired {
+            action: HighImpactAction::Terminate,
+        },
     ];
     for e in &errors {
         let json = serde_json::to_vec(e).unwrap();
@@ -460,13 +589,31 @@ fn emitter_buffer_full_returns_error() {
     let mut emitter = CanonicalEvidenceEmitter::new(policy);
     // Fill the buffer
     let ctx1 = test_context(HighImpactAction::Sandbox);
-    emitter.emit(&ctx1, vec![], vec![], test_chosen(), vec![], BTreeMap::new()).unwrap();
+    emitter
+        .emit(
+            &ctx1,
+            vec![],
+            vec![],
+            test_chosen(),
+            vec![],
+            BTreeMap::new(),
+        )
+        .unwrap();
     // Second emission should fail
     let ctx2 = EmissionContext {
         decision_id: "decision-2".to_string(),
         ..test_context(HighImpactAction::Terminate)
     };
-    let err = emitter.emit(&ctx2, vec![], vec![], test_chosen(), vec![], BTreeMap::new()).unwrap_err();
+    let err = emitter
+        .emit(
+            &ctx2,
+            vec![],
+            vec![],
+            test_chosen(),
+            vec![],
+            BTreeMap::new(),
+        )
+        .unwrap_err();
     assert!(matches!(err, EmissionError::BufferFull { .. }));
 }
 
@@ -478,7 +625,9 @@ fn emitter_not_required_action_errors() {
     };
     let mut emitter = CanonicalEvidenceEmitter::new(policy);
     let ctx = test_context(HighImpactAction::Terminate); // not in mandatory
-    let err = emitter.emit(&ctx, vec![], vec![], test_chosen(), vec![], BTreeMap::new()).unwrap_err();
+    let err = emitter
+        .emit(&ctx, vec![], vec![], test_chosen(), vec![], BTreeMap::new())
+        .unwrap_err();
     assert!(matches!(err, EmissionError::NotRequired { .. }));
 }
 
@@ -486,7 +635,9 @@ fn emitter_not_required_action_errors() {
 fn emitter_clear_resets() {
     let mut emitter = CanonicalEvidenceEmitter::with_defaults();
     let ctx = test_context(HighImpactAction::Sandbox);
-    emitter.emit(&ctx, vec![], vec![], test_chosen(), vec![], BTreeMap::new()).unwrap();
+    emitter
+        .emit(&ctx, vec![], vec![], test_chosen(), vec![], BTreeMap::new())
+        .unwrap();
     assert_eq!(emitter.ledger_len(), 1);
     emitter.clear();
     assert_eq!(emitter.ledger_len(), 0);
@@ -498,7 +649,9 @@ fn emitter_clear_resets() {
 fn emitter_entries_by_trace() {
     let mut emitter = CanonicalEvidenceEmitter::with_defaults();
     let ctx = test_context(HighImpactAction::Sandbox);
-    emitter.emit(&ctx, vec![], vec![], test_chosen(), vec![], BTreeMap::new()).unwrap();
+    emitter
+        .emit(&ctx, vec![], vec![], test_chosen(), vec![], BTreeMap::new())
+        .unwrap();
     let entries = emitter.entries_by_trace("trace-enrich");
     assert_eq!(entries.len(), 1);
     let empty = emitter.entries_by_trace("nonexistent");
@@ -509,7 +662,9 @@ fn emitter_entries_by_trace() {
 fn emitter_log_events_emitted() {
     let mut emitter = CanonicalEvidenceEmitter::with_defaults();
     let ctx = test_context(HighImpactAction::CapabilityGrant);
-    emitter.emit(&ctx, vec![], vec![], test_chosen(), vec![], BTreeMap::new()).unwrap();
+    emitter
+        .emit(&ctx, vec![], vec![], test_chosen(), vec![], BTreeMap::new())
+        .unwrap();
     let logs = emitter.log_events();
     assert!(!logs.is_empty());
     assert_eq!(logs[0].trace_id, "trace-enrich");
@@ -520,7 +675,9 @@ fn emitter_log_events_emitted() {
 fn emitter_verify_integrity() {
     let mut emitter = CanonicalEvidenceEmitter::with_defaults();
     let ctx = test_context(HighImpactAction::Revocation);
-    let receipt = emitter.emit(&ctx, vec![], vec![], test_chosen(), vec![], BTreeMap::new()).unwrap();
+    let receipt = emitter
+        .emit(&ctx, vec![], vec![], test_chosen(), vec![], BTreeMap::new())
+        .unwrap();
     let entry = &emitter.ledger()[0];
     let hash = emitter.verify_integrity(entry).unwrap();
     assert_eq!(hash, receipt.artifact_hash);

@@ -194,11 +194,7 @@ fn both_empty_source_and_id_returns_first_validation_error() {
 #[test]
 fn error_display_empty_source_contains_keyword() {
     let err = OrchestratorError::EmptySource;
-    assert!(
-        err.to_string().contains("empty"),
-        "got: {}",
-        err
-    );
+    assert!(err.to_string().contains("empty"), "got: {}", err);
 }
 
 #[test]

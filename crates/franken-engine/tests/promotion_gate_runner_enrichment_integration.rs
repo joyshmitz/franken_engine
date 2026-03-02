@@ -62,10 +62,7 @@ fn cap_req_within() -> CandidateCapabilityRequest {
 fn cap_req_exceeds() -> CandidateCapabilityRequest {
     CandidateCapabilityRequest {
         slot_id: test_slot_id(),
-        requested_capabilities: vec![
-            SlotCapability::ReadSource,
-            SlotCapability::InvokeHostcall,
-        ],
+        requested_capabilities: vec![SlotCapability::ReadSource, SlotCapability::InvokeHostcall],
         authority_envelope: test_envelope(),
     }
 }

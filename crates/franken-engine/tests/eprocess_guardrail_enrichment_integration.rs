@@ -52,22 +52,36 @@ fn test_receipt() -> ResetReceipt {
 // ── GuardrailState ─────────────────────────────────────────────────────
 
 #[test]
-fn guardrail_state_display_active() { assert_eq!(GuardrailState::Active.to_string(), "active"); }
+fn guardrail_state_display_active() {
+    assert_eq!(GuardrailState::Active.to_string(), "active");
+}
 #[test]
-fn guardrail_state_display_triggered() { assert_eq!(GuardrailState::Triggered.to_string(), "triggered"); }
+fn guardrail_state_display_triggered() {
+    assert_eq!(GuardrailState::Triggered.to_string(), "triggered");
+}
 #[test]
-fn guardrail_state_display_suspended() { assert_eq!(GuardrailState::Suspended.to_string(), "suspended"); }
+fn guardrail_state_display_suspended() {
+    assert_eq!(GuardrailState::Suspended.to_string(), "suspended");
+}
 
 #[test]
 fn guardrail_state_debug_distinct() {
-    let states = [GuardrailState::Active, GuardrailState::Triggered, GuardrailState::Suspended];
+    let states = [
+        GuardrailState::Active,
+        GuardrailState::Triggered,
+        GuardrailState::Suspended,
+    ];
     let dbgs: BTreeSet<String> = states.iter().map(|s| format!("{s:?}")).collect();
     assert_eq!(dbgs.len(), 3);
 }
 
 #[test]
 fn guardrail_state_serde_roundtrip() {
-    for state in [GuardrailState::Active, GuardrailState::Triggered, GuardrailState::Suspended] {
+    for state in [
+        GuardrailState::Active,
+        GuardrailState::Triggered,
+        GuardrailState::Suspended,
+    ] {
         let json = serde_json::to_vec(&state).unwrap();
         let back: GuardrailState = serde_json::from_slice(&json).unwrap();
         assert_eq!(state, back);
@@ -139,26 +153,34 @@ fn threshold_lr_serde_roundtrip() {
 
 #[test]
 fn universal_lr_computes_ratio() {
-    let lr = UniversalLikelihoodRatio { null_mean_millionths: 1_000_000 };
+    let lr = UniversalLikelihoodRatio {
+        null_mean_millionths: 1_000_000,
+    };
     // observation = 2.0 => ratio = 2.0
     assert_eq!(lr.ratio(2_000_000), Some(2_000_000));
 }
 
 #[test]
 fn universal_lr_zero_mean_returns_none() {
-    let lr = UniversalLikelihoodRatio { null_mean_millionths: 0 };
+    let lr = UniversalLikelihoodRatio {
+        null_mean_millionths: 0,
+    };
     assert_eq!(lr.ratio(1_000_000), None);
 }
 
 #[test]
 fn universal_lr_family() {
-    let lr = UniversalLikelihoodRatio { null_mean_millionths: 1 };
+    let lr = UniversalLikelihoodRatio {
+        null_mean_millionths: 1,
+    };
     assert_eq!(lr.family(), "universal");
 }
 
 #[test]
 fn universal_lr_serde_roundtrip() {
-    let lr = UniversalLikelihoodRatio { null_mean_millionths: 500_000 };
+    let lr = UniversalLikelihoodRatio {
+        null_mean_millionths: 500_000,
+    };
     let json = serde_json::to_vec(&lr).unwrap();
     let back: UniversalLikelihoodRatio = serde_json::from_slice(&json).unwrap();
     assert_eq!(lr.null_mean_millionths, back.null_mean_millionths);
@@ -168,43 +190,57 @@ fn universal_lr_serde_roundtrip() {
 
 #[test]
 fn guardrail_error_display_suspended() {
-    let e = GuardrailError::Suspended { guardrail_id: "g1".to_string() };
+    let e = GuardrailError::Suspended {
+        guardrail_id: "g1".to_string(),
+    };
     assert_eq!(e.to_string(), "guardrail 'g1' is suspended");
 }
 
 #[test]
 fn guardrail_error_display_already_triggered() {
-    let e = GuardrailError::AlreadyTriggered { guardrail_id: "g2".to_string() };
+    let e = GuardrailError::AlreadyTriggered {
+        guardrail_id: "g2".to_string(),
+    };
     assert_eq!(e.to_string(), "guardrail 'g2' already triggered");
 }
 
 #[test]
 fn guardrail_error_display_invalid_observation() {
-    let e = GuardrailError::InvalidObservation { guardrail_id: "g3".to_string() };
+    let e = GuardrailError::InvalidObservation {
+        guardrail_id: "g3".to_string(),
+    };
     assert_eq!(e.to_string(), "invalid observation for guardrail 'g3'");
 }
 
 #[test]
 fn guardrail_error_display_reset_unauthorized() {
-    let e = GuardrailError::ResetUnauthorized { guardrail_id: "g4".to_string() };
+    let e = GuardrailError::ResetUnauthorized {
+        guardrail_id: "g4".to_string(),
+    };
     assert_eq!(e.to_string(), "unauthorized reset for guardrail 'g4'");
 }
 
 #[test]
 fn guardrail_error_display_not_triggered() {
-    let e = GuardrailError::NotTriggered { guardrail_id: "g5".to_string() };
+    let e = GuardrailError::NotTriggered {
+        guardrail_id: "g5".to_string(),
+    };
     assert_eq!(e.to_string(), "guardrail 'g5' is not triggered");
 }
 
 #[test]
 fn guardrail_error_display_overflow() {
-    let e = GuardrailError::EValueOverflow { guardrail_id: "g6".to_string() };
+    let e = GuardrailError::EValueOverflow {
+        guardrail_id: "g6".to_string(),
+    };
     assert_eq!(e.to_string(), "e-value overflow for guardrail 'g6'");
 }
 
 #[test]
 fn guardrail_error_is_std_error() {
-    let e = GuardrailError::Suspended { guardrail_id: "x".to_string() };
+    let e = GuardrailError::Suspended {
+        guardrail_id: "x".to_string(),
+    };
     let err: &dyn std::error::Error = &e;
     assert!(!err.to_string().is_empty());
 }
@@ -212,12 +248,24 @@ fn guardrail_error_is_std_error() {
 #[test]
 fn guardrail_error_debug_all_distinct() {
     let variants: Vec<GuardrailError> = vec![
-        GuardrailError::Suspended { guardrail_id: "a".to_string() },
-        GuardrailError::AlreadyTriggered { guardrail_id: "a".to_string() },
-        GuardrailError::InvalidObservation { guardrail_id: "a".to_string() },
-        GuardrailError::ResetUnauthorized { guardrail_id: "a".to_string() },
-        GuardrailError::NotTriggered { guardrail_id: "a".to_string() },
-        GuardrailError::EValueOverflow { guardrail_id: "a".to_string() },
+        GuardrailError::Suspended {
+            guardrail_id: "a".to_string(),
+        },
+        GuardrailError::AlreadyTriggered {
+            guardrail_id: "a".to_string(),
+        },
+        GuardrailError::InvalidObservation {
+            guardrail_id: "a".to_string(),
+        },
+        GuardrailError::ResetUnauthorized {
+            guardrail_id: "a".to_string(),
+        },
+        GuardrailError::NotTriggered {
+            guardrail_id: "a".to_string(),
+        },
+        GuardrailError::EValueOverflow {
+            guardrail_id: "a".to_string(),
+        },
     ];
     let dbgs: BTreeSet<String> = variants.iter().map(|v| format!("{v:?}")).collect();
     assert_eq!(dbgs.len(), 6);
@@ -226,12 +274,24 @@ fn guardrail_error_debug_all_distinct() {
 #[test]
 fn guardrail_error_serde_roundtrip_all() {
     let variants = vec![
-        GuardrailError::Suspended { guardrail_id: "a".to_string() },
-        GuardrailError::AlreadyTriggered { guardrail_id: "b".to_string() },
-        GuardrailError::InvalidObservation { guardrail_id: "c".to_string() },
-        GuardrailError::ResetUnauthorized { guardrail_id: "d".to_string() },
-        GuardrailError::NotTriggered { guardrail_id: "e".to_string() },
-        GuardrailError::EValueOverflow { guardrail_id: "f".to_string() },
+        GuardrailError::Suspended {
+            guardrail_id: "a".to_string(),
+        },
+        GuardrailError::AlreadyTriggered {
+            guardrail_id: "b".to_string(),
+        },
+        GuardrailError::InvalidObservation {
+            guardrail_id: "c".to_string(),
+        },
+        GuardrailError::ResetUnauthorized {
+            guardrail_id: "d".to_string(),
+        },
+        GuardrailError::NotTriggered {
+            guardrail_id: "e".to_string(),
+        },
+        GuardrailError::EValueOverflow {
+            guardrail_id: "f".to_string(),
+        },
     ];
     for v in &variants {
         let json = serde_json::to_vec(v).unwrap();
@@ -315,7 +375,9 @@ fn guardrail_event_serde_roundtrip_suspended() {
 
 #[test]
 fn guardrail_event_serde_roundtrip_resumed() {
-    let ev = GuardrailEvent::Resumed { guardrail_id: "g1".to_string() };
+    let ev = GuardrailEvent::Resumed {
+        guardrail_id: "g1".to_string(),
+    };
     let json = serde_json::to_vec(&ev).unwrap();
     let back: GuardrailEvent = serde_json::from_slice(&json).unwrap();
     assert_eq!(ev, back);
@@ -378,11 +440,19 @@ fn guardrail_blocks_action_when_triggered() {
 #[test]
 fn guardrail_update_on_triggered_returns_error() {
     let mut gr = EProcessGuardrail::new(
-        "test", "metric", "null", 5_000_000, test_blocked(),
-        SecurityEpoch::GENESIS, test_threshold_lr(),
+        "test",
+        "metric",
+        "null",
+        5_000_000,
+        test_blocked(),
+        SecurityEpoch::GENESIS,
+        test_threshold_lr(),
     );
     gr.update(100_000).unwrap();
-    assert!(matches!(gr.update(100_000), Err(GuardrailError::AlreadyTriggered { .. })));
+    assert!(matches!(
+        gr.update(100_000),
+        Err(GuardrailError::AlreadyTriggered { .. })
+    ));
 }
 
 #[test]
@@ -390,7 +460,10 @@ fn guardrail_suspend_and_resume() {
     let mut gr = test_guardrail();
     gr.suspend("maintenance");
     assert_eq!(gr.state(), GuardrailState::Suspended);
-    assert!(matches!(gr.update(100_000), Err(GuardrailError::Suspended { .. })));
+    assert!(matches!(
+        gr.update(100_000),
+        Err(GuardrailError::Suspended { .. })
+    ));
     gr.resume();
     assert_eq!(gr.state(), GuardrailState::Active);
     gr.update(5_000).unwrap(); // should work again
@@ -399,8 +472,13 @@ fn guardrail_suspend_and_resume() {
 #[test]
 fn guardrail_reset_from_triggered() {
     let mut gr = EProcessGuardrail::new(
-        "test", "metric", "null", 5_000_000, test_blocked(),
-        SecurityEpoch::GENESIS, test_threshold_lr(),
+        "test",
+        "metric",
+        "null",
+        5_000_000,
+        test_blocked(),
+        SecurityEpoch::GENESIS,
+        test_threshold_lr(),
     );
     gr.update(100_000).unwrap();
     assert_eq!(gr.state(), GuardrailState::Triggered);
@@ -413,14 +491,22 @@ fn guardrail_reset_from_triggered() {
 #[test]
 fn guardrail_reset_not_triggered_returns_error() {
     let mut gr = test_guardrail();
-    assert!(matches!(gr.reset(&test_receipt()), Err(GuardrailError::NotTriggered { .. })));
+    assert!(matches!(
+        gr.reset(&test_receipt()),
+        Err(GuardrailError::NotTriggered { .. })
+    ));
 }
 
 #[test]
 fn guardrail_reset_unauthorized_returns_error() {
     let mut gr = EProcessGuardrail::new(
-        "test", "metric", "null", 5_000_000, test_blocked(),
-        SecurityEpoch::GENESIS, test_threshold_lr(),
+        "test",
+        "metric",
+        "null",
+        5_000_000,
+        test_blocked(),
+        SecurityEpoch::GENESIS,
+        test_threshold_lr(),
     );
     gr.update(100_000).unwrap();
     let bad_receipt = ResetReceipt {
@@ -428,7 +514,10 @@ fn guardrail_reset_unauthorized_returns_error() {
         rationale: "x".to_string(),
         epoch: SecurityEpoch::from_raw(2),
     };
-    assert!(matches!(gr.reset(&bad_receipt), Err(GuardrailError::ResetUnauthorized { .. })));
+    assert!(matches!(
+        gr.reset(&bad_receipt),
+        Err(GuardrailError::ResetUnauthorized { .. })
+    ));
 }
 
 #[test]
@@ -475,8 +564,13 @@ fn registry_add_and_len() {
 fn registry_is_blocked_when_triggered() {
     let mut reg = GuardrailRegistry::new();
     let mut gr = EProcessGuardrail::new(
-        "test", "metric", "null", 5_000_000, test_blocked(),
-        SecurityEpoch::GENESIS, test_threshold_lr(),
+        "test",
+        "metric",
+        "null",
+        5_000_000,
+        test_blocked(),
+        SecurityEpoch::GENESIS,
+        test_threshold_lr(),
     );
     gr.update(100_000).unwrap();
     reg.add(gr);
@@ -491,16 +585,26 @@ fn registry_blocked_actions_union() {
     let mut blocked1 = BTreeSet::new();
     blocked1.insert("action-a".to_string());
     let mut gr1 = EProcessGuardrail::new(
-        "g1", "m", "n", 5_000_000, blocked1,
-        SecurityEpoch::GENESIS, test_threshold_lr(),
+        "g1",
+        "m",
+        "n",
+        5_000_000,
+        blocked1,
+        SecurityEpoch::GENESIS,
+        test_threshold_lr(),
     );
     gr1.update(100_000).unwrap();
 
     let mut blocked2 = BTreeSet::new();
     blocked2.insert("action-b".to_string());
     let mut gr2 = EProcessGuardrail::new(
-        "g2", "m", "n", 5_000_000, blocked2,
-        SecurityEpoch::GENESIS, test_threshold_lr(),
+        "g2",
+        "m",
+        "n",
+        5_000_000,
+        blocked2,
+        SecurityEpoch::GENESIS,
+        test_threshold_lr(),
     );
     gr2.update(100_000).unwrap();
 
@@ -515,8 +619,13 @@ fn registry_blocked_actions_union() {
 fn registry_blocking_guardrails() {
     let mut reg = GuardrailRegistry::new();
     let mut gr = EProcessGuardrail::new(
-        "g1", "m", "n", 5_000_000, test_blocked(),
-        SecurityEpoch::GENESIS, test_threshold_lr(),
+        "g1",
+        "m",
+        "n",
+        5_000_000,
+        test_blocked(),
+        SecurityEpoch::GENESIS,
+        test_threshold_lr(),
     );
     gr.update(100_000).unwrap();
     reg.add(gr);
@@ -528,8 +637,13 @@ fn registry_blocking_guardrails() {
 fn registry_permitted_actions() {
     let mut reg = GuardrailRegistry::new();
     let mut gr = EProcessGuardrail::new(
-        "g1", "m", "n", 5_000_000, test_blocked(),
-        SecurityEpoch::GENESIS, test_threshold_lr(),
+        "g1",
+        "m",
+        "n",
+        5_000_000,
+        test_blocked(),
+        SecurityEpoch::GENESIS,
+        test_threshold_lr(),
     );
     gr.update(100_000).unwrap();
     reg.add(gr);
@@ -543,12 +657,22 @@ fn registry_permitted_actions() {
 fn registry_update_stream_targets_matching() {
     let mut reg = GuardrailRegistry::new();
     reg.add(EProcessGuardrail::new(
-        "g1", "stream-a", "n", 20_000_000, test_blocked(),
-        SecurityEpoch::GENESIS, test_threshold_lr(),
+        "g1",
+        "stream-a",
+        "n",
+        20_000_000,
+        test_blocked(),
+        SecurityEpoch::GENESIS,
+        test_threshold_lr(),
     ));
     reg.add(EProcessGuardrail::new(
-        "g2", "stream-b", "n", 20_000_000, test_blocked(),
-        SecurityEpoch::GENESIS, test_threshold_lr(),
+        "g2",
+        "stream-b",
+        "n",
+        20_000_000,
+        test_blocked(),
+        SecurityEpoch::GENESIS,
+        test_threshold_lr(),
     ));
     let errors = reg.update_stream("stream-a", 5_000);
     assert!(errors.is_empty());
@@ -581,8 +705,13 @@ fn registry_get_and_get_mut() {
 fn registry_reset_all_triggered() {
     let mut reg = GuardrailRegistry::new();
     let mut gr1 = EProcessGuardrail::new(
-        "g1", "m", "n", 5_000_000, test_blocked(),
-        SecurityEpoch::GENESIS, test_threshold_lr(),
+        "g1",
+        "m",
+        "n",
+        5_000_000,
+        test_blocked(),
+        SecurityEpoch::GENESIS,
+        test_threshold_lr(),
     );
     gr1.update(100_000).unwrap();
     let gr2 = test_guardrail(); // not triggered
@@ -592,7 +721,10 @@ fn registry_reset_all_triggered() {
     assert!(errors.is_empty());
     assert_eq!(reg.get("g1").unwrap().state(), GuardrailState::Active);
     // g2 wasn't triggered so wasn't reset (stays active)
-    assert_eq!(reg.get("fnr-guard").unwrap().state(), GuardrailState::Active);
+    assert_eq!(
+        reg.get("fnr-guard").unwrap().state(),
+        GuardrailState::Active
+    );
 }
 
 #[test]

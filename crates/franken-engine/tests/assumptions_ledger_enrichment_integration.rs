@@ -11,7 +11,11 @@ use frankenengine_engine::assumptions_ledger::*;
 
 // ── helpers ────────────────────────────────────────────────────────────
 
-fn make_assumption(id: &str, category: AssumptionCategory, severity: ViolationSeverity) -> Assumption {
+fn make_assumption(
+    id: &str,
+    category: AssumptionCategory,
+    severity: ViolationSeverity,
+) -> Assumption {
     Assumption {
         id: id.to_string(),
         category,
@@ -48,7 +52,11 @@ fn make_monitor(
 
 fn ledger_with_assumption() -> (AssumptionLedger, String) {
     let mut ledger = AssumptionLedger::new(DemotionPolicy::default());
-    let a = make_assumption("a-1", AssumptionCategory::Statistical, ViolationSeverity::Warning);
+    let a = make_assumption(
+        "a-1",
+        AssumptionCategory::Statistical,
+        ViolationSeverity::Warning,
+    );
     let id = a.id.clone();
     ledger.record_assumption(a).unwrap();
     (ledger, id)
@@ -74,11 +82,26 @@ fn assumption_category_debug_distinct() {
 
 #[test]
 fn assumption_category_serde_tags_exact() {
-    assert_eq!(serde_json::to_string(&AssumptionCategory::Statistical).unwrap(), "\"Statistical\"");
-    assert_eq!(serde_json::to_string(&AssumptionCategory::Behavioral).unwrap(), "\"Behavioral\"");
-    assert_eq!(serde_json::to_string(&AssumptionCategory::Resource).unwrap(), "\"Resource\"");
-    assert_eq!(serde_json::to_string(&AssumptionCategory::Safety).unwrap(), "\"Safety\"");
-    assert_eq!(serde_json::to_string(&AssumptionCategory::Structural).unwrap(), "\"Structural\"");
+    assert_eq!(
+        serde_json::to_string(&AssumptionCategory::Statistical).unwrap(),
+        "\"Statistical\""
+    );
+    assert_eq!(
+        serde_json::to_string(&AssumptionCategory::Behavioral).unwrap(),
+        "\"Behavioral\""
+    );
+    assert_eq!(
+        serde_json::to_string(&AssumptionCategory::Resource).unwrap(),
+        "\"Resource\""
+    );
+    assert_eq!(
+        serde_json::to_string(&AssumptionCategory::Safety).unwrap(),
+        "\"Safety\""
+    );
+    assert_eq!(
+        serde_json::to_string(&AssumptionCategory::Structural).unwrap(),
+        "\"Structural\""
+    );
 }
 
 #[test]
@@ -115,10 +138,22 @@ fn assumption_origin_debug_distinct() {
 
 #[test]
 fn assumption_origin_serde_tags_exact() {
-    assert_eq!(serde_json::to_string(&AssumptionOrigin::CompileTime).unwrap(), "\"CompileTime\"");
-    assert_eq!(serde_json::to_string(&AssumptionOrigin::Runtime).unwrap(), "\"Runtime\"");
-    assert_eq!(serde_json::to_string(&AssumptionOrigin::PolicyInherited).unwrap(), "\"PolicyInherited\"");
-    assert_eq!(serde_json::to_string(&AssumptionOrigin::Inferred).unwrap(), "\"Inferred\"");
+    assert_eq!(
+        serde_json::to_string(&AssumptionOrigin::CompileTime).unwrap(),
+        "\"CompileTime\""
+    );
+    assert_eq!(
+        serde_json::to_string(&AssumptionOrigin::Runtime).unwrap(),
+        "\"Runtime\""
+    );
+    assert_eq!(
+        serde_json::to_string(&AssumptionOrigin::PolicyInherited).unwrap(),
+        "\"PolicyInherited\""
+    );
+    assert_eq!(
+        serde_json::to_string(&AssumptionOrigin::Inferred).unwrap(),
+        "\"Inferred\""
+    );
 }
 
 #[test]
@@ -154,10 +189,22 @@ fn assumption_status_debug_distinct() {
 
 #[test]
 fn assumption_status_serde_tags_exact() {
-    assert_eq!(serde_json::to_string(&AssumptionStatus::Active).unwrap(), "\"Active\"");
-    assert_eq!(serde_json::to_string(&AssumptionStatus::Violated).unwrap(), "\"Violated\"");
-    assert_eq!(serde_json::to_string(&AssumptionStatus::Retired).unwrap(), "\"Retired\"");
-    assert_eq!(serde_json::to_string(&AssumptionStatus::Suspended).unwrap(), "\"Suspended\"");
+    assert_eq!(
+        serde_json::to_string(&AssumptionStatus::Active).unwrap(),
+        "\"Active\""
+    );
+    assert_eq!(
+        serde_json::to_string(&AssumptionStatus::Violated).unwrap(),
+        "\"Violated\""
+    );
+    assert_eq!(
+        serde_json::to_string(&AssumptionStatus::Retired).unwrap(),
+        "\"Retired\""
+    );
+    assert_eq!(
+        serde_json::to_string(&AssumptionStatus::Suspended).unwrap(),
+        "\"Suspended\""
+    );
 }
 
 #[test]
@@ -270,7 +317,11 @@ fn monitor_op_serde_roundtrip_all() {
 
 #[test]
 fn assumption_json_fields() {
-    let a = make_assumption("a-f", AssumptionCategory::Safety, ViolationSeverity::Critical);
+    let a = make_assumption(
+        "a-f",
+        AssumptionCategory::Safety,
+        ViolationSeverity::Critical,
+    );
     let v: serde_json::Value = serde_json::to_value(&a).unwrap();
     let obj = v.as_object().unwrap();
     assert!(obj.contains_key("id"));
@@ -287,7 +338,11 @@ fn assumption_json_fields() {
 
 #[test]
 fn assumption_serde_roundtrip() {
-    let a = make_assumption("a-rt", AssumptionCategory::Behavioral, ViolationSeverity::Advisory);
+    let a = make_assumption(
+        "a-rt",
+        AssumptionCategory::Behavioral,
+        ViolationSeverity::Advisory,
+    );
     let json = serde_json::to_vec(&a).unwrap();
     let back: Assumption = serde_json::from_slice(&json).unwrap();
     assert_eq!(a, back);
@@ -412,7 +467,7 @@ fn monitor_consecutive_reset_on_good_value() {
     let mut m = make_monitor("m-rs", "a-rs", 1_000_000, MonitorOp::Le, 3);
     m.check(2_000_000, 1, 1); // violation 1
     m.check(2_000_000, 1, 2); // violation 2
-    m.check(500_000, 1, 3);   // good value => reset
+    m.check(500_000, 1, 3); // good value => reset
     assert_eq!(m.current_violations, 0);
     assert!(m.check(2_000_000, 1, 4).is_none()); // restart count
 }
@@ -764,7 +819,11 @@ fn ledger_observe_wrong_variable_no_trigger() {
 #[test]
 fn ledger_demotion_action_matches_severity_advisory() {
     let mut ledger = AssumptionLedger::new(DemotionPolicy::default());
-    let a = make_assumption("a-adv", AssumptionCategory::Statistical, ViolationSeverity::Advisory);
+    let a = make_assumption(
+        "a-adv",
+        AssumptionCategory::Statistical,
+        ViolationSeverity::Advisory,
+    );
     ledger.record_assumption(a).unwrap();
     let m = make_monitor("m-adv", "a-adv", 1_000_000, MonitorOp::Le, 1);
     ledger.register_monitor(m).unwrap();
@@ -776,7 +835,11 @@ fn ledger_demotion_action_matches_severity_advisory() {
 #[test]
 fn ledger_demotion_action_matches_severity_critical() {
     let mut ledger = AssumptionLedger::new(DemotionPolicy::default());
-    let a = make_assumption("a-crit", AssumptionCategory::Safety, ViolationSeverity::Critical);
+    let a = make_assumption(
+        "a-crit",
+        AssumptionCategory::Safety,
+        ViolationSeverity::Critical,
+    );
     ledger.record_assumption(a).unwrap();
     let m = make_monitor("m-crit", "a-crit", 1_000_000, MonitorOp::Le, 1);
     ledger.register_monitor(m).unwrap();
@@ -791,7 +854,11 @@ fn ledger_demotion_action_matches_severity_critical() {
 fn ledger_chain_hash_changes_on_record() {
     let mut ledger = AssumptionLedger::new(DemotionPolicy::default());
     let hash_before = ledger.chain_hash().to_string();
-    let a = make_assumption("a-hash", AssumptionCategory::Resource, ViolationSeverity::Warning);
+    let a = make_assumption(
+        "a-hash",
+        AssumptionCategory::Resource,
+        ViolationSeverity::Warning,
+    );
     ledger.record_assumption(a).unwrap();
     assert_ne!(ledger.chain_hash(), &hash_before);
 }
@@ -853,8 +920,16 @@ fn ledger_serde_roundtrip_with_data() {
 #[test]
 fn active_assumptions_only_returns_active() {
     let mut ledger = AssumptionLedger::new(DemotionPolicy::default());
-    let a1 = make_assumption("a-act1", AssumptionCategory::Statistical, ViolationSeverity::Warning);
-    let a2 = make_assumption("a-act2", AssumptionCategory::Behavioral, ViolationSeverity::Critical);
+    let a1 = make_assumption(
+        "a-act1",
+        AssumptionCategory::Statistical,
+        ViolationSeverity::Warning,
+    );
+    let a2 = make_assumption(
+        "a-act2",
+        AssumptionCategory::Behavioral,
+        ViolationSeverity::Critical,
+    );
     ledger.record_assumption(a1).unwrap();
     ledger.record_assumption(a2).unwrap();
     ledger.retire_assumption("a-act1").unwrap();

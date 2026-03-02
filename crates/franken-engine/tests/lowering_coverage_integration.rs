@@ -19,8 +19,8 @@ use frankenengine_engine::ir_contract::{
     BindingKind, Ir0Module, Ir3Instruction, IrLevel, ScopeKind,
 };
 use frankenengine_engine::lowering_pipeline::{
-    lower_ir0_to_ir1, lower_ir0_to_ir3, lower_ir1_to_ir2, lower_ir2_to_ir3, LoweringContext,
-    LoweringPipelineError, LoweringPipelineOutput,
+    LoweringContext, LoweringPipelineError, LoweringPipelineOutput, lower_ir0_to_ir1,
+    lower_ir0_to_ir3, lower_ir1_to_ir2, lower_ir2_to_ir3,
 };
 use frankenengine_engine::static_semantics::analyze;
 
@@ -212,7 +212,9 @@ fn determinism_all_literal_types() {
 fn determinism_identifier_expression() {
     let ir0 = make_ir0(
         ParseGoal::Script,
-        vec![make_expr_stmt(Expression::Identifier("console".to_string()))],
+        vec![make_expr_stmt(Expression::Identifier(
+            "console".to_string(),
+        ))],
     );
     let a = run_full(&ir0);
     let b = run_full(&ir0);
@@ -236,7 +238,9 @@ fn determinism_await_expression() {
 fn determinism_raw_expression_no_call() {
     let ir0 = make_ir0(
         ParseGoal::Script,
-        vec![make_expr_stmt(Expression::Raw("some_raw_thing".to_string()))],
+        vec![make_expr_stmt(Expression::Raw(
+            "some_raw_thing".to_string(),
+        ))],
     );
     let a = run_full(&ir0);
     let b = run_full(&ir0);
@@ -360,7 +364,11 @@ fn witness_invariant_checks_all_pass() {
     let output = run_full(&ir0);
     for witness in &output.witnesses {
         for check in &witness.invariant_checks {
-            assert!(check.passed, "invariant {} failed: {}", check.name, check.detail);
+            assert!(
+                check.passed,
+                "invariant {} failed: {}",
+                check.name, check.detail
+            );
         }
     }
 }
@@ -382,10 +390,7 @@ fn script_goal_creates_global_scope() {
 
 #[test]
 fn module_goal_creates_module_scope() {
-    let ir0 = make_ir0(
-        ParseGoal::Module,
-        vec![make_import("mod", Some("m"))],
-    );
+    let ir0 = make_ir0(ParseGoal::Module, vec![make_import("mod", Some("m"))]);
     let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
     assert_eq!(ir1.module.scopes.len(), 1);
     assert_eq!(ir1.module.scopes[0].kind, ScopeKind::Module);
@@ -441,10 +446,7 @@ fn const_declaration_creates_const_binding() {
 
 #[test]
 fn import_creates_import_binding() {
-    let ir0 = make_ir0(
-        ParseGoal::Module,
-        vec![make_import("react", Some("React"))],
-    );
+    let ir0 = make_ir0(ParseGoal::Module, vec![make_import("react", Some("React"))]);
     let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
     let binding = &ir1.module.scopes[0].bindings[0];
     assert_eq!(binding.name, "React");
@@ -563,7 +565,12 @@ fn ir3_string_literal_uses_constant_pool() {
         ))],
     );
     let output = run_full(&ir0);
-    assert!(output.ir3.constant_pool.contains(&"hello world".to_string()));
+    assert!(
+        output
+            .ir3
+            .constant_pool
+            .contains(&"hello world".to_string())
+    );
     let has_load_str = output
         .ir3
         .instructions
@@ -628,10 +635,7 @@ fn ir3_undefined_literal_produces_load_undefined() {
 
 #[test]
 fn ir3_import_uses_constant_pool_for_specifier() {
-    let ir0 = make_ir0(
-        ParseGoal::Module,
-        vec![make_import("lodash", Some("_"))],
-    );
+    let ir0 = make_ir0(ParseGoal::Module, vec![make_import("lodash", Some("_"))]);
     let output = run_full(&ir0);
     assert!(output.ir3.constant_pool.contains(&"lodash".to_string()));
 }
@@ -642,33 +646,27 @@ fn ir3_import_uses_constant_pool_for_specifier() {
 
 #[test]
 fn flow_proof_artifact_has_schema_version() {
-    let ir0 = make_ir0(
-        ParseGoal::Module,
-        vec![make_import("pkg", Some("p"))],
-    );
+    let ir0 = make_ir0(ParseGoal::Module, vec![make_import("pkg", Some("p"))]);
     let output = run_full(&ir0);
     assert!(!output.ir2_flow_proof_artifact.schema_version.is_empty());
 }
 
 #[test]
 fn flow_proof_artifact_has_artifact_id() {
-    let ir0 = make_ir0(
-        ParseGoal::Module,
-        vec![make_import("pkg", Some("p"))],
-    );
+    let ir0 = make_ir0(ParseGoal::Module, vec![make_import("pkg", Some("p"))]);
     let output = run_full(&ir0);
     assert!(
-        output.ir2_flow_proof_artifact.artifact_id.starts_with("sha256:"),
+        output
+            .ir2_flow_proof_artifact
+            .artifact_id
+            .starts_with("sha256:"),
         "artifact_id should be a sha256 hash"
     );
 }
 
 #[test]
 fn flow_proof_artifact_deterministic() {
-    let ir0 = make_ir0(
-        ParseGoal::Module,
-        vec![make_import("pkg", Some("p"))],
-    );
+    let ir0 = make_ir0(ParseGoal::Module, vec![make_import("pkg", Some("p"))]);
     let a = run_full(&ir0);
     let b = run_full(&ir0);
     assert_eq!(
@@ -771,10 +769,7 @@ fn full_pipeline_emits_success_events() {
 
 #[test]
 fn events_include_all_pass_names() {
-    let ir0 = make_ir0(
-        ParseGoal::Module,
-        vec![make_import("pkg", Some("p"))],
-    );
+    let ir0 = make_ir0(ParseGoal::Module, vec![make_import("pkg", Some("p"))]);
     let output = run_full(&ir0);
     let event_names: Vec<&str> = output.events.iter().map(|e| e.event.as_str()).collect();
     assert!(event_names.contains(&"ir0_to_ir1_lowered"));
@@ -1034,10 +1029,7 @@ fn serde_roundtrip_for_pipeline_output() {
 
 #[test]
 fn serde_roundtrip_for_flow_proof_artifact() {
-    let ir0 = make_ir0(
-        ParseGoal::Module,
-        vec![make_import("pkg", Some("P"))],
-    );
+    let ir0 = make_ir0(ParseGoal::Module, vec![make_import("pkg", Some("P"))]);
     let output = run_full(&ir0);
     let json = serde_json::to_string(&output.ir2_flow_proof_artifact).unwrap();
     let back: frankenengine_engine::lowering_pipeline::Ir2FlowProofArtifact =

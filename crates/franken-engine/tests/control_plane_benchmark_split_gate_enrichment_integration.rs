@@ -12,13 +12,7 @@ use frankenengine_engine::control_plane_benchmark_split_gate::*;
 
 // ── helpers ────────────────────────────────────────────────────────────
 
-fn mk_metrics(
-    throughput: u64,
-    p50: u64,
-    p95: u64,
-    p99: u64,
-    rss: u64,
-) -> SplitBenchmarkMetrics {
+fn mk_metrics(throughput: u64, p50: u64, p95: u64, p99: u64, rss: u64) -> SplitBenchmarkMetrics {
     SplitBenchmarkMetrics {
         throughput_ops_per_sec: throughput,
         latency_ns: LatencyStatsNs {
@@ -32,16 +26,34 @@ fn mk_metrics(
 
 fn all_splits_metrics() -> BTreeMap<BenchmarkSplit, SplitBenchmarkMetrics> {
     BTreeMap::from([
-        (BenchmarkSplit::Baseline, mk_metrics(1_000_000, 900_000, 1_000_000, 1_050_000, 0)),
-        (BenchmarkSplit::CxThreading, mk_metrics(995_000, 910_000, 1_010_000, 1_060_000, 8_000_000)),
-        (BenchmarkSplit::DecisionContracts, mk_metrics(990_000, 920_000, 1_050_000, 1_100_000, 16_000_000)),
-        (BenchmarkSplit::EvidenceEmission, mk_metrics(980_000, 930_000, 1_060_000, 1_110_000, 24_000_000)),
-        (BenchmarkSplit::FullIntegration, mk_metrics(960_000, 940_000, 1_070_000, 1_120_000, 30_000_000)),
+        (
+            BenchmarkSplit::Baseline,
+            mk_metrics(1_000_000, 900_000, 1_000_000, 1_050_000, 0),
+        ),
+        (
+            BenchmarkSplit::CxThreading,
+            mk_metrics(995_000, 910_000, 1_010_000, 1_060_000, 8_000_000),
+        ),
+        (
+            BenchmarkSplit::DecisionContracts,
+            mk_metrics(990_000, 920_000, 1_050_000, 1_100_000, 16_000_000),
+        ),
+        (
+            BenchmarkSplit::EvidenceEmission,
+            mk_metrics(980_000, 930_000, 1_060_000, 1_110_000, 24_000_000),
+        ),
+        (
+            BenchmarkSplit::FullIntegration,
+            mk_metrics(960_000, 940_000, 1_070_000, 1_120_000, 30_000_000),
+        ),
     ])
 }
 
 fn baseline_runs() -> Vec<u64> {
-    vec![1_000_100, 1_000_200, 999_900, 1_000_050, 1_000_150, 999_950, 1_000_300, 1_000_000, 1_000_250, 1_000_175]
+    vec![
+        1_000_100, 1_000_200, 999_900, 1_000_050, 1_000_150, 999_950, 1_000_300, 1_000_000,
+        1_000_250, 1_000_175,
+    ]
 }
 
 fn mk_snapshot(id: &str, run_id: &str) -> BenchmarkSplitSnapshot {
@@ -76,12 +88,18 @@ fn benchmark_split_as_str_exact_cx_threading() {
 
 #[test]
 fn benchmark_split_as_str_exact_decision_contracts() {
-    assert_eq!(BenchmarkSplit::DecisionContracts.as_str(), "decision_contracts");
+    assert_eq!(
+        BenchmarkSplit::DecisionContracts.as_str(),
+        "decision_contracts"
+    );
 }
 
 #[test]
 fn benchmark_split_as_str_exact_evidence_emission() {
-    assert_eq!(BenchmarkSplit::EvidenceEmission.as_str(), "evidence_emission");
+    assert_eq!(
+        BenchmarkSplit::EvidenceEmission.as_str(),
+        "evidence_emission"
+    );
 }
 
 #[test]
@@ -144,42 +162,66 @@ fn benchmark_split_serde_roundtrip_all() {
 
 #[test]
 fn failure_code_display_exact_missing_split() {
-    assert_eq!(BenchmarkSplitFailureCode::MissingSplitMetrics.to_string(), "missing_split_metrics");
+    assert_eq!(
+        BenchmarkSplitFailureCode::MissingSplitMetrics.to_string(),
+        "missing_split_metrics"
+    );
 }
 
 #[test]
 fn failure_code_display_exact_insufficient_baseline() {
-    assert_eq!(BenchmarkSplitFailureCode::InsufficientBaselineRuns.to_string(), "insufficient_baseline_runs");
+    assert_eq!(
+        BenchmarkSplitFailureCode::InsufficientBaselineRuns.to_string(),
+        "insufficient_baseline_runs"
+    );
 }
 
 #[test]
 fn failure_code_display_exact_baseline_variance() {
-    assert_eq!(BenchmarkSplitFailureCode::BaselineVarianceExceeded.to_string(), "baseline_variance_exceeded");
+    assert_eq!(
+        BenchmarkSplitFailureCode::BaselineVarianceExceeded.to_string(),
+        "baseline_variance_exceeded"
+    );
 }
 
 #[test]
 fn failure_code_display_exact_invalid_metric() {
-    assert_eq!(BenchmarkSplitFailureCode::InvalidMetric.to_string(), "invalid_metric");
+    assert_eq!(
+        BenchmarkSplitFailureCode::InvalidMetric.to_string(),
+        "invalid_metric"
+    );
 }
 
 #[test]
 fn failure_code_display_exact_throughput_regression() {
-    assert_eq!(BenchmarkSplitFailureCode::ThroughputRegressionExceeded.to_string(), "throughput_regression_exceeded");
+    assert_eq!(
+        BenchmarkSplitFailureCode::ThroughputRegressionExceeded.to_string(),
+        "throughput_regression_exceeded"
+    );
 }
 
 #[test]
 fn failure_code_display_exact_latency_regression() {
-    assert_eq!(BenchmarkSplitFailureCode::LatencyRegressionExceeded.to_string(), "latency_regression_exceeded");
+    assert_eq!(
+        BenchmarkSplitFailureCode::LatencyRegressionExceeded.to_string(),
+        "latency_regression_exceeded"
+    );
 }
 
 #[test]
 fn failure_code_display_exact_memory_overhead() {
-    assert_eq!(BenchmarkSplitFailureCode::MemoryOverheadExceeded.to_string(), "memory_overhead_exceeded");
+    assert_eq!(
+        BenchmarkSplitFailureCode::MemoryOverheadExceeded.to_string(),
+        "memory_overhead_exceeded"
+    );
 }
 
 #[test]
 fn failure_code_display_exact_previous_run_regression() {
-    assert_eq!(BenchmarkSplitFailureCode::PreviousRunRegressionExceeded.to_string(), "previous_run_regression_exceeded");
+    assert_eq!(
+        BenchmarkSplitFailureCode::PreviousRunRegressionExceeded.to_string(),
+        "previous_run_regression_exceeded"
+    );
 }
 
 #[test]
@@ -379,7 +421,10 @@ fn thresholds_serde_roundtrip() {
     let json = serde_json::to_vec(&t).unwrap();
     let back: BenchmarkSplitThresholds = serde_json::from_slice(&json).unwrap();
     assert_eq!(t.min_baseline_runs, back.min_baseline_runs);
-    assert_eq!(t.max_baseline_cv_millionths, back.max_baseline_cv_millionths);
+    assert_eq!(
+        t.max_baseline_cv_millionths,
+        back.max_baseline_cv_millionths
+    );
     assert_eq!(t.max_peak_rss_delta_bytes, back.max_peak_rss_delta_bytes);
 }
 
@@ -525,7 +570,8 @@ fn evaluation_serde_roundtrip() {
 
 #[test]
 fn decision_json_fields() {
-    let d = evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
+    let d =
+        evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
     let v: serde_json::Value = serde_json::to_value(&d).unwrap();
     let obj = v.as_object().unwrap();
     assert!(obj.contains_key("decision_id"));
@@ -541,7 +587,8 @@ fn decision_json_fields() {
 
 #[test]
 fn decision_serde_roundtrip() {
-    let d = evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
+    let d =
+        evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
     let json = serde_json::to_vec(&d).unwrap();
     let back: BenchmarkSplitGateDecision = serde_json::from_slice(&json).unwrap();
     assert_eq!(d.decision_id, back.decision_id);
@@ -554,7 +601,8 @@ fn decision_serde_roundtrip() {
 
 #[test]
 fn gate_passes_for_matching_snapshots() {
-    let d = evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
+    let d =
+        evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
     assert!(d.pass);
     assert!(!d.rollback_required);
     assert!(d.findings.is_empty());
@@ -563,13 +611,15 @@ fn gate_passes_for_matching_snapshots() {
 
 #[test]
 fn gate_pass_and_rollback_are_inverse() {
-    let d = evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
+    let d =
+        evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
     assert_eq!(d.pass, !d.rollback_required);
 }
 
 #[test]
 fn gate_decision_id_starts_with_cp_bench_split() {
-    let d = evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
+    let d =
+        evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
     assert!(d.decision_id.starts_with("cp-bench-split-"));
 }
 
@@ -594,7 +644,8 @@ fn gate_decision_id_changes_with_trace() {
 
 #[test]
 fn gate_baseline_cv_computed() {
-    let d = evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
+    let d =
+        evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
     assert!(d.baseline_cv_millionths.is_some());
     let cv = d.baseline_cv_millionths.unwrap();
     assert!(cv < 50_000, "stable baseline should have low CV");
@@ -605,7 +656,9 @@ fn gate_baseline_cv_computed() {
 #[test]
 fn gate_fails_missing_candidate_split() {
     let mut inp = mk_input();
-    inp.candidate_snapshot.split_metrics.remove(&BenchmarkSplit::FullIntegration);
+    inp.candidate_snapshot
+        .split_metrics
+        .remove(&BenchmarkSplit::FullIntegration);
     let d = evaluate_control_plane_benchmark_split(&inp, &BenchmarkSplitThresholds::default());
     assert!(!d.pass);
     assert!(d.findings.iter().any(|f| {
@@ -617,7 +670,9 @@ fn gate_fails_missing_candidate_split() {
 #[test]
 fn gate_fails_missing_previous_split() {
     let mut inp = mk_input();
-    inp.previous_snapshot.split_metrics.remove(&BenchmarkSplit::CxThreading);
+    inp.previous_snapshot
+        .split_metrics
+        .remove(&BenchmarkSplit::CxThreading);
     let d = evaluate_control_plane_benchmark_split(&inp, &BenchmarkSplitThresholds::default());
     assert!(!d.pass);
     assert!(d.findings.iter().any(|f| {
@@ -633,17 +688,27 @@ fn gate_fails_insufficient_baseline_runs() {
     inp.candidate_snapshot.baseline_throughput_runs_ops_per_sec = vec![1_000_000; 3]; // < 10
     let d = evaluate_control_plane_benchmark_split(&inp, &BenchmarkSplitThresholds::default());
     assert!(!d.pass);
-    assert!(d.findings.iter().any(|f| f.code == BenchmarkSplitFailureCode::InsufficientBaselineRuns));
+    assert!(
+        d.findings
+            .iter()
+            .any(|f| f.code == BenchmarkSplitFailureCode::InsufficientBaselineRuns)
+    );
 }
 
 #[test]
 fn gate_fails_high_baseline_variance() {
     let mut inp = mk_input();
-    inp.candidate_snapshot.baseline_throughput_runs_ops_per_sec =
-        vec![500_000, 1_500_000, 600_000, 1_400_000, 550_000, 1_450_000, 620_000, 1_380_000, 510_000, 1_490_000];
+    inp.candidate_snapshot.baseline_throughput_runs_ops_per_sec = vec![
+        500_000, 1_500_000, 600_000, 1_400_000, 550_000, 1_450_000, 620_000, 1_380_000, 510_000,
+        1_490_000,
+    ];
     let d = evaluate_control_plane_benchmark_split(&inp, &BenchmarkSplitThresholds::default());
     assert!(!d.pass);
-    assert!(d.findings.iter().any(|f| f.code == BenchmarkSplitFailureCode::BaselineVarianceExceeded));
+    assert!(
+        d.findings
+            .iter()
+            .any(|f| f.code == BenchmarkSplitFailureCode::BaselineVarianceExceeded)
+    );
 }
 
 #[test]
@@ -681,7 +746,8 @@ fn gate_fails_memory_overhead_exceeded() {
 
 #[test]
 fn logs_carry_trace_and_policy() {
-    let d = evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
+    let d =
+        evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
     for log in &d.logs {
         assert_eq!(log.trace_id, "trace-enrich");
         assert_eq!(log.policy_id, "policy-enrich");
@@ -691,13 +757,15 @@ fn logs_carry_trace_and_policy() {
 
 #[test]
 fn logs_include_baseline_stability_check() {
-    let d = evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
+    let d =
+        evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
     assert!(d.logs.iter().any(|l| l.event == "baseline_stability_check"));
 }
 
 #[test]
 fn logs_final_event_is_benchmark_split_decision() {
-    let d = evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
+    let d =
+        evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
     let last = d.logs.last().unwrap();
     assert_eq!(last.event, "benchmark_split_decision");
     assert_eq!(last.outcome, "pass");
@@ -706,8 +774,13 @@ fn logs_final_event_is_benchmark_split_decision() {
 
 #[test]
 fn logs_split_evaluations_present() {
-    let d = evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
-    let split_eval_count = d.logs.iter().filter(|l| l.event == "split_evaluation").count();
+    let d =
+        evaluate_control_plane_benchmark_split(&mk_input(), &BenchmarkSplitThresholds::default());
+    let split_eval_count = d
+        .logs
+        .iter()
+        .filter(|l| l.event == "split_evaluation")
+        .count();
     assert_eq!(split_eval_count, 5);
 }
 
@@ -727,6 +800,12 @@ fn logs_failing_gate_has_error_code() {
 fn snapshot_hashes_in_decision_match_direct_computation() {
     let inp = mk_input();
     let d = evaluate_control_plane_benchmark_split(&inp, &BenchmarkSplitThresholds::default());
-    assert_eq!(d.previous_snapshot_hash, inp.previous_snapshot.snapshot_hash());
-    assert_eq!(d.candidate_snapshot_hash, inp.candidate_snapshot.snapshot_hash());
+    assert_eq!(
+        d.previous_snapshot_hash,
+        inp.previous_snapshot.snapshot_hash()
+    );
+    assert_eq!(
+        d.candidate_snapshot_hash,
+        inp.candidate_snapshot.snapshot_hash()
+    );
 }

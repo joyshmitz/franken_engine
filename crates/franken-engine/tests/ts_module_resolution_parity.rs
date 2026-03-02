@@ -130,11 +130,21 @@ fn rgc_202_contract_schema_and_required_fields_are_present() {
         true
     );
 
-    let stable_fields: BTreeSet<String> = json_string_array(resolution_policy, "stable_trace_fields")
-        .into_iter()
-        .collect();
-    for required in ["trace_id", "decision_id", "policy_id", "event", "error_code"] {
-        assert!(stable_fields.contains(required), "missing trace field {required}");
+    let stable_fields: BTreeSet<String> =
+        json_string_array(resolution_policy, "stable_trace_fields")
+            .into_iter()
+            .collect();
+    for required in [
+        "trace_id",
+        "decision_id",
+        "policy_id",
+        "event",
+        "error_code",
+    ] {
+        assert!(
+            stable_fields.contains(required),
+            "missing trace field {required}"
+        );
     }
 
     let parity_scenarios = contract
@@ -172,7 +182,10 @@ fn rgc_202_contract_schema_and_required_fields_are_present() {
         "commands.txt",
         "ts_resolution_trace.jsonl",
     ] {
-        assert!(required_paths.contains(required), "missing artifact path {required}");
+        assert!(
+            required_paths.contains(required),
+            "missing artifact path {required}"
+        );
     }
 
     let drift_classes: BTreeSet<String> = contract
@@ -190,7 +203,10 @@ fn rgc_202_contract_schema_and_required_fields_are_present() {
         "extra_target",
         "full_mismatch",
     ] {
-        assert!(drift_classes.contains(required), "missing drift class {required}");
+        assert!(
+            drift_classes.contains(required),
+            "missing drift class {required}"
+        );
     }
 
     let operator_verification = contract
@@ -203,7 +219,10 @@ fn rgc_202_contract_schema_and_required_fields_are_present() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(verification_lines.contains("jq empty"));
-    assert!(verification_lines.contains("cargo test -p frankenengine-engine --test ts_module_resolution_parity"));
+    assert!(
+        verification_lines
+            .contains("cargo test -p frankenengine-engine --test ts_module_resolution_parity")
+    );
 }
 
 #[test]
@@ -272,7 +291,10 @@ fn resolver_selects_package_export_condition_by_request_style() {
             &context(),
         )
         .expect("import should resolve");
-    assert_eq!(import_outcome.resolved_path, "/repo/node_modules/toolkit/esm/index.mjs");
+    assert_eq!(
+        import_outcome.resolved_path,
+        "/repo/node_modules/toolkit/esm/index.mjs"
+    );
     assert_eq!(import_outcome.selected_condition.as_deref(), Some("import"));
 
     let require_outcome = resolver
@@ -281,8 +303,14 @@ fn resolver_selects_package_export_condition_by_request_style() {
             &context(),
         )
         .expect("require should resolve");
-    assert_eq!(require_outcome.resolved_path, "/repo/node_modules/toolkit/cjs/index.cjs");
-    assert_eq!(require_outcome.selected_condition.as_deref(), Some("require"));
+    assert_eq!(
+        require_outcome.resolved_path,
+        "/repo/node_modules/toolkit/cjs/index.cjs"
+    );
+    assert_eq!(
+        require_outcome.selected_condition.as_deref(),
+        Some("require")
+    );
 }
 
 #[test]
@@ -342,7 +370,10 @@ fn monorepo_resolution_trace_is_deterministic_across_runs() {
         .resolve(&request, &context())
         .expect("second resolve should pass");
 
-    assert_eq!(first.resolved_path, "/repo/packages/shared/src/runtime/index.ts");
+    assert_eq!(
+        first.resolved_path,
+        "/repo/packages/shared/src/runtime/index.ts"
+    );
     assert_eq!(first.resolved_path, second.resolved_path);
     assert_eq!(first.traces, second.traces);
 }
