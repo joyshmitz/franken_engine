@@ -31,6 +31,7 @@ struct CliArgs {
     out_path: Option<PathBuf>,
     evidence_jsonl_path: Option<PathBuf>,
     fail_on_divergence: bool,
+    preflight_only: bool,
     print_help: bool,
 }
 
@@ -113,6 +114,17 @@ fn run() -> Result<i32, Box<dyn Error>> {
     if args.print_help {
         return Ok(0);
     }
+    if args.preflight_only {
+        run_preflight(&args.config)?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "preflight_passed": true,
+                "engine_count": args.config.engines.len(),
+            }))?
+        );
+        return Ok(0);
+    }
 
     let mut report = run_multi_engine_harness(&args.config)?;
     rewrite_replay_commands_for_lockstep_runner(&mut report);
@@ -167,6 +179,7 @@ where
     let mut out_path = None::<PathBuf>;
     let mut evidence_jsonl_path = None::<PathBuf>;
     let mut fail_on_divergence = false;
+    let mut preflight_only = false;
     let mut print_help_flag = false;
 
     let mut iter = args.into_iter();
@@ -241,6 +254,9 @@ where
             "--fail-on-divergence" => {
                 fail_on_divergence = true;
             }
+            "--preflight-only" => {
+                preflight_only = true;
+            }
             "--out" => {
                 let value = iter
                     .next()
@@ -298,6 +314,7 @@ where
         out_path,
         evidence_jsonl_path,
         fail_on_divergence,
+        preflight_only,
         print_help: print_help_flag,
     })
 }
@@ -308,6 +325,68 @@ fn parse_fixture_limit(value: &str) -> Result<Option<usize>, Box<dyn Error>> {
     } else {
         Ok(Some(value.parse::<usize>()?))
     }
+}
+
+fn run_preflight(config: &MultiEngineHarnessConfig) -> Result<(), Box<dyn Error>> {
+    for engine in &config.engines {
+        if !matches!(engine.kind, HarnessEngineKind::ExternalCommand) {
+            continue;
+        }
+        let command = engine
+            .command
+            .as_deref()
+            .ok_or_else(|| format!("external engine `{}` has no command", engine.engine_id))?;
+        if !command_exists(command) {
+            return Err(format!(
+                "external engine `{}` command `{}` not found in PATH",
+                engine.engine_id, command
+            )
+            .into());
+        }
+
+        for arg in &engine.args {
+            if !looks_like_script_path(arg) {
+                continue;
+            }
+            let script_path = Path::new(arg);
+            if !script_path.exists() {
+                return Err(format!(
+                    "external engine `{}` expected script path `{}` to exist (cwd: {})",
+                    engine.engine_id,
+                    script_path.display(),
+                    std::env::current_dir()?.display()
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn command_exists(command: &str) -> bool {
+    if command.trim().is_empty() {
+        return false;
+    }
+
+    let command_path = Path::new(command);
+    if command_path.is_absolute()
+        || command.contains(std::path::MAIN_SEPARATOR)
+        || command.contains('/')
+        || command.contains('\\')
+    {
+        return command_path.is_file();
+    }
+
+    std::env::var_os("PATH").is_some_and(|path_value| {
+        std::env::split_paths(&path_value).any(|entry| entry.join(command).is_file())
+    })
+}
+
+fn looks_like_script_path(value: &str) -> bool {
+    let lowered = value.to_ascii_lowercase();
+    [".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"]
+        .iter()
+        .any(|suffix| lowered.ends_with(suffix))
 }
 
 fn append_lockstep_evidence_jsonl(
@@ -544,6 +623,7 @@ fn print_help() {
     println!("  --engine-specs <path>");
     println!("  --runtime-specs <path>");
     println!("  --fail-on-divergence");
+    println!("  --preflight-only");
     println!("  --out <path>");
     println!("  --evidence-jsonl <path>");
     println!("  default runtime-specs path: {DEFAULT_LOCKSTEP_RUNTIME_SPECS_PATH}");

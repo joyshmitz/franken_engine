@@ -126,6 +126,46 @@ args = ['-c', 'echo "{\"hash\":\"sha256:two\"}"']
     fs::write(path, toml).expect("runtime spec file should be written");
 }
 
+fn write_missing_command_runtime_specs(path: &Path) {
+    let toml = r#"schema_version = "franken-engine.lockstep-runtimes.v1"
+
+[[runtimes]]
+runtime_id = "node"
+display_name = "Node.js missing command"
+version_pin = "node@test"
+command = "franken_lockstep_missing_runtime_command"
+args = []
+
+[[runtimes]]
+runtime_id = "bun"
+display_name = "Bun shell adapter"
+version_pin = "bun@test"
+command = "sh"
+args = ['-c', 'echo "{\"hash\":\"sha256:abc\"}"']
+"#;
+    fs::write(path, toml).expect("runtime spec file should be written");
+}
+
+fn write_missing_script_runtime_specs(path: &Path) {
+    let toml = r#"schema_version = "franken-engine.lockstep-runtimes.v1"
+
+[[runtimes]]
+runtime_id = "node"
+display_name = "Node.js script-path adapter"
+version_pin = "node@test"
+command = "sh"
+args = ["./scripts/lockstep_runtime_adapter_node_missing.mjs"]
+
+[[runtimes]]
+runtime_id = "bun"
+display_name = "Bun shell adapter"
+version_pin = "bun@test"
+command = "sh"
+args = ['-c', 'echo "{\"hash\":\"sha256:def\"}"']
+"#;
+    fs::write(path, toml).expect("runtime spec file should be written");
+}
+
 fn write_engine_specs(path: &Path) {
     let payload = serde_json::json!([
         {
@@ -171,6 +211,7 @@ fn lockstep_runner_help_exits_zero() {
     assert!(stdout.contains("--fixture-catalog"));
     assert!(stdout.contains("--runtime-specs"));
     assert!(stdout.contains("--evidence-jsonl"));
+    assert!(stdout.contains("--preflight-only"));
 }
 
 #[test]
@@ -567,6 +608,103 @@ fn lockstep_runner_rejects_runtime_specs_missing_required_runtime_ids() {
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
     assert!(stderr.contains("must include enabled runtime_id entries for bun"));
+
+    let _ = fs::remove_file(catalog_path);
+    let _ = fs::remove_file(runtime_specs_path);
+}
+
+#[test]
+fn lockstep_runner_preflight_only_passes_for_valid_runtime_specs() {
+    let catalog_path = temp_path("franken_lockstep_runner_preflight_catalog", "json");
+    let runtime_specs_path = temp_path("franken_lockstep_runner_preflight_specs", "toml");
+    let expected_hash = write_fixture_catalog(&catalog_path);
+    write_runtime_specs(&runtime_specs_path, expected_hash.as_str());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken_lockstep_runner"))
+        .args([
+            "--fixture-catalog",
+            catalog_path
+                .to_str()
+                .expect("fixture path should be valid utf8"),
+            "--runtime-specs",
+            runtime_specs_path
+                .to_str()
+                .expect("runtime specs path should be valid utf8"),
+            "--preflight-only",
+        ])
+        .output()
+        .expect("lockstep runner should execute");
+
+    assert!(
+        output.status.success(),
+        "command failed with stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    assert!(stdout.contains("\"preflight_passed\": true"));
+
+    let _ = fs::remove_file(catalog_path);
+    let _ = fs::remove_file(runtime_specs_path);
+}
+
+#[test]
+fn lockstep_runner_preflight_only_rejects_missing_command() {
+    let catalog_path = temp_path("franken_lockstep_runner_preflight_missing_cmd_catalog", "json");
+    let runtime_specs_path = temp_path("franken_lockstep_runner_preflight_missing_cmd", "toml");
+    write_fixture_catalog(&catalog_path);
+    write_missing_command_runtime_specs(&runtime_specs_path);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken_lockstep_runner"))
+        .args([
+            "--fixture-catalog",
+            catalog_path
+                .to_str()
+                .expect("fixture path should be valid utf8"),
+            "--runtime-specs",
+            runtime_specs_path
+                .to_str()
+                .expect("runtime specs path should be valid utf8"),
+            "--preflight-only",
+        ])
+        .output()
+        .expect("lockstep runner should execute");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(stderr.contains("not found in PATH"));
+
+    let _ = fs::remove_file(catalog_path);
+    let _ = fs::remove_file(runtime_specs_path);
+}
+
+#[test]
+fn lockstep_runner_preflight_only_rejects_missing_script_path() {
+    let catalog_path =
+        temp_path("franken_lockstep_runner_preflight_missing_script_catalog", "json");
+    let runtime_specs_path =
+        temp_path("franken_lockstep_runner_preflight_missing_script_specs", "toml");
+    write_fixture_catalog(&catalog_path);
+    write_missing_script_runtime_specs(&runtime_specs_path);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken_lockstep_runner"))
+        .args([
+            "--fixture-catalog",
+            catalog_path
+                .to_str()
+                .expect("fixture path should be valid utf8"),
+            "--runtime-specs",
+            runtime_specs_path
+                .to_str()
+                .expect("runtime specs path should be valid utf8"),
+            "--preflight-only",
+        ])
+        .output()
+        .expect("lockstep runner should execute");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(stderr.contains("expected script path"));
 
     let _ = fs::remove_file(catalog_path);
     let _ = fs::remove_file(runtime_specs_path);

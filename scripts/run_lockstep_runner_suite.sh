@@ -78,6 +78,45 @@ run_step() {
 }
 
 run_report_step() {
+  local preflight_stdout_path="${run_dir}/report.preflight.stdout"
+  local -a preflight_command=(
+    cargo run -p frankenengine-engine --bin franken_lockstep_runner -- \
+      --fixture-catalog "$fixture_catalog" \
+      --fixture-limit "$fixture_limit" \
+      --seed "$seed" \
+      --trace-id "$trace_id" \
+      --decision-id "$decision_id" \
+      --policy-id "$policy_id" \
+      --locale C \
+      --timezone UTC \
+      --preflight-only
+  )
+
+  if [[ -n "$fixture_id" ]]; then
+    preflight_command+=(--fixture-id "$fixture_id")
+  fi
+  if [[ -n "$runtime_specs" ]]; then
+    preflight_command+=(--runtime-specs "$runtime_specs")
+  fi
+
+  local preflight_command_text
+  preflight_command_text="$(printf '%q ' "${preflight_command[@]}")"
+  preflight_command_text="${preflight_command_text% }"
+  commands_run+=("$preflight_command_text")
+  echo "==> $preflight_command_text"
+  set +e
+  run_rch "${preflight_command[@]}" | tee "$preflight_stdout_path"
+  local preflight_rc=$?
+  set -e
+  if ! rch_reject_local_fallback "$preflight_stdout_path"; then
+    failed_command="${preflight_command_text} (rch-local-fallback-detected)"
+    return 86
+  fi
+  if [[ "$preflight_rc" -ne 0 ]]; then
+    failed_command="$preflight_command_text"
+    return "$preflight_rc"
+  fi
+
   local report_stdout_path="${run_dir}/report.stdout"
   local -a command=(
     cargo run -p frankenengine-engine --bin franken_lockstep_runner -- \
