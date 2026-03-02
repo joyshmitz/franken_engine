@@ -50,6 +50,41 @@ fn rgc_execution_waves_handoff_rejects_unknown_wave() {
 }
 
 #[test]
+fn rgc_execution_waves_handoff_rejects_missing_artifact_triad_member() {
+    let protocol = default_rgc_execution_wave_protocol();
+    let mut handoff = default_wave_handoff_package();
+    handoff.artifact_links = vec![
+        "artifacts/rgc_execution_waves_coordination/demo/run_manifest.json".to_string(),
+        "artifacts/rgc_execution_waves_coordination/demo/events.jsonl".to_string(),
+    ];
+
+    let error = validate_wave_handoff_package(&protocol, &handoff)
+        .expect_err("handoff without commands.txt artifact should fail");
+    assert!(matches!(
+        error,
+        CoordinationValidationError::MissingRequiredArtifactLink { .. }
+    ));
+}
+
+#[test]
+fn rgc_execution_waves_handoff_rejects_next_steps_without_target_bead_reference() {
+    let protocol = default_rgc_execution_wave_protocol();
+    let mut handoff = default_wave_handoff_package();
+    handoff.next_steps = vec![
+        "notify wave lead".to_string(),
+        "prepare reservation request".to_string(),
+    ];
+
+    let error = validate_wave_handoff_package(&protocol, &handoff).expect_err(
+        "handoff next steps must reference at least one target wave bead id for automation",
+    );
+    assert!(matches!(
+        error,
+        CoordinationValidationError::MissingTargetWaveNextStep { .. }
+    ));
+}
+
+#[test]
 fn rgc_execution_waves_dry_run_emits_required_coordination_events() {
     let protocol = default_rgc_execution_wave_protocol();
     let handoff = default_wave_handoff_package();

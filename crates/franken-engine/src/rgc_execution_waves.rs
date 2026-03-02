@@ -207,6 +207,24 @@ pub enum CoordinationValidationError {
     UnknownWaveForHandoff {
         wave: String,
     },
+    MissingWaveEntryForHandoffSource {
+        wave: String,
+    },
+    DuplicateHandoffFieldValue {
+        field: String,
+        value: String,
+    },
+    ChangedBeadOutsideSourceWave {
+        bead_id: String,
+        source_wave: String,
+    },
+    MissingRequiredArtifactLink {
+        required_suffix: String,
+    },
+    MissingTargetWaveNextStep {
+        wave: String,
+    },
+    HandoffOwnersMustDiffer,
 }
 
 impl std::fmt::Display for CoordinationValidationError {
@@ -237,6 +255,37 @@ impl std::fmt::Display for CoordinationValidationError {
             Self::InvalidReservationPolicy => write!(f, "file reservation policy is invalid"),
             Self::UnknownWaveForHandoff { wave } => {
                 write!(f, "handoff references unknown wave: {wave}")
+            }
+            Self::MissingWaveEntryForHandoffSource { wave } => {
+                write!(f, "handoff source wave is missing from protocol: {wave}")
+            }
+            Self::DuplicateHandoffFieldValue { field, value } => {
+                write!(
+                    f,
+                    "handoff field `{field}` contains duplicate value `{value}`"
+                )
+            }
+            Self::ChangedBeadOutsideSourceWave {
+                bead_id,
+                source_wave,
+            } => write!(
+                f,
+                "handoff changed bead `{bead_id}` is not owned by source wave `{source_wave}`"
+            ),
+            Self::MissingRequiredArtifactLink { required_suffix } => {
+                write!(
+                    f,
+                    "handoff artifact_links missing required artifact suffix `{required_suffix}`"
+                )
+            }
+            Self::MissingTargetWaveNextStep { wave } => {
+                write!(
+                    f,
+                    "handoff next_steps missing explicit target-wave bead reference for {wave}"
+                )
+            }
+            Self::HandoffOwnersMustDiffer => {
+                write!(f, "handoff from_owner and to_owner must differ")
             }
         }
     }
@@ -359,7 +408,8 @@ pub fn default_wave_handoff_package() -> WaveHandoffPackage {
         ],
         open_risks: vec!["No active blockers at handoff time".to_string()],
         next_steps: vec![
-            "Claim wave_1 parser/ts ingestion beads".to_string(),
+            "Claim bd-1lsy.2.1 parser grammar lane".to_string(),
+            "Claim bd-1lsy.3.1 deterministic TS ingestion lane".to_string(),
             "Reserve file scopes before edits".to_string(),
         ],
     }
@@ -470,6 +520,36 @@ pub fn validate_execution_wave_protocol(
     Ok(())
 }
 
+fn wave_entry(protocol: &ExecutionWaveProtocol, wave: ExecutionWave) -> Option<&WavePlanEntry> {
+    protocol.waves.iter().find(|entry| entry.wave == wave)
+}
+
+fn previous_wave(target_wave: ExecutionWave) -> Option<ExecutionWave> {
+    match target_wave {
+        ExecutionWave::Wave0 => None,
+        ExecutionWave::Wave1 => Some(ExecutionWave::Wave0),
+        ExecutionWave::Wave2 => Some(ExecutionWave::Wave1),
+        ExecutionWave::Wave3 => Some(ExecutionWave::Wave2),
+    }
+}
+
+fn source_wave_for_handoff(target_wave: ExecutionWave) -> ExecutionWave {
+    previous_wave(target_wave).unwrap_or(ExecutionWave::Wave0)
+}
+
+fn assert_unique_values(field: &str, values: &[String]) -> Result<(), CoordinationValidationError> {
+    let mut seen = BTreeSet::<&str>::new();
+    for value in values {
+        if !seen.insert(value.as_str()) {
+            return Err(CoordinationValidationError::DuplicateHandoffFieldValue {
+                field: field.to_string(),
+                value: value.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Validate one handoff package against a protocol.
 pub fn validate_wave_handoff_package(
     protocol: &ExecutionWaveProtocol,
@@ -493,6 +573,9 @@ pub fn validate_wave_handoff_package(
             field: "handoff.to_owner".to_string(),
         });
     }
+    if package.from_owner.trim() == package.to_owner.trim() {
+        return Err(CoordinationValidationError::HandoffOwnersMustDiffer);
+    }
     if package.changed_beads.is_empty() {
         return Err(CoordinationValidationError::EmptyField {
             field: "handoff.changed_beads".to_string(),
@@ -508,13 +591,61 @@ pub fn validate_wave_handoff_package(
             field: "handoff.next_steps".to_string(),
         });
     }
+    assert_unique_values("handoff.changed_beads", &package.changed_beads)?;
+    assert_unique_values("handoff.artifact_links", &package.artifact_links)?;
+    assert_unique_values("handoff.next_steps", &package.next_steps)?;
 
-    let known_wave = protocol
-        .waves
-        .iter()
-        .any(|entry| entry.wave == package.wave);
-    if !known_wave {
+    let Some(target_wave_entry) = wave_entry(protocol, package.wave) else {
         return Err(CoordinationValidationError::UnknownWaveForHandoff {
+            wave: package.wave.as_str().to_string(),
+        });
+    };
+
+    let source_wave = source_wave_for_handoff(package.wave);
+    let Some(source_wave_entry) = wave_entry(protocol, source_wave) else {
+        return Err(
+            CoordinationValidationError::MissingWaveEntryForHandoffSource {
+                wave: source_wave.as_str().to_string(),
+            },
+        );
+    };
+
+    let source_wave_beads = source_wave_entry
+        .all_bead_ids()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    for changed_bead in &package.changed_beads {
+        if !source_wave_beads.contains(changed_bead.as_str()) {
+            return Err(CoordinationValidationError::ChangedBeadOutsideSourceWave {
+                bead_id: changed_bead.clone(),
+                source_wave: source_wave.as_str().to_string(),
+            });
+        }
+    }
+
+    for required_suffix in ["run_manifest.json", "events.jsonl", "commands.txt"] {
+        if !package
+            .artifact_links
+            .iter()
+            .any(|link| link.ends_with(required_suffix))
+        {
+            return Err(CoordinationValidationError::MissingRequiredArtifactLink {
+                required_suffix: required_suffix.to_string(),
+            });
+        }
+    }
+
+    let target_wave_beads = target_wave_entry
+        .all_bead_ids()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let has_target_wave_next_step = package.next_steps.iter().any(|next_step| {
+        target_wave_beads
+            .iter()
+            .any(|target_bead| next_step.contains(target_bead))
+    });
+    if !has_target_wave_next_step {
+        return Err(CoordinationValidationError::MissingTargetWaveNextStep {
             wave: package.wave.as_str().to_string(),
         });
     }
@@ -650,13 +781,91 @@ mod tests {
             CoordinationValidationError::EmptyField { .. }
         ));
 
-        package.artifact_links.push("a.json".to_string());
+        package.artifact_links = vec![
+            "a/run_manifest.json".to_string(),
+            "a/events.jsonl".to_string(),
+            "a/commands.txt".to_string(),
+        ];
         package.next_steps.clear();
         let error = validate_wave_handoff_package(&protocol, &package)
             .expect_err("missing next steps should fail");
         assert!(matches!(
             error,
             CoordinationValidationError::EmptyField { .. }
+        ));
+    }
+
+    #[test]
+    fn handoff_requires_distinct_owners() {
+        let protocol = default_rgc_execution_wave_protocol();
+        let mut package = default_wave_handoff_package();
+        package.to_owner = package.from_owner.clone();
+
+        let error = validate_wave_handoff_package(&protocol, &package)
+            .expect_err("handoff owners must differ");
+        assert!(matches!(
+            error,
+            CoordinationValidationError::HandoffOwnersMustDiffer
+        ));
+    }
+
+    #[test]
+    fn handoff_rejects_duplicate_changed_beads() {
+        let protocol = default_rgc_execution_wave_protocol();
+        let mut package = default_wave_handoff_package();
+        package.changed_beads.push("bd-1lsy.1.4".to_string());
+
+        let error = validate_wave_handoff_package(&protocol, &package)
+            .expect_err("duplicate changed_beads should fail");
+        assert!(matches!(
+            error,
+            CoordinationValidationError::DuplicateHandoffFieldValue { .. }
+        ));
+    }
+
+    #[test]
+    fn handoff_requires_artifact_triad_suffixes() {
+        let protocol = default_rgc_execution_wave_protocol();
+        let mut package = default_wave_handoff_package();
+        package.artifact_links = vec![
+            "artifacts/run_manifest.json".to_string(),
+            "artifacts/events.jsonl".to_string(),
+            "artifacts/summary.md".to_string(),
+        ];
+
+        let error = validate_wave_handoff_package(&protocol, &package)
+            .expect_err("artifact triad suffixes should be required");
+        assert!(matches!(
+            error,
+            CoordinationValidationError::MissingRequiredArtifactLink { .. }
+        ));
+    }
+
+    #[test]
+    fn handoff_rejects_changed_bead_outside_source_wave() {
+        let protocol = default_rgc_execution_wave_protocol();
+        let mut package = default_wave_handoff_package();
+        package.changed_beads = vec!["bd-1lsy.2.1".to_string()];
+
+        let error = validate_wave_handoff_package(&protocol, &package)
+            .expect_err("changed_beads must belong to source wave");
+        assert!(matches!(
+            error,
+            CoordinationValidationError::ChangedBeadOutsideSourceWave { .. }
+        ));
+    }
+
+    #[test]
+    fn handoff_requires_target_wave_bead_reference_in_next_steps() {
+        let protocol = default_rgc_execution_wave_protocol();
+        let mut package = default_wave_handoff_package();
+        package.next_steps = vec!["Review pending risks".to_string()];
+
+        let error = validate_wave_handoff_package(&protocol, &package)
+            .expect_err("next_steps must reference at least one target-wave bead");
+        assert!(matches!(
+            error,
+            CoordinationValidationError::MissingTargetWaveNextStep { .. }
         ));
     }
 
@@ -1006,6 +1215,31 @@ mod tests {
             wave: "wave_99".to_string(),
         };
         assert!(err.to_string().contains("wave_99"));
+    }
+
+    #[test]
+    fn validation_error_display_missing_required_artifact_link() {
+        let err = CoordinationValidationError::MissingRequiredArtifactLink {
+            required_suffix: "commands.txt".to_string(),
+        };
+        assert!(err.to_string().contains("commands.txt"));
+    }
+
+    #[test]
+    fn validation_error_display_changed_bead_outside_source_wave() {
+        let err = CoordinationValidationError::ChangedBeadOutsideSourceWave {
+            bead_id: "bd-x".to_string(),
+            source_wave: "wave_0".to_string(),
+        };
+        let rendered = err.to_string();
+        assert!(rendered.contains("bd-x"));
+        assert!(rendered.contains("wave_0"));
+    }
+
+    #[test]
+    fn validation_error_display_handoff_owners_must_differ() {
+        let err = CoordinationValidationError::HandoffOwnersMustDiffer;
+        assert!(err.to_string().contains("must differ"));
     }
 
     #[test]

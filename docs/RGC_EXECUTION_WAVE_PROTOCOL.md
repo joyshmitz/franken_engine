@@ -1,7 +1,7 @@
 # RGC Execution Wave Protocol v1
 
 Status: active
-Primary bead: `bd-1lsy.1.4`
+Primary beads: `bd-1lsy.1.4`, `bd-1lsy.1.5`
 
 ## Purpose
 
@@ -73,8 +73,16 @@ Required fields:
 6. `open_risks`
 7. `next_steps` (non-empty)
 
-Minimum handoff quality rule: no wave transition without artifact links and
-next-step recommendations.
+Minimum handoff quality rules (enforced by validator):
+
+1. `from_owner` and `to_owner` must differ.
+2. `changed_beads` must be unique and owned by the source wave
+   (`wave_(n-1)` -> `wave_n`, or `wave_0` bootstrap for wave 0 handoff checks).
+3. `artifact_links` must include the reproducibility triad:
+   - `run_manifest.json`
+   - `events.jsonl`
+   - `commands.txt`
+4. `next_steps` must include at least one explicit bead ID from the target wave.
 
 ## Message Templates
 
