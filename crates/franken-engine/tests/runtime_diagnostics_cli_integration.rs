@@ -1429,3 +1429,119 @@ fn debug_impls_produce_nonempty_output() {
     };
     assert!(!format!("{:?}", event).is_empty());
 }
+
+// ===================================================================
+// Section 18: Preflight doctor
+// ===================================================================
+
+#[test]
+fn preflight_doctor_red_for_critical_signals() {
+    let input = make_cli_input();
+    let output = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+
+    assert_eq!(output.verdict, PreflightVerdict::Red);
+    assert!(
+        output
+            .blockers
+            .iter()
+            .any(|blocker| blocker.severity == EvidenceSeverity::Critical),
+        "expected at least one critical blocker"
+    );
+    assert!(
+        output
+            .support_bundle
+            .index
+            .files
+            .iter()
+            .any(|file| file.path == "support_bundle/index.json"),
+        "support bundle index file should be present"
+    );
+    assert!(
+        output
+            .logs
+            .iter()
+            .any(|event| event.event == "preflight_doctor" && event.outcome == "fail"),
+        "doctor log event should be present with fail outcome"
+    );
+}
+
+#[test]
+fn preflight_doctor_green_for_clean_signals() {
+    let mut input = make_cli_input();
+    input.evidence_entries.clear();
+    input.containment_receipts.clear();
+    input
+        .hostcall_records
+        .retain(|record| matches!(record.record.result_status, HostcallResult::Success));
+    for sample in &mut input.runtime_state.gc_pressure {
+        sample.used_bytes = sample.used_bytes.min(sample.budget_bytes);
+    }
+    for lane in &mut input.runtime_state.scheduler_lanes {
+        lane.tasks_timed_out = 0;
+        lane.queue_depth = 0;
+    }
+
+    let output = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+
+    assert_eq!(output.verdict, PreflightVerdict::Green);
+    assert!(output.blockers.is_empty());
+    assert!(output.mandatory_field_status.valid);
+    assert!(
+        output
+            .logs
+            .iter()
+            .any(|event| event.event == "preflight_doctor" && event.outcome == "pass"),
+        "doctor log event should be present with pass outcome"
+    );
+}
+
+#[test]
+fn preflight_doctor_detects_missing_mandatory_fields() {
+    let mut input = make_cli_input();
+    input.trace_id.clear();
+
+    let output = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+
+    assert!(!output.mandatory_field_status.valid);
+    assert!(
+        output
+            .mandatory_field_status
+            .missing_fields
+            .contains(&"trace_id".to_string())
+    );
+    assert_eq!(output.verdict, PreflightVerdict::Red);
+    assert!(
+        output
+            .blockers
+            .iter()
+            .any(|blocker| blocker.blocker_id == "mandatory_field_contract"
+                && blocker.severity == EvidenceSeverity::Critical),
+        "missing mandatory fields should raise a critical contract blocker"
+    );
+}
+
+#[test]
+fn render_preflight_summary_includes_repro_commands() {
+    let output = run_preflight_doctor(
+        &make_cli_input(),
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let summary = render_preflight_summary(&output);
+
+    assert!(summary.contains("verdict: red"));
+    assert!(summary.contains("support_bundle_id: bundle-"));
+    assert!(summary.contains("runtime_diagnostics doctor --input <path> --summary"));
+}

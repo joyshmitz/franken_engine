@@ -21,6 +21,7 @@ use crate::security_epoch::SecurityEpoch;
 const COMPONENT: &str = "runtime_diagnostics_cli";
 const SUPPORT_BUNDLE_SCHEMA_VERSION: &str = "franken-engine.runtime-diagnostics.support-bundle.v1";
 const DEFAULT_SUPPORT_BUNDLE_REDACTION_MARKER: &str = "sha256:REDACTED";
+const PREFLIGHT_DOCTOR_FAILURE_CODE: &str = "FE-RUNTIME-DIAGNOSTICS-DOCTOR-0001";
 
 /// Stable log envelope required by plan acceptance criteria.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -513,6 +514,67 @@ pub struct SupportBundleOutput {
     pub logs: Vec<StructuredLogEvent>,
 }
 
+/// Operator-facing preflight verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreflightVerdict {
+    Green,
+    Yellow,
+    Red,
+}
+
+impl PreflightVerdict {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Green => "green",
+            Self::Yellow => "yellow",
+            Self::Red => "red",
+        }
+    }
+}
+
+impl fmt::Display for PreflightVerdict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str((*self).as_str())
+    }
+}
+
+/// Deterministic blocker surfaced by the preflight doctor command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreflightBlocker {
+    pub blocker_id: String,
+    pub severity: EvidenceSeverity,
+    pub rationale: String,
+    pub remediation: String,
+    pub reproducible_command: String,
+    pub evidence_links: Vec<String>,
+}
+
+/// Mandatory-field validation status for fail-closed gate consumption.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreflightMandatoryFieldStatus {
+    pub valid: bool,
+    pub missing_fields: Vec<String>,
+    pub inconsistent_fields: Vec<String>,
+}
+
+/// Deterministic preflight doctor output.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PreflightDoctorOutput {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub verdict: PreflightVerdict,
+    pub rationale: String,
+    pub blockers: Vec<PreflightBlocker>,
+    pub mandatory_field_status: PreflightMandatoryFieldStatus,
+    pub diagnostics: RuntimeDiagnosticsOutput,
+    pub evidence_summary: EvidenceExportSummary,
+    pub support_bundle: SupportBundleOutput,
+    pub logs: Vec<StructuredLogEvent>,
+}
+
 /// Export deterministic evidence records from all supported sources.
 pub fn export_evidence_bundle(
     input: &RuntimeDiagnosticsCliInput,
@@ -690,6 +752,7 @@ pub fn export_support_bundle(
         "runtime_diagnostics diagnostics --input <path> --summary".to_string(),
         "runtime_diagnostics export-evidence --input <path> --summary".to_string(),
         "runtime_diagnostics support-bundle --input <path> --summary".to_string(),
+        "runtime_diagnostics doctor --input <path> --summary".to_string(),
     ];
 
     let run_manifest = serde_json::json!({
@@ -832,6 +895,317 @@ pub fn render_support_bundle_summary(output: &SupportBundleOutput) -> String {
         lines.push(format!("  - {command}"));
     }
     lines.join("\n")
+}
+
+/// Run deterministic workload preflight diagnostics and produce a fail-closed
+/// readiness verdict with reproducible remediation guidance.
+pub fn run_preflight_doctor(
+    input: &RuntimeDiagnosticsCliInput,
+    filter: EvidenceExportFilter,
+    redaction_policy: SupportBundleRedactionPolicy,
+) -> PreflightDoctorOutput {
+    let diagnostics = collect_runtime_diagnostics(
+        &input.runtime_state,
+        &input.trace_id,
+        &input.decision_id,
+        &input.policy_id,
+    );
+    let evidence_output = export_evidence_bundle(input, filter.clone());
+    let support_bundle = export_support_bundle(input, filter, redaction_policy);
+    let mandatory_field_status =
+        validate_preflight_mandatory_fields(input, &evidence_output, &support_bundle);
+
+    let mut blockers = Vec::new();
+    if !mandatory_field_status.valid {
+        blockers.push(PreflightBlocker {
+            blocker_id: "mandatory_field_contract".to_string(),
+            severity: EvidenceSeverity::Critical,
+            rationale: "required readiness fields are missing or inconsistent".to_string(),
+            remediation:
+                "rerun support bundle export and fix missing/inconsistent readiness fields"
+                    .to_string(),
+            reproducible_command: "runtime_diagnostics support-bundle --input <path> --summary"
+                .to_string(),
+            evidence_links: vec![
+                "support_bundle/run_manifest.json".to_string(),
+                "support_bundle/index.json".to_string(),
+                "support_bundle/events.jsonl".to_string(),
+            ],
+        });
+    }
+
+    for gc in diagnostics.gc_pressure.iter().filter(|row| row.over_budget) {
+        blockers.push(PreflightBlocker {
+            blocker_id: format!("gc_over_budget:{}", gc.extension_id),
+            severity: EvidenceSeverity::Critical,
+            rationale: format!(
+                "extension {} exceeds memory budget (used={} budget={})",
+                gc.extension_id, gc.used_bytes, gc.budget_bytes
+            ),
+            remediation:
+                "reduce heap pressure or raise deterministic budget before promotion".to_string(),
+            reproducible_command: "runtime_diagnostics diagnostics --input <path> --summary"
+                .to_string(),
+            evidence_links: vec!["support_bundle/runtime_diagnostics.json".to_string()],
+        });
+    }
+
+    for lane in diagnostics
+        .scheduler_lanes
+        .iter()
+        .filter(|row| row.tasks_timed_out > 0)
+    {
+        blockers.push(PreflightBlocker {
+            blocker_id: format!("scheduler_timeouts:{}", lane.lane),
+            severity: EvidenceSeverity::Warning,
+            rationale: format!(
+                "scheduler lane {} reported {} timed-out tasks",
+                lane.lane, lane.tasks_timed_out
+            ),
+            remediation: "stabilize scheduler lane timeout behavior before rollout".to_string(),
+            reproducible_command: "runtime_diagnostics diagnostics --input <path> --summary"
+                .to_string(),
+            evidence_links: vec!["support_bundle/runtime_diagnostics.json".to_string()],
+        });
+    }
+
+    let critical_records = *evidence_output
+        .summary
+        .counts_by_severity
+        .get("critical")
+        .unwrap_or(&0);
+    if critical_records > 0 {
+        blockers.push(PreflightBlocker {
+            blocker_id: "critical_evidence_records_present".to_string(),
+            severity: EvidenceSeverity::Critical,
+            rationale: format!("{critical_records} critical evidence records present"),
+            remediation:
+                "inspect critical records and resolve containment/security failures".to_string(),
+            reproducible_command: "runtime_diagnostics export-evidence --input <path> --summary --severity critical"
+                .to_string(),
+            evidence_links: vec!["support_bundle/evidence_records.jsonl".to_string()],
+        });
+    }
+
+    let warning_records = *evidence_output
+        .summary
+        .counts_by_severity
+        .get("warning")
+        .unwrap_or(&0);
+    if warning_records > 0 {
+        blockers.push(PreflightBlocker {
+            blocker_id: "warning_evidence_records_present".to_string(),
+            severity: EvidenceSeverity::Warning,
+            rationale: format!("{warning_records} warning evidence records present"),
+            remediation:
+                "review warning records and confirm acceptable rollout posture".to_string(),
+            reproducible_command: "runtime_diagnostics export-evidence --input <path> --summary --severity warning"
+                .to_string(),
+            evidence_links: vec!["support_bundle/evidence_records.jsonl".to_string()],
+        });
+    }
+
+    blockers.sort_by(|left, right| {
+        right
+            .severity
+            .cmp(&left.severity)
+            .then(left.blocker_id.cmp(&right.blocker_id))
+    });
+
+    let critical_count = blockers
+        .iter()
+        .filter(|blocker| blocker.severity == EvidenceSeverity::Critical)
+        .count();
+    let warning_count = blockers
+        .iter()
+        .filter(|blocker| blocker.severity == EvidenceSeverity::Warning)
+        .count();
+
+    let verdict = if critical_count > 0 {
+        PreflightVerdict::Red
+    } else if warning_count > 0 {
+        PreflightVerdict::Yellow
+    } else {
+        PreflightVerdict::Green
+    };
+
+    let rationale = format!(
+        "critical_blockers={} warning_blockers={} evidence_records={}",
+        critical_count, warning_count, evidence_output.summary.total_records
+    );
+
+    let mut logs = diagnostics.logs.clone();
+    logs.extend(evidence_output.logs.clone());
+    logs.extend(support_bundle.logs.clone());
+    logs.push(StructuredLogEvent {
+        trace_id: input.trace_id.clone(),
+        decision_id: input.decision_id.clone(),
+        policy_id: input.policy_id.clone(),
+        component: COMPONENT.to_string(),
+        event: "preflight_doctor".to_string(),
+        outcome: match verdict {
+            PreflightVerdict::Green => "pass".to_string(),
+            PreflightVerdict::Yellow => "warn".to_string(),
+            PreflightVerdict::Red => "fail".to_string(),
+        },
+        error_code: if verdict == PreflightVerdict::Red {
+            Some(PREFLIGHT_DOCTOR_FAILURE_CODE.to_string())
+        } else {
+            None
+        },
+    });
+    logs.sort_by(|left, right| {
+        left.event
+            .cmp(&right.event)
+            .then(left.trace_id.cmp(&right.trace_id))
+            .then(left.decision_id.cmp(&right.decision_id))
+            .then(left.policy_id.cmp(&right.policy_id))
+            .then(left.outcome.cmp(&right.outcome))
+            .then(left.error_code.cmp(&right.error_code))
+    });
+    logs.dedup_by(|left, right| left == right);
+
+    PreflightDoctorOutput {
+        trace_id: input.trace_id.clone(),
+        decision_id: input.decision_id.clone(),
+        policy_id: input.policy_id.clone(),
+        verdict,
+        rationale,
+        blockers,
+        mandatory_field_status,
+        diagnostics,
+        evidence_summary: evidence_output.summary,
+        support_bundle,
+        logs,
+    }
+}
+
+/// Render preflight output in deterministic human-readable form.
+pub fn render_preflight_summary(output: &PreflightDoctorOutput) -> String {
+    let mut lines = vec![
+        format!("verdict: {}", output.verdict),
+        format!("rationale: {}", output.rationale),
+        format!(
+            "mandatory_fields_valid: {}",
+            output.mandatory_field_status.valid
+        ),
+    ];
+
+    if !output.mandatory_field_status.missing_fields.is_empty() {
+        lines.push("missing_fields:".to_string());
+        for field in &output.mandatory_field_status.missing_fields {
+            lines.push(format!("  - {field}"));
+        }
+    }
+
+    if !output.mandatory_field_status.inconsistent_fields.is_empty() {
+        lines.push("inconsistent_fields:".to_string());
+        for field in &output.mandatory_field_status.inconsistent_fields {
+            lines.push(format!("  - {field}"));
+        }
+    }
+
+    lines.push(format!("blockers: {}", output.blockers.len()));
+    for blocker in &output.blockers {
+        lines.push(format!(
+            "  - [{}] {} :: {}",
+            blocker.severity, blocker.blocker_id, blocker.rationale
+        ));
+        lines.push(format!("    remediation: {}", blocker.remediation));
+        lines.push(format!(
+            "    reproducible_command: {}",
+            blocker.reproducible_command
+        ));
+    }
+
+    lines.push(format!(
+        "support_bundle_id: {}",
+        output.support_bundle.index.bundle_id
+    ));
+    lines.push("reproducible_commands:".to_string());
+    for command in &output.support_bundle.index.reproducible_commands {
+        lines.push(format!("  - {command}"));
+    }
+    lines.join("\n")
+}
+
+fn validate_preflight_mandatory_fields(
+    input: &RuntimeDiagnosticsCliInput,
+    evidence_output: &EvidenceExportOutput,
+    support_bundle: &SupportBundleOutput,
+) -> PreflightMandatoryFieldStatus {
+    let mut missing_fields = Vec::new();
+    let mut inconsistent_fields = Vec::new();
+
+    if input.trace_id.trim().is_empty() {
+        missing_fields.push("trace_id".to_string());
+    }
+    if input.decision_id.trim().is_empty() {
+        missing_fields.push("decision_id".to_string());
+    }
+    if input.policy_id.trim().is_empty() {
+        missing_fields.push("policy_id".to_string());
+    }
+
+    if support_bundle.index.trace_id.trim().is_empty() {
+        missing_fields.push("support_bundle.index.trace_id".to_string());
+    }
+    if support_bundle.index.decision_id.trim().is_empty() {
+        missing_fields.push("support_bundle.index.decision_id".to_string());
+    }
+    if support_bundle.index.policy_id.trim().is_empty() {
+        missing_fields.push("support_bundle.index.policy_id".to_string());
+    }
+    if support_bundle.index.reproducible_commands.is_empty() {
+        missing_fields.push("support_bundle.index.reproducible_commands".to_string());
+    }
+
+    let required_paths = [
+        "support_bundle/run_manifest.json",
+        "support_bundle/events.jsonl",
+        "support_bundle/commands.txt",
+        "support_bundle/runtime_diagnostics.json",
+        "support_bundle/evidence_records.jsonl",
+        "support_bundle/summary.md",
+        "support_bundle/index.json",
+    ];
+    for path in required_paths {
+        if !support_bundle
+            .index
+            .files
+            .iter()
+            .any(|entry| entry.path == path)
+        {
+            missing_fields.push(format!("support_bundle.file:{path}"));
+        }
+    }
+
+    if support_bundle.index.trace_id != input.trace_id {
+        inconsistent_fields.push("trace_id".to_string());
+    }
+    if support_bundle.index.decision_id != input.decision_id {
+        inconsistent_fields.push("decision_id".to_string());
+    }
+    if support_bundle.index.policy_id != input.policy_id {
+        inconsistent_fields.push("policy_id".to_string());
+    }
+    if support_bundle.index.total_records != evidence_output.summary.total_records {
+        inconsistent_fields.push(format!(
+            "total_records:{}!={}",
+            support_bundle.index.total_records, evidence_output.summary.total_records
+        ));
+    }
+
+    missing_fields.sort();
+    missing_fields.dedup();
+    inconsistent_fields.sort();
+    inconsistent_fields.dedup();
+
+    PreflightMandatoryFieldStatus {
+        valid: missing_fields.is_empty() && inconsistent_fields.is_empty(),
+        missing_fields,
+        inconsistent_fields,
+    }
 }
 
 fn render_evidence_records_jsonl(records: &[EvidenceExportRecord]) -> String {

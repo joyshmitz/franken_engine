@@ -436,3 +436,95 @@ fn support_bundle_command_redacts_sensitive_values_and_writes_files() {
     let _ = fs::remove_file(input_path);
     let _ = fs::remove_dir_all(out_dir);
 }
+
+#[test]
+fn doctor_command_outputs_preflight_json_and_summary() {
+    let input = build_sample_input();
+    let input_path = write_input_file(&input);
+
+    let json_output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args(["doctor", "--input"])
+        .arg(&input_path)
+        .output()
+        .expect("doctor command should execute");
+
+    assert!(json_output.status.success());
+    let json_stdout = String::from_utf8(json_output.stdout).expect("stdout should be utf8");
+    let value: serde_json::Value = serde_json::from_str(&json_stdout).expect("valid json output");
+    assert_eq!(value["verdict"], "red");
+    assert_eq!(
+        value["support_bundle"]["index"]["schema_version"],
+        "franken-engine.runtime-diagnostics.support-bundle.v1"
+    );
+    assert!(
+        value["blockers"]
+            .as_array()
+            .is_some_and(|blockers| !blockers.is_empty()),
+        "expected preflight blockers for sample input"
+    );
+
+    let summary_output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "doctor",
+            "--input",
+            input_path.to_str().expect("path should be utf8"),
+            "--summary",
+        ])
+        .output()
+        .expect("doctor summary command should execute");
+    assert!(summary_output.status.success());
+    let summary_stdout =
+        String::from_utf8(summary_output.stdout).expect("summary stdout should be utf8");
+    assert!(summary_stdout.contains("verdict: red"));
+    assert!(summary_stdout.contains("support_bundle_id: bundle-"));
+    assert!(summary_stdout.contains("runtime_diagnostics doctor --input <path> --summary"));
+
+    let _ = fs::remove_file(input_path);
+}
+
+#[test]
+fn doctor_command_writes_support_bundle_and_preflight_report() {
+    let input = build_sample_input();
+    let input_path = write_input_file(&input);
+
+    let mut out_dir = std::env::temp_dir();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    out_dir.push(format!(
+        "runtime_diagnostics_doctor_out_{}_{}",
+        std::process::id(),
+        nonce
+    ));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "doctor",
+            "--input",
+            input_path.to_str().expect("path should be utf8"),
+            "--summary",
+            "--out-dir",
+            out_dir.to_str().expect("dir should be utf8"),
+        ])
+        .output()
+        .expect("doctor command should execute");
+    assert!(output.status.success());
+
+    let written_index = out_dir.join("support_bundle/index.json");
+    let written_report = out_dir.join("support_bundle/preflight_report.json");
+    assert!(written_index.exists(), "index file should be written");
+    assert!(written_report.exists(), "preflight report should be written");
+
+    let report_content = fs::read_to_string(&written_report).expect("report should be readable");
+    let report_json: serde_json::Value =
+        serde_json::from_str(&report_content).expect("report should be valid json");
+    assert_eq!(report_json["verdict"], "red");
+    assert_eq!(
+        report_json["support_bundle"]["index"]["schema_version"],
+        "franken-engine.runtime-diagnostics.support-bundle.v1"
+    );
+
+    let _ = fs::remove_file(input_path);
+    let _ = fs::remove_dir_all(out_dir);
+}
