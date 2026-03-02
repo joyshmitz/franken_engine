@@ -1,5 +1,6 @@
 use frankenengine_engine::parser_evidence_indexer::{
-    ParserEvidenceIndexBuilder, SchemaMigrationStep,
+    CorrelationKey, EvidenceIndexerError, IndexedParserEvent, PARSER_EVIDENCE_INDEX_SCHEMA_V1,
+    ParserEvidenceIndexBuilder, ParserRunArtifactRef, SchemaMigrationStep,
 };
 
 fn manifest(run_id: &str, schema_version: &str, replay_command: &str) -> serde_json::Value {
@@ -204,4 +205,162 @@ fn deterministic_ordering_is_stable_across_insertion_order() {
     let left_json = serde_json::to_string(&left_index).unwrap();
     let right_json = serde_json::to_string(&right_index).unwrap();
     assert_eq!(left_json, right_json);
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde, error display, validation, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn evidence_indexer_error_display_all_variants() {
+    let errors: Vec<EvidenceIndexerError> = vec![
+        EvidenceIndexerError::MissingField("schema_version"),
+        EvidenceIndexerError::InvalidFieldType {
+            field: "run_id",
+            expected: "string",
+        },
+        EvidenceIndexerError::DuplicateRunId("run-001".to_string()),
+        EvidenceIndexerError::UnknownRunId("run-unknown".to_string()),
+        EvidenceIndexerError::InvalidSchemaVersion("bad-version".to_string()),
+        EvidenceIndexerError::IncompatibleSchemaFamily {
+            from_schema: "family-a.v1".to_string(),
+            to_schema: "family-b.v2".to_string(),
+        },
+        EvidenceIndexerError::NoMigrationPath {
+            from_schema: "a.v1".to_string(),
+            to_schema: "a.v5".to_string(),
+        },
+        EvidenceIndexerError::Json("parse error".to_string()),
+    ];
+    for err in &errors {
+        let msg = err.to_string();
+        assert!(!msg.is_empty(), "error display must not be empty: {err:?}");
+    }
+}
+
+#[test]
+fn parser_run_artifact_ref_serde_round_trip() {
+    let artifact = ParserRunArtifactRef {
+        run_id: "run-001".to_string(),
+        manifest_schema_version: "franken-engine.parser-evidence-index.run.v1".to_string(),
+        manifest_path: "artifacts/run_manifest.json".to_string(),
+        events_path: "artifacts/events.jsonl".to_string(),
+        commands_path: "artifacts/commands.txt".to_string(),
+        replay_command: "./scripts/replay.sh".to_string(),
+        generated_at_utc: Some("2026-02-25T00:00:00Z".to_string()),
+        outcome: Some("pass".to_string()),
+    };
+    let json = serde_json::to_string(&artifact).expect("serialize");
+    let recovered: ParserRunArtifactRef = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(artifact, recovered);
+}
+
+#[test]
+fn indexed_parser_event_serde_round_trip() {
+    let event = IndexedParserEvent {
+        run_id: "run-001".to_string(),
+        sequence: 0,
+        schema_version: "franken-engine.parser-log-event.v1".to_string(),
+        trace_id: "trace-001".to_string(),
+        decision_id: "decision-001".to_string(),
+        policy_id: "policy-v1".to_string(),
+        component: "parser_evidence_indexer".to_string(),
+        event: "drift_detected".to_string(),
+        outcome: "fail".to_string(),
+        error_code: Some("FE-PARSER-DRIFT-0001".to_string()),
+        replay_command: Some("./scripts/replay.sh".to_string()),
+        scenario_id: Some("fixture-foo".to_string()),
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: IndexedParserEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(event, recovered);
+}
+
+#[test]
+fn correlation_key_ordering_is_deterministic() {
+    let a = CorrelationKey {
+        component: "a".to_string(),
+        event: "x".to_string(),
+        scenario_id: None,
+        error_code: None,
+        outcome: "fail".to_string(),
+    };
+    let b = CorrelationKey {
+        component: "b".to_string(),
+        event: "x".to_string(),
+        scenario_id: None,
+        error_code: None,
+        outcome: "fail".to_string(),
+    };
+    assert!(a < b);
+}
+
+#[test]
+fn schema_migration_step_serde_round_trip() {
+    let step = SchemaMigrationStep {
+        migration_id: "mig-v1-v2".to_string(),
+        from_schema: "franken-engine.parser-log-event.v1".to_string(),
+        to_schema: "franken-engine.parser-log-event.v2".to_string(),
+    };
+    let json = serde_json::to_string(&step).expect("serialize");
+    let recovered: SchemaMigrationStep = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(step, recovered);
+}
+
+#[test]
+fn parser_evidence_index_schema_constant_is_well_formed() {
+    assert!(PARSER_EVIDENCE_INDEX_SCHEMA_V1.starts_with("franken-engine."));
+    assert!(PARSER_EVIDENCE_INDEX_SCHEMA_V1.contains(".v1"));
+}
+
+#[test]
+fn builder_rejects_duplicate_run_id() {
+    let mut builder = ParserEvidenceIndexBuilder::new();
+    builder
+        .add_run(
+            &manifest(
+                "run-dup",
+                "franken-engine.parser-evidence-index.run.v1",
+                "./scripts/replay.sh",
+            ),
+            "artifacts/a/run_manifest.json",
+            "artifacts/a/events.jsonl",
+            "artifacts/a/commands.txt",
+        )
+        .unwrap();
+    let err = builder
+        .add_run(
+            &manifest(
+                "run-dup",
+                "franken-engine.parser-evidence-index.run.v1",
+                "./scripts/replay2.sh",
+            ),
+            "artifacts/b/run_manifest.json",
+            "artifacts/b/events.jsonl",
+            "artifacts/b/commands.txt",
+        )
+        .expect_err("duplicate run_id should fail");
+    assert!(err.to_string().contains("run-dup"));
+}
+
+#[test]
+fn builder_rejects_events_for_unknown_run_id() {
+    let mut builder = ParserEvidenceIndexBuilder::new();
+    let err = builder
+        .add_events_jsonl(
+            "run-nonexistent",
+            r#"{"schema_version":"franken-engine.parser-log-event.v1","trace_id":"t","decision_id":"d","policy_id":"p","component":"c","event":"e","outcome":"pass","error_code":null}"#,
+        )
+        .expect_err("unknown run_id should fail");
+    assert!(err.to_string().contains("run-nonexistent"));
+}
+
+#[test]
+fn empty_index_correlates_to_no_regressions() {
+    let builder = ParserEvidenceIndexBuilder::new();
+    let index = builder.build();
+    assert!(index.runs.is_empty());
+    assert!(index.events.is_empty());
+    let clusters = index.correlate_regressions();
+    assert!(clusters.is_empty());
 }

@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::counterexample_synthesizer::{
-    ControllerConfig, CounterexampleSynthesizer, InterferenceKind, SynthesisConfig,
+    ControllerConfig, CounterexampleSynthesizer, DEFAULT_BUDGET_NS,
+    DEFAULT_MAX_MINIMIZATION_ROUNDS, InterferenceKind, SynthesisConfig, SynthesisError,
+    SynthesisStrategy,
 };
 
 fn set(values: &[&str]) -> BTreeSet<String> {
@@ -260,4 +262,133 @@ fn every_detected_conflict_has_matching_structured_event() {
             && event.component == "counterexample_synthesizer"
             && event.error_code.is_some()
     }));
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde, display, defaults, error paths
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn interference_kind_serde_round_trip() {
+    for kind in [
+        InterferenceKind::InvariantInvalidation,
+        InterferenceKind::Oscillation,
+        InterferenceKind::TimescaleConflict,
+    ] {
+        let json = serde_json::to_string(&kind).expect("serialize");
+        let recovered: InterferenceKind = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(kind, recovered);
+    }
+}
+
+#[test]
+fn interference_kind_display_formats() {
+    assert_eq!(
+        InterferenceKind::InvariantInvalidation.to_string(),
+        "invariant-invalidation"
+    );
+    assert_eq!(InterferenceKind::Oscillation.to_string(), "oscillation");
+    assert_eq!(
+        InterferenceKind::TimescaleConflict.to_string(),
+        "timescale-conflict"
+    );
+}
+
+#[test]
+fn synthesis_strategy_serde_round_trip() {
+    for strategy in [
+        SynthesisStrategy::CompilerExtraction,
+        SynthesisStrategy::Enumeration,
+        SynthesisStrategy::Mutation,
+        SynthesisStrategy::TimeBounded,
+    ] {
+        let json = serde_json::to_string(&strategy).expect("serialize");
+        let recovered: SynthesisStrategy = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(strategy, recovered);
+    }
+}
+
+#[test]
+fn synthesis_strategy_display_formats() {
+    assert_eq!(
+        SynthesisStrategy::CompilerExtraction.to_string(),
+        "compiler-extraction"
+    );
+    assert_eq!(SynthesisStrategy::Enumeration.to_string(), "enumeration");
+    assert_eq!(SynthesisStrategy::Mutation.to_string(), "mutation");
+    assert_eq!(SynthesisStrategy::TimeBounded.to_string(), "time-bounded");
+}
+
+#[test]
+fn synthesis_config_default_has_expected_values() {
+    let config = SynthesisConfig::default();
+    assert_eq!(config.budget_ns, DEFAULT_BUDGET_NS);
+    assert_eq!(
+        config.max_minimization_rounds,
+        DEFAULT_MAX_MINIMIZATION_ROUNDS
+    );
+    assert_eq!(
+        config.preferred_strategy,
+        SynthesisStrategy::CompilerExtraction
+    );
+    assert!(config.detect_controller_interference);
+}
+
+#[test]
+fn synthesis_config_serde_round_trip() {
+    let config = SynthesisConfig::default();
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: SynthesisConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(config, recovered);
+}
+
+#[test]
+fn synthesis_error_display_all_variants() {
+    let errors: Vec<SynthesisError> = vec![
+        SynthesisError::NoViolations,
+        SynthesisError::Timeout {
+            elapsed_ns: 100,
+            budget_ns: 200,
+            partial: None,
+        },
+        SynthesisError::InvalidPolicy {
+            reason: "empty IR".to_string(),
+        },
+        SynthesisError::IdDerivation("bad id".to_string()),
+        SynthesisError::MinimizationExhausted { rounds: 50 },
+        SynthesisError::CompilerFailure("internal error".to_string()),
+    ];
+    for err in errors {
+        let msg = err.to_string();
+        assert!(!msg.is_empty(), "error display must not be empty: {err:?}");
+    }
+}
+
+#[test]
+fn empty_controller_list_produces_no_interference() {
+    let synth = synth();
+    let interferences = synth.detect_interference(&[]);
+    assert!(interferences.is_empty());
+}
+
+#[test]
+fn single_controller_produces_no_interference() {
+    let synth = synth();
+    let configs = vec![controller(
+        "solo-writer",
+        &[],
+        &["latency_ms"],
+        100_000,
+        "writes every 100ms",
+    )];
+    let interferences = synth.detect_interference(&configs);
+    assert!(interferences.is_empty());
+}
+
+#[test]
+fn counterexample_synthesizer_construction_preserves_config() {
+    let config = SynthesisConfig::default();
+    let synthesizer = CounterexampleSynthesizer::new(config.clone());
+    let json = serde_json::to_string(&synthesizer).expect("serialize");
+    assert!(json.contains(&config.budget_ns.to_string()));
 }

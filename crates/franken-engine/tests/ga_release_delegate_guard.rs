@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::slot_registry::{
     AuthorityEnvelope, GaReleaseGuardConfig, GaReleaseGuardInput, GaReleaseGuardVerdict,
-    GaSignedLineageArtifact, SlotCapability, SlotId, SlotKind, SlotRegistry,
+    GaSignedLineageArtifact, PromotionStatus, SlotCapability, SlotId, SlotKind, SlotRegistry,
+    SlotRegistryError,
 };
 
 fn test_authority() -> AuthorityEnvelope {
@@ -218,4 +219,144 @@ fn version_matrix_workflow_runs_ga_delegate_guard_check() {
         workflow.contains("./scripts/check_ga_delegate_core_slots.sh ci"),
         "workflow must run GA delegate guard check script"
     );
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde, display, validation, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn slot_kind_serde_round_trip_all_variants() {
+    for kind in [
+        SlotKind::Parser,
+        SlotKind::IrLowering,
+        SlotKind::CapabilityLowering,
+        SlotKind::ExecLowering,
+        SlotKind::Interpreter,
+        SlotKind::ObjectModel,
+        SlotKind::ScopeModel,
+        SlotKind::AsyncRuntime,
+        SlotKind::GarbageCollector,
+        SlotKind::ModuleLoader,
+        SlotKind::HostcallDispatch,
+        SlotKind::Builtins,
+    ] {
+        let json = serde_json::to_string(&kind).expect("serialize");
+        let recovered: SlotKind = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(kind, recovered);
+    }
+}
+
+#[test]
+fn slot_capability_serde_round_trip_all_variants() {
+    for cap in [
+        SlotCapability::ReadSource,
+        SlotCapability::EmitIr,
+        SlotCapability::HeapAlloc,
+        SlotCapability::ScheduleAsync,
+        SlotCapability::InvokeHostcall,
+        SlotCapability::ModuleAccess,
+        SlotCapability::TriggerGc,
+        SlotCapability::EmitEvidence,
+    ] {
+        let json = serde_json::to_string(&cap).expect("serialize");
+        let recovered: SlotCapability = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(cap, recovered);
+    }
+}
+
+#[test]
+fn slot_id_valid_and_invalid_construction() {
+    assert!(SlotId::new("parser").is_ok());
+    assert!(SlotId::new("ir-lowering").is_ok());
+    assert!(SlotId::new("scope123").is_ok());
+
+    assert!(SlotId::new("").is_err());
+    assert!(SlotId::new("Parser").is_err()); // uppercase
+    assert!(SlotId::new("slot_name").is_err()); // underscore
+}
+
+#[test]
+fn slot_id_display_matches_inner_value() {
+    let id = SlotId::new("parser").expect("valid id");
+    assert_eq!(id.to_string(), "parser");
+    assert_eq!(id.as_str(), "parser");
+}
+
+#[test]
+fn slot_registry_error_display_is_non_empty() {
+    let err = SlotRegistryError::InvalidSlotId {
+        id: "BAD".to_string(),
+        reason: "uppercase chars".to_string(),
+    };
+    assert!(!err.to_string().is_empty());
+    assert!(err.to_string().contains("BAD"));
+
+    let err2 = SlotRegistryError::DuplicateSlotId {
+        id: "parser".to_string(),
+    };
+    assert!(!err2.to_string().is_empty());
+}
+
+#[test]
+fn ga_release_guard_verdict_display_formats() {
+    assert_eq!(GaReleaseGuardVerdict::Pass.to_string(), "pass");
+    assert_eq!(GaReleaseGuardVerdict::Blocked.to_string(), "blocked");
+}
+
+#[test]
+fn authority_envelope_serde_round_trip() {
+    let envelope = AuthorityEnvelope {
+        required: vec![SlotCapability::ReadSource],
+        permitted: vec![SlotCapability::ReadSource, SlotCapability::EmitIr],
+    };
+    let json = serde_json::to_string(&envelope).expect("serialize");
+    let recovered: AuthorityEnvelope = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(envelope, recovered);
+}
+
+#[test]
+fn promotion_status_serde_round_trip_all_variants() {
+    let variants: Vec<PromotionStatus> = vec![
+        PromotionStatus::Delegate,
+        PromotionStatus::PromotionCandidate {
+            candidate_digest: "sha256:candidate".to_string(),
+        },
+        PromotionStatus::Promoted {
+            native_digest: "sha256:native".to_string(),
+            receipt_id: "receipt-001".to_string(),
+        },
+        PromotionStatus::Demoted {
+            reason: "regression detected".to_string(),
+            rollback_digest: "sha256:rollback".to_string(),
+        },
+    ];
+    for status in variants {
+        let json = serde_json::to_string(&status).expect("serialize");
+        let recovered: PromotionStatus = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(status, recovered);
+    }
+}
+
+#[test]
+fn ga_release_guard_verdict_serde_round_trip() {
+    for verdict in [GaReleaseGuardVerdict::Pass, GaReleaseGuardVerdict::Blocked] {
+        let json = serde_json::to_string(&verdict).expect("serialize");
+        let recovered: GaReleaseGuardVerdict = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(verdict, recovered);
+    }
+}
+
+#[test]
+fn duplicate_slot_registration_returns_error() {
+    let mut registry = SlotRegistry::new();
+    register_slot(&mut registry, "parser", SlotKind::Parser, "sha256:a");
+    let dup = registry.register_delegate(
+        SlotId::new("parser").expect("valid"),
+        SlotKind::Parser,
+        test_authority(),
+        "sha256:b".to_string(),
+        "2026-02-21T00:00:00Z".to_string(),
+    );
+    assert!(dup.is_err());
 }

@@ -256,3 +256,117 @@ fn version_matrix_workflow_runs_control_plane_benchmark_split_gate_suite() {
         "version_matrix_conformance workflow must run control-plane benchmark split gate suite"
     );
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde, display, defaults, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn benchmark_split_serde_round_trip_all_variants() {
+    for split in [
+        BenchmarkSplit::Baseline,
+        BenchmarkSplit::CxThreading,
+        BenchmarkSplit::DecisionContracts,
+        BenchmarkSplit::EvidenceEmission,
+        BenchmarkSplit::FullIntegration,
+    ] {
+        let json = serde_json::to_string(&split).expect("serialize");
+        let recovered: BenchmarkSplit = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(split, recovered);
+    }
+}
+
+#[test]
+fn benchmark_split_display_and_as_str_are_consistent() {
+    for split in [
+        BenchmarkSplit::Baseline,
+        BenchmarkSplit::CxThreading,
+        BenchmarkSplit::DecisionContracts,
+        BenchmarkSplit::EvidenceEmission,
+        BenchmarkSplit::FullIntegration,
+    ] {
+        assert_eq!(split.to_string(), split.as_str());
+        assert!(!split.as_str().is_empty());
+    }
+}
+
+#[test]
+fn benchmark_split_failure_code_serde_round_trip() {
+    for code in [
+        BenchmarkSplitFailureCode::MissingSplitMetrics,
+        BenchmarkSplitFailureCode::InsufficientBaselineRuns,
+        BenchmarkSplitFailureCode::BaselineVarianceExceeded,
+        BenchmarkSplitFailureCode::InvalidMetric,
+        BenchmarkSplitFailureCode::ThroughputRegressionExceeded,
+        BenchmarkSplitFailureCode::LatencyRegressionExceeded,
+        BenchmarkSplitFailureCode::MemoryOverheadExceeded,
+        BenchmarkSplitFailureCode::PreviousRunRegressionExceeded,
+    ] {
+        let json = serde_json::to_string(&code).expect("serialize");
+        let recovered: BenchmarkSplitFailureCode =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(code, recovered);
+        assert!(!code.to_string().is_empty());
+    }
+}
+
+#[test]
+fn latency_stats_ns_serde_round_trip() {
+    let stats = LatencyStatsNs {
+        p50_ns: 950_000,
+        p95_ns: 1_000_000,
+        p99_ns: 1_050_000,
+    };
+    let json = serde_json::to_string(&stats).expect("serialize");
+    let recovered: LatencyStatsNs = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(stats, recovered);
+}
+
+#[test]
+fn split_benchmark_metrics_serde_round_trip() {
+    let m = metrics(1_000_000, 950_000, 1_000_000, 1_050_000, 0);
+    let json = serde_json::to_string(&m).expect("serialize");
+    let recovered: SplitBenchmarkMetrics = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(m, recovered);
+}
+
+#[test]
+fn benchmark_split_snapshot_serde_round_trip() {
+    let snapshot = previous_snapshot();
+    let json = serde_json::to_string(&snapshot).expect("serialize");
+    let recovered: BenchmarkSplitSnapshot = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(snapshot, recovered);
+}
+
+#[test]
+fn benchmark_split_thresholds_default_has_entries_for_all_splits() {
+    let thresholds = BenchmarkSplitThresholds::default();
+    let json = serde_json::to_string(&thresholds).expect("serialize");
+    let recovered: BenchmarkSplitThresholds = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(thresholds, recovered);
+}
+
+#[test]
+fn gate_input_serde_round_trip() {
+    let gate_input = input(previous_snapshot(), candidate_snapshot(0, true));
+    let json = serde_json::to_string(&gate_input).expect("serialize");
+    let recovered: BenchmarkSplitGateInput = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(gate_input.trace_id, recovered.trace_id);
+    assert_eq!(gate_input.policy_id, recovered.policy_id);
+}
+
+#[test]
+fn evaluate_always_produces_evaluations_and_structured_logs() {
+    let decision = evaluate_control_plane_benchmark_split(
+        &input(previous_snapshot(), candidate_snapshot(0, true)),
+        &BenchmarkSplitThresholds::default(),
+    );
+    assert!(!decision.evaluations.is_empty());
+    assert!(!decision.logs.is_empty());
+    assert!(
+        decision
+            .logs
+            .iter()
+            .all(|event| !event.trace_id.is_empty() && !event.policy_id.is_empty())
+    );
+}

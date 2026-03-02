@@ -2,7 +2,7 @@
 
 use frankenengine_engine::hook_effect_contract::{
     ComponentPhaseTracker, DepToken, EffectScheduler, EffectTiming, HookEffectContract, HookKind,
-    HookManifest, HookRuleViolation, HookSlot, HookSlotIndex, RenderPhase,
+    HookManifest, HookManifestError, HookRuleViolation, HookSlot, HookSlotIndex, RenderPhase,
     validate_hook_consistency,
 };
 use serde::{Deserialize, Serialize};
@@ -279,4 +279,122 @@ fn hook_effect_contract_same_seed_is_deterministic() {
     let first = run_happy_path(99, "trace-hook-effect-determinism");
     let second = run_happy_path(99, "trace-hook-effect-determinism");
     assert_eq!(first, second);
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde, classification, validation, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn hook_kind_all_serde_round_trips() {
+    for kind in HookKind::ALL {
+        let json = serde_json::to_string(&kind).expect("serialize");
+        let recovered: HookKind = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(kind, &recovered);
+    }
+}
+
+#[test]
+fn hook_kind_has_effect_phase_classification() {
+    let effect_kinds: Vec<HookKind> = HookKind::ALL
+        .iter()
+        .copied()
+        .filter(|k| k.has_effect_phase())
+        .collect();
+    assert_eq!(effect_kinds.len(), 3);
+    assert!(effect_kinds.contains(&HookKind::Effect));
+    assert!(effect_kinds.contains(&HookKind::LayoutEffect));
+    assert!(effect_kinds.contains(&HookKind::InsertionEffect));
+}
+
+#[test]
+fn hook_kind_can_trigger_rerender_classification() {
+    assert!(HookKind::State.can_trigger_rerender());
+    assert!(HookKind::Reducer.can_trigger_rerender());
+    assert!(HookKind::Context.can_trigger_rerender());
+    assert!(!HookKind::Ref.can_trigger_rerender());
+    assert!(!HookKind::Memo.can_trigger_rerender());
+    assert!(!HookKind::DebugValue.can_trigger_rerender());
+}
+
+#[test]
+fn hook_kind_has_dependency_array_classification() {
+    assert!(HookKind::Effect.has_dependency_array());
+    assert!(HookKind::LayoutEffect.has_dependency_array());
+    assert!(HookKind::Memo.has_dependency_array());
+    assert!(HookKind::Callback.has_dependency_array());
+    assert!(!HookKind::State.has_dependency_array());
+    assert!(!HookKind::Ref.has_dependency_array());
+    assert!(!HookKind::Id.has_dependency_array());
+}
+
+#[test]
+fn effect_timing_serde_round_trip() {
+    for timing in [
+        EffectTiming::Insertion,
+        EffectTiming::Layout,
+        EffectTiming::Passive,
+    ] {
+        let json = serde_json::to_string(&timing).expect("serialize");
+        let recovered: EffectTiming = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(timing, recovered);
+    }
+}
+
+#[test]
+fn render_phase_legal_successors_cover_full_lifecycle() {
+    let successors = RenderPhase::Rendering.legal_successors();
+    assert!(successors.contains(&RenderPhase::InsertionEffectsPending));
+
+    let idle_successors = RenderPhase::Idle.legal_successors();
+    assert!(idle_successors.contains(&RenderPhase::Rendering));
+}
+
+#[test]
+fn hook_manifest_validate_empty_returns_error() {
+    let manifest = HookManifest::new("Empty", vec![]);
+    let errors = manifest.validate();
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, HookManifestError::EmptyManifest))
+    );
+}
+
+#[test]
+fn hook_manifest_validate_non_consecutive_indices_returns_error() {
+    let manifest = HookManifest::new(
+        "BadIndices",
+        vec![
+            make_slot(0, HookKind::State, None),
+            make_slot(5, HookKind::Effect, Some(vec![])),
+        ],
+    );
+    let errors = manifest.validate();
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, HookManifestError::NonConsecutiveIndices { .. }))
+    );
+}
+
+#[test]
+fn hook_slot_index_ordering_is_numeric() {
+    let a = HookSlotIndex(0);
+    let b = HookSlotIndex(1);
+    let c = HookSlotIndex(100);
+    assert!(a < b);
+    assert!(b < c);
+}
+
+#[test]
+fn hook_rule_violation_count_mismatch_serde_round_trip() {
+    let violation = HookRuleViolation::HookCountMismatch {
+        component: "TestComp".to_string(),
+        previous_count: 2,
+        current_count: 3,
+    };
+    let json = serde_json::to_string(&violation).expect("serialize");
+    let recovered: HookRuleViolation = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(violation, recovered);
 }
