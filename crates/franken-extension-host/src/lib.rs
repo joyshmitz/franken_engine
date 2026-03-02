@@ -4419,6 +4419,13 @@ pub struct DelegateCellPolicy {
     pub false_negative_cost_micros: u64,
 }
 
+const GUARDPLANE_MAX_POSTERIOR_MICROS: u64 = 1_000_000;
+const GUARDPLANE_CHALLENGE_THRESHOLD_MICROS: u64 = 250_000;
+const GUARDPLANE_SANDBOX_THRESHOLD_MICROS: u64 = 400_000;
+const GUARDPLANE_SUSPEND_THRESHOLD_MICROS: u64 = 550_000;
+const GUARDPLANE_TERMINATE_THRESHOLD_MICROS: u64 = 700_000;
+const GUARDPLANE_QUARANTINE_THRESHOLD_MICROS: u64 = 850_000;
+
 impl Default for DelegateCellPolicy {
     fn default() -> Self {
         Self {
@@ -4436,6 +4443,84 @@ impl Default for DelegateCellPolicy {
 pub struct DelegateGuardplaneState {
     pub delegate_id: String,
     pub posterior_micros: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GuardplanePolicyAction {
+    Allow,
+    Challenge,
+    Sandbox,
+    Suspend,
+    Terminate,
+    Quarantine,
+}
+
+impl GuardplanePolicyAction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Challenge => "challenge",
+            Self::Sandbox => "sandbox",
+            Self::Suspend => "suspend",
+            Self::Terminate => "terminate",
+            Self::Quarantine => "quarantine",
+        }
+    }
+
+    pub const fn fail_closed_fallback(self) -> Self {
+        match self {
+            Self::Allow | Self::Challenge => Self::Sandbox,
+            Self::Sandbox => Self::Suspend,
+            Self::Suspend => Self::Terminate,
+            Self::Terminate | Self::Quarantine => Self::Quarantine,
+        }
+    }
+
+    pub const fn is_containment_action(self) -> bool {
+        matches!(
+            self,
+            Self::Sandbox | Self::Suspend | Self::Terminate | Self::Quarantine
+        )
+    }
+}
+
+impl fmt::Display for GuardplanePolicyAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str((*self).as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuardplaneDecisionLogEntry {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub source_event: String,
+    pub delegate_id: String,
+    pub timestamp_ns: u64,
+    pub posterior_micros: u64,
+    pub action: GuardplanePolicyAction,
+    pub safe_mode_fallback: bool,
+    pub lifecycle_transition: Option<LifecycleTransition>,
+    pub resulting_state: ExtensionState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContainmentWorkflowLogEntry {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub source_event: String,
+    pub delegate_id: String,
+    pub timestamp_ns: u64,
+    pub action: GuardplanePolicyAction,
+    pub lifecycle_transition: Option<LifecycleTransition>,
+    pub resulting_state: ExtensionState,
+    pub mesh_targets: Vec<String>,
+    pub mesh_propagated: bool,
 }
 
 /// Stable structured event for delegate-cell operations.
@@ -4462,6 +4547,14 @@ pub enum DelegateCellEvidence {
     },
     CapabilityEscrow(CapabilityEscrowEvidence),
     DeclassificationDenied(DeclassificationDeniedEvidence),
+    ContainmentAction {
+        delegate_id: String,
+        action: GuardplanePolicyAction,
+        lifecycle_transition: Option<LifecycleTransition>,
+        mesh_targets: Vec<String>,
+        mesh_propagated: bool,
+        timestamp_ns: u64,
+    },
     LifetimeExpired {
         delegate_id: String,
         expired_at_ns: u64,
@@ -4578,8 +4671,12 @@ pub struct DelegateCell {
     expires_at_ns: u64,
     lifetime_expired_recorded: bool,
     events: Vec<DelegateCellEvent>,
+    quarantine_mesh_peers: BTreeSet<String>,
+    guardplane_decision_log: Vec<GuardplaneDecisionLogEntry>,
+    containment_workflow_log: Vec<ContainmentWorkflowLogEntry>,
     evidence: Vec<DelegateCellEvidence>,
     capability_escrow_evidence_cursor: usize,
+    adaptive_components_available: bool,
 }
 
 impl DelegateCell {
@@ -4789,6 +4886,41 @@ impl DelegateCell {
         &self.events
     }
 
+    pub fn guardplane_decision_log(&self) -> &[GuardplaneDecisionLogEntry] {
+        &self.guardplane_decision_log
+    }
+
+    pub fn containment_workflow_log(&self) -> &[ContainmentWorkflowLogEntry] {
+        &self.containment_workflow_log
+    }
+
+    pub fn quarantine_mesh_peers(&self) -> &BTreeSet<String> {
+        &self.quarantine_mesh_peers
+    }
+
+    pub fn set_quarantine_mesh_peers<I, S>(&mut self, peers: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut normalized = BTreeSet::new();
+        for peer in peers {
+            let peer = peer.into();
+            if !peer.trim().is_empty() {
+                normalized.insert(peer);
+            }
+        }
+        self.quarantine_mesh_peers = normalized;
+    }
+
+    pub const fn adaptive_components_available(&self) -> bool {
+        self.adaptive_components_available
+    }
+
+    pub fn set_adaptive_components_available(&mut self, available: bool) {
+        self.adaptive_components_available = available;
+    }
+
     pub fn evidence(&self) -> &[DelegateCellEvidence] {
         &self.evidence
     }
@@ -4982,6 +5114,12 @@ impl DelegateCell {
                         "blocked",
                         decision.error_code.as_deref(),
                     );
+                    self.evaluate_guardplane_policy_action(
+                        "delegate_capability_escrow",
+                        timestamp_ns,
+                        flow_context,
+                        lifecycle_context,
+                    );
                     return Ok(HostcallDispatchOutcome {
                         result: HostcallResult::Denied {
                             reason: DenialReason::CapabilityEscrowPending {
@@ -5016,6 +5154,12 @@ impl DelegateCell {
                         "delegate_hostcall",
                         "blocked",
                         decision.error_code.as_deref(),
+                    );
+                    self.evaluate_guardplane_policy_action(
+                        "delegate_capability_escrow",
+                        timestamp_ns,
+                        flow_context,
+                        lifecycle_context,
                     );
                     return Ok(HostcallDispatchOutcome {
                         result: HostcallResult::Denied {
@@ -5122,6 +5266,13 @@ impl DelegateCell {
             }
         }
 
+        self.evaluate_guardplane_policy_action(
+            "delegate_hostcall",
+            timestamp_ns,
+            flow_context,
+            lifecycle_context,
+        );
+
         Ok(outcome)
     }
 
@@ -5132,6 +5283,7 @@ impl DelegateCell {
         lifecycle_context: &LifecycleContext<'_>,
     ) -> Result<DeclassificationOutcome, DelegateCellError> {
         self.check_lifetime(request.timestamp_ns, lifecycle_context)?;
+        let timestamp_ns = request.timestamp_ns;
         let outcome = self.declassification_gateway.evaluate_request(
             request,
             &self.manifest.base_manifest.capabilities,
@@ -5182,6 +5334,13 @@ impl DelegateCell {
             }
         }
 
+        self.evaluate_guardplane_policy_action(
+            "delegate_declassification",
+            timestamp_ns,
+            flow_context,
+            lifecycle_context,
+        );
+
         Ok(outcome)
     }
 
@@ -5200,8 +5359,156 @@ impl DelegateCell {
     }
 
     fn apply_guardplane_penalty(&mut self, penalty_micros: u64) {
-        self.guardplane_state.posterior_micros =
-            (self.guardplane_state.posterior_micros + penalty_micros).min(1_000_000);
+        self.guardplane_state.posterior_micros = (self.guardplane_state.posterior_micros
+            + penalty_micros)
+            .min(GUARDPLANE_MAX_POSTERIOR_MICROS);
+    }
+
+    fn evaluate_guardplane_policy_action(
+        &mut self,
+        source_event: &str,
+        timestamp_ns: u64,
+        flow_context: &FlowEnforcementContext<'_>,
+        lifecycle_context: &LifecycleContext<'_>,
+    ) {
+        let (action, safe_mode_fallback) = self.select_guardplane_policy_action();
+        let lifecycle_transition =
+            self.apply_guardplane_lifecycle_action(action, timestamp_ns, lifecycle_context);
+        let resulting_state = self.lifecycle_manager.state();
+        self.record_event(
+            flow_context.trace_id,
+            flow_context.decision_id,
+            flow_context.policy_id,
+            "delegate_guardplane_action",
+            action.as_str(),
+            None,
+        );
+        self.guardplane_decision_log
+            .push(GuardplaneDecisionLogEntry {
+                trace_id: flow_context.trace_id.to_string(),
+                decision_id: flow_context.decision_id.to_string(),
+                policy_id: flow_context.policy_id.to_string(),
+                component: DELEGATE_COMPONENT.to_string(),
+                source_event: source_event.to_string(),
+                delegate_id: self.delegate_id.clone(),
+                timestamp_ns,
+                posterior_micros: self.guardplane_state.posterior_micros,
+                action,
+                safe_mode_fallback,
+                lifecycle_transition,
+                resulting_state,
+            });
+        self.record_containment_workflow(
+            source_event,
+            timestamp_ns,
+            flow_context,
+            action,
+            lifecycle_transition,
+            resulting_state,
+        );
+    }
+
+    fn select_guardplane_policy_action(&self) -> (GuardplanePolicyAction, bool) {
+        let nominal = guardplane_action_from_posterior(self.guardplane_state.posterior_micros);
+        if self.adaptive_components_available {
+            (nominal, false)
+        } else {
+            (nominal.fail_closed_fallback(), true)
+        }
+    }
+
+    fn apply_guardplane_lifecycle_action(
+        &mut self,
+        action: GuardplanePolicyAction,
+        timestamp_ns: u64,
+        context: &LifecycleContext<'_>,
+    ) -> Option<LifecycleTransition> {
+        let transition = match action {
+            GuardplanePolicyAction::Suspend => Some(LifecycleTransition::Suspend),
+            GuardplanePolicyAction::Terminate => Some(LifecycleTransition::Terminate),
+            GuardplanePolicyAction::Quarantine => Some(LifecycleTransition::Quarantine),
+            GuardplanePolicyAction::Allow
+            | GuardplanePolicyAction::Challenge
+            | GuardplanePolicyAction::Sandbox => None,
+        }?;
+
+        let current_state = self.lifecycle_manager.state();
+        lifecycle_target_state(current_state, transition)?;
+
+        if self
+            .lifecycle_manager
+            .apply_transition(transition, timestamp_ns, context)
+            .is_ok()
+        {
+            Some(transition)
+        } else {
+            None
+        }
+    }
+
+    fn record_containment_workflow(
+        &mut self,
+        source_event: &str,
+        timestamp_ns: u64,
+        flow_context: &FlowEnforcementContext<'_>,
+        action: GuardplanePolicyAction,
+        lifecycle_transition: Option<LifecycleTransition>,
+        resulting_state: ExtensionState,
+    ) {
+        if !action.is_containment_action() {
+            return;
+        }
+
+        let mesh_targets = if action == GuardplanePolicyAction::Quarantine {
+            self.quarantine_mesh_peers
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let mesh_propagated =
+            action == GuardplanePolicyAction::Quarantine && !mesh_targets.is_empty();
+        let event_name = if action == GuardplanePolicyAction::Quarantine {
+            if mesh_propagated {
+                "delegate_quarantine_mesh_propagated"
+            } else {
+                "delegate_quarantine_mesh_local_only"
+            }
+        } else {
+            "delegate_containment_action"
+        };
+        self.record_event(
+            flow_context.trace_id,
+            flow_context.decision_id,
+            flow_context.policy_id,
+            event_name,
+            "ok",
+            None,
+        );
+        self.evidence.push(DelegateCellEvidence::ContainmentAction {
+            delegate_id: self.delegate_id.clone(),
+            action,
+            lifecycle_transition,
+            mesh_targets: mesh_targets.clone(),
+            mesh_propagated,
+            timestamp_ns,
+        });
+        self.containment_workflow_log
+            .push(ContainmentWorkflowLogEntry {
+                trace_id: flow_context.trace_id.to_string(),
+                decision_id: flow_context.decision_id.to_string(),
+                policy_id: flow_context.policy_id.to_string(),
+                component: DELEGATE_COMPONENT.to_string(),
+                source_event: source_event.to_string(),
+                delegate_id: self.delegate_id.clone(),
+                timestamp_ns,
+                action,
+                lifecycle_transition,
+                resulting_state,
+                mesh_targets,
+                mesh_propagated,
+            });
     }
 
     fn record_event(
@@ -5300,8 +5607,12 @@ impl DelegateCellFactory {
             expires_at_ns: created_at_ns.saturating_add(manifest.max_lifetime_ns),
             lifetime_expired_recorded: false,
             events: Vec::new(),
+            quarantine_mesh_peers: BTreeSet::new(),
+            guardplane_decision_log: Vec::new(),
+            containment_workflow_log: Vec::new(),
             evidence: Vec::new(),
             capability_escrow_evidence_cursor: 0,
+            adaptive_components_available: true,
             manifest,
         };
         delegate.record_event(
@@ -5346,6 +5657,22 @@ fn validate_delegate_budget(budget: &ResourceBudget) -> Result<(), DelegateCellE
         });
     }
     Ok(())
+}
+
+const fn guardplane_action_from_posterior(posterior_micros: u64) -> GuardplanePolicyAction {
+    if posterior_micros >= GUARDPLANE_QUARANTINE_THRESHOLD_MICROS {
+        GuardplanePolicyAction::Quarantine
+    } else if posterior_micros >= GUARDPLANE_TERMINATE_THRESHOLD_MICROS {
+        GuardplanePolicyAction::Terminate
+    } else if posterior_micros >= GUARDPLANE_SUSPEND_THRESHOLD_MICROS {
+        GuardplanePolicyAction::Suspend
+    } else if posterior_micros >= GUARDPLANE_SANDBOX_THRESHOLD_MICROS {
+        GuardplanePolicyAction::Sandbox
+    } else if posterior_micros >= GUARDPLANE_CHALLENGE_THRESHOLD_MICROS {
+        GuardplanePolicyAction::Challenge
+    } else {
+        GuardplanePolicyAction::Allow
+    }
 }
 
 #[cfg(test)]
@@ -6808,5 +7135,258 @@ mod delegate_cell_tests {
             .evidence()
             .iter()
             .any(|item| matches!(item, DelegateCellEvidence::DeclassificationDenied(_))));
+    }
+
+    #[test]
+    fn guardplane_action_thresholds_are_deterministic() {
+        assert_eq!(
+            guardplane_action_from_posterior(0),
+            GuardplanePolicyAction::Allow
+        );
+        assert_eq!(
+            guardplane_action_from_posterior(250_000),
+            GuardplanePolicyAction::Challenge
+        );
+        assert_eq!(
+            guardplane_action_from_posterior(400_000),
+            GuardplanePolicyAction::Sandbox
+        );
+        assert_eq!(
+            guardplane_action_from_posterior(550_000),
+            GuardplanePolicyAction::Suspend
+        );
+        assert_eq!(
+            guardplane_action_from_posterior(700_000),
+            GuardplanePolicyAction::Terminate
+        );
+        assert_eq!(
+            guardplane_action_from_posterior(850_000),
+            GuardplanePolicyAction::Quarantine
+        );
+    }
+
+    #[test]
+    fn guardplane_policy_actions_progress_from_challenge_to_quarantine() {
+        let factory = DelegateCellFactory::default();
+        let mut delegate = factory
+            .create_delegate_cell(
+                "delegate-g",
+                delegate_manifest(&[Capability::FsRead, Capability::NetClient], 1_000_000),
+                ResourceBudget::new(1_000_000_000, 64 * 1024 * 1024, 100),
+                BudgetExhaustionPolicy::Suspend,
+                700,
+                &lifecycle_context(),
+            )
+            .expect("delegate created");
+        let expected_actions = [
+            GuardplanePolicyAction::Challenge,
+            GuardplanePolicyAction::Sandbox,
+            GuardplanePolicyAction::Sandbox,
+            GuardplanePolicyAction::Suspend,
+            GuardplanePolicyAction::Terminate,
+            GuardplanePolicyAction::Quarantine,
+        ];
+
+        for (index, expected_action) in expected_actions.iter().enumerate() {
+            let outcome = delegate
+                .request_declassification(
+                    DeclassificationRequest {
+                        request_id: format!("delegate-dec-denied-{index}"),
+                        requester: "delegate-g".to_string(),
+                        data_ref: DataRef::new("memory", "token"),
+                        current_label: FlowLabel::new(
+                            SecrecyLevel::Secret,
+                            IntegrityLevel::Validated,
+                        ),
+                        target_label: FlowLabel::new(
+                            SecrecyLevel::Internal,
+                            IntegrityLevel::Validated,
+                        ),
+                        purpose: DeclassificationPurpose::DiagnosticExport,
+                        justification: "expected denial".to_string(),
+                        timestamp_ns: 710 + index as u64,
+                    },
+                    &flow_context(),
+                    &lifecycle_context(),
+                )
+                .expect("declassification outcome");
+
+            assert!(matches!(
+                outcome,
+                DeclassificationOutcome::Denied {
+                    reason: DeclassificationDenialReason::MissingCapability { .. },
+                    ..
+                }
+            ));
+            let decision = delegate
+                .guardplane_decision_log()
+                .last()
+                .expect("guardplane decision");
+            assert_eq!(decision.action, *expected_action);
+            assert_eq!(decision.source_event, "delegate_declassification");
+            assert_eq!(
+                decision.posterior_micros,
+                310_000 + (index as u64 * 110_000)
+            );
+        }
+
+        assert_eq!(delegate.state(), ExtensionState::Quarantined);
+        let transitions: Vec<_> = delegate
+            .guardplane_decision_log()
+            .iter()
+            .filter_map(|entry| entry.lifecycle_transition)
+            .collect();
+        assert_eq!(
+            transitions,
+            vec![
+                LifecycleTransition::Suspend,
+                LifecycleTransition::Terminate,
+                LifecycleTransition::Quarantine
+            ]
+        );
+        let containment_actions: Vec<_> = delegate
+            .containment_workflow_log()
+            .iter()
+            .map(|entry| entry.action)
+            .collect();
+        assert_eq!(
+            containment_actions,
+            vec![
+                GuardplanePolicyAction::Sandbox,
+                GuardplanePolicyAction::Sandbox,
+                GuardplanePolicyAction::Suspend,
+                GuardplanePolicyAction::Terminate,
+                GuardplanePolicyAction::Quarantine
+            ]
+        );
+        let last_containment = delegate
+            .containment_workflow_log()
+            .last()
+            .expect("quarantine containment record");
+        assert!(last_containment.mesh_targets.is_empty());
+        assert!(!last_containment.mesh_propagated);
+    }
+
+    #[test]
+    fn quarantine_mesh_targets_are_sorted_and_recorded() {
+        let factory = DelegateCellFactory::default();
+        let mut delegate = factory
+            .create_delegate_cell(
+                "delegate-mesh",
+                delegate_manifest(&[Capability::FsRead, Capability::NetClient], 1_000_000),
+                ResourceBudget::new(1_000_000_000, 64 * 1024 * 1024, 100),
+                BudgetExhaustionPolicy::Suspend,
+                750,
+                &lifecycle_context(),
+            )
+            .expect("delegate created");
+        delegate.set_quarantine_mesh_peers(["peer-z", "peer-a", "peer-m", "peer-a"]);
+
+        for index in 0..6 {
+            let _ = delegate
+                .request_declassification(
+                    DeclassificationRequest {
+                        request_id: format!("delegate-mesh-denied-{index}"),
+                        requester: "delegate-mesh".to_string(),
+                        data_ref: DataRef::new("memory", "token"),
+                        current_label: FlowLabel::new(
+                            SecrecyLevel::Secret,
+                            IntegrityLevel::Validated,
+                        ),
+                        target_label: FlowLabel::new(
+                            SecrecyLevel::Internal,
+                            IntegrityLevel::Validated,
+                        ),
+                        purpose: DeclassificationPurpose::DiagnosticExport,
+                        justification: "expected denial".to_string(),
+                        timestamp_ns: 760 + index as u64,
+                    },
+                    &flow_context(),
+                    &lifecycle_context(),
+                )
+                .expect("declassification outcome");
+        }
+
+        let expected_targets = vec![
+            "peer-a".to_string(),
+            "peer-m".to_string(),
+            "peer-z".to_string(),
+        ];
+        let quarantine_record = delegate
+            .containment_workflow_log()
+            .iter()
+            .find(|entry| entry.action == GuardplanePolicyAction::Quarantine)
+            .expect("quarantine containment record");
+        assert_eq!(quarantine_record.mesh_targets, expected_targets);
+        assert!(quarantine_record.mesh_propagated);
+        assert_eq!(
+            quarantine_record.resulting_state,
+            ExtensionState::Quarantined
+        );
+        assert_eq!(
+            quarantine_record.lifecycle_transition,
+            Some(LifecycleTransition::Quarantine)
+        );
+        assert_eq!(quarantine_record.source_event, "delegate_declassification");
+        assert!(delegate
+            .events()
+            .iter()
+            .any(|event| event.event == "delegate_quarantine_mesh_propagated"
+                && event.outcome == "ok"));
+        let quarantine_evidence_targets = delegate
+            .evidence()
+            .iter()
+            .find_map(|item| {
+                if let DelegateCellEvidence::ContainmentAction {
+                    action,
+                    mesh_targets,
+                    ..
+                } = item
+                {
+                    (*action == GuardplanePolicyAction::Quarantine).then(|| mesh_targets.clone())
+                } else {
+                    None
+                }
+            })
+            .expect("quarantine evidence");
+        assert_eq!(quarantine_evidence_targets, expected_targets);
+    }
+
+    #[test]
+    fn guardplane_safe_mode_fallback_is_fail_closed() {
+        let factory = DelegateCellFactory::default();
+        let mut delegate = factory
+            .create_delegate_cell(
+                "delegate-h",
+                delegate_manifest(&[Capability::FsRead], 1_000_000),
+                ResourceBudget::new(1_000_000_000, 64 * 1024 * 1024, 100),
+                BudgetExhaustionPolicy::Suspend,
+                800,
+                &lifecycle_context(),
+            )
+            .expect("delegate created");
+        delegate.set_adaptive_components_available(false);
+
+        let outcome = delegate
+            .dispatch_hostcall(
+                HostcallType::FsRead,
+                Capability::FsRead,
+                Labeled::system_generated("probe".to_string()),
+                805,
+                &flow_context(),
+                &lifecycle_context(),
+            )
+            .expect("hostcall dispatch");
+
+        assert_eq!(outcome.result, HostcallResult::Success);
+        let decision = delegate
+            .guardplane_decision_log()
+            .last()
+            .expect("guardplane decision");
+        assert_eq!(decision.action, GuardplanePolicyAction::Sandbox);
+        assert!(decision.safe_mode_fallback);
+        assert_eq!(decision.lifecycle_transition, None);
+        assert_eq!(decision.resulting_state, ExtensionState::Running);
+        assert_eq!(decision.source_event, "delegate_hostcall");
     }
 }
