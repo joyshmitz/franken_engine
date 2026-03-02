@@ -727,7 +727,8 @@ impl ModuleResolver for DeterministicModuleResolver {
         context: &ResolutionContext,
         policy: &dyn ModulePolicyHook,
     ) -> ResolutionResult<ResolutionOutcome> {
-        let (canonical_specifier, record, probe_sequence) = self.resolve_candidate(request, context)?;
+        let (canonical_specifier, record, probe_sequence) =
+            self.resolve_candidate(request, context)?;
         policy.authorize(request, record, context)?;
 
         let resolved = ResolvedModule {
@@ -1867,6 +1868,73 @@ mod tests {
         let json = serde_json::to_string(&ev).expect("serialize");
         let restored: ResolutionEvent = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(ev, restored);
+    }
+
+    #[test]
+    fn resolved_module_serde_roundtrip_preserves_probe_sequence() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_workspace_module(
+                "/app/lib.mjs",
+                ModuleDefinition::new(ModuleSyntax::EsModule, "export default 1;"),
+            )
+            .unwrap();
+
+        let request = ModuleRequest::new("/app/lib", ImportStyle::Import);
+        let outcome = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .unwrap();
+
+        let value = serde_json::to_value(&outcome.module).expect("serialize");
+        assert_eq!(
+            value.get("probe_sequence"),
+            Some(&serde_json::json!(["/app/lib", "/app/lib.mjs"]))
+        );
+
+        let restored: ResolvedModule = serde_json::from_value(value).expect("deserialize");
+        assert_eq!(outcome.module, restored);
+    }
+
+    #[test]
+    fn resolved_module_serde_omits_empty_probe_sequence() {
+        let record = ModuleRecord::from_definition(
+            "/app/manual.js".to_string(),
+            ModuleSourceKind::Workspace,
+            ModuleDefinition::new(ModuleSyntax::EsModule, "export default 1;"),
+        );
+        let module = ResolvedModule {
+            request_specifier: "/app/manual.js".to_string(),
+            canonical_specifier: "/app/manual.js".to_string(),
+            content_hash: record.canonical_hash(),
+            record,
+            probe_sequence: Vec::new(),
+        };
+
+        let value = serde_json::to_value(&module).expect("serialize");
+        assert!(value.get("probe_sequence").is_none());
+
+        let restored: ResolvedModule = serde_json::from_value(value).expect("deserialize");
+        assert!(restored.probe_sequence.is_empty());
+    }
+
+    #[test]
+    fn resolution_outcome_serde_roundtrip_preserves_probe_trace() {
+        let mut resolver = DeterministicModuleResolver::new("/app");
+        resolver
+            .register_external_module(
+                "left-pad",
+                ModuleDefinition::new(ModuleSyntax::CommonJs, "module.exports = pad;"),
+            )
+            .unwrap();
+        let request = ModuleRequest::new("left-pad", ImportStyle::Require);
+        let outcome = resolver
+            .resolve(&request, &context(), &AllowAllPolicy)
+            .unwrap();
+
+        let json = serde_json::to_string(&outcome).expect("serialize");
+        let restored: ResolutionOutcome = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(outcome, restored);
+        assert_eq!(restored.module.probe_sequence, vec!["left-pad"]);
     }
 
     #[test]
