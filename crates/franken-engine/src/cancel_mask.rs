@@ -1156,4 +1156,627 @@ mod tests {
             "Debug output must be deterministic across runs"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: deep coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn clone_independence_mask_justification() {
+        let orig = MaskJustification {
+            operation_name: "checkpoint_write".to_string(),
+            expected_ops_hint: 10,
+            atomicity_reason: "atomic".to_string(),
+        };
+        let mut cloned = orig.clone();
+        cloned.operation_name = "evidence_append".to_string();
+        cloned.expected_ops_hint = 999;
+        cloned.atomicity_reason = "changed".to_string();
+        // Original must be unaffected.
+        assert_eq!(orig.operation_name, "checkpoint_write");
+        assert_eq!(orig.expected_ops_hint, 10);
+        assert_eq!(orig.atomicity_reason, "atomic");
+        assert_ne!(orig, cloned);
+    }
+
+    #[test]
+    fn clone_independence_mask_policy() {
+        let orig = MaskPolicy::standard();
+        let mut cloned = orig.clone();
+        cloned
+            .operation_bounds
+            .insert("extra_op".to_string(), MaskBounds { max_ops: 1 });
+        cloned.lab_mode = true;
+        cloned.default_bounds = MaskBounds { max_ops: 1 };
+        // Original must be unaffected.
+        assert!(!orig.is_allowed("extra_op"));
+        assert!(!orig.lab_mode);
+        assert_eq!(orig.default_bounds.max_ops, 64);
+        assert_ne!(orig, cloned);
+    }
+
+    #[test]
+    fn clone_independence_mask_event() {
+        let orig = MaskEvent {
+            trace_id: "t".to_string(),
+            region_id: "r".to_string(),
+            mask_id: 1,
+            operation_name: "checkpoint_write".to_string(),
+            ops_executed: 5,
+            outcome: MaskOutcome::CleanRelease,
+        };
+        let mut cloned = orig.clone();
+        cloned.trace_id = "modified".to_string();
+        cloned.mask_id = 99;
+        cloned.outcome = MaskOutcome::BoundExceeded;
+        assert_eq!(orig.trace_id, "t");
+        assert_eq!(orig.mask_id, 1);
+        assert_eq!(orig.outcome, MaskOutcome::CleanRelease);
+        assert_ne!(orig, cloned);
+    }
+
+    #[test]
+    fn clone_independence_mask_error() {
+        let orig = MaskError::OperationNotAllowed {
+            operation_name: "op_a".to_string(),
+        };
+        let mut cloned = orig.clone();
+        if let MaskError::OperationNotAllowed { ref mut operation_name } = cloned {
+            *operation_name = "op_b".to_string();
+        }
+        assert_ne!(orig, cloned);
+        assert!(orig.to_string().contains("op_a"));
+        assert!(cloned.to_string().contains("op_b"));
+    }
+
+    #[test]
+    fn mask_outcome_debug_uniqueness() {
+        let debugs: std::collections::BTreeSet<String> = [
+            MaskOutcome::CleanRelease,
+            MaskOutcome::BoundExceeded,
+            MaskOutcome::CancelDeferred,
+        ]
+        .iter()
+        .map(|o| format!("{o:?}"))
+        .collect();
+        assert_eq!(debugs.len(), 3, "all MaskOutcome Debug representations must be unique");
+    }
+
+    #[test]
+    fn mask_error_debug_uniqueness() {
+        let debugs: std::collections::BTreeSet<String> = [
+            MaskError::NestingDenied,
+            MaskError::OperationNotAllowed {
+                operation_name: "x".to_string(),
+            },
+            MaskError::AlreadyReleased,
+        ]
+        .iter()
+        .map(|e| format!("{e:?}"))
+        .collect();
+        assert_eq!(debugs.len(), 3, "all MaskError Debug representations must be unique");
+    }
+
+    #[test]
+    fn mask_justification_debug_contains_fields() {
+        let just = MaskJustification {
+            operation_name: "my_op".to_string(),
+            expected_ops_hint: 42,
+            atomicity_reason: "reason_here".to_string(),
+        };
+        let dbg = format!("{just:?}");
+        assert!(dbg.contains("my_op"));
+        assert!(dbg.contains("42"));
+        assert!(dbg.contains("reason_here"));
+    }
+
+    #[test]
+    fn mask_bounds_debug_contains_max_ops() {
+        let b = MaskBounds { max_ops: 256 };
+        let dbg = format!("{b:?}");
+        assert!(dbg.contains("256"));
+    }
+
+    #[test]
+    fn mask_event_debug_contains_all_fields() {
+        let event = MaskEvent {
+            trace_id: "trace-abc".to_string(),
+            region_id: "region-def".to_string(),
+            mask_id: 77,
+            operation_name: "hash_link_finalize".to_string(),
+            ops_executed: 3,
+            outcome: MaskOutcome::CancelDeferred,
+        };
+        let dbg = format!("{event:?}");
+        assert!(dbg.contains("trace-abc"));
+        assert!(dbg.contains("region-def"));
+        assert!(dbg.contains("77"));
+        assert!(dbg.contains("hash_link_finalize"));
+        assert!(dbg.contains("3"));
+        assert!(dbg.contains("CancelDeferred"));
+    }
+
+    #[test]
+    fn empty_policy_denies_all_operations() {
+        let policy = MaskPolicy {
+            default_bounds: MaskBounds::default(),
+            operation_bounds: BTreeMap::new(),
+            lab_mode: false,
+        };
+        assert!(!policy.is_allowed("checkpoint_write"));
+        assert!(!policy.is_allowed("evidence_append"));
+        assert!(policy.bounds_for("checkpoint_write").is_none());
+    }
+
+    #[test]
+    fn empty_policy_context_create_mask_fails() {
+        let policy = MaskPolicy {
+            default_bounds: MaskBounds::default(),
+            operation_bounds: BTreeMap::new(),
+            lab_mode: false,
+        };
+        let mut ctx = CancelMaskContext::new(policy, "t", "r");
+        let err = ctx
+            .create_mask(&checkpoint_justification())
+            .unwrap_err();
+        assert_eq!(
+            err,
+            MaskError::OperationNotAllowed {
+                operation_name: "checkpoint_write".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn empty_policy_serde_roundtrip() {
+        let policy = MaskPolicy {
+            default_bounds: MaskBounds { max_ops: 0 },
+            operation_bounds: BTreeMap::new(),
+            lab_mode: false,
+        };
+        let json = serde_json::to_string(&policy).unwrap();
+        let restored: MaskPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, restored);
+        assert!(restored.operation_bounds.is_empty());
+    }
+
+    #[test]
+    fn mask_bounds_zero_ops_exceeds_on_first_tick() {
+        let mut policy = MaskPolicy::standard();
+        policy
+            .operation_bounds
+            .insert("zero_op".to_string(), MaskBounds { max_ops: 0 });
+        let mut ctx = CancelMaskContext::new(policy, "t", "r");
+        ctx.create_mask(&MaskJustification {
+            operation_name: "zero_op".to_string(),
+            expected_ops_hint: 0,
+            atomicity_reason: "zero".to_string(),
+        })
+        .unwrap();
+        // With max_ops=0, immediately masked; first tick sets ops_executed=1 >= 0
+        // Actually ops_executed starts at 0 and bound is 0, so first tick: 0+1=1 >= 0 => exceeded
+        assert!(!ctx.tick());
+        assert!(!ctx.is_masked());
+    }
+
+    #[test]
+    fn stress_many_sequential_masks() {
+        let mut ctx = test_context();
+        for i in 1..=100u64 {
+            let id = ctx.create_mask(&checkpoint_justification()).unwrap();
+            assert_eq!(id, i);
+            ctx.tick();
+            ctx.release_mask(false).unwrap();
+        }
+        assert_eq!(ctx.event_count(), 100);
+        let events = ctx.drain_events();
+        assert_eq!(events.len(), 100);
+        for (i, event) in events.iter().enumerate() {
+            assert_eq!(event.mask_id, (i + 1) as u64);
+            assert_eq!(event.outcome, MaskOutcome::CleanRelease);
+        }
+    }
+
+    #[test]
+    fn stress_tick_to_exact_bound() {
+        let mut ctx = test_context();
+        // two_phase_commit has max_ops=64
+        ctx.create_mask(&MaskJustification {
+            operation_name: "two_phase_commit".to_string(),
+            expected_ops_hint: 64,
+            atomicity_reason: "two-phase".to_string(),
+        })
+        .unwrap();
+        // Tick exactly 63 times — should all succeed.
+        for _ in 0..63 {
+            assert!(ctx.tick());
+        }
+        assert!(ctx.is_masked());
+        // 64th tick exceeds the bound.
+        assert!(!ctx.tick());
+        assert!(!ctx.is_masked());
+    }
+
+    #[test]
+    fn stress_alternating_operations() {
+        let mut ctx = test_context();
+        let ops = [
+            "checkpoint_write",
+            "evidence_append",
+            "two_phase_commit",
+            "hash_link_finalize",
+        ];
+        for (i, op) in ops.iter().enumerate() {
+            let id = ctx
+                .create_mask(&MaskJustification {
+                    operation_name: op.to_string(),
+                    expected_ops_hint: 1,
+                    atomicity_reason: "stress test".to_string(),
+                })
+                .unwrap();
+            assert_eq!(id, (i + 1) as u64);
+            ctx.tick();
+            ctx.release_mask(false).unwrap();
+        }
+        assert_eq!(ctx.event_count(), 4);
+    }
+
+    #[test]
+    fn deterministic_replay_with_mixed_outcomes() {
+        let run = || -> Vec<MaskEvent> {
+            let mut ctx = test_context();
+            // Mask 1: clean release
+            ctx.create_mask(&checkpoint_justification()).unwrap();
+            for _ in 0..5 {
+                ctx.tick();
+            }
+            ctx.release_mask(false).unwrap();
+
+            // Mask 2: bound exceeded
+            ctx.create_mask(&MaskJustification {
+                operation_name: "hash_link_finalize".to_string(),
+                expected_ops_hint: 4,
+                atomicity_reason: "hash".to_string(),
+            })
+            .unwrap();
+            for _ in 0..8 {
+                ctx.tick();
+            }
+            ctx.release_mask(false).unwrap();
+
+            // Mask 3: cancel deferred
+            ctx.create_mask(&MaskJustification {
+                operation_name: "evidence_append".to_string(),
+                expected_ops_hint: 2,
+                atomicity_reason: "evidence".to_string(),
+            })
+            .unwrap();
+            ctx.tick();
+            ctx.tick();
+            ctx.release_mask(true).unwrap();
+
+            ctx.drain_events()
+        };
+
+        let events1 = run();
+        let events2 = run();
+        assert_eq!(events1.len(), 3);
+        assert_eq!(events1, events2);
+        assert_eq!(events1[0].outcome, MaskOutcome::CleanRelease);
+        assert_eq!(events1[1].outcome, MaskOutcome::BoundExceeded);
+        assert_eq!(events1[2].outcome, MaskOutcome::CancelDeferred);
+    }
+
+    #[test]
+    fn double_release_returns_already_released() {
+        let mut ctx = test_context();
+        ctx.create_mask(&checkpoint_justification()).unwrap();
+        ctx.release_mask(false).unwrap();
+        let err = ctx.release_mask(false).unwrap_err();
+        assert_eq!(err, MaskError::AlreadyReleased);
+    }
+
+    #[test]
+    fn nesting_denied_with_different_operations() {
+        let mut ctx = test_context();
+        ctx.create_mask(&checkpoint_justification()).unwrap();
+        let err = ctx
+            .create_mask(&MaskJustification {
+                operation_name: "evidence_append".to_string(),
+                expected_ops_hint: 1,
+                atomicity_reason: "nested".to_string(),
+            })
+            .unwrap_err();
+        assert_eq!(err, MaskError::NestingDenied);
+    }
+
+    #[test]
+    fn mask_event_serde_all_outcomes() {
+        let outcomes = [
+            MaskOutcome::CleanRelease,
+            MaskOutcome::BoundExceeded,
+            MaskOutcome::CancelDeferred,
+        ];
+        for outcome in &outcomes {
+            let event = MaskEvent {
+                trace_id: "t-serde".to_string(),
+                region_id: "r-serde".to_string(),
+                mask_id: 42,
+                operation_name: "checkpoint_write".to_string(),
+                ops_executed: 10,
+                outcome: *outcome,
+            };
+            let json = serde_json::to_string(&event).unwrap();
+            let restored: MaskEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(event, restored);
+        }
+    }
+
+    #[test]
+    fn mask_justification_empty_strings_serde() {
+        let just = MaskJustification {
+            operation_name: String::new(),
+            expected_ops_hint: 0,
+            atomicity_reason: String::new(),
+        };
+        let json = serde_json::to_string(&just).unwrap();
+        let restored: MaskJustification = serde_json::from_str(&json).unwrap();
+        assert_eq!(just, restored);
+        assert!(restored.operation_name.is_empty());
+        assert!(restored.atomicity_reason.is_empty());
+    }
+
+    #[test]
+    fn mask_justification_unicode_serde() {
+        let just = MaskJustification {
+            operation_name: "op_\u{1F600}_emoji".to_string(),
+            expected_ops_hint: 1,
+            atomicity_reason: "\u{00E9}\u{00E8}\u{00EA}".to_string(),
+        };
+        let json = serde_json::to_string(&just).unwrap();
+        let restored: MaskJustification = serde_json::from_str(&json).unwrap();
+        assert_eq!(just, restored);
+    }
+
+    #[test]
+    fn mask_bounds_large_max_ops_serde() {
+        let bounds = MaskBounds {
+            max_ops: u64::MAX,
+        };
+        let json = serde_json::to_string(&bounds).unwrap();
+        let restored: MaskBounds = serde_json::from_str(&json).unwrap();
+        assert_eq!(bounds, restored);
+    }
+
+    #[test]
+    fn mask_policy_many_operations_serde() {
+        let mut policy = MaskPolicy::standard();
+        for i in 0..50 {
+            policy.operation_bounds.insert(
+                format!("op_{i}"),
+                MaskBounds { max_ops: i + 1 },
+            );
+        }
+        let json = serde_json::to_string(&policy).unwrap();
+        let restored: MaskPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, restored);
+        assert_eq!(restored.operation_bounds.len(), 54); // 4 standard + 50
+    }
+
+    #[test]
+    fn drain_events_is_idempotent_on_empty() {
+        let mut ctx = test_context();
+        let drained1 = ctx.drain_events();
+        let drained2 = ctx.drain_events();
+        assert!(drained1.is_empty());
+        assert!(drained2.is_empty());
+        assert_eq!(ctx.event_count(), 0);
+    }
+
+    #[test]
+    fn is_masked_false_after_bound_exceeded() {
+        let mut ctx = test_context();
+        ctx.create_mask(&MaskJustification {
+            operation_name: "hash_link_finalize".to_string(),
+            expected_ops_hint: 4,
+            atomicity_reason: "hash".to_string(),
+        })
+        .unwrap();
+        assert!(ctx.is_masked());
+        // Exhaust (max_ops = 8).
+        for _ in 0..8 {
+            ctx.tick();
+        }
+        assert!(!ctx.is_masked());
+        // Still not masked after extra ticks.
+        ctx.tick();
+        assert!(!ctx.is_masked());
+    }
+
+    #[test]
+    fn event_trace_and_region_propagation() {
+        let mut ctx = CancelMaskContext::new(
+            MaskPolicy::standard(),
+            "trace-custom-42",
+            "region-custom-99",
+        );
+        ctx.create_mask(&checkpoint_justification()).unwrap();
+        ctx.tick();
+        ctx.release_mask(false).unwrap();
+        let events = ctx.drain_events();
+        assert_eq!(events[0].trace_id, "trace-custom-42");
+        assert_eq!(events[0].region_id, "region-custom-99");
+    }
+
+    #[test]
+    fn context_with_empty_trace_and_region() {
+        let mut ctx = CancelMaskContext::new(MaskPolicy::standard(), "", "");
+        ctx.create_mask(&checkpoint_justification()).unwrap();
+        ctx.tick();
+        ctx.release_mask(false).unwrap();
+        let events = ctx.drain_events();
+        assert_eq!(events[0].trace_id, "");
+        assert_eq!(events[0].region_id, "");
+    }
+
+    #[test]
+    fn mask_after_nesting_denied_still_works() {
+        let mut ctx = test_context();
+        ctx.create_mask(&checkpoint_justification()).unwrap();
+        // Attempt nested mask — fails.
+        let _ = ctx.create_mask(&checkpoint_justification());
+        // Original mask still active.
+        assert!(ctx.is_masked());
+        assert!(ctx.tick());
+        ctx.release_mask(false).unwrap();
+        assert!(!ctx.is_masked());
+        // Can create a new mask now.
+        let id = ctx.create_mask(&checkpoint_justification()).unwrap();
+        assert_eq!(id, 2);
+    }
+
+    #[test]
+    fn mask_after_disallowed_operation_error_still_works() {
+        let mut ctx = test_context();
+        let err = ctx
+            .create_mask(&MaskJustification {
+                operation_name: "unknown_op".to_string(),
+                expected_ops_hint: 1,
+                atomicity_reason: "test".to_string(),
+            })
+            .unwrap_err();
+        assert!(matches!(err, MaskError::OperationNotAllowed { .. }));
+        // Context should still be usable — no mask active.
+        assert!(!ctx.is_masked());
+        let id = ctx.create_mask(&checkpoint_justification()).unwrap();
+        assert_eq!(id, 1);
+    }
+
+    #[test]
+    fn mask_event_equality() {
+        let e1 = MaskEvent {
+            trace_id: "t".to_string(),
+            region_id: "r".to_string(),
+            mask_id: 1,
+            operation_name: "op".to_string(),
+            ops_executed: 5,
+            outcome: MaskOutcome::CleanRelease,
+        };
+        let e2 = e1.clone();
+        assert_eq!(e1, e2);
+
+        let e3 = MaskEvent {
+            ops_executed: 6,
+            ..e1.clone()
+        };
+        assert_ne!(e1, e3);
+    }
+
+    #[test]
+    fn mask_outcome_copy_semantics() {
+        let a = MaskOutcome::CancelDeferred;
+        let b = a; // Copy
+        let c = a; // Still valid after copy
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+
+    #[test]
+    fn mask_bounds_copy_semantics() {
+        let a = MaskBounds { max_ops: 42 };
+        let b = a; // Copy
+        let c = a; // Still valid
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+
+    #[test]
+    fn policy_operation_bounds_are_sorted() {
+        let policy = MaskPolicy::standard();
+        let keys: Vec<&String> = policy.operation_bounds.keys().collect();
+        // BTreeMap guarantees sorted order.
+        let mut sorted = keys.clone();
+        sorted.sort();
+        assert_eq!(keys, sorted);
+    }
+
+    #[test]
+    fn stress_drain_after_each_mask() {
+        let mut ctx = test_context();
+        for i in 1..=20u64 {
+            ctx.create_mask(&checkpoint_justification()).unwrap();
+            for _ in 0..3 {
+                ctx.tick();
+            }
+            ctx.release_mask(false).unwrap();
+            let events = ctx.drain_events();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].mask_id, i);
+            assert_eq!(events[0].ops_executed, 3);
+            assert_eq!(ctx.event_count(), 0);
+        }
+    }
+
+    #[test]
+    fn mask_justification_inequality() {
+        let a = MaskJustification {
+            operation_name: "op_a".to_string(),
+            expected_ops_hint: 10,
+            atomicity_reason: "reason_a".to_string(),
+        };
+        let b = MaskJustification {
+            operation_name: "op_b".to_string(),
+            expected_ops_hint: 10,
+            atomicity_reason: "reason_a".to_string(),
+        };
+        let c = MaskJustification {
+            operation_name: "op_a".to_string(),
+            expected_ops_hint: 20,
+            atomicity_reason: "reason_a".to_string(),
+        };
+        let d = MaskJustification {
+            operation_name: "op_a".to_string(),
+            expected_ops_hint: 10,
+            atomicity_reason: "reason_b".to_string(),
+        };
+        assert_ne!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(a, d);
+    }
+
+    #[test]
+    fn mask_bounds_inequality() {
+        let a = MaskBounds { max_ops: 10 };
+        let b = MaskBounds { max_ops: 20 };
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn mask_policy_inequality_on_lab_mode() {
+        let mut a = MaskPolicy::standard();
+        let mut b = MaskPolicy::standard();
+        assert_eq!(a, b);
+        b.lab_mode = true;
+        assert_ne!(a, b);
+        a.lab_mode = true;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn mask_policy_inequality_on_bounds() {
+        let mut a = MaskPolicy::standard();
+        let b = MaskPolicy::standard();
+        a.default_bounds = MaskBounds { max_ops: 1 };
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn context_debug_format_contains_policy() {
+        let ctx = test_context();
+        let dbg = format!("{ctx:?}");
+        assert!(dbg.contains("CancelMaskContext"));
+        assert!(dbg.contains("MaskPolicy"));
+        assert!(dbg.contains("trace-1"));
+        assert!(dbg.contains("region-1"));
+    }
 }

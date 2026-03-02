@@ -1669,4 +1669,669 @@ mod tests {
     fn schema_version_constant_matches() {
         assert_eq!(SCHEMA_VERSION, "franken-engine.succinct-witness.v1");
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    // ── Serde roundtrips for remaining types ─────────────────────
+
+    #[test]
+    fn sufficiency_constraint_serde_roundtrip() {
+        let sc = SufficiencyConstraint {
+            dimension: SufficiencyDimension::CausalOrdering,
+            min_score_millionths: 850_000,
+            rationale: "causal chain must be intact".into(),
+        };
+        let json = serde_json::to_string(&sc).unwrap();
+        let back: SufficiencyConstraint = serde_json::from_str(&json).unwrap();
+        assert_eq!(sc, back);
+    }
+
+    #[test]
+    fn sufficiency_result_serde_roundtrip() {
+        let sr = SufficiencyResult {
+            satisfied: false,
+            min_score_millionths: 400_000,
+            violations: vec![SufficiencyViolation {
+                dimension: SufficiencyDimension::LegalRetention,
+                required_millionths: 750_000,
+                actual_millionths: 400_000,
+            }],
+        };
+        let json = serde_json::to_string(&sr).unwrap();
+        let back: SufficiencyResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(sr, back);
+    }
+
+    #[test]
+    fn sufficiency_violation_serde_roundtrip() {
+        let sv = SufficiencyViolation {
+            dimension: SufficiencyDimension::ProvenanceBinding,
+            required_millionths: 850_000,
+            actual_millionths: 0,
+        };
+        let json = serde_json::to_string(&sv).unwrap();
+        let back: SufficiencyViolation = serde_json::from_str(&json).unwrap();
+        assert_eq!(sv, back);
+    }
+
+    #[test]
+    fn evidence_chunk_serde_roundtrip() {
+        let chunk = EvidenceChunk::new(7, "security", b"payload bytes".to_vec());
+        let json = serde_json::to_string(&chunk).unwrap();
+        let back: EvidenceChunk = serde_json::from_str(&json).unwrap();
+        assert_eq!(chunk, back);
+    }
+
+    #[test]
+    fn merkle_tree_serde_roundtrip() {
+        let leaves: Vec<[u8; 32]> = (0..4)
+            .map(|i| EvidenceChunk::new(i, "x", vec![i as u8; 10]).leaf_hash())
+            .collect();
+        let tree = MerkleTree::build(&leaves);
+        let json = serde_json::to_string(&tree).unwrap();
+        let back: MerkleTree = serde_json::from_str(&json).unwrap();
+        assert_eq!(tree, back);
+    }
+
+    #[test]
+    fn proof_step_serde_roundtrip() {
+        let step = ProofStep {
+            hash: [0xAB; 32],
+            is_right: true,
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        let back: ProofStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(step, back);
+    }
+
+    #[test]
+    fn reconstruction_hint_serde_roundtrip() {
+        let hint = ReconstructionHint {
+            chunk_index: 3,
+            kind: ReconstructionKind::Hybrid,
+            artifact_hash: Some("abc123".into()),
+            replay_session_id: Some("sess-99".into()),
+        };
+        let json = serde_json::to_string(&hint).unwrap();
+        let back: ReconstructionHint = serde_json::from_str(&json).unwrap();
+        assert_eq!(hint, back);
+    }
+
+    #[test]
+    fn chunk_manifest_entry_serde_roundtrip() {
+        let entry = ChunkManifestEntry {
+            index: 2,
+            content_hash: "deadbeef".into(),
+            payload_family: "decision".into(),
+            size_bytes: 256,
+            leaf_hash: "cafebabe".into(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: ChunkManifestEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn pack_report_entry_serde_roundtrip() {
+        let entry = PackReportEntry {
+            pack_id: "wp-test".into(),
+            chunk_count: 3,
+            total_bytes: 1024,
+            payload_families: vec!["decision".into(), "replay".into()],
+            valid: true,
+            issues: vec![],
+            sufficiency_score: Some(900_000),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: PackReportEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn pack_verification_result_serde_roundtrip() {
+        let pvr = PackVerificationResult {
+            valid: false,
+            issues: vec!["merkle root mismatch".into()],
+        };
+        let json = serde_json::to_string(&pvr).unwrap();
+        let back: PackVerificationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(pvr, back);
+    }
+
+    #[test]
+    fn sufficiency_certificate_serde_roundtrip() {
+        let mut scores = BTreeMap::new();
+        scores.insert("replay_completeness".into(), 950_000_i64);
+        scores.insert("causal_ordering".into(), 880_000);
+        let cert = SufficiencyCertificate {
+            certificate_id: "sc-abc".into(),
+            witness_pack_id: "wp-xyz".into(),
+            schema_id: "ws-test".into(),
+            dimension_scores: scores,
+            overall_score_millionths: 880_000,
+            all_satisfied: true,
+            epoch: test_epoch(),
+        };
+        let json = serde_json::to_string(&cert).unwrap();
+        let back: SufficiencyCertificate = serde_json::from_str(&json).unwrap();
+        assert_eq!(cert, back);
+    }
+
+    #[test]
+    fn compilation_result_serde_roundtrip() {
+        let result = WitnessCompiler::new(test_schema())
+            .add_chunk("decision", b"data".to_vec())
+            .provenance(test_provenance())
+            .compile(test_epoch())
+            .unwrap();
+        let json = serde_json::to_string(&result).unwrap();
+        let back: CompilationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+        assert!(back.verify_all_proofs());
+    }
+
+    // ── Clone independence ───────────────────────────────────────
+
+    #[test]
+    fn witness_schema_clone_independence() {
+        let s1 = test_schema();
+        let mut s2 = s1.clone();
+        s2.name = "mutated".into();
+        assert_ne!(s1.name, s2.name);
+        assert_eq!(s1.name, "test-schema");
+    }
+
+    #[test]
+    fn evidence_chunk_clone_independence() {
+        let c1 = EvidenceChunk::new(0, "decision", b"original".to_vec());
+        let mut c2 = c1.clone();
+        c2.payload = b"modified".to_vec();
+        assert_eq!(c1.payload, b"original");
+        assert_ne!(c1.payload, c2.payload);
+    }
+
+    #[test]
+    fn provenance_attachment_clone_independence() {
+        let p1 = test_provenance();
+        let mut p2 = p1.clone();
+        p2.git_hash = "changed".into();
+        assert_eq!(p1.git_hash, "def456");
+        assert_ne!(p1.git_hash, p2.git_hash);
+    }
+
+    #[test]
+    fn witness_pack_clone_independence() {
+        let result = WitnessCompiler::new(test_schema())
+            .add_chunk("decision", b"data".to_vec())
+            .provenance(test_provenance())
+            .compile(test_epoch())
+            .unwrap();
+        let mut pack2 = result.pack.clone();
+        pack2.merkle_root = "tampered".into();
+        assert_ne!(result.pack.merkle_root, pack2.merkle_root);
+    }
+
+    #[test]
+    fn compilation_error_clone_independence() {
+        let e1 = CompilationError::ChunkTooLarge {
+            index: 0,
+            size: 5000,
+            max: 4096,
+        };
+        let e2 = e1.clone();
+        assert_eq!(e1, e2);
+    }
+
+    // ── Ordering / BTreeSet insertion ────────────────────────────
+
+    #[test]
+    fn sufficiency_dimension_ord_all_insertable_in_btreeset() {
+        let set: BTreeSet<SufficiencyDimension> =
+            SufficiencyDimension::ALL.iter().copied().collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    #[test]
+    fn sufficiency_dimension_ord_is_stable() {
+        let mut dims = SufficiencyDimension::ALL.to_vec();
+        dims.sort();
+        let mut dims2 = dims.clone();
+        dims2.sort();
+        assert_eq!(dims, dims2);
+    }
+
+    #[test]
+    fn reconstruction_kind_ord_all_insertable_in_btreeset() {
+        let set: BTreeSet<ReconstructionKind> = [
+            ReconstructionKind::Inline,
+            ReconstructionKind::ContentAddressed,
+            ReconstructionKind::DeterministicReplay,
+            ReconstructionKind::Hybrid,
+        ]
+        .iter()
+        .copied()
+        .collect();
+        assert_eq!(set.len(), 4);
+    }
+
+    #[test]
+    fn reconstruction_kind_ord_is_stable() {
+        let mut kinds = vec![
+            ReconstructionKind::Hybrid,
+            ReconstructionKind::Inline,
+            ReconstructionKind::DeterministicReplay,
+            ReconstructionKind::ContentAddressed,
+        ];
+        kinds.sort();
+        let mut kinds2 = kinds.clone();
+        kinds2.sort();
+        assert_eq!(kinds, kinds2);
+    }
+
+    // ── Error handling edge cases ────────────────────────────────
+
+    #[test]
+    fn compiler_chunk_exactly_at_max_succeeds() {
+        let result = WitnessCompiler::new(test_schema())
+            .max_chunk_bytes(64)
+            .add_chunk("decision", vec![0u8; 64])
+            .provenance(test_provenance())
+            .compile(test_epoch());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn compiler_chunk_one_byte_over_max_fails() {
+        let err = WitnessCompiler::new(test_schema())
+            .max_chunk_bytes(64)
+            .add_chunk("decision", vec![0u8; 65])
+            .provenance(test_provenance())
+            .compile(test_epoch())
+            .unwrap_err();
+        match err {
+            CompilationError::ChunkTooLarge { index, size, max } => {
+                assert_eq!(index, 0);
+                assert_eq!(size, 65);
+                assert_eq!(max, 64);
+            }
+            _ => panic!("expected ChunkTooLarge"),
+        }
+    }
+
+    #[test]
+    fn compiler_second_chunk_too_large_reports_correct_index() {
+        let err = WitnessCompiler::new(test_schema())
+            .max_chunk_bytes(100)
+            .add_chunk("decision", vec![0u8; 50])
+            .add_chunk("replay", vec![0u8; 200])
+            .provenance(test_provenance())
+            .compile(test_epoch())
+            .unwrap_err();
+        match err {
+            CompilationError::ChunkTooLarge { index, .. } => assert_eq!(index, 1),
+            _ => panic!("expected ChunkTooLarge"),
+        }
+    }
+
+    #[test]
+    fn validate_sufficiency_missing_dimension_scores_treated_as_zero() {
+        let schema = test_schema();
+        let cert = SufficiencyCertificate {
+            certificate_id: String::new(),
+            witness_pack_id: "wp-test".into(),
+            schema_id: schema.schema_id.clone(),
+            dimension_scores: BTreeMap::new(),
+            overall_score_millionths: 0,
+            all_satisfied: false,
+            epoch: test_epoch(),
+        };
+        let result = schema.validate_sufficiency(&cert);
+        assert!(!result.satisfied);
+        assert_eq!(result.violations.len(), 2);
+    }
+
+    #[test]
+    fn verifier_inclusion_bad_hex_returns_false() {
+        let l1 = EvidenceChunk::new(0, "a", b"one".to_vec()).leaf_hash();
+        let tree = MerkleTree::build(&[l1]);
+        let proof = tree.inclusion_proof(0).unwrap();
+        assert!(!PackVerifier::verify_inclusion(&proof, "not-hex!!"));
+    }
+
+    #[test]
+    fn verifier_inclusion_wrong_length_hex_returns_false() {
+        let l1 = EvidenceChunk::new(0, "a", b"one".to_vec()).leaf_hash();
+        let tree = MerkleTree::build(&[l1]);
+        let proof = tree.inclusion_proof(0).unwrap();
+        // Valid hex but only 16 bytes (not 32)
+        assert!(!PackVerifier::verify_inclusion(
+            &proof,
+            &hex::encode([0u8; 16])
+        ));
+    }
+
+    // ── Stress scenarios ─────────────────────────────────────────
+
+    #[test]
+    fn merkle_tree_128_leaves_stress() {
+        let leaves: Vec<[u8; 32]> = (0..128)
+            .map(|i| EvidenceChunk::new(i, "s", vec![(i & 0xFF) as u8; 8]).leaf_hash())
+            .collect();
+        let tree = MerkleTree::build(&leaves);
+        assert_eq!(tree.leaf_count, 128);
+        // Spot-check first, middle, last
+        for &idx in &[0, 63, 127] {
+            assert!(
+                tree.inclusion_proof(idx).unwrap().verify(),
+                "proof for leaf {idx} failed"
+            );
+        }
+    }
+
+    #[test]
+    fn compiler_many_chunks_stress() {
+        let mut compiler = WitnessCompiler::new(test_schema());
+        for i in 0..50 {
+            compiler = compiler.add_chunk("stress", format!("chunk-{i}").into_bytes());
+        }
+        let result = compiler
+            .provenance(test_provenance())
+            .compile(test_epoch())
+            .unwrap();
+        assert_eq!(result.pack.chunk_count, 50);
+        assert!(result.verify_all_proofs());
+        assert!(PackVerifier::verify_result(&result).valid);
+    }
+
+    #[test]
+    fn report_many_packs_stress() {
+        let results: Vec<CompilationResult> = (0..10)
+            .map(|i| {
+                WitnessCompiler::new(test_schema())
+                    .add_chunk("decision", format!("pack-{i}").into_bytes())
+                    .provenance(test_provenance())
+                    .compile(test_epoch())
+                    .unwrap()
+            })
+            .collect();
+        let refs: Vec<&CompilationResult> = results.iter().collect();
+        let report = generate_report(&refs);
+        assert!(report.all_valid);
+        assert_eq!(report.total_chunks, 10);
+        assert_eq!(report.pack_results.len(), 10);
+    }
+
+    // ── Deterministic replay ─────────────────────────────────────
+
+    #[test]
+    fn full_pipeline_deterministic_replay() {
+        let build = || {
+            let schema = test_schema();
+            let result = WitnessCompiler::new(schema.clone())
+                .add_chunk("decision", b"evidence-a".to_vec())
+                .add_chunk("replay", b"evidence-b".to_vec())
+                .with_reconstruction(ReconstructionKind::DeterministicReplay)
+                .obligation_category(ObligationCategory::Safety)
+                .provenance(test_provenance())
+                .compile(test_epoch())
+                .unwrap();
+            let mut scores = BTreeMap::new();
+            scores.insert("replay_completeness".into(), 900_000_i64);
+            scores.insert("verification_coverage".into(), 800_000);
+            let cert = result.certify_sufficiency(&schema, scores);
+            let report = generate_report(&[&result]);
+            (result, cert, report)
+        };
+        let (r1, c1, rpt1) = build();
+        let (r2, c2, rpt2) = build();
+        assert_eq!(r1.pack.pack_id, r2.pack.pack_id);
+        assert_eq!(r1.pack.merkle_root, r2.pack.merkle_root);
+        assert_eq!(c1.certificate_id, c2.certificate_id);
+        assert_eq!(rpt1.content_hash, rpt2.content_hash);
+        assert_eq!(rpt1.report_id, rpt2.report_id);
+    }
+
+    #[test]
+    fn merkle_root_changes_with_different_data() {
+        let r1 = WitnessCompiler::new(test_schema())
+            .add_chunk("decision", b"alpha".to_vec())
+            .provenance(test_provenance())
+            .compile(test_epoch())
+            .unwrap();
+        let r2 = WitnessCompiler::new(test_schema())
+            .add_chunk("decision", b"beta".to_vec())
+            .provenance(test_provenance())
+            .compile(test_epoch())
+            .unwrap();
+        assert_ne!(r1.pack.merkle_root, r2.pack.merkle_root);
+    }
+
+    #[test]
+    fn certificate_id_changes_with_different_scores() {
+        let schema = test_schema();
+        let result = WitnessCompiler::new(schema.clone())
+            .add_chunk("decision", b"data".to_vec())
+            .provenance(test_provenance())
+            .compile(test_epoch())
+            .unwrap();
+        let mut s1 = BTreeMap::new();
+        s1.insert("replay_completeness".into(), 900_000_i64);
+        let mut s2 = BTreeMap::new();
+        s2.insert("replay_completeness".into(), 800_000_i64);
+        let c1 = result.certify_sufficiency(&schema, s1);
+        let c2 = result.certify_sufficiency(&schema, s2);
+        assert_ne!(c1.certificate_id, c2.certificate_id);
+    }
+
+    // ── Default/empty states ─────────────────────────────────────
+
+    #[test]
+    fn merkle_tree_empty_inclusion_proof_is_none() {
+        let tree = MerkleTree::build(&[]);
+        assert!(tree.inclusion_proof(0).is_none());
+    }
+
+    #[test]
+    fn evidence_chunk_empty_payload() {
+        let chunk = EvidenceChunk::new(0, "empty", Vec::new());
+        assert_eq!(chunk.size_bytes, 0);
+        assert!(!chunk.content_hash.is_empty());
+        // Hash of empty data is still deterministic
+        let chunk2 = EvidenceChunk::new(0, "empty", Vec::new());
+        assert_eq!(chunk.content_hash, chunk2.content_hash);
+    }
+
+    #[test]
+    fn schema_no_constraints_sufficiency_always_satisfied() {
+        let schema = WitnessSchema {
+            schema_id: "ws-no-constraints".into(),
+            name: "no-constraints".into(),
+            payload_families: BTreeSet::new(),
+            constraints: vec![],
+            required_fields: BTreeSet::new(),
+            obligation_categories: BTreeSet::new(),
+            epoch: test_epoch(),
+        };
+        let cert = SufficiencyCertificate {
+            certificate_id: String::new(),
+            witness_pack_id: "wp-test".into(),
+            schema_id: schema.schema_id.clone(),
+            dimension_scores: BTreeMap::new(),
+            overall_score_millionths: 0,
+            all_satisfied: true,
+            epoch: test_epoch(),
+        };
+        let result = schema.validate_sufficiency(&cert);
+        assert!(result.satisfied);
+        assert!(result.violations.is_empty());
+        // min_score defaults to MILLION when no constraints
+        assert_eq!(result.min_score_millionths, MILLION);
+    }
+
+    #[test]
+    fn provenance_no_legal_summary_hash_differs_from_with() {
+        let without = test_provenance();
+        let mut with_summary = test_provenance();
+        with_summary.legal_summary = Some("some legal note".into());
+        assert_ne!(without.content_hash(), with_summary.content_hash());
+    }
+
+    // ── Schema compute_id sensitivity ────────────────────────────
+
+    #[test]
+    fn schema_id_changes_with_name() {
+        let s1 = test_schema();
+        let mut s2 = test_schema();
+        s2.name = "different-name".into();
+        s2.schema_id = s2.compute_id();
+        assert_ne!(s1.schema_id, s2.schema_id);
+    }
+
+    #[test]
+    fn schema_id_changes_with_payload_families() {
+        let s1 = test_schema();
+        let mut s2 = test_schema();
+        s2.payload_families.insert("extra_family".into());
+        s2.schema_id = s2.compute_id();
+        assert_ne!(s1.schema_id, s2.schema_id);
+    }
+
+    // ── WitnessPack helpers ──────────────────────────────────────
+
+    #[test]
+    fn witness_pack_covers_all_obligation_categories() {
+        let mut compiler = WitnessCompiler::new(test_schema())
+            .add_chunk("decision", b"d".to_vec());
+        for cat in &ObligationCategory::ALL {
+            compiler = compiler.obligation_category(*cat);
+        }
+        let result = compiler
+            .provenance(test_provenance())
+            .compile(test_epoch())
+            .unwrap();
+        for cat in &ObligationCategory::ALL {
+            assert!(result.pack.covers_obligation(cat), "missing {cat:?}");
+        }
+    }
+
+    #[test]
+    fn witness_pack_families_returns_sorted() {
+        let result = WitnessCompiler::new(test_schema())
+            .add_chunk("zebra", b"z".to_vec())
+            .add_chunk("alpha", b"a".to_vec())
+            .add_chunk("middle", b"m".to_vec())
+            .provenance(test_provenance())
+            .compile(test_epoch())
+            .unwrap();
+        let fams = result.pack.families();
+        assert_eq!(fams, vec!["alpha", "middle", "zebra"]);
+    }
+
+    // ── proof_for_chunk ──────────────────────────────────────────
+
+    #[test]
+    fn proof_for_chunk_returns_correct_leaf() {
+        let result = WitnessCompiler::new(test_schema())
+            .add_chunk("a", b"alpha".to_vec())
+            .add_chunk("b", b"beta".to_vec())
+            .add_chunk("c", b"gamma".to_vec())
+            .provenance(test_provenance())
+            .compile(test_epoch())
+            .unwrap();
+        for i in 0..3 {
+            let proof = result.proof_for_chunk(i).unwrap();
+            assert_eq!(proof.leaf_index, i);
+            assert!(proof.verify());
+        }
+        assert!(result.proof_for_chunk(3).is_none());
+    }
+
+    // ── Canonical schemas additional checks ──────────────────────
+
+    #[test]
+    fn canonical_schemas_required_fields_include_epoch_and_provenance() {
+        let schemas = canonical_witness_schemas(test_epoch());
+        for s in &schemas {
+            assert!(s.required_fields.contains("epoch"));
+            assert!(s.required_fields.contains("merkle_root"));
+            assert!(s.required_fields.contains("provenance"));
+        }
+    }
+
+    #[test]
+    fn canonical_schemas_deterministic_across_calls() {
+        let s1 = canonical_witness_schemas(test_epoch());
+        let s2 = canonical_witness_schemas(test_epoch());
+        for (a, b) in s1.iter().zip(s2.iter()) {
+            assert_eq!(a.schema_id, b.schema_id);
+        }
+    }
+
+    // ── hash_pair symmetry / asymmetry ───────────────────────────
+
+    #[test]
+    fn hash_pair_is_not_commutative() {
+        let a = [1u8; 32];
+        let b = [2u8; 32];
+        assert_ne!(hash_pair(&a, &b), hash_pair(&b, &a));
+    }
+
+    #[test]
+    fn hash_pair_deterministic() {
+        let a = [0xAA; 32];
+        let b = [0xBB; 32];
+        assert_eq!(hash_pair(&a, &b), hash_pair(&a, &b));
+    }
+
+    // ── Evidence chunk index sensitivity ─────────────────────────
+
+    #[test]
+    fn evidence_chunk_different_index_different_leaf_hash() {
+        let c0 = EvidenceChunk::new(0, "x", b"same".to_vec());
+        let c1 = EvidenceChunk::new(1, "x", b"same".to_vec());
+        assert_ne!(c0.leaf_hash(), c1.leaf_hash());
+    }
+
+    // ── Report content_hash sensitivity ──────────────────────────
+
+    #[test]
+    fn report_content_hash_changes_with_different_packs() {
+        let r1 = WitnessCompiler::new(test_schema())
+            .add_chunk("decision", b"aaa".to_vec())
+            .provenance(test_provenance())
+            .compile(test_epoch())
+            .unwrap();
+        let r2 = WitnessCompiler::new(test_schema())
+            .add_chunk("decision", b"bbb".to_vec())
+            .provenance(test_provenance())
+            .compile(test_epoch())
+            .unwrap();
+        let rpt1 = generate_report(&[&r1]);
+        let rpt2 = generate_report(&[&r2]);
+        assert_ne!(rpt1.content_hash, rpt2.content_hash);
+    }
+
+    // ── Sufficiency violation details ────────────────────────────
+
+    #[test]
+    fn sufficiency_violation_captures_exact_scores() {
+        let schema = test_schema();
+        let mut scores = BTreeMap::new();
+        scores.insert("replay_completeness".into(), 799_999_i64);
+        scores.insert("verification_coverage".into(), 700_000);
+        let cert = SufficiencyCertificate {
+            certificate_id: String::new(),
+            witness_pack_id: "wp-test".into(),
+            schema_id: schema.schema_id.clone(),
+            dimension_scores: scores,
+            overall_score_millionths: 700_000,
+            all_satisfied: false,
+            epoch: test_epoch(),
+        };
+        let result = schema.validate_sufficiency(&cert);
+        assert!(!result.satisfied);
+        assert_eq!(result.violations.len(), 1);
+        assert_eq!(result.violations[0].required_millionths, 800_000);
+        assert_eq!(result.violations[0].actual_millionths, 799_999);
+    }
 }

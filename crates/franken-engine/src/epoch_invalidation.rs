@@ -3005,4 +3005,649 @@ mod tests {
         assert_eq!(engine.fallback_count(), 2);
         assert_eq!(engine.active_count(), 0);
     }
+
+    // =======================================================================
+    // Enrichment tests — PearlTower 2026-03-02
+    // =======================================================================
+
+    #[test]
+    fn canary_multiplier_returns_base_when_not_conservative() {
+        let engine = test_engine();
+        assert!(!engine.is_conservative_mode());
+        assert_eq!(engine.canary_multiplier(), 1_000_000);
+    }
+
+    #[test]
+    fn canary_multiplier_returns_extended_when_conservative() {
+        let mut engine = test_engine();
+        // Trigger churn dampening by rapid invalidations (threshold = 10 default).
+        for i in 0..12 {
+            let spec = make_spec(
+                OptimizationClass::LayoutSpecialization,
+                90,
+                110,
+                &format!("p{i}"),
+                &format!("churn-canary-{i}"),
+            );
+            engine.register_specialization(spec, 1000 + i).unwrap();
+        }
+        for i in 0..12 {
+            let id = engine.specializations()[i].specialization_id.clone();
+            let _ = engine.invalidate_specialization(
+                &id,
+                InvalidationReason::OperatorInvalidation {
+                    reason: format!("churn-{i}"),
+                },
+                2000 + i as u64,
+            );
+        }
+        assert!(engine.is_conservative_mode());
+        assert_eq!(engine.canary_multiplier(), 2_000_000);
+    }
+
+    #[test]
+    fn requires_extended_canary_mirrors_conservative() {
+        let engine = test_engine();
+        assert!(!engine.requires_extended_canary());
+        assert_eq!(
+            engine.requires_extended_canary(),
+            engine.is_conservative_mode()
+        );
+    }
+
+    #[test]
+    fn fallback_state_ord_ordering() {
+        assert!(FallbackState::Active < FallbackState::Invalidating);
+        assert!(FallbackState::Invalidating < FallbackState::BaselineFallback);
+        assert!(FallbackState::BaselineFallback < FallbackState::ReSpecializing);
+    }
+
+    #[test]
+    fn invalidation_reason_ord_epoch_before_policy() {
+        let epoch_reason = InvalidationReason::EpochTransition {
+            old_epoch: SecurityEpoch::from_raw(1),
+            new_epoch: SecurityEpoch::from_raw(2),
+        };
+        let policy_reason = InvalidationReason::PolicyRotation {
+            policy_id: "p1".into(),
+        };
+        assert!(epoch_reason < policy_reason);
+    }
+
+    #[test]
+    fn create_specialization_starts_active() {
+        let spec = make_default_spec();
+        assert_eq!(spec.state, FallbackState::Active);
+    }
+
+    #[test]
+    fn engine_receipts_accessor_after_invalidation() {
+        let mut engine = test_engine();
+        assert!(engine.receipts().is_empty());
+        let spec = make_default_spec();
+        let spec_id = spec.specialization_id.clone();
+        engine.register_specialization(spec, 1000).unwrap();
+        engine
+            .invalidate_specialization(
+                &spec_id,
+                InvalidationReason::OperatorInvalidation {
+                    reason: "test".into(),
+                },
+                2000,
+            )
+            .unwrap();
+        assert_eq!(engine.receipts().len(), 1);
+        assert_eq!(engine.receipts()[0].specialization_id, spec_id);
+    }
+
+    #[test]
+    fn engine_events_accessor_after_registration() {
+        let mut engine = test_engine();
+        assert!(engine.events().is_empty());
+        let spec = make_default_spec();
+        engine.register_specialization(spec, 1000).unwrap();
+        assert_eq!(engine.events().len(), 1);
+        if let InvalidationEventType::SpecializationRegistered { .. } =
+            &engine.events()[0].event_type
+        {
+            // ok
+        } else {
+            panic!("expected SpecializationRegistered event");
+        }
+    }
+
+    #[test]
+    fn invalidation_config_default_signing_key_is_zero() {
+        let cfg = InvalidationConfig::default();
+        assert_eq!(cfg.signing_key, [0u8; 32]);
+    }
+
+    #[test]
+    fn begin_respecialization_on_active_errors() {
+        let mut engine = test_engine();
+        let spec = make_default_spec();
+        let spec_id = spec.specialization_id.clone();
+        engine.register_specialization(spec, 1000).unwrap();
+        let err = engine.begin_respecialization(&spec_id, 2000).unwrap_err();
+        match err {
+            InvalidationError::InvalidState {
+                expected, actual, ..
+            } => {
+                assert!(expected.contains("baseline-fallback"));
+                assert!(actual.contains("active"));
+            }
+            other => panic!("expected InvalidState, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn invalidate_already_baseline_fallback_errors() {
+        let mut engine = test_engine();
+        let spec = make_default_spec();
+        let spec_id = spec.specialization_id.clone();
+        engine.register_specialization(spec, 1000).unwrap();
+        engine
+            .invalidate_specialization(
+                &spec_id,
+                InvalidationReason::OperatorInvalidation {
+                    reason: "first".into(),
+                },
+                2000,
+            )
+            .unwrap();
+        let err = engine
+            .invalidate_specialization(
+                &spec_id,
+                InvalidationReason::OperatorInvalidation {
+                    reason: "second".into(),
+                },
+                3000,
+            )
+            .unwrap_err();
+        assert!(matches!(err, InvalidationError::AlreadyInFallback { .. }));
+    }
+
+    #[test]
+    fn advance_epoch_invalidates_only_active_not_respecializing() {
+        let mut engine = test_engine();
+        let s1 = make_spec(OptimizationClass::Superinstruction, 90, 100, "p1", "ae1");
+        let s2 = make_spec(
+            OptimizationClass::LayoutSpecialization,
+            90,
+            100,
+            "p2",
+            "ae2",
+        );
+        let s1_id = s1.specialization_id.clone();
+        let s2_id = s2.specialization_id.clone();
+        engine.register_specialization(s1, 1000).unwrap();
+        engine.register_specialization(s2, 1000).unwrap();
+        // Move s1 to BaselineFallback then ReSpecializing.
+        engine
+            .invalidate_specialization(
+                &s1_id,
+                InvalidationReason::OperatorInvalidation {
+                    reason: "move".into(),
+                },
+                1500,
+            )
+            .unwrap();
+        engine.begin_respecialization(&s1_id, 1600).unwrap();
+        // s1 is ReSpecializing, s2 is Active.
+        // Advance epoch past 100 — should only invalidate s2.
+        let count = engine.advance_epoch(SecurityEpoch::from_raw(105), 2000);
+        assert_eq!(count, 1);
+        // s2 should be BaselineFallback.
+        let s2_state = engine.get_specialization(&s2_id).unwrap().state;
+        assert_eq!(s2_state, FallbackState::BaselineFallback);
+        // s1 should still be ReSpecializing.
+        let s1_state = engine.get_specialization(&s1_id).unwrap().state;
+        assert_eq!(s1_state, FallbackState::ReSpecializing);
+    }
+
+    #[test]
+    fn is_valid_at_boundary_epoch_equal_from_and_until() {
+        let spec = make_spec(
+            OptimizationClass::Superinstruction,
+            100,
+            100,
+            "p",
+            "boundary",
+        );
+        assert!(spec.is_valid_at(SecurityEpoch::from_raw(100)));
+        assert!(!spec.is_valid_at(SecurityEpoch::from_raw(99)));
+        assert!(!spec.is_valid_at(SecurityEpoch::from_raw(101)));
+    }
+
+    #[test]
+    fn canonical_bytes_include_epoch_bounds() {
+        let s1 = make_spec(OptimizationClass::Superinstruction, 90, 110, "p", "cb1");
+        let s2 = make_spec(OptimizationClass::Superinstruction, 90, 120, "p", "cb1");
+        // Different valid_until means different canonical bytes.
+        // But also different IDs from create_specialization with the same suffix means
+        // these are actually the same suffix but different epoch — they will have
+        // different specialization_ids and therefore different canonical_bytes.
+        assert_ne!(s1.canonical_bytes(), s2.canonical_bytes());
+    }
+
+    #[test]
+    fn get_specialization_returns_correct_spec() {
+        let mut engine = test_engine();
+        let spec = make_default_spec();
+        let spec_id = spec.specialization_id.clone();
+        let class = spec.optimization_class.clone();
+        engine.register_specialization(spec, 1000).unwrap();
+        let found = engine.get_specialization(&spec_id).unwrap();
+        assert_eq!(found.optimization_class, class);
+    }
+
+    #[test]
+    fn event_seq_is_monotonically_increasing() {
+        let mut engine = test_engine();
+        let s1 = make_spec(OptimizationClass::Superinstruction, 90, 110, "p1", "seq1");
+        let s2 = make_spec(
+            OptimizationClass::LayoutSpecialization,
+            90,
+            110,
+            "p2",
+            "seq2",
+        );
+        engine.register_specialization(s1, 100).unwrap();
+        engine.register_specialization(s2, 200).unwrap();
+        engine.advance_epoch(SecurityEpoch::from_raw(115), 300);
+        let seqs: Vec<u64> = engine.events().iter().map(|e| e.seq).collect();
+        for window in seqs.windows(2) {
+            assert!(
+                window[0] < window[1],
+                "seq {} should be less than {}",
+                window[0],
+                window[1]
+            );
+        }
+    }
+
+    #[test]
+    fn receipt_contains_matching_reason() {
+        let mut engine = test_engine();
+        let spec = make_default_spec();
+        let spec_id = spec.specialization_id.clone();
+        engine.register_specialization(spec, 1000).unwrap();
+        let reason = InvalidationReason::KeyRotation {
+            key_id: "k42".into(),
+        };
+        let receipt = engine
+            .invalidate_specialization(&spec_id, reason.clone(), 2000)
+            .unwrap();
+        assert_eq!(receipt.reason, reason);
+    }
+
+    #[test]
+    fn invalidation_error_display_churn_dampening_active() {
+        let err = InvalidationError::ChurnDampeningActive {
+            invalidation_count: 15,
+            window_ns: 60_000_000_000,
+        };
+        let display = err.to_string();
+        assert!(display.contains("15"));
+        assert!(display.contains("60000000000"));
+    }
+
+    #[test]
+    fn invalidation_error_display_id_derivation() {
+        let err = InvalidationError::IdDerivation("bad input".into());
+        assert!(err.to_string().contains("bad input"));
+    }
+
+    #[test]
+    fn invalidation_reason_display_capability_revocation() {
+        let reason = InvalidationReason::CapabilityRevocation {
+            capability_id: "cap-99".into(),
+        };
+        let display = reason.to_string();
+        assert!(display.contains("capability-revocation"));
+        assert!(display.contains("cap-99"));
+    }
+
+    #[test]
+    fn churn_config_custom_values_serde() {
+        let cfg = ChurnConfig {
+            threshold: 5,
+            window_ns: 30_000_000_000,
+            extended_canary_multiplier: 3_000_000,
+            cooldown_ns: 15_000_000_000,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let deser: ChurnConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser, cfg);
+    }
+
+    #[test]
+    fn schema_constants_non_empty() {
+        assert!(!SPECIALIZATION_SCHEMA_DEF.is_empty());
+        assert!(!INVALIDATION_RECEIPT_SCHEMA_DEF.is_empty());
+        assert!(!EPOCH_INVALIDATION_ZONE.is_empty());
+    }
+
+    #[test]
+    fn multiple_registrations_query_all() {
+        let mut engine = test_engine();
+        for i in 0..5 {
+            let spec = make_spec(
+                OptimizationClass::Superinstruction,
+                90,
+                110,
+                &format!("p{i}"),
+                &format!("all-{i}"),
+            );
+            engine.register_specialization(spec, 1000 + i).unwrap();
+        }
+        assert_eq!(engine.specializations().len(), 5);
+        assert_eq!(engine.active_count(), 5);
+        assert_eq!(engine.fallback_count(), 0);
+    }
+
+    #[test]
+    fn engine_serde_preserves_conservative_mode_and_counters() {
+        let mut engine = test_engine();
+        // Register and invalidate 11 specs quickly to trigger churn.
+        for i in 0..11 {
+            let spec = make_spec(
+                OptimizationClass::TraceSpecialization,
+                90,
+                110,
+                &format!("p{i}"),
+                &format!("serde-cons-{i}"),
+            );
+            engine.register_specialization(spec, 1000).unwrap();
+        }
+        for i in 0..11 {
+            let id = engine.specializations()[i].specialization_id.clone();
+            let _ = engine.invalidate_specialization(
+                &id,
+                InvalidationReason::OperatorInvalidation {
+                    reason: format!("s{i}"),
+                },
+                2000,
+            );
+        }
+        assert!(engine.is_conservative_mode());
+        let total = engine.total_invalidations();
+        assert!(total >= 11);
+
+        let json = serde_json::to_string(&engine).unwrap();
+        let restored: EpochInvalidationEngine = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            restored.is_conservative_mode(),
+            engine.is_conservative_mode()
+        );
+        assert_eq!(restored.total_invalidations(), total);
+        assert_eq!(
+            restored.specializations().len(),
+            engine.specializations().len()
+        );
+    }
+
+    #[test]
+    fn invalidate_by_proof_with_spec_having_multiple_proof_ids() {
+        let mut engine = test_engine();
+        let proof_a = make_proof_id("proof-a");
+        let proof_b = make_proof_id("proof-b");
+        let mut proofs = BTreeSet::new();
+        proofs.insert(proof_a.clone());
+        proofs.insert(proof_b.clone());
+        let spec = create_specialization(SpecializationInput {
+            optimization_class: OptimizationClass::Superinstruction,
+            valid_from_epoch: SecurityEpoch::from_raw(90),
+            valid_until_epoch: SecurityEpoch::from_raw(110),
+            source_proof_ids: proofs,
+            linked_policy_id: "multi-proof-pol".into(),
+            rollback_token_hash: ContentHash::compute(b"rb-multi"),
+            baseline_ir_hash: ContentHash::compute(b"bl-multi"),
+            activated_epoch: SecurityEpoch::from_raw(90),
+            activated_at_ns: 1000,
+        })
+        .unwrap();
+        engine.register_specialization(spec, 1000).unwrap();
+        // Invalidation by proof_a should hit the spec.
+        let count = engine.invalidate_by_proof(&proof_a, 2000);
+        assert_eq!(count, 1);
+        assert_eq!(engine.fallback_count(), 1);
+    }
+
+    #[test]
+    fn create_specialization_with_invalid_epoch_range_fails() {
+        let result = create_specialization(SpecializationInput {
+            optimization_class: OptimizationClass::Superinstruction,
+            valid_from_epoch: SecurityEpoch::from_raw(200),
+            valid_until_epoch: SecurityEpoch::from_raw(100),
+            source_proof_ids: BTreeSet::new(),
+            linked_policy_id: "pol".into(),
+            rollback_token_hash: ContentHash::compute(b"rb"),
+            baseline_ir_hash: ContentHash::compute(b"bl"),
+            activated_epoch: SecurityEpoch::from_raw(200),
+            activated_at_ns: 1000,
+        });
+        // create_specialization itself doesn't validate epoch range,
+        // but register_specialization does. Let's verify the spec is created.
+        // Actually, create_specialization doesn't validate. Let's register it.
+        let spec = result.unwrap();
+        let mut engine = test_engine();
+        let err = engine.register_specialization(spec, 1000).unwrap_err();
+        assert!(matches!(err, InvalidationError::InvalidEpochRange { .. }));
+    }
+
+    #[test]
+    fn complete_respecialization_on_active_spec_fails() {
+        let mut engine = test_engine();
+        let spec = make_default_spec();
+        let spec_id = spec.specialization_id.clone();
+        engine.register_specialization(spec, 1000).unwrap();
+        let err = engine
+            .complete_respecialization(
+                &spec_id,
+                SecurityEpoch::from_raw(100),
+                SecurityEpoch::from_raw(200),
+                BTreeSet::new(),
+                2000,
+            )
+            .unwrap_err();
+        match err {
+            InvalidationError::InvalidState {
+                expected, actual, ..
+            } => {
+                assert!(expected.contains("re-specializing"));
+                assert!(actual.contains("active"));
+            }
+            other => panic!("expected InvalidState, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn advance_epoch_emits_transition_but_no_bulk_when_nothing_invalidated() {
+        let mut engine = test_engine();
+        let spec = make_spec(OptimizationClass::Superinstruction, 90, 200, "p", "wide");
+        engine.register_specialization(spec, 1000).unwrap();
+        let events_before = engine.events().len();
+        let count = engine.advance_epoch(SecurityEpoch::from_raw(105), 2000);
+        assert_eq!(count, 0);
+        // Should emit EpochTransitionTriggered but NOT BulkInvalidationCompleted.
+        let new_events: Vec<_> = engine.events()[events_before..].to_vec();
+        assert_eq!(new_events.len(), 1);
+        assert!(matches!(
+            new_events[0].event_type,
+            InvalidationEventType::EpochTransitionTriggered { .. }
+        ));
+    }
+
+    #[test]
+    fn total_invalidations_increments_on_each_invalidation() {
+        let mut engine = test_engine();
+        assert_eq!(engine.total_invalidations(), 0);
+        for i in 0..3 {
+            let spec = make_spec(
+                OptimizationClass::Superinstruction,
+                90,
+                110,
+                &format!("p{i}"),
+                &format!("total-{i}"),
+            );
+            engine.register_specialization(spec, 1000).unwrap();
+        }
+        for i in 0..3 {
+            let id = engine.specializations()[i].specialization_id.clone();
+            engine
+                .invalidate_specialization(
+                    &id,
+                    InvalidationReason::OperatorInvalidation {
+                        reason: format!("inv-{i}"),
+                    },
+                    2000 + i as u64,
+                )
+                .unwrap();
+        }
+        assert_eq!(engine.total_invalidations(), 3);
+    }
+
+    #[test]
+    fn invalidation_error_is_std_error_for_all_variants() {
+        let errors: Vec<InvalidationError> = vec![
+            InvalidationError::SpecializationNotFound {
+                id: make_proof_id("e1"),
+            },
+            InvalidationError::AlreadyInFallback {
+                id: make_proof_id("e2"),
+            },
+            InvalidationError::InvalidEpochRange {
+                valid_from: SecurityEpoch::from_raw(10),
+                valid_until: SecurityEpoch::from_raw(5),
+            },
+            InvalidationError::IdDerivation("oops".into()),
+            InvalidationError::ChurnDampeningActive {
+                invalidation_count: 20,
+                window_ns: 1000,
+            },
+            InvalidationError::DuplicateSpecialization {
+                id: make_proof_id("e3"),
+            },
+            InvalidationError::InvalidState {
+                id: make_proof_id("e4"),
+                expected: "active".into(),
+                actual: "fallback".into(),
+            },
+        ];
+        for err in &errors {
+            let _: &dyn std::error::Error = err;
+            assert!(!err.to_string().is_empty());
+        }
+    }
+
+    #[test]
+    fn invalidation_reason_ord_operator_is_last() {
+        let op = InvalidationReason::OperatorInvalidation { reason: "z".into() };
+        let epoch = InvalidationReason::EpochTransition {
+            old_epoch: SecurityEpoch::from_raw(1),
+            new_epoch: SecurityEpoch::from_raw(2),
+        };
+        let policy = InvalidationReason::PolicyRotation {
+            policy_id: "z".into(),
+        };
+        let key = InvalidationReason::KeyRotation { key_id: "z".into() };
+        let cap = InvalidationReason::CapabilityRevocation {
+            capability_id: "z".into(),
+        };
+        let proof = InvalidationReason::ProofUpdate {
+            proof_id: make_proof_id("z"),
+        };
+        // Derive order follows declaration order: Epoch < Policy < Key < Cap < Proof < Operator
+        assert!(epoch < policy);
+        assert!(policy < key);
+        assert!(key < cap);
+        assert!(cap < proof);
+        assert!(proof < op);
+    }
+
+    #[test]
+    fn engine_current_epoch_accessor() {
+        let engine = test_engine();
+        assert_eq!(engine.current_epoch(), test_epoch());
+    }
+
+    #[test]
+    fn invalidation_event_type_churn_dampening_deactivated_serde() {
+        let evt = InvalidationEventType::ChurnDampeningDeactivated;
+        let json = serde_json::to_string(&evt).unwrap();
+        let deser: InvalidationEventType = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser, evt);
+    }
+
+    #[test]
+    fn receipt_signature_changes_with_spec_id() {
+        let mut engine = test_engine();
+        let s1 = make_spec(OptimizationClass::Superinstruction, 90, 110, "p1", "sig-a");
+        let s2 = make_spec(OptimizationClass::Superinstruction, 90, 110, "p2", "sig-b");
+        let s1_id = s1.specialization_id.clone();
+        let s2_id = s2.specialization_id.clone();
+        engine.register_specialization(s1, 1000).unwrap();
+        engine.register_specialization(s2, 1000).unwrap();
+        let r1 = engine
+            .invalidate_specialization(
+                &s1_id,
+                InvalidationReason::OperatorInvalidation { reason: "a".into() },
+                2000,
+            )
+            .unwrap();
+        let r2 = engine
+            .invalidate_specialization(
+                &s2_id,
+                InvalidationReason::OperatorInvalidation { reason: "b".into() },
+                2000,
+            )
+            .unwrap();
+        assert_ne!(r1.signature, r2.signature);
+    }
+
+    #[test]
+    fn specialization_input_serde_all_fields() {
+        let input = SpecializationInput {
+            optimization_class: OptimizationClass::DevirtualizedHostcallFastPath,
+            valid_from_epoch: SecurityEpoch::from_raw(50),
+            valid_until_epoch: SecurityEpoch::from_raw(200),
+            source_proof_ids: {
+                let mut s = BTreeSet::new();
+                s.insert(make_proof_id("si1"));
+                s.insert(make_proof_id("si2"));
+                s
+            },
+            linked_policy_id: "enterprise-policy".into(),
+            rollback_token_hash: ContentHash::compute(b"rb-si"),
+            baseline_ir_hash: ContentHash::compute(b"bl-si"),
+            activated_epoch: SecurityEpoch::from_raw(50),
+            activated_at_ns: 999,
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let deser: SpecializationInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.optimization_class, input.optimization_class);
+        assert_eq!(deser.linked_policy_id, input.linked_policy_id);
+        assert_eq!(deser.source_proof_ids.len(), 2);
+    }
+
+    #[test]
+    fn invalidation_config_custom_key_serde() {
+        let mut key = [0u8; 32];
+        key[0] = 0xFF;
+        key[31] = 0xAB;
+        let cfg = InvalidationConfig {
+            signing_key: key,
+            churn: ChurnConfig {
+                threshold: 3,
+                window_ns: 10_000,
+                extended_canary_multiplier: 5_000_000,
+                cooldown_ns: 2_000,
+            },
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let deser: InvalidationConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.signing_key, key);
+        assert_eq!(deser.churn.threshold, 3);
+    }
 }

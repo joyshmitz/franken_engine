@@ -1678,4 +1678,864 @@ mod tests {
         let snap = reg.snapshot();
         assert!(snap["test"].at_pressure);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: serde edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn bulkhead_config_serde_boundary_values_enrichment() {
+        let cfg = BulkheadConfig {
+            max_concurrent: usize::MAX,
+            max_queue_depth: 0,
+            pressure_threshold_pct: 255,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let restored: BulkheadConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, restored);
+    }
+
+    #[test]
+    fn bulkhead_config_serde_minimal_enrichment() {
+        let cfg = BulkheadConfig {
+            max_concurrent: 1,
+            max_queue_depth: 0,
+            pressure_threshold_pct: 0,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let restored: BulkheadConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, restored);
+    }
+
+    #[test]
+    fn bulkhead_event_serde_empty_strings_enrichment() {
+        let ev = BulkheadEvent {
+            bulkhead_id: String::new(),
+            current_count: 0,
+            max_concurrent: 0,
+            queue_depth: 0,
+            action: String::new(),
+            trace_id: String::new(),
+            event: String::new(),
+            permit_id: 0,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let restored: BulkheadEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, restored);
+    }
+
+    #[test]
+    fn bulkhead_event_serde_unicode_strings_enrichment() {
+        let ev = BulkheadEvent {
+            bulkhead_id: "\u{1F600} emoji-bh".into(),
+            current_count: 1,
+            max_concurrent: 10,
+            queue_depth: 0,
+            action: "acquire".into(),
+            trace_id: "trace-\u{00E9}\u{00F1}".into(),
+            event: "permit_acquired".into(),
+            permit_id: 1,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let restored: BulkheadEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, restored);
+    }
+
+    #[test]
+    fn bulkhead_error_serde_long_reason_enrichment() {
+        let reason = "x".repeat(10_000);
+        let err = BulkheadError::InvalidConfig {
+            reason: reason.clone(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let restored: BulkheadError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, restored);
+        assert!(restored.to_string().contains(&reason));
+    }
+
+    #[test]
+    fn bulkhead_snapshot_serde_at_pressure_true_enrichment() {
+        let snap = BulkheadSnapshot {
+            bulkhead_id: "pressured".into(),
+            active_count: 9,
+            max_concurrent: 10,
+            queue_depth: 5,
+            max_queue_depth: 20,
+            at_pressure: true,
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        let restored: BulkheadSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(snap, restored);
+        assert!(json.contains("true"));
+    }
+
+    #[test]
+    fn permit_id_serde_zero_enrichment() {
+        let pid = PermitId(0);
+        let json = serde_json::to_string(&pid).unwrap();
+        let restored: PermitId = serde_json::from_str(&json).unwrap();
+        assert_eq!(pid, restored);
+    }
+
+    #[test]
+    fn permit_id_serde_max_enrichment() {
+        let pid = PermitId(u64::MAX);
+        let json = serde_json::to_string(&pid).unwrap();
+        let restored: PermitId = serde_json::from_str(&json).unwrap();
+        assert_eq!(pid, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: clone independence (mutate original after clone)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn bulkhead_config_clone_independence_enrichment() {
+        let mut cfg = BulkheadConfig {
+            max_concurrent: 10,
+            max_queue_depth: 20,
+            pressure_threshold_pct: 80,
+        };
+        let cloned = cfg.clone();
+        cfg.max_concurrent = 999;
+        cfg.max_queue_depth = 1;
+        cfg.pressure_threshold_pct = 1;
+        assert_ne!(cfg, cloned);
+        assert_eq!(cloned.max_concurrent, 10);
+        assert_eq!(cloned.max_queue_depth, 20);
+        assert_eq!(cloned.pressure_threshold_pct, 80);
+    }
+
+    #[test]
+    fn bulkhead_event_clone_independence_enrichment() {
+        let mut ev = BulkheadEvent {
+            bulkhead_id: "original".into(),
+            current_count: 1,
+            max_concurrent: 10,
+            queue_depth: 0,
+            action: "acquire".into(),
+            trace_id: "t-1".into(),
+            event: "permit_acquired".into(),
+            permit_id: 5,
+        };
+        let cloned = ev.clone();
+        ev.bulkhead_id = "mutated".into();
+        ev.permit_id = 999;
+        assert_ne!(ev, cloned);
+        assert_eq!(cloned.bulkhead_id, "original");
+        assert_eq!(cloned.permit_id, 5);
+    }
+
+    #[test]
+    fn bulkhead_error_clone_independence_enrichment() {
+        let mut err = BulkheadError::BulkheadFull {
+            bulkhead_id: "orig".into(),
+            max_concurrent: 10,
+            queue_depth: 5,
+        };
+        let cloned = err.clone();
+        err = BulkheadError::PermitNotFound { permit_id: 42 };
+        assert_ne!(err, cloned);
+    }
+
+    #[test]
+    fn bulkhead_snapshot_clone_independence_enrichment() {
+        let mut snap = BulkheadSnapshot {
+            bulkhead_id: "snap-orig".into(),
+            active_count: 3,
+            max_concurrent: 10,
+            queue_depth: 1,
+            max_queue_depth: 20,
+            at_pressure: false,
+        };
+        let cloned = snap.clone();
+        snap.at_pressure = true;
+        snap.active_count = 10;
+        assert_ne!(snap, cloned);
+        assert!(!cloned.at_pressure);
+        assert_eq!(cloned.active_count, 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: Display/Debug uniqueness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn bulkhead_class_debug_uniqueness_enrichment() {
+        let classes = [
+            BulkheadClass::RemoteInFlight,
+            BulkheadClass::BackgroundMaintenance,
+            BulkheadClass::SagaExecution,
+            BulkheadClass::EvidenceFlush,
+        ];
+        let debugs: std::collections::BTreeSet<String> =
+            classes.iter().map(|c| format!("{c:?}")).collect();
+        assert_eq!(debugs.len(), 4, "all Debug representations are unique");
+    }
+
+    #[test]
+    fn permit_id_display_format_enrichment() {
+        assert_eq!(PermitId(0).to_string(), "permit:0");
+        assert_eq!(PermitId(u64::MAX).to_string(), format!("permit:{}", u64::MAX));
+    }
+
+    #[test]
+    fn permit_id_debug_differs_from_display_enrichment() {
+        let pid = PermitId(42);
+        let display = format!("{pid}");
+        let debug = format!("{pid:?}");
+        assert_ne!(display, debug);
+        assert!(debug.contains("PermitId"));
+    }
+
+    #[test]
+    fn bulkhead_error_full_display_content_enrichment() {
+        let err = BulkheadError::BulkheadFull {
+            bulkhead_id: "my-bh".into(),
+            max_concurrent: 64,
+            queue_depth: 128,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("my-bh"), "should contain bulkhead id");
+        assert!(msg.contains("64"), "should contain max_concurrent");
+        assert!(msg.contains("128"), "should contain queue_depth");
+        assert!(msg.contains("full"), "should contain 'full'");
+    }
+
+    #[test]
+    fn bulkhead_error_permit_not_found_display_content_enrichment() {
+        let err = BulkheadError::PermitNotFound { permit_id: 9999 };
+        let msg = err.to_string();
+        assert!(msg.contains("9999"));
+        assert!(msg.contains("not found"));
+    }
+
+    #[test]
+    fn bulkhead_error_invalid_config_display_content_enrichment() {
+        let err = BulkheadError::InvalidConfig {
+            reason: "threshold exceeds 100".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("threshold exceeds 100"));
+        assert!(msg.contains("invalid"));
+    }
+
+    #[test]
+    fn bulkhead_error_not_found_display_content_enrichment() {
+        let err = BulkheadError::BulkheadNotFound {
+            bulkhead_id: "phantom".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("phantom"));
+        assert!(msg.contains("not found"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: ordering tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn bulkhead_class_ord_is_total_enrichment() {
+        let classes = [
+            BulkheadClass::RemoteInFlight,
+            BulkheadClass::BackgroundMaintenance,
+            BulkheadClass::SagaExecution,
+            BulkheadClass::EvidenceFlush,
+        ];
+        // Reflexive
+        for c in &classes {
+            assert_eq!(c.cmp(c), std::cmp::Ordering::Equal);
+        }
+        // Antisymmetric: if a < b then b > a
+        for i in 0..classes.len() {
+            for j in (i + 1)..classes.len() {
+                assert!(classes[i] < classes[j]);
+                assert!(classes[j] > classes[i]);
+            }
+        }
+    }
+
+    #[test]
+    fn permit_id_ord_monotonic_enrichment() {
+        let mut ids: Vec<PermitId> = (0..100).map(PermitId).collect();
+        let sorted = ids.clone();
+        ids.sort();
+        assert_eq!(ids, sorted, "sequential PermitIds should already be sorted");
+    }
+
+    #[test]
+    fn permit_id_ord_reverse_enrichment() {
+        let mut ids: Vec<PermitId> = (0..50).rev().map(PermitId).collect();
+        ids.sort();
+        let expected: Vec<PermitId> = (0..50).map(PermitId).collect();
+        assert_eq!(ids, expected);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: stress scenarios
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn stress_acquire_release_many_permits_enrichment() {
+        let mut reg = BulkheadRegistry::empty();
+        reg.register(
+            "stress",
+            BulkheadConfig {
+                max_concurrent: 100,
+                max_queue_depth: 200,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap();
+
+        let mut permits = Vec::new();
+        for i in 0..100 {
+            permits.push(reg.acquire("stress", &format!("t{i}")).unwrap());
+        }
+        assert_eq!(reg.active_count("stress"), Some(100));
+
+        // Release all
+        for (i, p) in permits.into_iter().enumerate() {
+            reg.release("stress", p, &format!("t{i}")).unwrap();
+        }
+        assert_eq!(reg.active_count("stress"), Some(0));
+    }
+
+    #[test]
+    fn stress_fill_queue_completely_enrichment() {
+        let mut reg = BulkheadRegistry::empty();
+        reg.register(
+            "stress",
+            BulkheadConfig {
+                max_concurrent: 2,
+                max_queue_depth: 50,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap();
+
+        // Fill active slots
+        let _p1 = reg.acquire("stress", "t0").unwrap();
+        let _p2 = reg.acquire("stress", "t1").unwrap();
+        assert_eq!(reg.active_count("stress"), Some(2));
+
+        // Fill entire queue
+        for i in 2..52 {
+            reg.acquire("stress", &format!("t{i}")).unwrap();
+        }
+        assert_eq!(reg.queue_depth("stress"), Some(50));
+
+        // One more should be rejected
+        assert!(matches!(
+            reg.acquire("stress", "overflow"),
+            Err(BulkheadError::BulkheadFull { .. })
+        ));
+    }
+
+    #[test]
+    fn stress_rapid_acquire_release_cycles_enrichment() {
+        let mut reg = BulkheadRegistry::empty();
+        reg.register(
+            "cycle",
+            BulkheadConfig {
+                max_concurrent: 1,
+                max_queue_depth: 0,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap();
+
+        for i in 0..200 {
+            let p = reg.acquire("cycle", &format!("t{i}")).unwrap();
+            reg.release("cycle", p, &format!("t{i}")).unwrap();
+        }
+        assert_eq!(reg.active_count("cycle"), Some(0));
+        assert_eq!(reg.event_counts().get("acquire"), Some(&200));
+        assert_eq!(reg.event_counts().get("release"), Some(&200));
+    }
+
+    #[test]
+    fn stress_multiple_bulkheads_interleaved_enrichment() {
+        let mut reg = BulkheadRegistry::empty();
+        for name in &["alpha", "beta", "gamma"] {
+            reg.register(
+                name,
+                BulkheadConfig {
+                    max_concurrent: 3,
+                    max_queue_depth: 5,
+                    pressure_threshold_pct: 80,
+                },
+            )
+            .unwrap();
+        }
+
+        let mut permits = Vec::new();
+        for i in 0..9 {
+            let bh = ["alpha", "beta", "gamma"][i % 3];
+            permits.push((bh, reg.acquire(bh, &format!("t{i}")).unwrap()));
+        }
+
+        for (bh, p) in &permits {
+            reg.release(bh, *p, "done").unwrap();
+        }
+
+        assert_eq!(reg.active_count("alpha"), Some(0));
+        assert_eq!(reg.active_count("beta"), Some(0));
+        assert_eq!(reg.active_count("gamma"), Some(0));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: deterministic replay
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn deterministic_replay_with_rejections_enrichment() {
+        let run = || -> Vec<BulkheadEvent> {
+            let mut reg = BulkheadRegistry::empty();
+            reg.register(
+                "det",
+                BulkheadConfig {
+                    max_concurrent: 1,
+                    max_queue_depth: 1,
+                    pressure_threshold_pct: 50,
+                },
+            )
+            .unwrap();
+
+            let p1 = reg.acquire("det", "t1").unwrap();
+            let _p2 = reg.acquire("det", "t2").unwrap(); // queued
+            let _ = reg.acquire("det", "t3"); // rejected
+            reg.release("det", p1, "t1").unwrap(); // promotes p2
+            reg.drain_events()
+        };
+
+        let events1 = run();
+        let events2 = run();
+        assert_eq!(events1.len(), events2.len());
+        for (a, b) in events1.iter().zip(events2.iter()) {
+            assert_eq!(a, b);
+        }
+    }
+
+    #[test]
+    fn deterministic_replay_event_counts_enrichment() {
+        let run = || -> BTreeMap<String, u64> {
+            let mut reg = BulkheadRegistry::empty();
+            reg.register(
+                "det",
+                BulkheadConfig {
+                    max_concurrent: 2,
+                    max_queue_depth: 2,
+                    pressure_threshold_pct: 80,
+                },
+            )
+            .unwrap();
+
+            for i in 0..4 {
+                let _ = reg.acquire("det", &format!("t{i}"));
+            }
+            // One more triggers rejection
+            let _ = reg.acquire("det", "overflow");
+            reg.event_counts().clone()
+        };
+
+        assert_eq!(run(), run());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: snapshot edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn snapshot_empty_registry_enrichment() {
+        let reg = BulkheadRegistry::empty();
+        let snap = reg.snapshot();
+        assert!(snap.is_empty());
+    }
+
+    #[test]
+    fn snapshot_with_waiters_enrichment() {
+        let mut reg = BulkheadRegistry::empty();
+        reg.register(
+            "test",
+            BulkheadConfig {
+                max_concurrent: 1,
+                max_queue_depth: 5,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap();
+
+        reg.acquire("test", "t1").unwrap(); // active
+        reg.acquire("test", "t2").unwrap(); // queued
+        reg.acquire("test", "t3").unwrap(); // queued
+
+        let snap = reg.snapshot();
+        assert_eq!(snap["test"].active_count, 1);
+        assert_eq!(snap["test"].queue_depth, 2);
+        assert_eq!(snap["test"].max_queue_depth, 5);
+    }
+
+    #[test]
+    fn snapshot_serde_roundtrip_via_btreemap_enrichment() {
+        let mut reg = BulkheadRegistry::with_defaults();
+        reg.acquire("remote_in_flight", "t1").unwrap();
+
+        let snap = reg.snapshot();
+        let json = serde_json::to_string(&snap).unwrap();
+        let restored: BTreeMap<String, BulkheadSnapshot> =
+            serde_json::from_str(&json).unwrap();
+        assert_eq!(snap, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: reconfigure edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn reconfigure_increase_limit_allows_more_acquires_enrichment() {
+        let mut reg = BulkheadRegistry::empty();
+        reg.register(
+            "test",
+            BulkheadConfig {
+                max_concurrent: 1,
+                max_queue_depth: 0,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap();
+
+        let _p1 = reg.acquire("test", "t1").unwrap();
+        // Currently full, no queue room
+        assert!(reg.acquire("test", "t2").is_err());
+
+        // Increase limit
+        reg.reconfigure(
+            "test",
+            BulkheadConfig {
+                max_concurrent: 5,
+                max_queue_depth: 10,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap();
+
+        // Now we can acquire more
+        let _p2 = reg.acquire("test", "t2").unwrap();
+        assert_eq!(reg.active_count("test"), Some(2));
+    }
+
+    #[test]
+    fn reconfigure_pressure_threshold_changes_detection_enrichment() {
+        let mut reg = BulkheadRegistry::empty();
+        reg.register(
+            "test",
+            BulkheadConfig {
+                max_concurrent: 10,
+                max_queue_depth: 10,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap();
+
+        // Fill to 5 (50%), not at 80% threshold
+        for i in 0..5 {
+            reg.acquire("test", &format!("t{i}")).unwrap();
+        }
+        assert_eq!(reg.is_at_pressure("test"), Some(false));
+
+        // Lower threshold to 50%
+        reg.reconfigure(
+            "test",
+            BulkheadConfig {
+                max_concurrent: 10,
+                max_queue_depth: 10,
+                pressure_threshold_pct: 50,
+            },
+        )
+        .unwrap();
+        assert_eq!(reg.is_at_pressure("test"), Some(true));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: event details
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn queued_event_action_and_type_enrichment() {
+        let mut reg = BulkheadRegistry::empty();
+        reg.register(
+            "test",
+            BulkheadConfig {
+                max_concurrent: 1,
+                max_queue_depth: 5,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap();
+
+        let _p1 = reg.acquire("test", "t1").unwrap();
+        reg.drain_events(); // clear acquire event
+
+        let _p2 = reg.acquire("test", "t2").unwrap(); // queued
+        let events = reg.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].action, "queued");
+        assert_eq!(events[0].event, "permit_queued");
+        assert_eq!(events[0].trace_id, "t2");
+    }
+
+    #[test]
+    fn pressure_event_has_correct_fields_enrichment() {
+        let mut reg = BulkheadRegistry::empty();
+        reg.register(
+            "bh-press",
+            BulkheadConfig {
+                max_concurrent: 2,
+                max_queue_depth: 4,
+                pressure_threshold_pct: 50,
+            },
+        )
+        .unwrap();
+
+        // First acquire at 50% threshold triggers pressure
+        reg.acquire("bh-press", "trace-a").unwrap();
+        let events = reg.drain_events();
+        let pressure = events.iter().find(|e| e.event == "bulkhead_pressure");
+        assert!(pressure.is_some());
+        let pe = pressure.unwrap();
+        assert_eq!(pe.bulkhead_id, "bh-press");
+        assert_eq!(pe.action, "pressure");
+    }
+
+    #[test]
+    fn release_event_permit_id_matches_enrichment() {
+        let mut reg = BulkheadRegistry::empty();
+        reg.register(
+            "test",
+            BulkheadConfig {
+                max_concurrent: 10,
+                max_queue_depth: 10,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap();
+
+        let p = reg.acquire("test", "trace-rel").unwrap();
+        reg.drain_events();
+        reg.release("test", p, "trace-rel").unwrap();
+        let events = reg.drain_events();
+        assert_eq!(events[0].permit_id, p.0);
+        assert_eq!(events[0].trace_id, "trace-rel");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: default config invariants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn default_config_queue_depth_is_double_max_concurrent_enrichment() {
+        for class in [
+            BulkheadClass::RemoteInFlight,
+            BulkheadClass::BackgroundMaintenance,
+            BulkheadClass::SagaExecution,
+            BulkheadClass::EvidenceFlush,
+        ] {
+            let cfg = class.default_config();
+            assert_eq!(
+                cfg.max_queue_depth,
+                cfg.max_concurrent * 2,
+                "{class}: queue depth should be 2x max_concurrent"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: BulkheadClass serde variants are strings
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn bulkhead_class_serde_variant_names_enrichment() {
+        assert_eq!(
+            serde_json::to_string(&BulkheadClass::RemoteInFlight).unwrap(),
+            "\"RemoteInFlight\""
+        );
+        assert_eq!(
+            serde_json::to_string(&BulkheadClass::BackgroundMaintenance).unwrap(),
+            "\"BackgroundMaintenance\""
+        );
+        assert_eq!(
+            serde_json::to_string(&BulkheadClass::SagaExecution).unwrap(),
+            "\"SagaExecution\""
+        );
+        assert_eq!(
+            serde_json::to_string(&BulkheadClass::EvidenceFlush).unwrap(),
+            "\"EvidenceFlush\""
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: PermitId Copy semantics
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn permit_id_copy_semantics_enrichment() {
+        let p1 = PermitId(42);
+        let p2 = p1; // Copy
+        let p3 = p1; // still valid because Copy
+        assert_eq!(p1, p2);
+        assert_eq!(p2, p3);
+    }
+
+    #[test]
+    fn bulkhead_class_copy_semantics_enrichment() {
+        let c1 = BulkheadClass::SagaExecution;
+        let c2 = c1; // Copy
+        let c3 = c1; // still valid because Copy
+        assert_eq!(c1, c2);
+        assert_eq!(c2, c3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: waiter release from middle
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn release_middle_waiter_enrichment() {
+        let mut reg = BulkheadRegistry::empty();
+        reg.register(
+            "test",
+            BulkheadConfig {
+                max_concurrent: 1,
+                max_queue_depth: 10,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap();
+
+        let _p1 = reg.acquire("test", "t1").unwrap(); // active
+        let _p2 = reg.acquire("test", "t2").unwrap(); // queued 1st
+        let p3 = reg.acquire("test", "t3").unwrap(); // queued 2nd
+        let _p4 = reg.acquire("test", "t4").unwrap(); // queued 3rd
+
+        assert_eq!(reg.queue_depth("test"), Some(3));
+
+        // Release middle waiter p3
+        reg.release("test", p3, "t3").unwrap();
+        assert_eq!(reg.queue_depth("test"), Some(2));
+        // Active count unchanged (p3 was a waiter)
+        assert_eq!(reg.active_count("test"), Some(1));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: permit IDs are monotonically increasing
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn permit_ids_monotonically_increasing_enrichment() {
+        let mut reg = BulkheadRegistry::empty();
+        reg.register(
+            "test",
+            BulkheadConfig {
+                max_concurrent: 100,
+                max_queue_depth: 100,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap();
+
+        let mut prev = PermitId(0);
+        for i in 0..50 {
+            let p = reg.acquire("test", &format!("t{i}")).unwrap();
+            assert!(p > prev, "permit {p} should be > {prev}");
+            prev = p;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: event_counts survives drain_events
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn event_counts_persist_after_drain_enrichment() {
+        let mut reg = BulkheadRegistry::empty();
+        reg.register(
+            "test",
+            BulkheadConfig {
+                max_concurrent: 10,
+                max_queue_depth: 10,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap();
+
+        let p = reg.acquire("test", "t1").unwrap();
+        reg.release("test", p, "t1").unwrap();
+
+        let counts_before = reg.event_counts().clone();
+        let _ = reg.drain_events();
+        let counts_after = reg.event_counts().clone();
+
+        assert_eq!(counts_before, counts_after, "drain_events should not reset counters");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: BulkheadError Debug uniqueness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn bulkhead_error_debug_uniqueness_enrichment() {
+        let variants = [
+            BulkheadError::BulkheadFull {
+                bulkhead_id: "a".into(),
+                max_concurrent: 1,
+                queue_depth: 1,
+            },
+            BulkheadError::PermitNotFound { permit_id: 1 },
+            BulkheadError::BulkheadNotFound {
+                bulkhead_id: "b".into(),
+            },
+            BulkheadError::InvalidConfig {
+                reason: "c".into(),
+            },
+        ];
+        let debugs: std::collections::BTreeSet<String> =
+            variants.iter().map(|e| format!("{e:?}")).collect();
+        assert_eq!(debugs.len(), 4, "all Debug representations are unique");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: full waiter chain promotion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn waiter_chain_full_promotion_enrichment() {
+        let mut reg = BulkheadRegistry::empty();
+        reg.register(
+            "chain",
+            BulkheadConfig {
+                max_concurrent: 1,
+                max_queue_depth: 5,
+                pressure_threshold_pct: 80,
+            },
+        )
+        .unwrap();
+
+        let p1 = reg.acquire("chain", "t1").unwrap(); // active
+        let mut queued = Vec::new();
+        for i in 2..=5 {
+            queued.push(reg.acquire("chain", &format!("t{i}")).unwrap());
+        }
+        assert_eq!(reg.queue_depth("chain"), Some(4));
+
+        // Release active => promotes first waiter
+        reg.release("chain", p1, "t1").unwrap();
+        assert_eq!(reg.active_count("chain"), Some(1));
+        assert_eq!(reg.queue_depth("chain"), Some(3));
+
+        // Release promoted => promotes next waiter
+        reg.release("chain", queued[0], "t2").unwrap();
+        assert_eq!(reg.active_count("chain"), Some(1));
+        assert_eq!(reg.queue_depth("chain"), Some(2));
+    }
 }

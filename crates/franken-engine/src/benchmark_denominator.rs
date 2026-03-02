@@ -1194,4 +1194,680 @@ mod tests {
             assert!(v.source().is_none(), "expected source() == None for {v}");
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: clone independence, Debug, serde edge cases,
+    //     stress, deterministic replay, error display content
+    // -----------------------------------------------------------------------
+
+    // ── Clone independence (mutate original, assert clone unchanged) ──
+
+    #[test]
+    fn benchmark_case_clone_independence() {
+        let mut original = test_case("w-orig", 5000.0, 1000.0);
+        let cloned = original.clone();
+        original.workload_id = "w-mutated".into();
+        original.throughput_franken_tps = 9999.0;
+        assert_eq!(cloned.workload_id, "w-orig");
+        assert!((cloned.throughput_franken_tps - 5000.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn publication_context_clone_independence() {
+        let mut original = PublicationContext::new("tr-orig", "dec-orig", "pol-orig");
+        let cloned = original.clone();
+        original.trace_id = "tr-mutated".into();
+        original.decision_id = "dec-mutated".into();
+        assert_eq!(cloned.trace_id, "tr-orig");
+        assert_eq!(cloned.decision_id, "dec-orig");
+    }
+
+    #[test]
+    fn native_coverage_point_clone_independence() {
+        let mut original = NativeCoveragePoint {
+            recorded_at_utc: "2026-01-01T00:00:00Z".into(),
+            native_slots: 50,
+            total_slots: 100,
+        };
+        let cloned = original.clone();
+        original.native_slots = 999;
+        original.total_slots = 1000;
+        assert_eq!(cloned.native_slots, 50);
+        assert_eq!(cloned.total_slots, 100);
+    }
+
+    #[test]
+    fn publication_gate_decision_clone_independence() {
+        let input = test_gate_input();
+        let mut decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        let cloned = decision.clone();
+        decision.publish_allowed = false;
+        decision.blockers.push("injected".into());
+        assert!(cloned.publish_allowed);
+        assert!(cloned.blockers.is_empty());
+    }
+
+    #[test]
+    fn benchmark_publication_event_clone_independence() {
+        let mut original = BenchmarkPublicationEvent {
+            trace_id: "tr-1".into(),
+            decision_id: "dec-1".into(),
+            policy_id: "pol-1".into(),
+            component: "comp-1".into(),
+            event: "ev-1".into(),
+            outcome: "pass".into(),
+            error_code: None,
+        };
+        let cloned = original.clone();
+        original.outcome = "fail".into();
+        original.error_code = Some("FE-BENCH-9999".into());
+        assert_eq!(cloned.outcome, "pass");
+        assert!(cloned.error_code.is_none());
+    }
+
+    #[test]
+    fn benchmark_denominator_error_clone_independence() {
+        let mut original = BenchmarkDenominatorError::DuplicateWorkloadId {
+            baseline: "node".into(),
+            workload_id: "w1".into(),
+        };
+        let cloned = original.clone();
+        original = BenchmarkDenominatorError::MissingCoverageProgression;
+        assert!(matches!(
+            cloned,
+            BenchmarkDenominatorError::DuplicateWorkloadId { .. }
+        ));
+        assert!(matches!(
+            original,
+            BenchmarkDenominatorError::MissingCoverageProgression
+        ));
+    }
+
+    // ── Debug format content assertions ──────────────────────────────
+
+    #[test]
+    fn baseline_engine_debug_contains_variant_name() {
+        let node_dbg = format!("{:?}", BaselineEngine::Node);
+        let bun_dbg = format!("{:?}", BaselineEngine::Bun);
+        assert!(node_dbg.contains("Node"));
+        assert!(bun_dbg.contains("Bun"));
+        assert_ne!(node_dbg, bun_dbg);
+    }
+
+    #[test]
+    fn benchmark_case_debug_contains_workload_id() {
+        let c = test_case("debug-wk", 1234.0, 567.0);
+        let dbg = format!("{c:?}");
+        assert!(dbg.contains("debug-wk"));
+        assert!(dbg.contains("1234"));
+    }
+
+    #[test]
+    fn publication_context_debug_contains_ids() {
+        let ctx = PublicationContext::new("tr-dbg", "dec-dbg", "pol-dbg");
+        let dbg = format!("{ctx:?}");
+        assert!(dbg.contains("tr-dbg"));
+        assert!(dbg.contains("dec-dbg"));
+        assert!(dbg.contains("pol-dbg"));
+    }
+
+    #[test]
+    fn benchmark_denominator_error_debug_not_empty() {
+        let err = BenchmarkDenominatorError::MissingCoverageProgression;
+        let dbg = format!("{err:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("MissingCoverageProgression"));
+    }
+
+    // ── Error Display content assertions for all variants ────────────
+
+    #[test]
+    fn error_display_empty_workload_id_content() {
+        let e = BenchmarkDenominatorError::EmptyWorkloadId {
+            baseline: "bun".into(),
+        };
+        let s = e.to_string();
+        assert!(s.contains("empty workload id"));
+        assert!(s.contains("bun"));
+    }
+
+    #[test]
+    fn error_display_duplicate_workload_id_content() {
+        let e = BenchmarkDenominatorError::DuplicateWorkloadId {
+            baseline: "node".into(),
+            workload_id: "dup-wk".into(),
+        };
+        let s = e.to_string();
+        assert!(s.contains("duplicate"));
+        assert!(s.contains("dup-wk"));
+        assert!(s.contains("node"));
+    }
+
+    #[test]
+    fn error_display_invalid_weight_content() {
+        let e = BenchmarkDenominatorError::InvalidWeight {
+            workload_id: "wt-bad".into(),
+            reason: "weight must be finite".into(),
+        };
+        let s = e.to_string();
+        assert!(s.contains("invalid weight"));
+        assert!(s.contains("wt-bad"));
+        assert!(s.contains("weight must be finite"));
+    }
+
+    #[test]
+    fn error_display_invalid_throughput_content() {
+        let e = BenchmarkDenominatorError::InvalidThroughput {
+            workload_id: "tp-bad".into(),
+            field: "throughput_franken_tps".into(),
+        };
+        let s = e.to_string();
+        assert!(s.contains("invalid throughput"));
+        assert!(s.contains("tp-bad"));
+        assert!(s.contains("throughput_franken_tps"));
+    }
+
+    #[test]
+    fn error_display_invalid_weight_sum_content() {
+        let e = BenchmarkDenominatorError::InvalidWeightSum {
+            baseline: "bun".into(),
+            sum: 0.42,
+        };
+        let s = e.to_string();
+        assert!(s.contains("weights"));
+        assert!(s.contains("bun"));
+        assert!(s.contains("0.42"));
+    }
+
+    #[test]
+    fn error_display_missing_coverage_content() {
+        let s = BenchmarkDenominatorError::MissingCoverageProgression.to_string();
+        assert!(s.contains("native coverage"));
+    }
+
+    #[test]
+    fn error_display_missing_lineage_content() {
+        let s = BenchmarkDenominatorError::MissingReplacementLineage.to_string();
+        assert!(s.contains("replacement lineage"));
+    }
+
+    #[test]
+    fn error_display_serialization_failure_content() {
+        let e = BenchmarkDenominatorError::SerializationFailure("json broke".into());
+        let s = e.to_string();
+        assert!(s.contains("serialization failure"));
+        assert!(s.contains("json broke"));
+    }
+
+    // ── Serde roundtrip for all error variants ───────────────────────
+
+    #[test]
+    fn error_serde_roundtrip_all_variants() {
+        let variants: Vec<BenchmarkDenominatorError> = vec![
+            BenchmarkDenominatorError::EmptyCaseSet {
+                baseline: "node".into(),
+            },
+            BenchmarkDenominatorError::EmptyWorkloadId {
+                baseline: "bun".into(),
+            },
+            BenchmarkDenominatorError::DuplicateWorkloadId {
+                baseline: "node".into(),
+                workload_id: "w7".into(),
+            },
+            BenchmarkDenominatorError::InvalidWeight {
+                workload_id: "w3".into(),
+                reason: "negative".into(),
+            },
+            BenchmarkDenominatorError::InvalidThroughput {
+                workload_id: "w4".into(),
+                field: "throughput_baseline_tps".into(),
+            },
+            BenchmarkDenominatorError::InvalidWeightSum {
+                baseline: "bun".into(),
+                sum: 1.5,
+            },
+            BenchmarkDenominatorError::MissingCoverageProgression,
+            BenchmarkDenominatorError::MissingReplacementLineage,
+            BenchmarkDenominatorError::SerializationFailure("test-err".into()),
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: BenchmarkDenominatorError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back, "serde roundtrip failed for {v}");
+        }
+    }
+
+    // ── Serde edge cases ─────────────────────────────────────────────
+
+    #[test]
+    fn benchmark_case_weighted_serde_roundtrip() {
+        let c = test_case_weighted("sw-1", 7000.0, 1000.0, 0.75);
+        let json = serde_json::to_string(&c).unwrap();
+        let back: BenchmarkCase = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+        assert_eq!(back.weight, Some(0.75));
+    }
+
+    #[test]
+    fn benchmark_publication_event_with_error_code_serde() {
+        let e = BenchmarkPublicationEvent {
+            trace_id: "tr-ec".into(),
+            decision_id: "dec-ec".into(),
+            policy_id: "pol-ec".into(),
+            component: BENCHMARK_PUBLICATION_COMPONENT.to_string(),
+            event: "node_score_evaluated".into(),
+            outcome: "fail".into(),
+            error_code: Some("FE-BENCH-1007".into()),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: BenchmarkPublicationEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+        assert_eq!(back.error_code.as_deref(), Some("FE-BENCH-1007"));
+    }
+
+    #[test]
+    fn baseline_engine_serde_snake_case_format() {
+        let json = serde_json::to_string(&BaselineEngine::Node).unwrap();
+        assert_eq!(json, "\"node\"");
+        let json = serde_json::to_string(&BaselineEngine::Bun).unwrap();
+        assert_eq!(json, "\"bun\"");
+    }
+
+    // ── Geometric mean: workload ordering independence ───────────────
+
+    #[test]
+    fn geometric_mean_order_independent() {
+        let cases_fwd = vec![
+            test_case("alpha", 2000.0, 1000.0),
+            test_case("beta", 4000.0, 1000.0),
+            test_case("gamma", 8000.0, 1000.0),
+        ];
+        let cases_rev = vec![
+            test_case("gamma", 8000.0, 1000.0),
+            test_case("alpha", 2000.0, 1000.0),
+            test_case("beta", 4000.0, 1000.0),
+        ];
+        let s_fwd = weighted_geometric_mean(&cases_fwd, BaselineEngine::Node).unwrap();
+        let s_rev = weighted_geometric_mean(&cases_rev, BaselineEngine::Node).unwrap();
+        assert_eq!(s_fwd, s_rev, "ordering of cases must not affect score");
+    }
+
+    // ── Geometric mean: stress with many cases ───────────────────────
+
+    #[test]
+    fn geometric_mean_stress_many_cases() {
+        let n = 100;
+        let cases: Vec<BenchmarkCase> = (0..n)
+            .map(|i| test_case(&format!("stress-{i}"), 4000.0, 1000.0))
+            .collect();
+        let score = weighted_geometric_mean(&cases, BaselineEngine::Bun).unwrap();
+        // All cases have identical speedup of 4x, geometric mean should be 4x
+        assert!((score - 4.0).abs() < 1e-6);
+    }
+
+    // ── Geometric mean: asymmetric explicit weights ──────────────────
+
+    #[test]
+    fn geometric_mean_asymmetric_weights() {
+        // weight 0.9 on 10x speedup, weight 0.1 on 1x speedup
+        // geometric mean = 10^0.9 * 1^0.1 = 10^0.9 ≈ 7.943
+        let cases = vec![
+            test_case_weighted("heavy", 10000.0, 1000.0, 0.9),
+            test_case_weighted("light", 1000.0, 1000.0, 0.1),
+        ];
+        let score = weighted_geometric_mean(&cases, BaselineEngine::Node).unwrap();
+        let expected = 10.0_f64.powf(0.9);
+        assert!(
+            (score - expected).abs() < 1e-4,
+            "expected ~{expected:.4}, got {score:.4}"
+        );
+    }
+
+    // ── Gate: multiple blockers simultaneously ───────────────────────
+
+    #[test]
+    fn gate_multiple_blockers_combined() {
+        let mut input = test_gate_input();
+        // Below threshold for both
+        input.node_cases = vec![test_case("w1", 2000.0, 1000.0)];
+        input.bun_cases = vec![test_case("w1", 1500.0, 1000.0)];
+        // Fail behavior and latency on bun
+        input.bun_cases[0].behavior_equivalent = false;
+        input.bun_cases[0].latency_envelope_ok = false;
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        assert!(!decision.publish_allowed);
+        // Should have at least 4 blockers:
+        // behavior-equiv, latency, score_vs_node, score_vs_bun
+        assert!(
+            decision.blockers.len() >= 4,
+            "expected >= 4 blockers, got {}",
+            decision.blockers.len()
+        );
+    }
+
+    #[test]
+    fn gate_all_three_quality_failures() {
+        let mut input = test_gate_input();
+        input.node_cases[0].behavior_equivalent = false;
+        input.node_cases[0].latency_envelope_ok = false;
+        input.node_cases[0].error_envelope_ok = false;
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        assert!(!decision.publish_allowed);
+        let blockers_str = decision.blockers.join("; ");
+        assert!(blockers_str.contains("behavior-equivalence"));
+        assert!(blockers_str.contains("latency envelope"));
+        assert!(blockers_str.contains("error envelope"));
+    }
+
+    // ── Gate: denied events carry error_code ─────────────────────────
+
+    #[test]
+    fn gate_denied_events_have_error_code() {
+        let mut input = test_gate_input();
+        input.node_cases = vec![test_case("w1", 2000.0, 1000.0)]; // 2x < 3x
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        // The node_score_evaluated event should have an error_code
+        let node_event = decision
+            .events
+            .iter()
+            .find(|e| e.event == "node_score_evaluated")
+            .unwrap();
+        assert_eq!(node_event.outcome, "fail");
+        assert!(node_event.error_code.is_some());
+        assert_eq!(node_event.error_code.as_deref(), Some(ERROR_PUBLICATION_GATE_DENY));
+        // The publication_gate_decision event should also have error_code
+        let gate_event = decision
+            .events
+            .iter()
+            .find(|e| e.event == "publication_gate_decision")
+            .unwrap();
+        assert_eq!(gate_event.outcome, "deny");
+        assert!(gate_event.error_code.is_some());
+    }
+
+    // ── Gate: to_json_pretty content assertions ──────────────────────
+
+    #[test]
+    fn decision_to_json_pretty_structure() {
+        let input = test_gate_input();
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        let json = decision.to_json_pretty().unwrap();
+        // Pretty-printed JSON should have newlines and indentation
+        assert!(json.contains('\n'));
+        assert!(json.contains("  "));
+        assert!(json.contains("\"score_vs_node\""));
+        assert!(json.contains("\"events\""));
+    }
+
+    // ── Gate: lineage sorting verified ───────────────────────────────
+
+    #[test]
+    fn gate_lineage_ids_sorted() {
+        let mut input = test_gate_input();
+        input.replacement_lineage_ids =
+            vec!["charlie".into(), "alpha".into(), "bravo".into()];
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        assert_eq!(
+            decision.replacement_lineage_ids,
+            vec!["alpha", "bravo", "charlie"]
+        );
+    }
+
+    // ── Gate: multiple coverage points preserved ─────────────────────
+
+    #[test]
+    fn gate_multiple_coverage_points_preserved() {
+        let mut input = test_gate_input();
+        input.native_coverage_progression = vec![
+            NativeCoveragePoint {
+                recorded_at_utc: "2026-01-01T00:00:00Z".into(),
+                native_slots: 5,
+                total_slots: 20,
+            },
+            NativeCoveragePoint {
+                recorded_at_utc: "2026-02-01T00:00:00Z".into(),
+                native_slots: 12,
+                total_slots: 20,
+            },
+            NativeCoveragePoint {
+                recorded_at_utc: "2026-03-01T00:00:00Z".into(),
+                native_slots: 18,
+                total_slots: 20,
+            },
+        ];
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        assert_eq!(decision.native_coverage_progression.len(), 3);
+        assert_eq!(decision.native_coverage_progression[0].native_slots, 5);
+        assert_eq!(decision.native_coverage_progression[2].native_slots, 18);
+    }
+
+    // ── Constants ────────────────────────────────────────────────────
+
+    #[test]
+    fn score_threshold_is_three() {
+        assert!((SCORE_THRESHOLD - 3.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn benchmark_publication_component_constant() {
+        assert_eq!(BENCHMARK_PUBLICATION_COMPONENT, "benchmark_denominator");
+    }
+
+    // ── Deterministic replay ─────────────────────────────────────────
+
+    #[test]
+    fn gate_deterministic_replay() {
+        let input = test_gate_input();
+        let ctx = test_context();
+        let d1 = evaluate_publication_gate(&input, &ctx).unwrap();
+        let d2 = evaluate_publication_gate(&input, &ctx).unwrap();
+        assert_eq!(d1.score_vs_node, d2.score_vs_node);
+        assert_eq!(d1.score_vs_bun, d2.score_vs_bun);
+        assert_eq!(d1.publish_allowed, d2.publish_allowed);
+        assert_eq!(d1.blockers, d2.blockers);
+        assert_eq!(d1.events.len(), d2.events.len());
+        for (e1, e2) in d1.events.iter().zip(d2.events.iter()) {
+            assert_eq!(e1, e2);
+        }
+    }
+
+    #[test]
+    fn gate_deterministic_replay_denied() {
+        let mut input = test_gate_input();
+        input.node_cases = vec![test_case("w1", 1500.0, 1000.0)]; // 1.5x
+        let ctx = test_context();
+        let d1 = evaluate_publication_gate(&input, &ctx).unwrap();
+        let d2 = evaluate_publication_gate(&input, &ctx).unwrap();
+        assert_eq!(d1.publish_allowed, d2.publish_allowed);
+        assert!(!d1.publish_allowed);
+        assert_eq!(d1.score_vs_node, d2.score_vs_node);
+        assert_eq!(d1.blockers, d2.blockers);
+    }
+
+    // ── Speedup edge cases ───────────────────────────────────────────
+
+    #[test]
+    fn speedup_very_large_ratio() {
+        let c = test_case("w-big", 1_000_000.0, 1.0);
+        assert!((c.speedup() - 1_000_000.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn speedup_very_small_ratio() {
+        let c = test_case("w-small", 1.0, 1_000_000.0);
+        assert!((c.speedup() - 1e-6).abs() < 1e-12);
+    }
+
+    // ── Whitespace-only workload id ──────────────────────────────────
+
+    #[test]
+    fn geometric_mean_whitespace_only_workload_id_errors() {
+        let cases = vec![test_case("   ", 3000.0, 1000.0)];
+        let err = weighted_geometric_mean(&cases, BaselineEngine::Node).unwrap_err();
+        assert!(matches!(
+            err,
+            BenchmarkDenominatorError::EmptyWorkloadId { .. }
+        ));
+    }
+
+    // ── Weight: zero weight rejected ─────────────────────────────────
+
+    #[test]
+    fn geometric_mean_zero_weight_rejected() {
+        let cases = vec![test_case_weighted("w-z", 3000.0, 1000.0, 0.0)];
+        let err = weighted_geometric_mean(&cases, BaselineEngine::Node).unwrap_err();
+        assert!(matches!(
+            err,
+            BenchmarkDenominatorError::InvalidWeight { .. }
+        ));
+    }
+
+    // ── Weight: NaN weight rejected ──────────────────────────────────
+
+    #[test]
+    fn geometric_mean_nan_weight_rejected() {
+        let cases = vec![test_case_weighted("w-nan", 3000.0, 1000.0, f64::NAN)];
+        let err = weighted_geometric_mean(&cases, BaselineEngine::Node).unwrap_err();
+        assert!(matches!(
+            err,
+            BenchmarkDenominatorError::InvalidWeight { .. }
+        ));
+    }
+
+    // ── Weight: inf weight rejected ──────────────────────────────────
+
+    #[test]
+    fn geometric_mean_inf_weight_rejected() {
+        let cases = vec![test_case_weighted("w-inf", 3000.0, 1000.0, f64::INFINITY)];
+        let err = weighted_geometric_mean(&cases, BaselineEngine::Node).unwrap_err();
+        assert!(matches!(
+            err,
+            BenchmarkDenominatorError::InvalidWeight { .. }
+        ));
+    }
+
+    // ── Baseline throughput NaN rejected ──────────────────────────────
+
+    #[test]
+    fn geometric_mean_baseline_throughput_nan_rejected() {
+        let cases = vec![test_case("w-bnan", 3000.0, f64::NAN)];
+        let err = weighted_geometric_mean(&cases, BaselineEngine::Node).unwrap_err();
+        assert!(matches!(
+            err,
+            BenchmarkDenominatorError::InvalidThroughput { .. }
+        ));
+    }
+
+    // ── Baseline throughput negative rejected ─────────────────────────
+
+    #[test]
+    fn geometric_mean_baseline_throughput_negative_rejected() {
+        let cases = vec![test_case("w-bneg", 3000.0, -500.0)];
+        let err = weighted_geometric_mean(&cases, BaselineEngine::Node).unwrap_err();
+        assert!(matches!(
+            err,
+            BenchmarkDenominatorError::InvalidThroughput { .. }
+        ));
+    }
+
+    // ── Gate event context propagation ────────────────────────────────
+
+    #[test]
+    fn gate_events_carry_context_ids() {
+        let ctx = PublicationContext::new("trace-ctx", "dec-ctx", "pol-ctx");
+        let input = test_gate_input();
+        let decision = evaluate_publication_gate(&input, &ctx).unwrap();
+        for event in &decision.events {
+            assert_eq!(event.trace_id, "trace-ctx");
+            assert_eq!(event.decision_id, "dec-ctx");
+            assert_eq!(event.policy_id, "pol-ctx");
+            assert_eq!(event.component, BENCHMARK_PUBLICATION_COMPONENT);
+        }
+    }
+
+    // ── Gate: bun score passing while node fails ─────────────────────
+
+    #[test]
+    fn gate_bun_pass_node_fail() {
+        let mut input = test_gate_input();
+        input.node_cases = vec![test_case("w1", 1000.0, 1000.0)]; // 1x
+        input.bun_cases = vec![test_case("w1", 5000.0, 1000.0)]; // 5x
+        let decision = evaluate_publication_gate(&input, &test_context()).unwrap();
+        assert!(!decision.publish_allowed);
+        assert!(decision.score_vs_bun >= SCORE_THRESHOLD);
+        assert!(decision.score_vs_node < SCORE_THRESHOLD);
+        // bun event should pass, node should fail
+        let bun_event = decision
+            .events
+            .iter()
+            .find(|e| e.event == "bun_score_evaluated")
+            .unwrap();
+        assert_eq!(bun_event.outcome, "pass");
+        assert!(bun_event.error_code.is_none());
+    }
+
+    // ── deterministic_round edge values ──────────────────────────────
+
+    #[test]
+    fn deterministic_round_zero() {
+        assert!((deterministic_round(0.0) - 0.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn deterministic_round_negative() {
+        let result = deterministic_round(-2.5);
+        assert!((result - (-2.5)).abs() < 1e-10);
+    }
+
+    // ── BenchmarkCase inequality ─────────────────────────────────────
+
+    #[test]
+    fn benchmark_case_inequality() {
+        let a = test_case("a", 1000.0, 500.0);
+        let b = test_case("b", 2000.0, 500.0);
+        assert_ne!(a, b);
+    }
+
+    // ── PublicationContext inequality ─────────────────────────────────
+
+    #[test]
+    fn publication_context_inequality() {
+        let a = PublicationContext::new("t1", "d1", "p1");
+        let b = PublicationContext::new("t2", "d2", "p2");
+        assert_ne!(a, b);
+    }
+
+    // ── BaselineEngine inequality ────────────────────────────────────
+
+    #[test]
+    fn baseline_engine_inequality() {
+        assert_ne!(BaselineEngine::Node, BaselineEngine::Bun);
+    }
+
+    // ── NativeCoveragePoint JSON field names ─────────────────────────
+
+    #[test]
+    fn native_coverage_point_json_field_names() {
+        let p = NativeCoveragePoint {
+            recorded_at_utc: "2026-01-01T00:00:00Z".into(),
+            native_slots: 10,
+            total_slots: 20,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"recorded_at_utc\""));
+        assert!(json.contains("\"native_slots\""));
+        assert!(json.contains("\"total_slots\""));
+    }
+
+    // ── PublicationGateInput clone independence ───────────────────────
+
+    #[test]
+    fn publication_gate_input_clone_independence() {
+        let mut original = test_gate_input();
+        let cloned = original.clone();
+        original.node_cases.clear();
+        original.replacement_lineage_ids.push("extra".into());
+        assert_eq!(cloned.node_cases.len(), 1);
+        assert_eq!(cloned.replacement_lineage_ids.len(), 1);
+    }
 }

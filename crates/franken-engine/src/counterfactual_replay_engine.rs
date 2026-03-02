@@ -2385,4 +2385,334 @@ mod tests {
         let config = ReplayEngineConfig::default();
         assert_eq!(config.baseline_action, LaneAction::FallbackSafe);
     }
+
+    // ── Enrichment: serde for remaining types ────────────────────
+
+    #[test]
+    fn assumption_category_serde_roundtrip() {
+        let categories = [
+            AssumptionCategory::NoUnmeasuredConfounding,
+            AssumptionCategory::Positivity,
+            AssumptionCategory::Consistency,
+            AssumptionCategory::Sutva,
+            AssumptionCategory::ModelSpecification,
+            AssumptionCategory::TemporalStability,
+        ];
+        for cat in &categories {
+            let json = serde_json::to_string(cat).unwrap();
+            let back: AssumptionCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(*cat, back);
+        }
+    }
+
+    #[test]
+    fn policy_comparison_report_serde_roundtrip() {
+        let report = PolicyComparisonReport {
+            schema_version: REPLAY_ENGINE_SCHEMA_VERSION.to_string(),
+            baseline_policy_id: PolicyId("baseline".to_string()),
+            alternate_policy_id: PolicyId("alt".to_string()),
+            alternate_description: "test alt".to_string(),
+            decisions_evaluated: 50,
+            divergence_count: 10,
+            total_original_outcome_millionths: 5_000_000,
+            total_counterfactual_outcome_millionths: 6_000_000,
+            net_improvement_millionths: 1_000_000,
+            regime_breakdown: {
+                let mut m = BTreeMap::new();
+                m.insert("regime-a".to_string(), 500_000);
+                m
+            },
+            confidence_envelope: ConfidenceEnvelope {
+                estimate_millionths: 20_000,
+                lower_millionths: 5_000,
+                upper_millionths: 35_000,
+                confidence_millionths: 950_000,
+                effective_samples: 50,
+            },
+            safety_status: EnvelopeStatus::Safe,
+            divergent_decisions: vec![DecisionComparison {
+                decision_index: 3,
+                tick: 103,
+                epoch: SecurityEpoch::from_raw(1),
+                original_action: "native".to_string(),
+                alternate_action: "wasm".to_string(),
+                original_outcome_millionths: 500_000,
+                counterfactual_outcome_millionths: 600_000,
+                diverged: true,
+                regime: "regime-a".to_string(),
+            }],
+            assumptions: vec![AssumptionCard {
+                assumption_id: "pos-alt".to_string(),
+                category: AssumptionCategory::Positivity,
+                description: "overlap holds".to_string(),
+                testable: true,
+                test_passed: Some(true),
+                sensitivity_bound_millionths: 50_000,
+            }],
+            artifact_hash: ContentHash::compute(b"report"),
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let back: PolicyComparisonReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(report, back);
+    }
+
+    // ── Enrichment: From<IdError> ────────────────────────────────
+
+    #[test]
+    fn replay_engine_error_from_id_error() {
+        let id_err = IdError::EmptyCanonicalBytes;
+        let replay_err: ReplayEngineError = id_err.into();
+        assert!(matches!(replay_err, ReplayEngineError::IdDerivation(_)));
+        let display = format!("{replay_err}");
+        assert!(display.contains("ID derivation error"));
+    }
+
+    // ── Enrichment: is_confident_improvement edge cases ──────────
+
+    #[test]
+    fn is_confident_improvement_unsafe_status() {
+        let report = PolicyComparisonReport {
+            schema_version: REPLAY_ENGINE_SCHEMA_VERSION.to_string(),
+            baseline_policy_id: PolicyId("b".to_string()),
+            alternate_policy_id: PolicyId("a".to_string()),
+            alternate_description: "test".to_string(),
+            decisions_evaluated: 100,
+            divergence_count: 50,
+            total_original_outcome_millionths: 2_000_000,
+            total_counterfactual_outcome_millionths: 1_000_000,
+            net_improvement_millionths: -1_000_000,
+            regime_breakdown: BTreeMap::new(),
+            confidence_envelope: ConfidenceEnvelope {
+                estimate_millionths: -10_000,
+                lower_millionths: -15_000,
+                upper_millionths: -5_000,
+                confidence_millionths: 950_000,
+                effective_samples: 100,
+            },
+            safety_status: EnvelopeStatus::Unsafe,
+            divergent_decisions: Vec::new(),
+            assumptions: Vec::new(),
+            artifact_hash: ContentHash::compute(b"unsafe"),
+        };
+        assert!(!report.is_confident_improvement());
+    }
+
+    // ── Enrichment: recommendation rationale text ────────────────
+
+    #[test]
+    fn recommendation_rationale_for_unsafe_policy() {
+        let mut engine = default_engine();
+        let decisions: Vec<_> = (0..20)
+            .map(|i| make_decision(i, "native", 500_000))
+            .collect();
+        let trace = make_trace(decisions);
+        let alt = make_override_policy("force-wasm", LaneAction::RouteTo(LaneId("wasm".into())));
+
+        let result = engine
+            .compare(&[trace], &[alt], &default_scope(), None)
+            .unwrap();
+
+        // At least verify the rationale is non-empty
+        for rec in &result.ranked_recommendations {
+            assert!(!rec.rationale.is_empty());
+        }
+    }
+
+    // ── Enrichment: isqrt edge cases ─────────────────────────────
+
+    #[test]
+    fn isqrt_small_non_perfect_squares() {
+        assert_eq!(isqrt(2), 1);
+        assert_eq!(isqrt(3), 1);
+        assert_eq!(isqrt(5), 2);
+        assert_eq!(isqrt(8), 2);
+        assert_eq!(isqrt(15), 3);
+        assert_eq!(isqrt(24), 4);
+    }
+
+    // ── Enrichment: z_multiplier boundary transitions ────────────
+
+    #[test]
+    fn z_multiplier_exact_boundaries() {
+        // At exactly 900_001 the boundary transitions
+        assert_eq!(z_multiplier(900_001), 1_960);
+        assert_eq!(z_multiplier(950_001), 2_576);
+        assert_eq!(z_multiplier(990_001), 3_291);
+    }
+
+    // ── Enrichment: schema version constant ──────────────────────
+
+    #[test]
+    fn schema_version_is_v1() {
+        assert!(REPLAY_ENGINE_SCHEMA_VERSION.contains("counterfactual-replay-engine"));
+        assert!(REPLAY_ENGINE_SCHEMA_VERSION.contains("v1"));
+    }
+
+    // ── Enrichment: assumption card testable but not tested ──────
+
+    #[test]
+    fn assumption_card_with_none_test_result() {
+        let card = AssumptionCard {
+            assumption_id: "untested".to_string(),
+            category: AssumptionCategory::NoUnmeasuredConfounding,
+            description: "not testable assumption".to_string(),
+            testable: false,
+            test_passed: None,
+            sensitivity_bound_millionths: 100_000,
+        };
+        let json = serde_json::to_string(&card).unwrap();
+        let back: AssumptionCard = serde_json::from_str(&json).unwrap();
+        assert_eq!(card, back);
+        assert!(back.test_passed.is_none());
+    }
+
+    // ── Enrichment: replay count survives serde ──────────────────
+
+    #[test]
+    fn replay_count_survives_serde() {
+        let mut engine = default_engine();
+        let trace = make_trace(vec![make_decision(0, "native", 500_000)]);
+        let alt = make_alternate_policy("alt-1", "test");
+        engine
+            .compare(&[trace.clone()], &[alt.clone()], &default_scope(), None)
+            .unwrap();
+        engine
+            .compare(&[trace], &[alt], &default_scope(), None)
+            .unwrap();
+        assert_eq!(engine.replay_count(), 2);
+
+        let json = serde_json::to_string(&engine).unwrap();
+        let back: CounterfactualReplayEngine = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.replay_count(), 2);
+    }
+
+    // ── Enrichment: scope default epoch boundaries ───────────────
+
+    #[test]
+    fn default_scope_epoch_boundaries() {
+        let scope = ReplayScope::default();
+        assert_eq!(scope.start_epoch, SecurityEpoch::GENESIS);
+        assert_eq!(scope.end_epoch, SecurityEpoch::from_raw(u64::MAX));
+    }
+
+    // ── Enrichment: error display specifics ──────────────────────
+
+    #[test]
+    fn error_display_too_many_policies_includes_count() {
+        let err = ReplayEngineError::TooManyPolicies {
+            count: 100,
+            max: 64,
+        };
+        let s = format!("{err}");
+        assert!(s.contains("100"));
+        assert!(s.contains("64"));
+    }
+
+    #[test]
+    fn error_display_insufficient_decisions_includes_counts() {
+        let err = ReplayEngineError::InsufficientDecisions {
+            found: 5,
+            required: 100,
+        };
+        let s = format!("{err}");
+        assert!(s.contains("5"));
+        assert!(s.contains("100"));
+    }
+
+    #[test]
+    fn error_display_trace_integrity_includes_trace_id() {
+        let err = ReplayEngineError::TraceIntegrityFailure {
+            trace_id: "trace-42".to_string(),
+            detail: "hash mismatch".to_string(),
+        };
+        let s = format!("{err}");
+        assert!(s.contains("trace-42"));
+        assert!(s.contains("hash mismatch"));
+    }
+
+    #[test]
+    fn error_display_duplicate_policy_includes_id() {
+        let err = ReplayEngineError::DuplicatePolicy {
+            policy_id: "dup-pol".to_string(),
+        };
+        let s = format!("{err}");
+        assert!(s.contains("dup-pol"));
+    }
+
+    // ── Enrichment: alternate policy display details ─────────────
+
+    #[test]
+    fn alternate_policy_display_format() {
+        let ap = AlternatePolicy {
+            policy_id: PolicyId("my-policy".to_string()),
+            description: "a test policy".to_string(),
+            counterfactual_config: CounterfactualConfig {
+                branch_id: "b".to_string(),
+                threshold_override_millionths: None,
+                loss_matrix_overrides: BTreeMap::new(),
+                policy_version_override: None,
+                containment_overrides: BTreeMap::new(),
+                evidence_weight_overrides: BTreeMap::new(),
+                branch_from_index: 0,
+            },
+            default_action: None,
+        };
+        let s = format!("{ap}");
+        assert_eq!(s, "my-policy:a test policy");
+    }
+
+    // ── Enrichment: recommendation display includes all fields ───
+
+    #[test]
+    fn recommendation_display_includes_status() {
+        let rec = Recommendation {
+            rank: 2,
+            policy_id: PolicyId("pol-x".to_string()),
+            expected_improvement_millionths: -10_000,
+            confidence_millionths: 990_000,
+            safety_status: EnvelopeStatus::Unsafe,
+            rationale: "worse".to_string(),
+        };
+        let s = format!("{rec}");
+        assert!(s.contains("#2"));
+        assert!(s.contains("pol-x"));
+        assert!(s.contains("-10000"));
+        assert!(s.contains("990000"));
+    }
+
+    // ── Enrichment: error serde remaining variants ───────────────
+
+    #[test]
+    fn error_serde_roundtrip_all_variants() {
+        let errors = vec![
+            ReplayEngineError::NoTraces,
+            ReplayEngineError::NoPolicies,
+            ReplayEngineError::TooManyPolicies {
+                count: 100,
+                max: 64,
+            },
+            ReplayEngineError::TooManyDecisions {
+                count: 200_000,
+                max: 100_000,
+            },
+            ReplayEngineError::InsufficientDecisions {
+                found: 5,
+                required: 100,
+            },
+            ReplayEngineError::TraceIntegrityFailure {
+                trace_id: "t1".to_string(),
+                detail: "bad".to_string(),
+            },
+            ReplayEngineError::IdDerivation("id-err".to_string()),
+            ReplayEngineError::EmptyScope,
+            ReplayEngineError::DuplicatePolicy {
+                policy_id: "dup".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: ReplayEngineError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
 }

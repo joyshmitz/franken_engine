@@ -1172,4 +1172,359 @@ mod tests {
         let reason = AbortReason::Custom(String::new());
         assert_eq!(reason.to_string(), "custom:");
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn obligation_state_copy_semantics() {
+        let a = ObligationState::Pending;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn abort_reason_custom_long_string_serde() {
+        let reason = AbortReason::Custom("a".repeat(1000));
+        let json = serde_json::to_string(&reason).unwrap();
+        let back: AbortReason = serde_json::from_str(&json).unwrap();
+        assert_eq!(reason, back);
+    }
+
+    #[test]
+    fn obligation_error_not_found_display_contains_id() {
+        let err = ObligationError::NotFound { obligation_id: 42 };
+        let msg = err.to_string();
+        assert!(msg.contains("42"));
+    }
+
+    #[test]
+    fn obligation_error_already_resolved_display_contains_id() {
+        let err = ObligationError::AlreadyResolved { obligation_id: 77 };
+        let msg = err.to_string();
+        assert!(msg.contains("77"));
+    }
+
+    #[test]
+    fn obligation_error_backpressure_display_contains_limit() {
+        let err = ObligationError::Backpressure { max_pending: 256 };
+        let msg = err.to_string();
+        assert!(msg.contains("256"));
+    }
+
+    #[test]
+    fn obligation_error_leaked_display_contains_id() {
+        let err = ObligationError::Leaked { obligation_id: 99 };
+        let msg = err.to_string();
+        assert!(msg.contains("99"));
+    }
+
+    #[test]
+    fn channel_config_lab_mode_true_serde() {
+        let cfg = ChannelConfig {
+            max_pending: 50,
+            lab_mode: true,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: ChannelConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, back);
+    }
+
+    #[test]
+    fn obligation_record_with_none_evidence_serde() {
+        let rec = ObligationRecord {
+            obligation_id: 1,
+            created_at_tick: 0,
+            creator_trace_id: String::new(),
+            state: ObligationState::Pending,
+            resolution_evidence_hash: None,
+        };
+        let json = serde_json::to_string(&rec).unwrap();
+        let back: ObligationRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(rec, back);
+    }
+
+    #[test]
+    fn obligation_record_clone_independence_mutation() {
+        let rec = ObligationRecord {
+            obligation_id: 1,
+            created_at_tick: 100,
+            creator_trace_id: "trace-x".into(),
+            state: ObligationState::Pending,
+            resolution_evidence_hash: None,
+        };
+        let mut cloned = rec.clone();
+        cloned.state = ObligationState::Committed;
+        cloned.resolution_evidence_hash = Some("hash".into());
+        assert_ne!(rec.state, cloned.state);
+    }
+
+    #[test]
+    fn obligation_event_clone_independence_mutation() {
+        let evt = ObligationEvent {
+            trace_id: "t1".into(),
+            channel_id: "c1".into(),
+            obligation_id: 1,
+            state: ObligationState::Pending,
+            resolution_type: None,
+            evidence_hash: None,
+        };
+        let mut cloned = evt.clone();
+        cloned.resolution_type = Some("commit".into());
+        assert_ne!(evt.resolution_type, cloned.resolution_type);
+    }
+
+    #[test]
+    fn channel_config_clone_independence_mutation() {
+        let cfg = ChannelConfig {
+            max_pending: 100,
+            lab_mode: false,
+        };
+        let mut cloned = cfg.clone();
+        cloned.max_pending = 999;
+        cloned.lab_mode = true;
+        assert_ne!(cfg.max_pending, cloned.max_pending);
+    }
+
+    #[test]
+    fn stress_send_commit_20_obligations() {
+        let mut chan = ObligationChannel::new(
+            "stress",
+            "t",
+            ChannelConfig {
+                max_pending: 20,
+                lab_mode: false,
+            },
+        );
+        let mut ids = Vec::new();
+        for i in 0..20 {
+            chan.set_tick(i as u64);
+            ids.push(chan.send("t").unwrap());
+        }
+        assert_eq!(chan.pending_count(), 20);
+        assert!(chan.send("t").is_err());
+        for id in &ids {
+            chan.commit(*id, "h").unwrap();
+        }
+        assert_eq!(chan.pending_count(), 0);
+        assert_eq!(chan.total_count(), 20);
+    }
+
+    #[test]
+    fn stress_interleaved_send_commit_abort() {
+        let mut chan = test_channel();
+        for i in 0u64..30 {
+            chan.set_tick(i);
+            let id = chan.send("t").unwrap();
+            if i.is_multiple_of(3) {
+                chan.abort(id, &AbortReason::OperatorAbort, "h").unwrap();
+            } else {
+                chan.commit(id, "h").unwrap();
+            }
+        }
+        assert_eq!(chan.pending_count(), 0);
+        assert_eq!(chan.total_count(), 30);
+    }
+
+    #[test]
+    fn deterministic_replay_complex_lifecycle() {
+        let run = || -> Vec<ObligationEvent> {
+            let mut chan = ObligationChannel::new(
+                "replay-chan",
+                "replay-trace",
+                ChannelConfig {
+                    max_pending: 10,
+                    lab_mode: true,
+                },
+            );
+            chan.set_tick(100);
+            let id1 = chan.send("t").unwrap();
+            chan.set_tick(200);
+            let id2 = chan.send("t").unwrap();
+            chan.set_tick(300);
+            let id3 = chan.send("t").unwrap();
+            chan.commit(id1, "h1").unwrap();
+            chan.mark_leaked(id2).unwrap();
+            chan.abort(id3, &AbortReason::PolicyViolation, "h3")
+                .unwrap();
+            chan.drain_events()
+        };
+        let events1 = run();
+        let events2 = run();
+        assert_eq!(events1.len(), events2.len());
+        for (a, b) in events1.iter().zip(events2.iter()) {
+            assert_eq!(a, b);
+        }
+    }
+
+    #[test]
+    fn channel_id_propagates_to_events() {
+        let mut chan = ObligationChannel::new("my-channel", "my-trace", ChannelConfig::default());
+        chan.send("t").unwrap();
+        let events = chan.drain_events();
+        assert_eq!(events[0].channel_id, "my-channel");
+        assert_eq!(events[0].trace_id, "my-trace");
+    }
+
+    #[test]
+    fn oldest_pending_after_all_resolved_is_none() {
+        let mut chan = test_channel();
+        let id1 = chan.send("t").unwrap();
+        let id2 = chan.send("t").unwrap();
+        chan.commit(id1, "h").unwrap();
+        chan.commit(id2, "h").unwrap();
+        assert!(chan.oldest_pending().is_none());
+    }
+
+    #[test]
+    fn force_abort_skips_already_committed() {
+        let mut chan = test_channel();
+        let id1 = chan.send("t").unwrap();
+        let id2 = chan.send("t").unwrap();
+        let _id3 = chan.send("t").unwrap();
+        chan.commit(id1, "h").unwrap();
+        chan.mark_leaked(id2).unwrap();
+        let aborted = chan.force_abort_all_pending("timeout");
+        assert_eq!(aborted, 1);
+        assert!(chan.drain_check());
+    }
+
+    #[test]
+    fn send_with_empty_creator_trace_id() {
+        let mut chan = test_channel();
+        let id = chan.send("").unwrap();
+        let oldest = chan.oldest_pending().unwrap();
+        assert_eq!(oldest.obligation_id, id);
+        assert_eq!(oldest.creator_trace_id, "");
+    }
+
+    #[test]
+    fn drain_then_new_events_accumulate() {
+        let mut chan = test_channel();
+        chan.send("t").unwrap();
+        let batch1 = chan.drain_events();
+        assert_eq!(batch1.len(), 1);
+        chan.send("t").unwrap();
+        chan.send("t").unwrap();
+        let batch2 = chan.drain_events();
+        assert_eq!(batch2.len(), 2);
+    }
+
+    #[test]
+    fn abort_reason_serde_custom_special_chars() {
+        let reason = AbortReason::Custom("special: \"chars\" \n\t".into());
+        let json = serde_json::to_string(&reason).unwrap();
+        let back: AbortReason = serde_json::from_str(&json).unwrap();
+        assert_eq!(reason, back);
+    }
+
+    #[test]
+    fn obligation_error_serde_backpressure_boundary() {
+        let err = ObligationError::Backpressure {
+            max_pending: usize::MAX,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let back: ObligationError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    #[test]
+    fn channel_config_max_pending_zero_blocks_all() {
+        let mut chan = ObligationChannel::new(
+            "zero",
+            "t",
+            ChannelConfig {
+                max_pending: 0,
+                lab_mode: false,
+            },
+        );
+        let err = chan.send("t").unwrap_err();
+        assert!(matches!(
+            err,
+            ObligationError::Backpressure { max_pending: 0 }
+        ));
+    }
+
+    #[test]
+    fn multiple_channels_independent_state() {
+        let mut chan1 = ObligationChannel::new("c1", "t1", ChannelConfig::default());
+        let mut chan2 = ObligationChannel::new("c2", "t2", ChannelConfig::default());
+        let id1 = chan1.send("t").unwrap();
+        let id2 = chan2.send("t").unwrap();
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 1);
+        chan1.commit(id1, "h").unwrap();
+        assert_eq!(chan1.pending_count(), 0);
+        assert_eq!(chan2.pending_count(), 1);
+    }
+
+    #[test]
+    fn leak_count_accumulates_across_ops() {
+        let mut chan = test_channel();
+        let id1 = chan.send("t").unwrap();
+        chan.mark_leaked(id1).unwrap();
+        let id2 = chan.send("t").unwrap();
+        chan.commit(id2, "h").unwrap();
+        let id3 = chan.send("t").unwrap();
+        chan.mark_leaked(id3).unwrap();
+        assert_eq!(chan.leak_count(), 2);
+    }
+
+    #[test]
+    fn event_obligation_ids_match_send_ids() {
+        let mut chan = test_channel();
+        let id1 = chan.send("t").unwrap();
+        let id2 = chan.send("t").unwrap();
+        chan.commit(id1, "h").unwrap();
+        let events = chan.drain_events();
+        let event_ids: Vec<u64> = events.iter().map(|e| e.obligation_id).collect();
+        assert_eq!(event_ids, vec![id1, id2, id1]);
+    }
+
+    #[test]
+    fn obligation_state_all_variants_distinct() {
+        let states = [
+            ObligationState::Pending,
+            ObligationState::Committed,
+            ObligationState::Aborted,
+            ObligationState::Leaked,
+        ];
+        for i in 0..states.len() {
+            for j in (i + 1)..states.len() {
+                assert_ne!(states[i], states[j]);
+            }
+        }
+    }
+
+    #[test]
+    fn obligation_error_not_found_zero_id_serde() {
+        let err = ObligationError::NotFound { obligation_id: 0 };
+        let json = serde_json::to_string(&err).unwrap();
+        let back: ObligationError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    #[test]
+    fn obligation_state_serde_leaked() {
+        let state = ObligationState::Leaked;
+        let json = serde_json::to_string(&state).unwrap();
+        let back: ObligationState = serde_json::from_str(&json).unwrap();
+        assert_eq!(state, back);
+    }
+
+    #[test]
+    fn lab_mode_false_by_default() {
+        let chan = test_channel();
+        assert!(!chan.is_lab_mode());
+    }
+
+    #[test]
+    fn tick_monotonicity_in_oldest() {
+        let mut chan = test_channel();
+        chan.set_tick(100);
+        chan.send("t").unwrap();
+        chan.set_tick(50);
+        chan.send("t").unwrap();
+        let oldest = chan.oldest_pending().unwrap();
+        assert_eq!(oldest.created_at_tick, 50);
+    }
 }

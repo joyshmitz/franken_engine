@@ -1220,4 +1220,371 @@ mod tests {
         // SerdeError has no source (no #[from] or source field).
         assert!(std::error::Error::source(&err).is_none());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: edge cases, stress, clone independence, encoding
+    // sizes, registry edge cases, hash collision resistance
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn round_trip_u64_zero() {
+        let val = CanonicalValue::U64(0);
+        let bytes = encode_value(&val);
+        assert_eq!(decode_value(&bytes).unwrap(), val);
+    }
+
+    #[test]
+    fn round_trip_i64_zero() {
+        let val = CanonicalValue::I64(0);
+        let bytes = encode_value(&val);
+        assert_eq!(decode_value(&bytes).unwrap(), val);
+    }
+
+    #[test]
+    fn round_trip_large_bytes_payload() {
+        let val = CanonicalValue::Bytes(vec![0xAB; 1024]);
+        let bytes = encode_value(&val);
+        assert_eq!(decode_value(&bytes).unwrap(), val);
+    }
+
+    #[test]
+    fn round_trip_unicode_string() {
+        let val = CanonicalValue::String("\u{1F600}\u{1F4A9}\u{00E9}\u{2603}".to_string());
+        let bytes = encode_value(&val);
+        assert_eq!(decode_value(&bytes).unwrap(), val);
+    }
+
+    #[test]
+    fn round_trip_many_map_keys() {
+        let mut map = BTreeMap::new();
+        for i in 0..50 {
+            map.insert(format!("key_{i:04}"), CanonicalValue::U64(i));
+        }
+        let val = CanonicalValue::Map(map);
+        let bytes = encode_value(&val);
+        assert_eq!(decode_value(&bytes).unwrap(), val);
+    }
+
+    #[test]
+    fn round_trip_mixed_array() {
+        let val = CanonicalValue::Array(vec![
+            CanonicalValue::U64(0),
+            CanonicalValue::I64(i64::MIN),
+            CanonicalValue::Bool(true),
+            CanonicalValue::Bytes(vec![]),
+            CanonicalValue::String(String::new()),
+            CanonicalValue::Array(vec![]),
+            CanonicalValue::Map(BTreeMap::new()),
+            CanonicalValue::Null,
+        ]);
+        let bytes = encode_value(&val);
+        assert_eq!(decode_value(&bytes).unwrap(), val);
+    }
+
+    #[test]
+    fn schema_prefixed_complex_value() {
+        let schema = SchemaHash::from_definition(b"complex-schema");
+        let mut map = BTreeMap::new();
+        map.insert("arr".to_string(), CanonicalValue::Array(vec![
+            CanonicalValue::I64(-1),
+            CanonicalValue::Bool(false),
+        ]));
+        map.insert("data".to_string(), CanonicalValue::Bytes(vec![0xFF; 16]));
+        let val = CanonicalValue::Map(map);
+        let bytes = serialize_with_schema(&schema, &val);
+        let decoded = deserialize_with_schema(&schema, &bytes).unwrap();
+        assert_eq!(decoded, val);
+    }
+
+    #[test]
+    fn schema_prefix_too_short_buffer() {
+        let schema = test_schema();
+        // Only 31 bytes — less than the 32-byte schema prefix
+        let data = vec![0u8; 31];
+        assert!(matches!(
+            deserialize_with_schema(&schema, &data),
+            Err(SerdeError::BufferTooShort { expected: 32, actual: 31 })
+        ));
+    }
+
+    #[test]
+    fn registry_overwrite_same_definition() {
+        let mut reg = SchemaRegistry::new();
+        let h1 = reg.register("First", 1, b"same-def");
+        let h2 = reg.register("Second", 2, b"same-def");
+        // Same definition bytes → same hash, second overwrites first
+        assert_eq!(h1, h2);
+        assert_eq!(reg.len(), 1);
+        let def = reg.lookup(&h1).unwrap();
+        assert_eq!(def.name, "Second");
+        assert_eq!(def.version, 2);
+    }
+
+    #[test]
+    fn registry_multiple_schemas_deserialize() {
+        let mut reg = SchemaRegistry::new();
+        let h1 = reg.register("TypeA", 1, b"def-type-a");
+        let h2 = reg.register("TypeB", 1, b"def-type-b");
+        assert_ne!(h1, h2);
+
+        let bytes1 = serialize_with_schema(&h1, &CanonicalValue::U64(100));
+        let bytes2 = serialize_with_schema(&h2, &CanonicalValue::I64(-200));
+
+        let (d1, v1) = reg.deserialize_checked(&bytes1).unwrap();
+        assert_eq!(d1.name, "TypeA");
+        assert_eq!(v1, CanonicalValue::U64(100));
+
+        let (d2, v2) = reg.deserialize_checked(&bytes2).unwrap();
+        assert_eq!(d2.name, "TypeB");
+        assert_eq!(v2, CanonicalValue::I64(-200));
+    }
+
+    #[test]
+    fn encoding_size_null() {
+        // Null is a single tag byte
+        assert_eq!(encode_value(&CanonicalValue::Null).len(), 1);
+    }
+
+    #[test]
+    fn encoding_size_bool() {
+        // Bool is 1 tag + 1 data
+        assert_eq!(encode_value(&CanonicalValue::Bool(true)).len(), 2);
+        assert_eq!(encode_value(&CanonicalValue::Bool(false)).len(), 2);
+    }
+
+    #[test]
+    fn encoding_size_i64() {
+        // Same as u64: 1 tag + 8 data
+        assert_eq!(encode_value(&CanonicalValue::I64(0)).len(), 9);
+        assert_eq!(encode_value(&CanonicalValue::I64(i64::MIN)).len(), 9);
+    }
+
+    #[test]
+    fn encoding_size_bytes_prefix() {
+        // Bytes: 1 tag + 4 length + N data
+        let val = CanonicalValue::Bytes(vec![0; 10]);
+        assert_eq!(encode_value(&val).len(), 1 + 4 + 10);
+    }
+
+    #[test]
+    fn encoding_size_empty_array() {
+        // Empty array: 1 tag + 4 count(=0)
+        assert_eq!(encode_value(&CanonicalValue::Array(vec![])).len(), 5);
+    }
+
+    #[test]
+    fn encoding_size_empty_map() {
+        // Empty map: 1 tag + 4 count(=0)
+        assert_eq!(encode_value(&CanonicalValue::Map(BTreeMap::new())).len(), 5);
+    }
+
+    #[test]
+    fn canonical_hash_collision_resistance_type_tags() {
+        // U64(0) vs I64(0) must hash differently (different type tags)
+        let schema = test_schema();
+        let h_u64 = canonical_hash(&schema, &CanonicalValue::U64(0));
+        let h_i64 = canonical_hash(&schema, &CanonicalValue::I64(0));
+        assert_ne!(h_u64, h_i64);
+    }
+
+    #[test]
+    fn canonical_hash_collision_resistance_null_vs_empty() {
+        let schema = test_schema();
+        let h_null = canonical_hash(&schema, &CanonicalValue::Null);
+        let h_empty_bytes = canonical_hash(&schema, &CanonicalValue::Bytes(vec![]));
+        let h_empty_str = canonical_hash(&schema, &CanonicalValue::String(String::new()));
+        let h_empty_arr = canonical_hash(&schema, &CanonicalValue::Array(vec![]));
+        let h_empty_map = canonical_hash(&schema, &CanonicalValue::Map(BTreeMap::new()));
+        let all = [h_null, h_empty_bytes, h_empty_str, h_empty_arr, h_empty_map];
+        for i in 0..all.len() {
+            for j in (i + 1)..all.len() {
+                assert_ne!(all[i], all[j], "hash collision between idx {i} and {j}");
+            }
+        }
+    }
+
+    #[test]
+    fn clone_independence_canonical_value_bytes() {
+        let mut original = CanonicalValue::Bytes(vec![1, 2, 3]);
+        let cloned = original.clone();
+        // Mutate original
+        if let CanonicalValue::Bytes(ref mut v) = original {
+            v.push(4);
+        }
+        // Clone should not be affected
+        assert_eq!(cloned, CanonicalValue::Bytes(vec![1, 2, 3]));
+        assert_ne!(original, cloned);
+    }
+
+    #[test]
+    fn clone_independence_schema_definition() {
+        let mut original = SchemaDefinition {
+            name: "Original".to_string(),
+            version: 1,
+            schema_hash: SchemaHash::from_definition(b"orig"),
+        };
+        let cloned = original.clone();
+        original.name = "Mutated".to_string();
+        original.version = 99;
+        assert_eq!(cloned.name, "Original");
+        assert_eq!(cloned.version, 1);
+        assert_ne!(original, cloned);
+    }
+
+    #[test]
+    fn display_schema_mismatch_contains_both_hashes() {
+        let expected = SchemaHash([0xAA; 32]);
+        let actual = SchemaHash([0xBB; 32]);
+        let err = SerdeError::SchemaMismatch {
+            expected: expected.clone(),
+            actual: actual.clone(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains(&expected.to_string()));
+        assert!(msg.contains(&actual.to_string()));
+    }
+
+    #[test]
+    fn display_unknown_schema_contains_hash() {
+        let hash = SchemaHash([0xCC; 32]);
+        let err = SerdeError::UnknownSchema { schema_hash: hash.clone() };
+        let msg = err.to_string();
+        assert!(msg.contains(&hash.to_string()));
+    }
+
+    #[test]
+    fn display_invalid_tag_contains_hex() {
+        let err = SerdeError::InvalidTag { tag: 0xDE, offset: 42 };
+        let msg = err.to_string();
+        assert!(msg.contains("de")); // hex of 0xDE
+        assert!(msg.contains("42"));
+    }
+
+    #[test]
+    fn display_non_lexicographic_keys_contains_keys() {
+        let err = SerdeError::NonLexicographicKeys {
+            prev_key: "zebra".to_string(),
+            current_key: "apple".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("zebra"));
+        assert!(msg.contains("apple"));
+    }
+
+    #[test]
+    fn display_recursion_limit_contains_offset() {
+        let err = SerdeError::RecursionLimitExceeded { offset: 1234 };
+        let msg = err.to_string();
+        assert!(msg.contains("1234"));
+    }
+
+    #[test]
+    fn display_trailing_bytes_contains_count() {
+        let err = SerdeError::TrailingBytes { count: 99 };
+        let msg = err.to_string();
+        assert!(msg.contains("99"));
+    }
+
+    #[test]
+    fn schema_hash_btreeset_insertion() {
+        let mut set = std::collections::BTreeSet::new();
+        let h1 = SchemaHash([0x00; 32]);
+        let h2 = SchemaHash([0x01; 32]);
+        let h3 = SchemaHash([0x00; 32]); // duplicate of h1
+        set.insert(h1);
+        set.insert(h2);
+        set.insert(h3); // should not increase size
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn registry_checked_deserialize_trailing_bytes() {
+        let mut reg = SchemaRegistry::new();
+        let h = reg.register("T", 1, b"test-trailing");
+        let mut bytes = serialize_with_schema(&h, &CanonicalValue::Null);
+        bytes.push(0xFF); // extra trailing byte
+        assert!(matches!(
+            reg.deserialize_checked(&bytes),
+            Err(SerdeError::TrailingBytes { count: 1 })
+        ));
+    }
+
+    #[test]
+    fn registry_checked_deserialize_short_buffer() {
+        let reg = SchemaRegistry::new();
+        assert!(matches!(
+            reg.deserialize_checked(&[0u8; 10]),
+            Err(SerdeError::BufferTooShort { expected: 32, actual: 10 })
+        ));
+    }
+
+    #[test]
+    fn stress_encode_decode_many_values() {
+        let mut arr = Vec::new();
+        for i in 0..100 {
+            arr.push(CanonicalValue::U64(i));
+        }
+        let val = CanonicalValue::Array(arr);
+        let bytes = encode_value(&val);
+        let decoded = decode_value(&bytes).unwrap();
+        assert_eq!(decoded, val);
+    }
+
+    #[test]
+    fn stress_nested_maps_3_deep() {
+        let inner = BTreeMap::from([
+            ("leaf".to_string(), CanonicalValue::I64(42)),
+        ]);
+        let mid = BTreeMap::from([
+            ("mid_key".to_string(), CanonicalValue::Map(inner)),
+        ]);
+        let outer = BTreeMap::from([
+            ("top_key".to_string(), CanonicalValue::Map(mid)),
+        ]);
+        let val = CanonicalValue::Map(outer);
+        let bytes = encode_value(&val);
+        let decoded = decode_value(&bytes).unwrap();
+        assert_eq!(decoded, val);
+    }
+
+    #[test]
+    fn determinism_repeated_serializations() {
+        let val = CanonicalValue::Array(vec![
+            CanonicalValue::String("deterministic".to_string()),
+            CanonicalValue::Bytes(vec![0xDE, 0xAD]),
+            CanonicalValue::Map(BTreeMap::from([
+                ("a".to_string(), CanonicalValue::U64(1)),
+                ("b".to_string(), CanonicalValue::U64(2)),
+            ])),
+        ]);
+        let first = encode_value(&val);
+        for _ in 0..10 {
+            assert_eq!(encode_value(&val), first);
+        }
+    }
+
+    #[test]
+    fn schema_hash_as_bytes_returns_inner() {
+        let bytes = [0x42; 32];
+        let hash = SchemaHash(bytes);
+        assert_eq!(*hash.as_bytes(), bytes);
+    }
+
+    #[test]
+    fn canonical_value_debug_not_empty() {
+        let variants = vec![
+            CanonicalValue::U64(1),
+            CanonicalValue::I64(-1),
+            CanonicalValue::Bool(true),
+            CanonicalValue::Bytes(vec![]),
+            CanonicalValue::String("s".into()),
+            CanonicalValue::Array(vec![]),
+            CanonicalValue::Map(BTreeMap::new()),
+            CanonicalValue::Null,
+        ];
+        for v in &variants {
+            let dbg = format!("{v:?}");
+            assert!(!dbg.is_empty());
+        }
+    }
 }

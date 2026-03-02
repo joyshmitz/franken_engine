@@ -1540,4 +1540,387 @@ mod tests {
         let report = generate_report(&pack);
         assert_eq!(report, report.clone());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: content-hash sensitivity, edge cases, integrity
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn schema_version_constant_value() {
+        assert_eq!(SCHEMA_VERSION, "franken-engine.reproducibility-provenance.v1");
+    }
+
+    #[test]
+    fn toolchain_hash_differs_on_llvm_none_vs_some() {
+        let mut tc1 = test_toolchain();
+        tc1.llvm_version = None;
+        let mut tc2 = test_toolchain();
+        tc2.llvm_version = Some("18.1.0".to_string());
+        assert_ne!(tc1.content_hash(), tc2.content_hash());
+    }
+
+    #[test]
+    fn toolchain_hash_differs_on_linker() {
+        let mut tc1 = test_toolchain();
+        tc1.linker = "cc".to_string();
+        let mut tc2 = test_toolchain();
+        tc2.linker = "mold".to_string();
+        assert_ne!(tc1.content_hash(), tc2.content_hash());
+    }
+
+    #[test]
+    fn toolchain_hash_differs_on_profile() {
+        let mut tc1 = test_toolchain();
+        tc1.profile = "release".to_string();
+        let mut tc2 = test_toolchain();
+        tc2.profile = "dev".to_string();
+        assert_ne!(tc1.content_hash(), tc2.content_hash());
+    }
+
+    #[test]
+    fn toolchain_hash_differs_on_rustflags() {
+        let mut tc1 = test_toolchain();
+        tc1.rustflags = vec![];
+        let tc2 = test_toolchain(); // has ["-C linker=cc"]
+        assert_ne!(tc1.content_hash(), tc2.content_hash());
+    }
+
+    #[test]
+    fn git_hash_differs_on_branch_none_vs_some() {
+        let mut g1 = test_git();
+        g1.branch = None;
+        let g2 = test_git(); // branch = Some("main")
+        assert_ne!(g1.content_hash(), g2.content_hash());
+    }
+
+    #[test]
+    fn git_hash_differs_on_tags() {
+        let mut g1 = test_git();
+        g1.tags = vec![];
+        let g2 = test_git(); // tags = ["v0.1.0"]
+        assert_ne!(g1.content_hash(), g2.content_hash());
+    }
+
+    #[test]
+    fn git_hash_differs_on_commit_sha() {
+        let mut g1 = test_git();
+        g1.commit_sha = "0000000000000000000000000000000000000000".to_string();
+        let g2 = test_git();
+        assert_ne!(g1.content_hash(), g2.content_hash());
+    }
+
+    #[test]
+    fn env_hash_differs_on_extra_map() {
+        let mut env1 = test_env();
+        env1.extra = BTreeMap::new();
+        let mut env2 = test_env();
+        env2.extra
+            .insert("custom_key".to_string(), "custom_value".to_string());
+        assert_ne!(env1.content_hash(), env2.content_hash());
+    }
+
+    #[test]
+    fn env_hash_differs_on_os_name() {
+        let mut env1 = test_env();
+        env1.os_name = "Linux".to_string();
+        let mut env2 = test_env();
+        env2.os_name = "macOS".to_string();
+        assert_ne!(env1.content_hash(), env2.content_hash());
+    }
+
+    #[test]
+    fn env_hash_differs_on_cpu_count() {
+        let mut env1 = test_env();
+        env1.cpu_count = 8;
+        let mut env2 = test_env();
+        env2.cpu_count = 32;
+        assert_ne!(env1.content_hash(), env2.content_hash());
+    }
+
+    #[test]
+    fn manifest_empty_artifacts() {
+        let manifest = ArtifactManifest::from_artifacts("pack-empty".to_string(), vec![]);
+        assert_eq!(manifest.total_count, 0);
+        assert_eq!(manifest.total_size_bytes, 0);
+        assert!(manifest.artifacts.is_empty());
+        assert!(!manifest.manifest_hash.is_empty());
+    }
+
+    #[test]
+    fn manifest_hash_differs_with_different_pack_id() {
+        let arts = vec![test_artifact("a.rs", ArtifactKind::Source)];
+        let m1 = ArtifactManifest::from_artifacts("pack-A".to_string(), arts.clone());
+        let m2 = ArtifactManifest::from_artifacts("pack-B".to_string(), arts);
+        assert_ne!(m1.manifest_hash, m2.manifest_hash);
+    }
+
+    #[test]
+    fn manifest_schema_version_matches_constant() {
+        let manifest = ArtifactManifest::from_artifacts("pack-ver".to_string(), vec![]);
+        assert_eq!(manifest.schema_version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn dep_snapshot_empty_entries() {
+        let snap = DependencySnapshot::from_entries(vec![]);
+        assert_eq!(snap.total_count, 0);
+        assert!(snap.dependencies.is_empty());
+        assert_eq!(snap.schema_version, SCHEMA_VERSION);
+        assert!(!snap.snapshot_hash.is_empty());
+    }
+
+    #[test]
+    fn dep_snapshot_hash_differs_on_checksum_none_vs_some() {
+        let mut dep1 = test_dep("serde", "1.0");
+        dep1.checksum = None;
+        let dep2 = test_dep("serde", "1.0"); // checksum = Some("ck_serde")
+        let s1 = DependencySnapshot::from_entries(vec![dep1]);
+        let s2 = DependencySnapshot::from_entries(vec![dep2]);
+        assert_ne!(s1.snapshot_hash, s2.snapshot_hash);
+    }
+
+    #[test]
+    fn dep_snapshot_hash_differs_on_version() {
+        let s1 = DependencySnapshot::from_entries(vec![test_dep("serde", "1.0")]);
+        let s2 = DependencySnapshot::from_entries(vec![test_dep("serde", "2.0")]);
+        assert_ne!(s1.snapshot_hash, s2.snapshot_hash);
+    }
+
+    #[test]
+    fn legal_low_risk_does_not_require_review() {
+        let findings = vec![LicenseFinding {
+            dependency: "permissive".to_string(),
+            license_spdx: "MIT".to_string(),
+            risk: LicenseRisk::Low,
+            notes: String::new(),
+        }];
+        let assessment = LegalAssessment::from_findings(findings);
+        assert!(!assessment.review_required);
+        assert!(!assessment.has_high_risk);
+        assert_eq!(assessment.max_risk, LicenseRisk::Low);
+    }
+
+    #[test]
+    fn legal_summary_high_risk_includes_counts() {
+        let findings = vec![
+            LicenseFinding {
+                dependency: "gpl1".to_string(),
+                license_spdx: "GPL-3.0".to_string(),
+                risk: LicenseRisk::High,
+                notes: String::new(),
+            },
+            LicenseFinding {
+                dependency: "lgpl1".to_string(),
+                license_spdx: "LGPL-2.1".to_string(),
+                risk: LicenseRisk::Medium,
+                notes: String::new(),
+            },
+        ];
+        let assessment = LegalAssessment::from_findings(findings);
+        assert!(assessment.summary.contains("1 high-risk"));
+        assert!(assessment.summary.contains("1 medium-risk"));
+    }
+
+    #[test]
+    fn legal_summary_medium_only_includes_count() {
+        let findings = vec![
+            LicenseFinding {
+                dependency: "lgpl1".to_string(),
+                license_spdx: "LGPL-2.1".to_string(),
+                risk: LicenseRisk::Medium,
+                notes: String::new(),
+            },
+            LicenseFinding {
+                dependency: "lgpl2".to_string(),
+                license_spdx: "MPL-2.0".to_string(),
+                risk: LicenseRisk::Medium,
+                notes: String::new(),
+            },
+        ];
+        let assessment = LegalAssessment::from_findings(findings);
+        assert!(assessment.summary.contains("2 medium-risk"));
+        assert!(assessment.summary.contains("recommended"));
+    }
+
+    #[test]
+    fn pack_hash_differs_by_epoch() {
+        let p1 = PackBuilder::new("FRX-ep".to_string(), SecurityEpoch::from_raw(1))
+            .environment(test_env())
+            .build()
+            .unwrap();
+        let p2 = PackBuilder::new("FRX-ep".to_string(), SecurityEpoch::from_raw(2))
+            .environment(test_env())
+            .build()
+            .unwrap();
+        assert_ne!(p1.pack_hash, p2.pack_hash);
+        assert_ne!(p1.pack_id, p2.pack_id);
+    }
+
+    #[test]
+    fn pack_integrity_fails_on_tampered_hash() {
+        let mut pack = PackBuilder::new("FRX-tamper".to_string(), test_epoch())
+            .environment(test_env())
+            .artifact(test_artifact("a.rs", ArtifactKind::Source))
+            .build()
+            .unwrap();
+        pack.pack_hash = "deadbeefdeadbeef".to_string();
+        let result = pack.verify_integrity();
+        assert!(!result.pack_hash_valid);
+        assert!(!result.all_valid);
+    }
+
+    #[test]
+    fn pack_integrity_fails_on_tampered_count() {
+        let mut pack = PackBuilder::new("FRX-cnt".to_string(), test_epoch())
+            .environment(test_env())
+            .artifact(test_artifact("a.rs", ArtifactKind::Source))
+            .build()
+            .unwrap();
+        pack.manifest.total_count = 999;
+        let result = pack.verify_integrity();
+        assert!(!result.manifest_count_valid);
+        assert!(!result.all_valid);
+    }
+
+    #[test]
+    fn pack_integrity_fails_on_tampered_size() {
+        let mut pack = PackBuilder::new("FRX-sz".to_string(), test_epoch())
+            .environment(test_env())
+            .artifact(test_artifact("a.rs", ArtifactKind::Source))
+            .build()
+            .unwrap();
+        pack.manifest.total_size_bytes = 0;
+        let result = pack.verify_integrity();
+        assert!(!result.manifest_size_valid);
+        assert!(!result.all_valid);
+    }
+
+    #[test]
+    fn report_no_legal_shows_none_risk() {
+        let pack = PackBuilder::new("FRX-norisk".to_string(), test_epoch())
+            .environment(test_env())
+            .build()
+            .unwrap();
+        let report = generate_report(&pack);
+        assert!(report.max_license_risk.is_none());
+        assert!(!report.legal_review_required);
+    }
+
+    #[test]
+    fn report_hash_differs_for_different_packs() {
+        let p1 = PackBuilder::new("FRX-r1".to_string(), test_epoch())
+            .environment(test_env())
+            .build()
+            .unwrap();
+        let p2 = PackBuilder::new("FRX-r2".to_string(), test_epoch())
+            .environment(test_env())
+            .build()
+            .unwrap();
+        let r1 = generate_report(&p1);
+        let r2 = generate_report(&p2);
+        assert_ne!(r1.report_hash, r2.report_hash);
+    }
+
+    #[test]
+    fn artifact_entry_redacted_field_survives_serde() {
+        let entry = ArtifactEntry {
+            path: "secrets.txt".to_string(),
+            kind: ArtifactKind::Config,
+            content_hash: "hash_redacted".to_string(),
+            size_bytes: 512,
+            redacted: true,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: ArtifactEntry = serde_json::from_str(&json).unwrap();
+        assert!(back.redacted);
+    }
+
+    #[test]
+    fn dependency_entry_without_checksum_serde() {
+        let dep = DependencyEntry {
+            name: "local-dep".to_string(),
+            version: "0.1.0".to_string(),
+            source: "path".to_string(),
+            checksum: None,
+        };
+        let json = serde_json::to_string(&dep).unwrap();
+        let back: DependencyEntry = serde_json::from_str(&json).unwrap();
+        assert!(back.checksum.is_none());
+    }
+
+    #[test]
+    fn builder_multiple_license_findings_sorted() {
+        let pack = PackBuilder::new("FRX-multi".to_string(), test_epoch())
+            .environment(test_env())
+            .license_finding(LicenseFinding {
+                dependency: "z-dep".to_string(),
+                license_spdx: "MIT".to_string(),
+                risk: LicenseRisk::None,
+                notes: String::new(),
+            })
+            .license_finding(LicenseFinding {
+                dependency: "a-dep".to_string(),
+                license_spdx: "GPL-3.0".to_string(),
+                risk: LicenseRisk::High,
+                notes: String::new(),
+            })
+            .build()
+            .unwrap();
+        let legal = pack.legal.as_ref().unwrap();
+        assert_eq!(legal.findings[0].dependency, "a-dep");
+        assert_eq!(legal.findings[1].dependency, "z-dep");
+    }
+
+    #[test]
+    fn env_with_container_digest_serde_roundtrip() {
+        let mut env = test_env();
+        env.container_digest = Some("sha256:abc123".to_string());
+        let json = serde_json::to_string(&env).unwrap();
+        let back: BuildEnvironment = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.container_digest,
+            Some("sha256:abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn git_fingerprint_no_branch_no_tags_serde() {
+        let git = GitFingerprint {
+            commit_sha: "0".repeat(40),
+            tree_hash: "1".repeat(40),
+            branch: None,
+            dirty: true,
+            tags: vec![],
+        };
+        let json = serde_json::to_string(&git).unwrap();
+        let back: GitFingerprint = serde_json::from_str(&json).unwrap();
+        assert_eq!(git, back);
+        assert!(back.branch.is_none());
+        assert!(back.tags.is_empty());
+    }
+
+    #[test]
+    fn pack_id_format_starts_with_pack_prefix() {
+        let pack = PackBuilder::new("FRX-prefix".to_string(), test_epoch())
+            .environment(test_env())
+            .build()
+            .unwrap();
+        assert!(
+            pack.pack_id.starts_with("pack-"),
+            "pack_id must start with 'pack-'"
+        );
+        assert!(
+            pack.pack_id.len() > 5,
+            "pack_id must have content after prefix"
+        );
+    }
+
+    #[test]
+    fn pack_schema_version_matches_constant() {
+        let pack = PackBuilder::new("FRX-sv".to_string(), test_epoch())
+            .environment(test_env())
+            .build()
+            .unwrap();
+        assert_eq!(pack.schema_version, SCHEMA_VERSION);
+    }
 }

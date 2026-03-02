@@ -1833,4 +1833,922 @@ mod tests {
         };
         assert_eq!(ev, ev.clone());
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn race_surface_clone_independence() {
+        let original = RaceSurface {
+            race_id: "clone-ind".to_string(),
+            operations: [OperationType::EvidenceEmission, OperationType::RegionClose],
+            invariant: "evidence before close".to_string(),
+            severity: RaceSeverity::High,
+        };
+        let mut cloned = original.clone();
+        cloned.race_id = "mutated".to_string();
+        cloned.severity = RaceSeverity::Low;
+        assert_eq!(original.race_id, "clone-ind");
+        assert_eq!(original.severity, RaceSeverity::High);
+        assert_ne!(original, cloned);
+    }
+
+    #[test]
+    fn scenario_clone_independence() {
+        let original = Scenario {
+            task_count: 3,
+            actions: vec![
+                ScenarioAction::RunTask { task_index: 0 },
+                ScenarioAction::AdvanceTime { ticks: 10 },
+            ],
+            seed: 55,
+        };
+        let mut cloned = original.clone();
+        cloned.task_count = 99;
+        cloned
+            .actions
+            .push(ScenarioAction::CompleteTask { task_index: 0 });
+        assert_eq!(original.task_count, 3);
+        assert_eq!(original.actions.len(), 2);
+    }
+
+    #[test]
+    fn exploration_failure_clone_independence() {
+        let original = ExplorationFailure {
+            transcript: ScheduleTranscript::new(10),
+            violations: vec!["v1".to_string()],
+            minimized_transcript: None,
+            related_race_ids: vec!["r-a".to_string()],
+        };
+        let mut cloned = original.clone();
+        cloned.violations.push("v2".to_string());
+        cloned.related_race_ids.clear();
+        assert_eq!(original.violations.len(), 1);
+        assert_eq!(original.related_race_ids.len(), 1);
+    }
+
+    #[test]
+    fn exploration_report_clone_independence() {
+        let original = ExplorationReport {
+            exploration_id: "ind-test".to_string(),
+            strategy: ExplorationStrategy::Exhaustive {
+                max_permutations: 10,
+            },
+            total_explored: 10,
+            failures: vec![],
+            race_surfaces_covered: 2,
+            race_surfaces_total: 5,
+            regression_transcripts: vec![],
+        };
+        let mut cloned = original.clone();
+        cloned.exploration_id = "mutated".to_string();
+        cloned.total_explored = 999;
+        assert_eq!(original.exploration_id, "ind-test");
+        assert_eq!(original.total_explored, 10);
+    }
+
+    #[test]
+    fn race_surface_catalog_clone_independence() {
+        let mut original = RaceSurfaceCatalog::new();
+        original.add(RaceSurface {
+            race_id: "s1".to_string(),
+            operations: [OperationType::CheckpointWrite, OperationType::PolicyUpdate],
+            invariant: "x".to_string(),
+            severity: RaceSeverity::Medium,
+        });
+        let mut cloned = original.clone();
+        cloned.add(RaceSurface {
+            race_id: "s2".to_string(),
+            operations: [OperationType::TimeAdvance, OperationType::FaultInjection],
+            invariant: "y".to_string(),
+            severity: RaceSeverity::Low,
+        });
+        assert_eq!(original.len(), 1);
+        assert_eq!(cloned.len(), 2);
+    }
+
+    #[test]
+    fn operation_type_ord_all_variants() {
+        let variants = [
+            OperationType::CheckpointWrite,
+            OperationType::RevocationPropagation,
+            OperationType::PolicyUpdate,
+            OperationType::EvidenceEmission,
+            OperationType::RegionClose,
+            OperationType::ObligationCommit,
+            OperationType::TaskCompletion,
+            OperationType::FaultInjection,
+            OperationType::CancelInjection,
+            OperationType::TimeAdvance,
+        ];
+        for window in variants.windows(2) {
+            assert!(
+                window[0] <= window[1],
+                "{:?} should <= {:?}",
+                window[0],
+                window[1]
+            );
+        }
+    }
+
+    #[test]
+    fn race_severity_ord_all_variants() {
+        let variants = [
+            RaceSeverity::Low,
+            RaceSeverity::Medium,
+            RaceSeverity::High,
+            RaceSeverity::Critical,
+        ];
+        for window in variants.windows(2) {
+            assert!(window[0] < window[1]);
+        }
+    }
+
+    #[test]
+    fn operation_type_btreeset_insertion() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(OperationType::PolicyUpdate);
+        set.insert(OperationType::PolicyUpdate);
+        set.insert(OperationType::RegionClose);
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&OperationType::PolicyUpdate));
+        assert!(set.contains(&OperationType::RegionClose));
+    }
+
+    #[test]
+    fn race_severity_btreeset_insertion() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        for s in [
+            RaceSeverity::Low,
+            RaceSeverity::Medium,
+            RaceSeverity::High,
+            RaceSeverity::Critical,
+            RaceSeverity::Low,
+        ] {
+            set.insert(s);
+        }
+        assert_eq!(set.len(), 4);
+    }
+
+    #[test]
+    fn exploration_strategy_display_targeted_empty() {
+        let s = ExplorationStrategy::TargetedRace { race_ids: vec![] };
+        assert_eq!(s.to_string(), "targeted_race()");
+    }
+
+    #[test]
+    fn exploration_strategy_display_targeted_multiple() {
+        let s = ExplorationStrategy::TargetedRace {
+            race_ids: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+        };
+        assert_eq!(s.to_string(), "targeted_race(a,b,c)");
+    }
+
+    #[test]
+    fn invariant_result_held_eq() {
+        assert_eq!(InvariantResult::Held, InvariantResult::Held);
+    }
+
+    #[test]
+    fn invariant_result_violated_ne_held() {
+        let v = InvariantResult::Violated {
+            description: "oops".to_string(),
+        };
+        assert_ne!(v, InvariantResult::Held);
+    }
+
+    #[test]
+    fn invariant_result_violated_different_descriptions() {
+        let v1 = InvariantResult::Violated {
+            description: "a".to_string(),
+        };
+        let v2 = InvariantResult::Violated {
+            description: "b".to_string(),
+        };
+        assert_ne!(v1, v2);
+    }
+
+    #[test]
+    fn invariant_checker_no_completed_and_faulted_serde() {
+        let checker = InvariantChecker::NoCompletedAndFaulted;
+        let json = serde_json::to_string(&checker).unwrap();
+        let restored: InvariantChecker = serde_json::from_str(&json).unwrap();
+        assert_eq!(checker, restored);
+    }
+
+    #[test]
+    fn invariant_checker_fault_after_completion_serde() {
+        let checker = InvariantChecker::FaultAfterCompletionForbidden;
+        let json = serde_json::to_string(&checker).unwrap();
+        let restored: InvariantChecker = serde_json::from_str(&json).unwrap();
+        assert_eq!(checker, restored);
+    }
+
+    #[test]
+    fn fault_after_completion_forbidden_holds_on_clean() {
+        let checker = InvariantChecker::FaultAfterCompletionForbidden;
+        let result = LabRunResult {
+            seed: 1,
+            transcript: ScheduleTranscript::new(1),
+            events: vec![
+                LabEvent {
+                    virtual_time: 0,
+                    step_index: 1,
+                    action: "run_task".to_string(),
+                    task_id: Some(1),
+                    region_id: None,
+                    outcome: "running".to_string(),
+                },
+                LabEvent {
+                    virtual_time: 0,
+                    step_index: 2,
+                    action: "complete_task".to_string(),
+                    task_id: Some(1),
+                    region_id: None,
+                    outcome: "completed".to_string(),
+                },
+            ],
+            final_time: 0,
+            tasks_completed: 1,
+            tasks_faulted: 0,
+            tasks_cancelled: 0,
+            verdict: Verdict::Pass,
+        };
+        assert_eq!(checker.check(&result), InvariantResult::Held);
+    }
+
+    #[test]
+    fn fault_after_completion_forbidden_detects_violation() {
+        let checker = InvariantChecker::FaultAfterCompletionForbidden;
+        let result = LabRunResult {
+            seed: 1,
+            transcript: ScheduleTranscript::new(1),
+            events: vec![
+                LabEvent {
+                    virtual_time: 0,
+                    step_index: 1,
+                    action: "complete_task".to_string(),
+                    task_id: Some(1),
+                    region_id: None,
+                    outcome: "completed".to_string(),
+                },
+                LabEvent {
+                    virtual_time: 0,
+                    step_index: 2,
+                    action: "inject_fault".to_string(),
+                    task_id: Some(1),
+                    region_id: None,
+                    outcome: "fault=panic".to_string(),
+                },
+            ],
+            final_time: 0,
+            tasks_completed: 1,
+            tasks_faulted: 1,
+            tasks_cancelled: 0,
+            verdict: Verdict::Fail {
+                reason: "1 tasks faulted".to_string(),
+            },
+        };
+        match checker.check(&result) {
+            InvariantResult::Violated { description } => {
+                assert!(description.contains("task 1"));
+                assert!(description.contains("faulted at step 2"));
+                assert!(description.contains("completion at step 1"));
+            }
+            other => panic!("expected Violated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn all_tasks_terminal_with_cancelled_state() {
+        let checker = InvariantChecker::AllTasksTerminal;
+        let result = LabRunResult {
+            seed: 1,
+            transcript: ScheduleTranscript::new(1),
+            events: vec![LabEvent {
+                virtual_time: 0,
+                step_index: 1,
+                action: "cancel_task".to_string(),
+                task_id: Some(1),
+                region_id: None,
+                outcome: "cancelled".to_string(),
+            }],
+            final_time: 0,
+            tasks_completed: 0,
+            tasks_faulted: 0,
+            tasks_cancelled: 1,
+            verdict: Verdict::Pass,
+        };
+        assert_eq!(checker.check(&result), InvariantResult::Held);
+    }
+
+    #[test]
+    fn all_tasks_terminal_with_faulted_state() {
+        let checker = InvariantChecker::AllTasksTerminal;
+        let result = LabRunResult {
+            seed: 1,
+            transcript: ScheduleTranscript::new(1),
+            events: vec![LabEvent {
+                virtual_time: 0,
+                step_index: 1,
+                action: "inject_fault".to_string(),
+                task_id: Some(1),
+                region_id: None,
+                outcome: "fault=channel_disconnect".to_string(),
+            }],
+            final_time: 0,
+            tasks_completed: 0,
+            tasks_faulted: 1,
+            tasks_cancelled: 0,
+            verdict: Verdict::Fail {
+                reason: "1 tasks faulted".to_string(),
+            },
+        };
+        assert_eq!(checker.check(&result), InvariantResult::Held);
+    }
+
+    #[test]
+    fn no_completed_and_faulted_holds_on_empty_events() {
+        let checker = InvariantChecker::NoCompletedAndFaulted;
+        let result = LabRunResult {
+            seed: 1,
+            transcript: ScheduleTranscript::new(1),
+            events: vec![],
+            final_time: 0,
+            tasks_completed: 0,
+            tasks_faulted: 0,
+            tasks_cancelled: 0,
+            verdict: Verdict::Pass,
+        };
+        assert_eq!(checker.check(&result), InvariantResult::Held);
+    }
+
+    #[test]
+    fn all_tasks_terminal_holds_on_empty_events() {
+        let checker = InvariantChecker::AllTasksTerminal;
+        let result = LabRunResult {
+            seed: 1,
+            transcript: ScheduleTranscript::new(1),
+            events: vec![],
+            final_time: 0,
+            tasks_completed: 0,
+            tasks_faulted: 0,
+            tasks_cancelled: 0,
+            verdict: Verdict::Pass,
+        };
+        assert_eq!(checker.check(&result), InvariantResult::Held);
+    }
+
+    #[test]
+    fn forbidden_event_pattern_holds_on_empty_events() {
+        let checker = InvariantChecker::ForbiddenEventPattern {
+            action: "inject_fault".to_string(),
+            outcome: "fault=panic".to_string(),
+        };
+        let result = LabRunResult {
+            seed: 1,
+            transcript: ScheduleTranscript::new(1),
+            events: vec![],
+            final_time: 0,
+            tasks_completed: 0,
+            tasks_faulted: 0,
+            tasks_cancelled: 0,
+            verdict: Verdict::Pass,
+        };
+        assert_eq!(checker.check(&result), InvariantResult::Held);
+    }
+
+    #[test]
+    fn forbidden_event_pattern_detects_violation() {
+        let checker = InvariantChecker::ForbiddenEventPattern {
+            action: "run_task".to_string(),
+            outcome: "running".to_string(),
+        };
+        let result = LabRunResult {
+            seed: 1,
+            transcript: ScheduleTranscript::new(1),
+            events: vec![LabEvent {
+                virtual_time: 0,
+                step_index: 1,
+                action: "run_task".to_string(),
+                task_id: Some(1),
+                region_id: None,
+                outcome: "running".to_string(),
+            }],
+            final_time: 0,
+            tasks_completed: 0,
+            tasks_faulted: 0,
+            tasks_cancelled: 0,
+            verdict: Verdict::Pass,
+        };
+        match checker.check(&result) {
+            InvariantResult::Violated { description } => {
+                assert!(description.contains("forbidden event pattern"));
+                assert!(description.contains("run_task"));
+                assert!(description.contains("running"));
+            }
+            other => panic!("expected Violated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn coverage_millionths_partial() {
+        let report = ExplorationReport {
+            exploration_id: "partial".to_string(),
+            strategy: ExplorationStrategy::Exhaustive {
+                max_permutations: 1,
+            },
+            total_explored: 1,
+            failures: vec![],
+            race_surfaces_covered: 1,
+            race_surfaces_total: 3,
+            regression_transcripts: vec![],
+        };
+        assert_eq!(report.coverage_millionths(), 333_333);
+    }
+
+    #[test]
+    fn coverage_millionths_one_of_one() {
+        let report = ExplorationReport {
+            exploration_id: "one".to_string(),
+            strategy: ExplorationStrategy::Exhaustive {
+                max_permutations: 1,
+            },
+            total_explored: 1,
+            failures: vec![],
+            race_surfaces_covered: 1,
+            race_surfaces_total: 1,
+            regression_transcripts: vec![],
+        };
+        assert_eq!(report.coverage_millionths(), 1_000_000);
+    }
+
+    #[test]
+    fn deterministic_shuffle_large_is_valid() {
+        let perm = deterministic_shuffle(100, 12345);
+        assert_eq!(perm.len(), 100);
+        let mut sorted = perm.clone();
+        sorted.sort();
+        let expected: Vec<usize> = (0..100).collect();
+        assert_eq!(sorted, expected);
+    }
+
+    #[test]
+    fn deterministic_shuffle_seed_zero() {
+        let perm = deterministic_shuffle(5, 0);
+        assert_eq!(perm.len(), 5);
+        let mut sorted = perm.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn deterministic_shuffle_seed_u64_max() {
+        let perm = deterministic_shuffle(5, u64::MAX);
+        assert_eq!(perm.len(), 5);
+        let mut sorted = perm.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn deterministic_shuffle_stability_across_calls() {
+        let reference = deterministic_shuffle(20, 314159);
+        for _ in 0..10 {
+            assert_eq!(deterministic_shuffle(20, 314159), reference);
+        }
+    }
+
+    #[test]
+    fn exhaustive_single_action_produces_one_permutation() {
+        let scenario = Scenario {
+            task_count: 1,
+            actions: vec![ScenarioAction::RunTask { task_index: 0 }],
+            seed: 1,
+        };
+        let explorer = InterleavingExplorer::new(RaceSurfaceCatalog::new(), vec![]);
+        let report = explorer.explore(
+            &scenario,
+            &ExplorationStrategy::Exhaustive {
+                max_permutations: 100,
+            },
+            "single-action",
+        );
+        assert_eq!(report.total_explored, 1);
+    }
+
+    #[test]
+    fn exhaustive_empty_actions_produces_one_permutation() {
+        let scenario = Scenario {
+            task_count: 0,
+            actions: vec![],
+            seed: 1,
+        };
+        let explorer = InterleavingExplorer::new(RaceSurfaceCatalog::new(), vec![]);
+        let report = explorer.explore(
+            &scenario,
+            &ExplorationStrategy::Exhaustive {
+                max_permutations: 100,
+            },
+            "empty-actions",
+        );
+        assert_eq!(report.total_explored, 1);
+    }
+
+    #[test]
+    fn random_walk_zero_iterations() {
+        let scenario = Scenario {
+            task_count: 1,
+            actions: vec![ScenarioAction::RunTask { task_index: 0 }],
+            seed: 1,
+        };
+        let explorer = InterleavingExplorer::new(RaceSurfaceCatalog::new(), vec![]);
+        let report = explorer.explore(
+            &scenario,
+            &ExplorationStrategy::RandomWalk {
+                seed: 42,
+                iterations: 0,
+            },
+            "zero-iters",
+        );
+        assert_eq!(report.total_explored, 0);
+        assert!(report.all_passed());
+    }
+
+    #[test]
+    fn targeted_race_nonexistent_race_id() {
+        let catalog = RaceSurfaceCatalog::default_catalog();
+        let scenario = Scenario {
+            task_count: 1,
+            actions: vec![
+                ScenarioAction::RunTask { task_index: 0 },
+                ScenarioAction::AdvanceTime { ticks: 5 },
+            ],
+            seed: 1,
+        };
+        let explorer = InterleavingExplorer::new(catalog, vec![]);
+        let report = explorer.explore(
+            &scenario,
+            &ExplorationStrategy::TargetedRace {
+                race_ids: vec!["nonexistent-race".to_string()],
+            },
+            "bad-race-id",
+        );
+        assert!(report.total_explored >= 1);
+    }
+
+    #[test]
+    fn catalog_add_replaces_duplicate_race_id() {
+        let mut catalog = RaceSurfaceCatalog::new();
+        catalog.add(RaceSurface {
+            race_id: "dup".to_string(),
+            operations: [OperationType::CheckpointWrite, OperationType::PolicyUpdate],
+            invariant: "first".to_string(),
+            severity: RaceSeverity::Low,
+        });
+        catalog.add(RaceSurface {
+            race_id: "dup".to_string(),
+            operations: [OperationType::RegionClose, OperationType::TimeAdvance],
+            invariant: "second".to_string(),
+            severity: RaceSeverity::Critical,
+        });
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog.surfaces["dup"].invariant, "second");
+        assert_eq!(catalog.surfaces["dup"].severity, RaceSeverity::Critical);
+    }
+
+    #[test]
+    fn scenario_action_to_op_type_mapping() {
+        assert_eq!(
+            scenario_action_to_op_type(&ScenarioAction::RunTask { task_index: 0 }),
+            OperationType::TaskCompletion
+        );
+        assert_eq!(
+            scenario_action_to_op_type(&ScenarioAction::CompleteTask { task_index: 0 }),
+            OperationType::TaskCompletion
+        );
+        assert_eq!(
+            scenario_action_to_op_type(&ScenarioAction::AdvanceTime { ticks: 10 }),
+            OperationType::TimeAdvance
+        );
+        assert_eq!(
+            scenario_action_to_op_type(&ScenarioAction::InjectCancel {
+                region_id: "r".to_string()
+            }),
+            OperationType::CancelInjection
+        );
+        assert_eq!(
+            scenario_action_to_op_type(&ScenarioAction::InjectFault {
+                task_index: 0,
+                fault: FaultKind::Panic
+            }),
+            OperationType::FaultInjection
+        );
+    }
+
+    #[test]
+    fn explore_with_multiple_checkers() {
+        let scenario = Scenario {
+            task_count: 1,
+            actions: vec![
+                ScenarioAction::RunTask { task_index: 0 },
+                ScenarioAction::InjectFault {
+                    task_index: 0,
+                    fault: FaultKind::ChannelDisconnect,
+                },
+            ],
+            seed: 42,
+        };
+        let explorer = InterleavingExplorer::new(
+            RaceSurfaceCatalog::default_catalog(),
+            vec![
+                InvariantChecker::NoCompletedAndFaulted,
+                InvariantChecker::AllTasksTerminal,
+                InvariantChecker::ForbiddenEventPattern {
+                    action: "inject_fault".to_string(),
+                    outcome: "fault=channel_disconnect".to_string(),
+                },
+            ],
+        );
+        let report = explorer.explore(
+            &scenario,
+            &ExplorationStrategy::Exhaustive {
+                max_permutations: 10,
+            },
+            "multi-checker",
+        );
+        assert!(!report.all_passed());
+    }
+
+    #[test]
+    fn exploration_report_serde_with_failures() {
+        let report = ExplorationReport {
+            exploration_id: "serde-fail".to_string(),
+            strategy: ExplorationStrategy::RandomWalk {
+                seed: 7,
+                iterations: 3,
+            },
+            total_explored: 3,
+            failures: vec![
+                ExplorationFailure {
+                    transcript: ScheduleTranscript::new(7),
+                    violations: vec!["v1".to_string()],
+                    minimized_transcript: None,
+                    related_race_ids: vec!["r-1".to_string()],
+                },
+                ExplorationFailure {
+                    transcript: ScheduleTranscript::new(8),
+                    violations: vec!["v2".to_string(), "v3".to_string()],
+                    minimized_transcript: Some(ScheduleTranscript::new(8)),
+                    related_race_ids: vec![],
+                },
+            ],
+            race_surfaces_covered: 1,
+            race_surfaces_total: 5,
+            regression_transcripts: vec![ScheduleTranscript::new(7)],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let restored: ExplorationReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(report, restored);
+    }
+
+    #[test]
+    fn exploration_deterministic_replay_random_walk() {
+        let scenario = Scenario {
+            task_count: 3,
+            actions: vec![
+                ScenarioAction::RunTask { task_index: 0 },
+                ScenarioAction::RunTask { task_index: 1 },
+                ScenarioAction::RunTask { task_index: 2 },
+                ScenarioAction::CompleteTask { task_index: 0 },
+                ScenarioAction::AdvanceTime { ticks: 50 },
+            ],
+            seed: 77,
+        };
+        let catalog = RaceSurfaceCatalog::default_catalog();
+        let strategy = ExplorationStrategy::RandomWalk {
+            seed: 999,
+            iterations: 20,
+        };
+        let explorer = InterleavingExplorer::new(
+            catalog.clone(),
+            vec![
+                InvariantChecker::NoCompletedAndFaulted,
+                InvariantChecker::AllTasksTerminal,
+            ],
+        );
+        let r1 = explorer.explore(&scenario, &strategy, "replay-a");
+        let r2 = explorer.explore(&scenario, &strategy, "replay-a");
+        assert_eq!(r1.total_explored, r2.total_explored);
+        assert_eq!(r1.failures.len(), r2.failures.len());
+        assert_eq!(r1.race_surfaces_covered, r2.race_surfaces_covered);
+        for (f1, f2) in r1.failures.iter().zip(r2.failures.iter()) {
+            assert_eq!(f1.violations, f2.violations);
+            assert_eq!(f1.transcript, f2.transcript);
+        }
+    }
+
+    #[test]
+    fn scenario_with_out_of_bounds_task_index() {
+        let scenario = Scenario {
+            task_count: 1,
+            actions: vec![
+                ScenarioAction::RunTask { task_index: 99 },
+                ScenarioAction::CompleteTask { task_index: 99 },
+                ScenarioAction::InjectFault {
+                    task_index: 99,
+                    fault: FaultKind::Panic,
+                },
+            ],
+            seed: 1,
+        };
+        let explorer = InterleavingExplorer::new(
+            RaceSurfaceCatalog::new(),
+            vec![InvariantChecker::NoCompletedAndFaulted],
+        );
+        let report = explorer.explore(
+            &scenario,
+            &ExplorationStrategy::Exhaustive {
+                max_permutations: 10,
+            },
+            "oob-test",
+        );
+        assert!(report.all_passed());
+    }
+
+    #[test]
+    fn race_surfaces_covered_tracks_catalog() {
+        let catalog = RaceSurfaceCatalog::default_catalog();
+        let total = catalog.len();
+        let scenario = Scenario {
+            task_count: 2,
+            actions: vec![
+                ScenarioAction::RunTask { task_index: 0 },
+                ScenarioAction::RunTask { task_index: 1 },
+            ],
+            seed: 1,
+        };
+        let explorer = InterleavingExplorer::new(catalog, vec![]);
+        let report = explorer.explore(
+            &scenario,
+            &ExplorationStrategy::Exhaustive {
+                max_permutations: 10,
+            },
+            "coverage-track",
+        );
+        assert_eq!(report.race_surfaces_total, total);
+        assert_eq!(report.race_surfaces_covered, total);
+    }
+
+    #[test]
+    fn identify_related_races_single_action() {
+        let catalog = RaceSurfaceCatalog::default_catalog();
+        let explorer = InterleavingExplorer::new(catalog, vec![]);
+        let related = explorer.identify_related_races(&[0]);
+        assert!(
+            related.is_empty(),
+            "single action should not exercise races"
+        );
+    }
+
+    #[test]
+    fn identify_related_races_empty_ordering() {
+        let catalog = RaceSurfaceCatalog::default_catalog();
+        let explorer = InterleavingExplorer::new(catalog, vec![]);
+        let related = explorer.identify_related_races(&[]);
+        assert!(related.is_empty());
+    }
+
+    #[test]
+    fn default_catalog_race_ids_sorted() {
+        let catalog = RaceSurfaceCatalog::default_catalog();
+        let keys: Vec<&String> = catalog.surfaces.keys().collect();
+        for window in keys.windows(2) {
+            assert!(window[0] <= window[1], "BTreeMap keys must be sorted");
+        }
+    }
+
+    #[test]
+    fn default_catalog_all_severities_present() {
+        let catalog = RaceSurfaceCatalog::default_catalog();
+        use std::collections::BTreeSet;
+        let severities: BTreeSet<RaceSeverity> =
+            catalog.surfaces.values().map(|s| s.severity).collect();
+        assert!(severities.contains(&RaceSeverity::Critical));
+        assert!(severities.contains(&RaceSeverity::High));
+        assert!(severities.contains(&RaceSeverity::Medium));
+    }
+
+    #[test]
+    fn exploration_report_debug_not_empty() {
+        let report = ExplorationReport {
+            exploration_id: "dbg".to_string(),
+            strategy: ExplorationStrategy::Exhaustive {
+                max_permutations: 1,
+            },
+            total_explored: 1,
+            failures: vec![],
+            race_surfaces_covered: 0,
+            race_surfaces_total: 0,
+            regression_transcripts: vec![],
+        };
+        let dbg = format!("{report:?}");
+        assert!(!dbg.is_empty());
+        assert!(dbg.contains("ExplorationReport"));
+    }
+
+    #[test]
+    fn invariant_checker_clone_equality() {
+        let checkers = vec![
+            InvariantChecker::NoCompletedAndFaulted,
+            InvariantChecker::AllTasksTerminal,
+            InvariantChecker::FaultAfterCompletionForbidden,
+            InvariantChecker::ForbiddenEventPattern {
+                action: "x".to_string(),
+                outcome: "y".to_string(),
+            },
+        ];
+        for c in &checkers {
+            assert_eq!(*c, c.clone());
+        }
+    }
+
+    #[test]
+    fn stress_random_walk_many_iterations() {
+        let scenario = Scenario {
+            task_count: 2,
+            actions: vec![
+                ScenarioAction::RunTask { task_index: 0 },
+                ScenarioAction::RunTask { task_index: 1 },
+                ScenarioAction::CompleteTask { task_index: 0 },
+                ScenarioAction::InjectCancel {
+                    region_id: "rgn".to_string(),
+                },
+                ScenarioAction::AdvanceTime { ticks: 100 },
+            ],
+            seed: 42,
+        };
+        let explorer = InterleavingExplorer::new(
+            RaceSurfaceCatalog::default_catalog(),
+            vec![
+                InvariantChecker::NoCompletedAndFaulted,
+                InvariantChecker::AllTasksTerminal,
+            ],
+        );
+        let report = explorer.explore(
+            &scenario,
+            &ExplorationStrategy::RandomWalk {
+                seed: 0,
+                iterations: 50,
+            },
+            "stress-rw",
+        );
+        assert_eq!(report.total_explored, 50);
+    }
+
+    #[test]
+    fn minimization_returns_none_for_single_action() {
+        let scenario = Scenario {
+            task_count: 1,
+            actions: vec![ScenarioAction::InjectFault {
+                task_index: 0,
+                fault: FaultKind::Panic,
+            }],
+            seed: 1,
+        };
+        let explorer = InterleavingExplorer::new(
+            RaceSurfaceCatalog::new(),
+            vec![InvariantChecker::ForbiddenEventPattern {
+                action: "inject_fault".to_string(),
+                outcome: "fault=panic".to_string(),
+            }],
+        );
+        let result = explorer.execute_permutation(&scenario, &[0]);
+        let minimized = explorer.minimize_transcript(&scenario, &result.transcript);
+        assert!(
+            minimized.is_none(),
+            "single-action scenario cannot be minimized"
+        );
+    }
+
+    #[test]
+    fn scenario_action_inject_fault_all_kinds_serde() {
+        let faults = [
+            FaultKind::Panic,
+            FaultKind::ChannelDisconnect,
+            FaultKind::ObligationLeak,
+            FaultKind::DeadlineExpired,
+            FaultKind::RegionClose,
+        ];
+        for fault in &faults {
+            let action = ScenarioAction::InjectFault {
+                task_index: 0,
+                fault: fault.clone(),
+            };
+            let json = serde_json::to_string(&action).unwrap();
+            let restored: ScenarioAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(action, restored);
+        }
+    }
 }

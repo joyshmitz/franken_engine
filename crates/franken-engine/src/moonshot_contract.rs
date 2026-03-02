@@ -1507,4 +1507,856 @@ mod tests {
         assert_eq!(v.major, 2);
         assert_eq!(v.minor, 5);
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn enrich_moonshot_stage_serde_roundtrip_all_variants() {
+        for stage in MoonshotStage::all() {
+            let json = serde_json::to_string(stage).unwrap();
+            let back: MoonshotStage = serde_json::from_str(&json).unwrap();
+            assert_eq!(*stage, back);
+        }
+    }
+
+    #[test]
+    fn enrich_moonshot_stage_btreeset_insertion_order() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(MoonshotStage::Production);
+        set.insert(MoonshotStage::Research);
+        set.insert(MoonshotStage::Canary);
+        set.insert(MoonshotStage::Shadow);
+        let ordered: Vec<_> = set.into_iter().collect();
+        assert_eq!(
+            ordered,
+            vec![
+                MoonshotStage::Research,
+                MoonshotStage::Shadow,
+                MoonshotStage::Canary,
+                MoonshotStage::Production,
+            ]
+        );
+    }
+
+    #[test]
+    fn enrich_moonshot_stage_copy_semantics() {
+        let a = MoonshotStage::Canary;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrich_measurement_method_serde_roundtrip_all() {
+        for m in [
+            MeasurementMethod::Benchmark,
+            MeasurementMethod::EvidenceQuery,
+            MeasurementMethod::FleetTelemetry,
+            MeasurementMethod::OperatorReview,
+        ] {
+            let json = serde_json::to_string(&m).unwrap();
+            let back: MeasurementMethod = serde_json::from_str(&json).unwrap();
+            assert_eq!(m, back);
+        }
+    }
+
+    #[test]
+    fn enrich_measurement_method_btreeset_deterministic() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(MeasurementMethod::OperatorReview);
+        set.insert(MeasurementMethod::Benchmark);
+        set.insert(MeasurementMethod::FleetTelemetry);
+        set.insert(MeasurementMethod::EvidenceQuery);
+        assert_eq!(set.len(), 4);
+        let first = *set.iter().next().unwrap();
+        let last = *set.iter().next_back().unwrap();
+        assert!(first < last);
+    }
+
+    #[test]
+    fn enrich_distribution_type_serde_roundtrip_all() {
+        for d in [
+            DistributionType::PointEstimate,
+            DistributionType::Uniform,
+            DistributionType::Beta,
+            DistributionType::LogNormal,
+        ] {
+            let json = serde_json::to_string(&d).unwrap();
+            let back: DistributionType = serde_json::from_str(&json).unwrap();
+            assert_eq!(d, back);
+        }
+    }
+
+    #[test]
+    fn enrich_distribution_type_btreeset_deterministic() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(DistributionType::LogNormal);
+        set.insert(DistributionType::PointEstimate);
+        set.insert(DistributionType::Beta);
+        set.insert(DistributionType::Uniform);
+        assert_eq!(set.len(), 4);
+        let vec: Vec<_> = set.into_iter().collect();
+        assert_eq!(vec[0], DistributionType::PointEstimate);
+        assert_eq!(vec[3], DistributionType::LogNormal);
+    }
+
+    #[test]
+    fn enrich_risk_dimension_serde_roundtrip_all() {
+        for d in [
+            RiskDimension::SecurityRegression,
+            RiskDimension::PerformanceRegression,
+            RiskDimension::OperationalBurden,
+            RiskDimension::CrossInitiativeInterference,
+        ] {
+            let json = serde_json::to_string(&d).unwrap();
+            let back: RiskDimension = serde_json::from_str(&json).unwrap();
+            assert_eq!(d, back);
+        }
+    }
+
+    #[test]
+    fn enrich_artifact_type_serde_roundtrip_all() {
+        for a in [
+            ArtifactType::Proof,
+            ArtifactType::BenchmarkResult,
+            ArtifactType::ConformanceEvidence,
+            ArtifactType::OperatorDocumentation,
+            ArtifactType::RiskAssessment,
+        ] {
+            let json = serde_json::to_string(&a).unwrap();
+            let back: ArtifactType = serde_json::from_str(&json).unwrap();
+            assert_eq!(a, back);
+        }
+    }
+
+    #[test]
+    fn enrich_artifact_type_btreeset_deterministic() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(ArtifactType::RiskAssessment);
+        set.insert(ArtifactType::Proof);
+        set.insert(ArtifactType::ConformanceEvidence);
+        set.insert(ArtifactType::BenchmarkResult);
+        set.insert(ArtifactType::OperatorDocumentation);
+        assert_eq!(set.len(), 5);
+        let first = *set.iter().next().unwrap();
+        assert_eq!(first, ArtifactType::Proof);
+    }
+
+    #[test]
+    fn enrich_kill_trigger_serde_roundtrip_all() {
+        for k in [
+            KillTrigger::BudgetExhaustedNoSignal,
+            KillTrigger::MetricRegression,
+            KillTrigger::ReproducibilityFailure,
+            KillTrigger::RiskConstraintViolation,
+            KillTrigger::TimeExpiry,
+        ] {
+            let json = serde_json::to_string(&k).unwrap();
+            let back: KillTrigger = serde_json::from_str(&json).unwrap();
+            assert_eq!(k, back);
+        }
+    }
+
+    #[test]
+    fn enrich_kill_trigger_btreeset_deterministic() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(KillTrigger::TimeExpiry);
+        set.insert(KillTrigger::BudgetExhaustedNoSignal);
+        set.insert(KillTrigger::MetricRegression);
+        set.insert(KillTrigger::ReproducibilityFailure);
+        set.insert(KillTrigger::RiskConstraintViolation);
+        assert_eq!(set.len(), 5);
+        let first = *set.iter().next().unwrap();
+        assert_eq!(first, KillTrigger::BudgetExhaustedNoSignal);
+    }
+
+    #[test]
+    fn enrich_hypothesis_serde_roundtrip() {
+        let h = test_hypothesis();
+        let json = serde_json::to_string(&h).unwrap();
+        let back: Hypothesis = serde_json::from_str(&json).unwrap();
+        assert_eq!(h, back);
+    }
+
+    #[test]
+    fn enrich_target_metric_serde_roundtrip() {
+        for m in test_metrics() {
+            let json = serde_json::to_string(&m).unwrap();
+            let back: TargetMetric = serde_json::from_str(&json).unwrap();
+            assert_eq!(m, back);
+        }
+    }
+
+    #[test]
+    fn enrich_risk_budget_serde_roundtrip() {
+        let rb = test_risk_budget();
+        let json = serde_json::to_string(&rb).unwrap();
+        let back: RiskBudget = serde_json::from_str(&json).unwrap();
+        assert_eq!(rb, back);
+    }
+
+    #[test]
+    fn enrich_artifact_obligation_serde_roundtrip() {
+        for o in test_obligations() {
+            let json = serde_json::to_string(&o).unwrap();
+            let back: ArtifactObligation = serde_json::from_str(&json).unwrap();
+            assert_eq!(o, back);
+        }
+    }
+
+    #[test]
+    fn enrich_kill_criterion_serde_roundtrip() {
+        for k in test_kill_criteria() {
+            let json = serde_json::to_string(&k).unwrap();
+            let back: KillCriterion = serde_json::from_str(&json).unwrap();
+            assert_eq!(k, back);
+        }
+    }
+
+    #[test]
+    fn enrich_rollback_plan_serde_roundtrip() {
+        let rp = test_rollback();
+        let json = serde_json::to_string(&rp).unwrap();
+        let back: RollbackPlan = serde_json::from_str(&json).unwrap();
+        assert_eq!(rp, back);
+    }
+
+    #[test]
+    fn enrich_rollback_step_serde_roundtrip() {
+        let s = RollbackStep {
+            step_number: 42,
+            description: "revert schema".into(),
+            verification: "SELECT version FROM migrations".into(),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: RollbackStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn enrich_contract_version_serde_roundtrip() {
+        let v = ContractVersion { major: 3, minor: 7 };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: ContractVersion = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn enrich_contract_version_ordering() {
+        let v1 = ContractVersion { major: 1, minor: 0 };
+        let v2 = ContractVersion { major: 1, minor: 1 };
+        let v3 = ContractVersion { major: 2, minor: 0 };
+        assert!(v1 < v2);
+        assert!(v2 < v3);
+        assert!(v1 < v3);
+    }
+
+    #[test]
+    fn enrich_contract_version_btreeset() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(ContractVersion { major: 2, minor: 0 });
+        set.insert(ContractVersion { major: 1, minor: 3 });
+        set.insert(ContractVersion { major: 1, minor: 0 });
+        let ordered: Vec<_> = set.into_iter().collect();
+        assert_eq!(ordered[0], ContractVersion { major: 1, minor: 0 });
+        assert_eq!(ordered[1], ContractVersion { major: 1, minor: 3 });
+        assert_eq!(ordered[2], ContractVersion { major: 2, minor: 0 });
+    }
+
+    #[test]
+    fn enrich_hypothesis_clone_independence() {
+        let mut h = test_hypothesis();
+        let cloned = h.clone();
+        h.problem = "mutated".into();
+        assert_ne!(h.problem, cloned.problem);
+    }
+
+    #[test]
+    fn enrich_ev_model_clone_independence() {
+        let mut ev = test_ev_model();
+        let cloned = ev.clone();
+        ev.cost_millionths = 999_999;
+        assert_ne!(ev.cost_millionths, cloned.cost_millionths);
+    }
+
+    #[test]
+    fn enrich_risk_budget_clone_independence() {
+        let mut rb = test_risk_budget();
+        let cloned = rb.clone();
+        rb.dimension_caps
+            .insert(RiskDimension::OperationalBurden, 999_999);
+        assert!(
+            cloned
+                .dimension_caps
+                .get(&RiskDimension::OperationalBurden)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn enrich_contract_clone_independence() {
+        let mut c = test_contract();
+        let cloned = c.clone();
+        c.contract_id = "mutated-id".into();
+        c.metadata.insert("extra".into(), "val".into());
+        assert_ne!(c.contract_id, cloned.contract_id);
+        assert!(cloned.metadata.is_empty());
+    }
+
+    #[test]
+    fn enrich_ev_model_validate_negative_cost() {
+        let mut ev = test_ev_model();
+        ev.cost_millionths = -100;
+        let err = ev.validate().unwrap_err();
+        assert!(matches!(err, ContractError::InvalidEvModel { .. }));
+        assert!(err.to_string().contains("cost must be positive"));
+    }
+
+    #[test]
+    fn enrich_ev_model_net_ev_zero_probability() {
+        let mut params = BTreeMap::new();
+        params.insert("value".into(), 0i64);
+        let ev = EvModel {
+            success_distribution: DistributionType::PointEstimate,
+            distribution_params: params,
+            cost_millionths: 500_000,
+            benefit_on_success_millionths: 5_000_000,
+            harm_on_failure_millionths: -200_000,
+        };
+        let net = ev.net_ev_point_estimate().unwrap();
+        assert_eq!(net, -700_000);
+    }
+
+    #[test]
+    fn enrich_ev_model_net_ev_certainty() {
+        let mut params = BTreeMap::new();
+        params.insert("value".into(), 1_000_000i64);
+        let ev = EvModel {
+            success_distribution: DistributionType::PointEstimate,
+            distribution_params: params,
+            cost_millionths: 500_000,
+            benefit_on_success_millionths: 5_000_000,
+            harm_on_failure_millionths: -200_000,
+        };
+        let net = ev.net_ev_point_estimate().unwrap();
+        assert_eq!(net, 4_500_000);
+    }
+
+    #[test]
+    fn enrich_ev_model_net_ev_missing_value_param() {
+        let ev = EvModel {
+            success_distribution: DistributionType::PointEstimate,
+            distribution_params: BTreeMap::new(),
+            cost_millionths: 100_000,
+            benefit_on_success_millionths: 1_000_000,
+            harm_on_failure_millionths: -50_000,
+        };
+        let err = ev.net_ev_point_estimate().unwrap_err();
+        assert!(err.to_string().contains("missing 'value' parameter"));
+    }
+
+    #[test]
+    fn enrich_ev_model_validate_point_estimate_requires_value() {
+        let ev = EvModel {
+            success_distribution: DistributionType::PointEstimate,
+            distribution_params: BTreeMap::new(),
+            cost_millionths: 100_000,
+            benefit_on_success_millionths: 1_000_000,
+            harm_on_failure_millionths: -50_000,
+        };
+        let err = ev.validate().unwrap_err();
+        assert!(err.to_string().contains("PointEstimate requires 'value'"));
+    }
+
+    #[test]
+    fn enrich_ev_model_validate_beta_ok() {
+        let mut params = BTreeMap::new();
+        params.insert("alpha".into(), 2_000_000i64);
+        params.insert("beta".into(), 3_000_000i64);
+        let ev = EvModel {
+            success_distribution: DistributionType::Beta,
+            distribution_params: params,
+            cost_millionths: 100_000,
+            benefit_on_success_millionths: 1_000_000,
+            harm_on_failure_millionths: -50_000,
+        };
+        ev.validate().unwrap();
+    }
+
+    #[test]
+    fn enrich_ev_model_validate_uniform_ok() {
+        let mut params = BTreeMap::new();
+        params.insert("low".into(), 100_000i64);
+        params.insert("high".into(), 900_000i64);
+        let ev = EvModel {
+            success_distribution: DistributionType::Uniform,
+            distribution_params: params,
+            cost_millionths: 100_000,
+            benefit_on_success_millionths: 1_000_000,
+            harm_on_failure_millionths: -50_000,
+        };
+        ev.validate().unwrap();
+    }
+
+    #[test]
+    fn enrich_ev_model_validate_lognormal_ok() {
+        let mut params = BTreeMap::new();
+        params.insert("mu".into(), 0i64);
+        params.insert("sigma".into(), 500_000i64);
+        let ev = EvModel {
+            success_distribution: DistributionType::LogNormal,
+            distribution_params: params,
+            cost_millionths: 100_000,
+            benefit_on_success_millionths: 1_000_000,
+            harm_on_failure_millionths: -50_000,
+        };
+        ev.validate().unwrap();
+    }
+
+    #[test]
+    fn enrich_kill_criteria_time_not_triggered_at_boundary() {
+        let c = test_contract();
+        let metrics = BTreeMap::new();
+        let triggered = c.check_kill_criteria(&metrics, 15_552_000_000_000_000, 0);
+        assert!(
+            !triggered
+                .iter()
+                .any(|k| k.trigger == KillTrigger::TimeExpiry)
+        );
+    }
+
+    #[test]
+    fn enrich_kill_criteria_budget_below_threshold() {
+        let c = test_contract();
+        let metrics = BTreeMap::new();
+        let triggered = c.check_kill_criteria(&metrics, 0, 899_000);
+        assert!(
+            !triggered
+                .iter()
+                .any(|k| k.trigger == KillTrigger::BudgetExhaustedNoSignal)
+        );
+    }
+
+    #[test]
+    fn enrich_kill_criteria_budget_not_triggered_improving() {
+        let c = test_contract();
+        let mut metrics = BTreeMap::new();
+        metrics.insert("detection_latency_p50".into(), 100_000_000i64);
+        let triggered = c.check_kill_criteria(&metrics, 0, 950_000);
+        assert!(
+            !triggered
+                .iter()
+                .any(|k| k.trigger == KillTrigger::BudgetExhaustedNoSignal)
+        );
+    }
+
+    #[test]
+    fn enrich_kill_criteria_regression_higher_is_better() {
+        let mut c = test_contract();
+        c.target_metrics = vec![TargetMetric {
+            metric_id: "detection_rate".into(),
+            description: "detection accuracy".into(),
+            threshold_millionths: 950_000,
+            direction: MetricDirection::HigherIsBetter,
+            measurement_method: MeasurementMethod::Benchmark,
+            evaluation_cadence_ns: 86_400_000_000_000,
+        }];
+        c.kill_criteria = vec![KillCriterion {
+            criterion_id: "regression".into(),
+            trigger: KillTrigger::MetricRegression,
+            condition: "accuracy regression".into(),
+            threshold_millionths: Some(900_000),
+            max_duration_ns: None,
+        }];
+        let mut metrics = BTreeMap::new();
+        metrics.insert("detection_rate".into(), 800_000i64);
+        let triggered = c.check_kill_criteria(&metrics, 0, 0);
+        assert_eq!(triggered.len(), 1);
+        assert_eq!(triggered[0].trigger, KillTrigger::MetricRegression);
+    }
+
+    #[test]
+    fn enrich_kill_criteria_regression_not_triggered() {
+        let mut c = test_contract();
+        c.target_metrics = vec![TargetMetric {
+            metric_id: "detection_rate".into(),
+            description: "detection accuracy".into(),
+            threshold_millionths: 950_000,
+            direction: MetricDirection::HigherIsBetter,
+            measurement_method: MeasurementMethod::Benchmark,
+            evaluation_cadence_ns: 86_400_000_000_000,
+        }];
+        c.kill_criteria = vec![KillCriterion {
+            criterion_id: "regression".into(),
+            trigger: KillTrigger::MetricRegression,
+            condition: "accuracy regression".into(),
+            threshold_millionths: Some(900_000),
+            max_duration_ns: None,
+        }];
+        let mut metrics = BTreeMap::new();
+        metrics.insert("detection_rate".into(), 950_000i64);
+        let triggered = c.check_kill_criteria(&metrics, 0, 0);
+        assert!(triggered.is_empty());
+    }
+
+    #[test]
+    fn enrich_kill_criteria_regression_no_threshold() {
+        let mut c = test_contract();
+        c.kill_criteria = vec![KillCriterion {
+            criterion_id: "regression-no-thresh".into(),
+            trigger: KillTrigger::MetricRegression,
+            condition: "no threshold set".into(),
+            threshold_millionths: None,
+            max_duration_ns: None,
+        }];
+        let mut metrics = BTreeMap::new();
+        metrics.insert("detection_latency_p50".into(), 999_999_999i64);
+        let triggered = c.check_kill_criteria(&metrics, 0, 0);
+        assert!(triggered.is_empty());
+    }
+
+    #[test]
+    fn enrich_stage_obligations_multiple_blocking() {
+        let mut c = test_contract();
+        c.artifact_obligations.push(ArtifactObligation {
+            obligation_id: "extra-research".into(),
+            required_at_stage: MoonshotStage::Research,
+            artifact_type: ArtifactType::RiskAssessment,
+            description: "Risk assessment for research phase".into(),
+            blocking: true,
+        });
+        assert!(!c.stage_obligations_met(MoonshotStage::Research, &["proof-research".into()]));
+        assert!(c.stage_obligations_met(
+            MoonshotStage::Research,
+            &["proof-research".into(), "extra-research".into()]
+        ));
+    }
+
+    #[test]
+    fn enrich_contract_no_governance_signature() {
+        let mut c = test_contract();
+        c.governance_signature = None;
+        c.validate().unwrap();
+        let json = serde_json::to_string(&c).unwrap();
+        let back: MoonshotContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+        assert!(back.governance_signature.is_none());
+    }
+
+    #[test]
+    fn enrich_contract_metadata_stress() {
+        let mut c = test_contract();
+        for i in 0..20 {
+            c.metadata.insert(format!("key-{i:03}"), format!("val-{i}"));
+        }
+        let json1 = serde_json::to_string(&c).unwrap();
+        let json2 = serde_json::to_string(&c).unwrap();
+        assert_eq!(json1, json2);
+        let back: MoonshotContract = serde_json::from_str(&json1).unwrap();
+        assert_eq!(c, back);
+    }
+
+    #[test]
+    fn enrich_contract_error_display_all_distinct() {
+        let errors = vec![
+            ContractError::EmptyContractId,
+            ContractError::InvalidHypothesis {
+                reason: "r1".into(),
+            },
+            ContractError::EmptyTargetMetrics,
+            ContractError::InvalidEvModel {
+                reason: "r2".into(),
+            },
+            ContractError::InvalidRiskBudget {
+                reason: "r3".into(),
+            },
+            ContractError::EmptyKillCriteria,
+            ContractError::InvalidRollback {
+                reason: "r4".into(),
+            },
+        ];
+        use std::collections::BTreeSet;
+        let displays: BTreeSet<String> = errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(displays.len(), errors.len());
+    }
+
+    #[test]
+    fn enrich_contract_error_debug_not_empty() {
+        let err = ContractError::EmptyContractId;
+        let dbg = format!("{err:?}");
+        assert!(!dbg.is_empty());
+    }
+
+    #[test]
+    fn enrich_error_hypothesis_display_contains_reason() {
+        let err = ContractError::InvalidHypothesis {
+            reason: "missing data".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("missing data"));
+        assert!(msg.contains("hypothesis"));
+    }
+
+    #[test]
+    fn enrich_error_ev_model_display_contains_reason() {
+        let err = ContractError::InvalidEvModel {
+            reason: "bad distribution".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("bad distribution"));
+        assert!(msg.contains("EV model"));
+    }
+
+    #[test]
+    fn enrich_error_risk_budget_display_contains_reason() {
+        let err = ContractError::InvalidRiskBudget {
+            reason: "empty dimensions".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("empty dimensions"));
+        assert!(msg.contains("risk budget"));
+    }
+
+    #[test]
+    fn enrich_error_rollback_display_contains_reason() {
+        let err = ContractError::InvalidRollback {
+            reason: "no steps defined".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("no steps defined"));
+        assert!(msg.contains("rollback"));
+    }
+
+    #[test]
+    fn enrich_ev_model_net_ev_large_values_no_overflow() {
+        let mut params = BTreeMap::new();
+        params.insert("value".into(), 999_999i64);
+        let ev = EvModel {
+            success_distribution: DistributionType::PointEstimate,
+            distribution_params: params,
+            cost_millionths: i64::MAX / 2,
+            benefit_on_success_millionths: i64::MAX / 2,
+            harm_on_failure_millionths: i64::MIN / 2,
+        };
+        let _net = ev.net_ev_point_estimate().unwrap();
+    }
+
+    #[test]
+    fn enrich_contract_serde_all_fields_populated() {
+        let mut c = test_contract();
+        c.metadata.insert("team".into(), "alpha".into());
+        c.metadata.insert("region".into(), "us-east".into());
+        c.governance_signature = Some("sig:abc123".into());
+        c.current_stage = MoonshotStage::Canary;
+        c.artifact_obligations.push(ArtifactObligation {
+            obligation_id: "conf-canary".into(),
+            required_at_stage: MoonshotStage::Canary,
+            artifact_type: ArtifactType::ConformanceEvidence,
+            description: "Canary conformance evidence".into(),
+            blocking: true,
+        });
+        let json = serde_json::to_string_pretty(&c).unwrap();
+        let back: MoonshotContract = serde_json::from_str(&json).unwrap();
+        assert_eq!(c, back);
+    }
+
+    #[test]
+    fn enrich_contract_deterministic_replay_validate() {
+        let c = test_contract();
+        let r1 = c.validate();
+        let r2 = c.validate();
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn enrich_contract_deterministic_replay_kill() {
+        let c = test_contract();
+        let metrics = BTreeMap::new();
+        let t1 = c.check_kill_criteria(&metrics, 20_000_000_000_000_000, 950_000);
+        let t2 = c.check_kill_criteria(&metrics, 20_000_000_000_000_000, 950_000);
+        assert_eq!(t1.len(), t2.len());
+        for (a, b) in t1.iter().zip(t2.iter()) {
+            assert_eq!(a.criterion_id, b.criterion_id);
+        }
+    }
+
+    #[test]
+    fn enrich_contract_empty_metadata_serde() {
+        let c = test_contract();
+        assert!(c.metadata.is_empty());
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains("\"metadata\":{}"));
+        let back: MoonshotContract = serde_json::from_str(&json).unwrap();
+        assert!(back.metadata.is_empty());
+    }
+
+    #[test]
+    fn enrich_rollback_step_clone_independence() {
+        let mut s = RollbackStep {
+            step_number: 1,
+            description: "original".into(),
+            verification: "check".into(),
+        };
+        let cloned = s.clone();
+        s.description = "modified".into();
+        assert_ne!(s.description, cloned.description);
+    }
+
+    #[test]
+    fn enrich_kill_criterion_clone_independence() {
+        let mut k = KillCriterion {
+            criterion_id: "k1".into(),
+            trigger: KillTrigger::TimeExpiry,
+            condition: "original".into(),
+            threshold_millionths: Some(100_000),
+            max_duration_ns: Some(86_400_000_000_000),
+        };
+        let cloned = k.clone();
+        k.condition = "mutated".into();
+        k.threshold_millionths = None;
+        assert_ne!(k.condition, cloned.condition);
+        assert!(cloned.threshold_millionths.is_some());
+    }
+
+    #[test]
+    fn enrich_artifact_obligation_clone_independence() {
+        let mut o = ArtifactObligation {
+            obligation_id: "o1".into(),
+            required_at_stage: MoonshotStage::Research,
+            artifact_type: ArtifactType::Proof,
+            description: "original".into(),
+            blocking: true,
+        };
+        let cloned = o.clone();
+        o.blocking = false;
+        o.description = "mutated".into();
+        assert!(cloned.blocking);
+        assert_ne!(o.description, cloned.description);
+    }
+
+    #[test]
+    fn enrich_contract_stress_many_obligations() {
+        let mut c = test_contract();
+        for i in 0..100 {
+            c.artifact_obligations.push(ArtifactObligation {
+                obligation_id: format!("stress-{i}"),
+                required_at_stage: MoonshotStage::all()[i % 4],
+                artifact_type: ArtifactType::Proof,
+                description: format!("stress obligation {i}"),
+                blocking: i.is_multiple_of(2),
+            });
+        }
+        c.validate().unwrap();
+        let blocking_research: Vec<_> = c
+            .artifact_obligations
+            .iter()
+            .filter(|o| o.required_at_stage == MoonshotStage::Research && o.blocking)
+            .map(|o| o.obligation_id.clone())
+            .collect();
+        assert!(c.stage_obligations_met(MoonshotStage::Research, &blocking_research));
+    }
+
+    #[test]
+    fn enrich_risk_budget_all_dimensions() {
+        let mut caps = BTreeMap::new();
+        caps.insert(RiskDimension::SecurityRegression, 50_000u64);
+        caps.insert(RiskDimension::PerformanceRegression, 100_000u64);
+        caps.insert(RiskDimension::OperationalBurden, 75_000u64);
+        caps.insert(RiskDimension::CrossInitiativeInterference, 25_000u64);
+        let rb = RiskBudget {
+            dimension_caps: caps,
+        };
+        rb.validate().unwrap();
+        assert_eq!(rb.dimension_caps.len(), 4);
+        let json = serde_json::to_string(&rb).unwrap();
+        let back: RiskBudget = serde_json::from_str(&json).unwrap();
+        assert_eq!(rb, back);
+    }
+
+    #[test]
+    fn enrich_stage_all_covers_every_variant() {
+        let all = MoonshotStage::all();
+        assert!(all.contains(&MoonshotStage::Research));
+        assert!(all.contains(&MoonshotStage::Shadow));
+        assert!(all.contains(&MoonshotStage::Canary));
+        assert!(all.contains(&MoonshotStage::Production));
+    }
+
+    #[test]
+    fn enrich_stage_display_shadow_canary() {
+        assert_eq!(MoonshotStage::Shadow.to_string(), "shadow");
+        assert_eq!(MoonshotStage::Canary.to_string(), "canary");
+    }
+
+    #[test]
+    fn enrich_measurement_display_evidence_operator() {
+        assert_eq!(
+            MeasurementMethod::EvidenceQuery.to_string(),
+            "evidence_query"
+        );
+        assert_eq!(
+            MeasurementMethod::OperatorReview.to_string(),
+            "operator_review"
+        );
+    }
+
+    #[test]
+    fn enrich_artifact_type_display_remaining() {
+        assert_eq!(
+            ArtifactType::ConformanceEvidence.to_string(),
+            "conformance_evidence"
+        );
+        assert_eq!(
+            ArtifactType::OperatorDocumentation.to_string(),
+            "operator_documentation"
+        );
+        assert_eq!(ArtifactType::RiskAssessment.to_string(), "risk_assessment");
+    }
+
+    #[test]
+    fn enrich_kill_trigger_display_remaining() {
+        assert_eq!(
+            KillTrigger::MetricRegression.to_string(),
+            "metric_regression"
+        );
+        assert_eq!(
+            KillTrigger::ReproducibilityFailure.to_string(),
+            "reproducibility_failure"
+        );
+        assert_eq!(
+            KillTrigger::RiskConstraintViolation.to_string(),
+            "risk_constraint_violation"
+        );
+        assert_eq!(KillTrigger::TimeExpiry.to_string(), "time_expiry");
+    }
+
+    #[test]
+    fn enrich_risk_dimension_display_remaining() {
+        assert_eq!(
+            RiskDimension::PerformanceRegression.to_string(),
+            "performance_regression"
+        );
+        assert_eq!(
+            RiskDimension::OperationalBurden.to_string(),
+            "operational_burden"
+        );
+        assert_eq!(
+            RiskDimension::CrossInitiativeInterference.to_string(),
+            "cross_initiative_interference"
+        );
+    }
+
+    #[test]
+    fn enrich_distribution_type_display_remaining() {
+        assert_eq!(
+            DistributionType::PointEstimate.to_string(),
+            "point_estimate"
+        );
+        assert_eq!(DistributionType::Uniform.to_string(), "uniform");
+    }
 }

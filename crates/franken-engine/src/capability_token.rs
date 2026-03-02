@@ -1650,4 +1650,866 @@ mod tests {
         };
         verify_token(&token, &make_principal(10), &ctx).unwrap();
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: deep coverage, stress, isolation, replay, clone
+    // independence, Display/Debug, ordering, error message content
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn clone_independence_principal_id_enrichment() {
+        let original = make_principal(0xAA);
+        let mut cloned = original.clone();
+        cloned.0[0] = 0xFF;
+        assert_ne!(original, cloned);
+        assert_eq!(original.0[0], 0xAA);
+    }
+
+    #[test]
+    fn clone_independence_checkpoint_ref_enrichment() {
+        let original = make_checkpoint_ref(10);
+        let mut cloned = original.clone();
+        cloned.min_checkpoint_seq = 999;
+        assert_ne!(original.min_checkpoint_seq, cloned.min_checkpoint_seq);
+        assert_eq!(original.min_checkpoint_seq, 10);
+    }
+
+    #[test]
+    fn clone_independence_revocation_freshness_ref_enrichment() {
+        let original = make_revocation_ref(5);
+        let mut cloned = original.clone();
+        cloned.min_revocation_seq = 999;
+        assert_ne!(original.min_revocation_seq, cloned.min_revocation_seq);
+        assert_eq!(original.min_revocation_seq, 5);
+    }
+
+    #[test]
+    fn clone_independence_capability_token_enrichment() {
+        let sk = make_sk(1);
+        let original = build_basic_token(&sk);
+        let mut cloned = original.clone();
+        cloned.zone = "zone-tampered".to_string();
+        assert_ne!(original.zone, cloned.zone);
+        assert_eq!(original.zone, "zone-a");
+    }
+
+    #[test]
+    fn clone_independence_token_event_enrichment() {
+        let original = TokenEvent {
+            event_type: TokenEventType::TokenIssued {
+                jti: EngineObjectId([3; 32]),
+            },
+            trace_id: "trace-1".into(),
+        };
+        let mut cloned = original.clone();
+        cloned.trace_id = "trace-modified".into();
+        assert_ne!(original.trace_id, cloned.trace_id);
+        assert_eq!(original.trace_id, "trace-1");
+    }
+
+    #[test]
+    fn principal_id_debug_contains_bytes_enrichment() {
+        let p = make_principal(0x42);
+        let dbg = format!("{p:?}");
+        assert!(dbg.contains("PrincipalId"));
+    }
+
+    #[test]
+    fn token_version_debug_enrichment() {
+        let v = TokenVersion::V2;
+        let dbg = format!("{v:?}");
+        assert!(dbg.contains("V2"));
+    }
+
+    #[test]
+    fn token_error_debug_all_variants_enrichment() {
+        let variants = vec![
+            TokenError::SignatureInvalid {
+                detail: "dbg".into(),
+            },
+            TokenError::NonCanonical {
+                detail: "dbg".into(),
+            },
+            TokenError::AudienceRejected {
+                presenter: make_principal(1),
+                audience_size: 2,
+            },
+            TokenError::NotYetValid {
+                current_tick: 1,
+                not_before: 2,
+            },
+            TokenError::Expired {
+                current_tick: 3,
+                expiry: 2,
+            },
+            TokenError::CheckpointBindingFailed {
+                required_seq: 5,
+                verifier_seq: 3,
+            },
+            TokenError::RevocationFreshnessStale {
+                required_seq: 7,
+                verifier_seq: 4,
+            },
+            TokenError::UnsupportedVersion {
+                version: "v0".into(),
+            },
+            TokenError::IdDerivationFailed {
+                detail: "bad".into(),
+            },
+            TokenError::InvertedTemporalWindow {
+                not_before: 200,
+                expiry: 100,
+            },
+            TokenError::EmptyCapabilities,
+        ];
+        let mut debugs = BTreeSet::new();
+        for v in &variants {
+            let d = format!("{v:?}");
+            assert!(!d.is_empty());
+            debugs.insert(d);
+        }
+        assert_eq!(debugs.len(), 11, "all Debug outputs should be unique");
+    }
+
+    #[test]
+    fn token_version_ordering_enrichment() {
+        // Only one variant, but Ord is derived so we test reflexivity.
+        let v = TokenVersion::V2;
+        assert!(v == v);
+        assert!(!(v < v));
+    }
+
+    #[test]
+    fn principal_id_ordering_btreeset_enrichment() {
+        let mut set = BTreeSet::new();
+        for seed in (0u8..10).rev() {
+            set.insert(PrincipalId::from_bytes([seed; 32]));
+        }
+        assert_eq!(set.len(), 10);
+        // Verify iteration order is ascending by first byte.
+        let first_bytes: Vec<u8> = set.iter().map(|p| p.0[0]).collect();
+        for w in first_bytes.windows(2) {
+            assert!(w[0] < w[1]);
+        }
+    }
+
+    #[test]
+    fn principal_id_hash_consistency_enrichment() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let p = make_principal(0x77);
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        p.hash(&mut h1);
+        p.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn error_display_signature_invalid_enrichment() {
+        let err = TokenError::SignatureInvalid {
+            detail: "hmac mismatch".to_string(),
+        };
+        let s = err.to_string();
+        assert!(s.contains("signature invalid"));
+        assert!(s.contains("hmac mismatch"));
+    }
+
+    #[test]
+    fn error_display_non_canonical_enrichment() {
+        let err = TokenError::NonCanonical {
+            detail: "field ordering".to_string(),
+        };
+        let s = err.to_string();
+        assert!(s.contains("non-canonical"));
+        assert!(s.contains("field ordering"));
+    }
+
+    #[test]
+    fn error_display_audience_rejected_enrichment() {
+        let err = TokenError::AudienceRejected {
+            presenter: make_principal(0xAB),
+            audience_size: 3,
+        };
+        let s = err.to_string();
+        assert!(s.contains("audience rejected"));
+        assert!(s.contains("3 audience members"));
+    }
+
+    #[test]
+    fn error_display_checkpoint_binding_failed_enrichment() {
+        let err = TokenError::CheckpointBindingFailed {
+            required_seq: 100,
+            verifier_seq: 50,
+        };
+        let s = err.to_string();
+        assert!(s.contains("checkpoint binding failed"));
+        assert!(s.contains("100"));
+        assert!(s.contains("50"));
+    }
+
+    #[test]
+    fn error_display_revocation_freshness_stale_enrichment() {
+        let err = TokenError::RevocationFreshnessStale {
+            required_seq: 42,
+            verifier_seq: 7,
+        };
+        let s = err.to_string();
+        assert!(s.contains("revocation freshness stale"));
+        assert!(s.contains("42"));
+        assert!(s.contains("7"));
+    }
+
+    #[test]
+    fn error_display_unsupported_version_enrichment() {
+        let err = TokenError::UnsupportedVersion {
+            version: "v999".to_string(),
+        };
+        let s = err.to_string();
+        assert!(s.contains("unsupported version"));
+        assert!(s.contains("v999"));
+    }
+
+    #[test]
+    fn error_display_id_derivation_failed_enrichment() {
+        let err = TokenError::IdDerivationFailed {
+            detail: "no entropy".to_string(),
+        };
+        let s = err.to_string();
+        assert!(s.contains("ID derivation failed"));
+        assert!(s.contains("no entropy"));
+    }
+
+    #[test]
+    fn error_display_inverted_temporal_window_enrichment() {
+        let err = TokenError::InvertedTemporalWindow {
+            not_before: 500,
+            expiry: 100,
+        };
+        let s = err.to_string();
+        assert!(s.contains("inverted temporal window"));
+        assert!(s.contains("500"));
+        assert!(s.contains("100"));
+    }
+
+    #[test]
+    fn error_display_empty_capabilities_enrichment() {
+        let err = TokenError::EmptyCapabilities;
+        assert_eq!(err.to_string(), "empty capabilities");
+    }
+
+    #[test]
+    fn error_display_not_yet_valid_enrichment() {
+        let err = TokenError::NotYetValid {
+            current_tick: 30,
+            not_before: 200,
+        };
+        let s = err.to_string();
+        assert!(s.contains("not yet valid"));
+        assert!(s.contains("30"));
+        assert!(s.contains("200"));
+    }
+
+    #[test]
+    fn deterministic_replay_full_bindings_enrichment() {
+        let sk = make_sk(7);
+        let build = || {
+            TokenBuilder::new(
+                sk.clone(),
+                DeterministicTimestamp(200),
+                DeterministicTimestamp(2000),
+                SecurityEpoch::from_raw(3),
+                "zone-replay",
+            )
+            .add_audience(make_principal(10))
+            .add_audience(make_principal(20))
+            .add_capability(RuntimeCapability::VmDispatch)
+            .add_capability(RuntimeCapability::PolicyRead)
+            .add_capability(RuntimeCapability::FsRead)
+            .bind_checkpoint(make_checkpoint_ref(15))
+            .bind_revocation_freshness(make_revocation_ref(8))
+            .build()
+            .unwrap()
+        };
+        let t1 = build();
+        let t2 = build();
+        assert_eq!(t1.jti, t2.jti);
+        assert_eq!(t1.signature, t2.signature);
+        assert_eq!(t1.preimage_bytes(), t2.preimage_bytes());
+    }
+
+    #[test]
+    fn stress_many_audience_members_enrichment() {
+        let sk = make_sk(1);
+        let mut builder = TokenBuilder::new(
+            sk,
+            DeterministicTimestamp(0),
+            DeterministicTimestamp(u64::MAX),
+            SecurityEpoch::GENESIS,
+            "zone-stress",
+        )
+        .add_capability(RuntimeCapability::VmDispatch);
+
+        for i in 0u8..50 {
+            builder = builder.add_audience(make_principal(i));
+        }
+
+        let token = builder.build().unwrap();
+        assert_eq!(token.audience.len(), 50);
+
+        // Verify any audience member can verify.
+        let ctx = VerificationContext {
+            current_tick: 100,
+            verifier_checkpoint_seq: 0,
+            verifier_revocation_seq: 0,
+        };
+        verify_token(&token, &make_principal(0), &ctx).unwrap();
+        verify_token(&token, &make_principal(25), &ctx).unwrap();
+        verify_token(&token, &make_principal(49), &ctx).unwrap();
+    }
+
+    #[test]
+    fn stress_all_capabilities_enrichment() {
+        let sk = make_sk(2);
+        let all_caps = vec![
+            RuntimeCapability::VmDispatch,
+            RuntimeCapability::GcInvoke,
+            RuntimeCapability::IrLowering,
+            RuntimeCapability::PolicyRead,
+            RuntimeCapability::PolicyWrite,
+            RuntimeCapability::EvidenceEmit,
+            RuntimeCapability::DecisionInvoke,
+            RuntimeCapability::NetworkEgress,
+            RuntimeCapability::LeaseManagement,
+            RuntimeCapability::IdempotencyDerive,
+            RuntimeCapability::ExtensionLifecycle,
+            RuntimeCapability::HeapAllocate,
+            RuntimeCapability::EnvRead,
+            RuntimeCapability::ProcessSpawn,
+            RuntimeCapability::FsRead,
+            RuntimeCapability::FsWrite,
+        ];
+        let token = TokenBuilder::new(
+            sk,
+            DeterministicTimestamp(0),
+            DeterministicTimestamp(u64::MAX),
+            SecurityEpoch::GENESIS,
+            "zone-all",
+        )
+        .add_audience(make_principal(1))
+        .add_capabilities(all_caps)
+        .build()
+        .unwrap();
+
+        assert_eq!(token.capabilities.len(), 16);
+        let json = serde_json::to_string(&token).unwrap();
+        let back: CapabilityToken = serde_json::from_str(&json).unwrap();
+        assert_eq!(token, back);
+    }
+
+    #[test]
+    fn stress_duplicate_audience_deduplication_enrichment() {
+        let sk = make_sk(1);
+        let token = TokenBuilder::new(
+            sk,
+            DeterministicTimestamp(0),
+            DeterministicTimestamp(1000),
+            SecurityEpoch::GENESIS,
+            "zone-dedup",
+        )
+        .add_audience(make_principal(10))
+        .add_audience(make_principal(10)) // duplicate
+        .add_audience(make_principal(10)) // duplicate
+        .add_capability(RuntimeCapability::VmDispatch)
+        .build()
+        .unwrap();
+
+        assert_eq!(token.audience.len(), 1);
+    }
+
+    #[test]
+    fn stress_duplicate_capabilities_deduplication_enrichment() {
+        let sk = make_sk(1);
+        let token = TokenBuilder::new(
+            sk,
+            DeterministicTimestamp(0),
+            DeterministicTimestamp(1000),
+            SecurityEpoch::GENESIS,
+            "zone-dedup-cap",
+        )
+        .add_audience(make_principal(1))
+        .add_capability(RuntimeCapability::FsRead)
+        .add_capability(RuntimeCapability::FsRead) // duplicate
+        .add_capability(RuntimeCapability::FsRead) // duplicate
+        .build()
+        .unwrap();
+
+        assert_eq!(token.capabilities.len(), 1);
+    }
+
+    #[test]
+    fn different_zones_produce_different_jti_enrichment() {
+        let sk = make_sk(1);
+        let build_for_zone = |zone: &str| {
+            TokenBuilder::new(
+                sk.clone(),
+                DeterministicTimestamp(100),
+                DeterministicTimestamp(1000),
+                SecurityEpoch::GENESIS,
+                zone,
+            )
+            .add_audience(make_principal(10))
+            .add_capability(RuntimeCapability::VmDispatch)
+            .build()
+            .unwrap()
+        };
+
+        let t1 = build_for_zone("zone-alpha");
+        let t2 = build_for_zone("zone-beta");
+        assert_ne!(t1.jti, t2.jti);
+    }
+
+    #[test]
+    fn different_epochs_produce_different_jti_enrichment() {
+        let sk = make_sk(1);
+        let build_for_epoch = |epoch: SecurityEpoch| {
+            TokenBuilder::new(
+                sk.clone(),
+                DeterministicTimestamp(100),
+                DeterministicTimestamp(1000),
+                epoch,
+                "zone-a",
+            )
+            .add_audience(make_principal(10))
+            .add_capability(RuntimeCapability::VmDispatch)
+            .build()
+            .unwrap()
+        };
+
+        let t1 = build_for_epoch(SecurityEpoch::GENESIS);
+        let t2 = build_for_epoch(SecurityEpoch::from_raw(1));
+        assert_ne!(t1.jti, t2.jti);
+    }
+
+    #[test]
+    fn different_capabilities_produce_different_jti_enrichment() {
+        let sk = make_sk(1);
+        let build_with_cap = |cap: RuntimeCapability| {
+            TokenBuilder::new(
+                sk.clone(),
+                DeterministicTimestamp(100),
+                DeterministicTimestamp(1000),
+                SecurityEpoch::GENESIS,
+                "zone-a",
+            )
+            .add_audience(make_principal(10))
+            .add_capability(cap)
+            .build()
+            .unwrap()
+        };
+
+        let t1 = build_with_cap(RuntimeCapability::VmDispatch);
+        let t2 = build_with_cap(RuntimeCapability::FsWrite);
+        assert_ne!(t1.jti, t2.jti);
+    }
+
+    #[test]
+    fn different_audience_produces_different_jti_enrichment() {
+        let sk = make_sk(1);
+        let build_with_audience = |seed: u8| {
+            TokenBuilder::new(
+                sk.clone(),
+                DeterministicTimestamp(100),
+                DeterministicTimestamp(1000),
+                SecurityEpoch::GENESIS,
+                "zone-a",
+            )
+            .add_audience(make_principal(seed))
+            .add_capability(RuntimeCapability::VmDispatch)
+            .build()
+            .unwrap()
+        };
+
+        let t1 = build_with_audience(10);
+        let t2 = build_with_audience(20);
+        assert_ne!(t1.jti, t2.jti);
+    }
+
+    #[test]
+    fn verification_priority_signature_before_temporal_enrichment() {
+        // A token with tampered signature AND expired time should fail on
+        // signature, not temporal.
+        let sk = make_sk(1);
+        let mut token = build_basic_token(&sk);
+        token.signature.lower[0] ^= 0xFF; // tamper signature
+
+        let ctx = VerificationContext {
+            current_tick: 9999, // way past expiry
+            verifier_checkpoint_seq: 10,
+            verifier_revocation_seq: 5,
+        };
+        let err = verify_token(&token, &make_principal(10), &ctx).unwrap_err();
+        assert!(
+            matches!(err, TokenError::SignatureInvalid { .. }),
+            "signature check must happen before temporal check"
+        );
+    }
+
+    #[test]
+    fn verification_priority_audience_before_temporal_enrichment() {
+        // Wrong audience AND before nbf: should fail audience, not temporal.
+        let sk = make_sk(1);
+        let token = build_basic_token(&sk); // audience = principal(10)
+
+        let ctx = VerificationContext {
+            current_tick: 50, // before nbf=100
+            verifier_checkpoint_seq: 10,
+            verifier_revocation_seq: 5,
+        };
+        let err = verify_token(&token, &make_principal(99), &ctx).unwrap_err();
+        assert!(
+            matches!(err, TokenError::AudienceRejected { .. }),
+            "audience check must happen before temporal check"
+        );
+    }
+
+    #[test]
+    fn modifying_nbf_invalidates_signature_enrichment() {
+        let sk = make_sk(1);
+        let mut token = build_basic_token(&sk);
+        token.nbf = DeterministicTimestamp(0);
+        let ctx = basic_ctx();
+        let err = verify_token(&token, &make_principal(10), &ctx).unwrap_err();
+        assert!(matches!(err, TokenError::SignatureInvalid { .. }));
+    }
+
+    #[test]
+    fn modifying_epoch_invalidates_signature_enrichment() {
+        let sk = make_sk(1);
+        let mut token = build_basic_token(&sk);
+        token.epoch = SecurityEpoch::from_raw(999);
+        let ctx = basic_ctx();
+        let err = verify_token(&token, &make_principal(10), &ctx).unwrap_err();
+        assert!(matches!(err, TokenError::SignatureInvalid { .. }));
+    }
+
+    #[test]
+    fn token_event_type_serde_all_variants_enrichment() {
+        let jti = EngineObjectId([0xBB; 32]);
+        let variants = vec![
+            TokenEventType::TokenIssued { jti: jti.clone() },
+            TokenEventType::TokenVerified { jti: jti.clone() },
+            TokenEventType::TokenRejected {
+                jti,
+                reason: "test".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: TokenEventType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn token_event_debug_enrichment() {
+        let event = TokenEvent {
+            event_type: TokenEventType::TokenVerified {
+                jti: EngineObjectId([0xCC; 32]),
+            },
+            trace_id: "trace-dbg".into(),
+        };
+        let dbg = format!("{event:?}");
+        assert!(dbg.contains("TokenEvent"));
+        assert!(dbg.contains("trace-dbg"));
+    }
+
+    #[test]
+    fn principal_id_display_truncated_to_8_hex_enrichment() {
+        let p = PrincipalId::from_bytes([0xFF; 32]);
+        let s = p.to_string();
+        // Display is "principal:" + first 8 hex chars of 64-char hex.
+        assert!(s.starts_with("principal:"));
+        assert_eq!(s.len(), "principal:".len() + 8);
+    }
+
+    #[test]
+    fn principal_id_zero_bytes_enrichment() {
+        let p = PrincipalId::from_bytes([0u8; 32]);
+        let hex = p.to_hex();
+        assert_eq!(hex, "0".repeat(64));
+        assert_eq!(p.to_string(), "principal:00000000");
+    }
+
+    #[test]
+    fn principal_id_max_bytes_enrichment() {
+        let p = PrincipalId::from_bytes([0xFF; 32]);
+        let hex = p.to_hex();
+        assert_eq!(hex, "f".repeat(64));
+    }
+
+    #[test]
+    fn serde_roundtrip_token_with_no_optional_bindings_enrichment() {
+        let sk = make_sk(3);
+        let token = TokenBuilder::new(
+            sk,
+            DeterministicTimestamp(0),
+            DeterministicTimestamp(u64::MAX),
+            SecurityEpoch::GENESIS,
+            "zone-minimal",
+        )
+        .add_capability(RuntimeCapability::GcInvoke)
+        .build()
+        .unwrap();
+
+        assert!(token.checkpoint_binding.is_none());
+        assert!(token.revocation_freshness.is_none());
+        assert!(token.audience.is_empty());
+
+        let json = serde_json::to_string(&token).unwrap();
+        assert!(json.contains("null") || json.contains("\"checkpoint_binding\":null"));
+        let back: CapabilityToken = serde_json::from_str(&json).unwrap();
+        assert_eq!(token, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_token_max_temporal_window_enrichment() {
+        let sk = make_sk(4);
+        let token = TokenBuilder::new(
+            sk,
+            DeterministicTimestamp(0),
+            DeterministicTimestamp(u64::MAX),
+            SecurityEpoch::from_raw(u64::MAX),
+            "zone-max",
+        )
+        .add_audience(make_principal(1))
+        .add_capability(RuntimeCapability::NetworkEgress)
+        .build()
+        .unwrap();
+
+        let json = serde_json::to_string(&token).unwrap();
+        let back: CapabilityToken = serde_json::from_str(&json).unwrap();
+        assert_eq!(token, back);
+    }
+
+    #[test]
+    fn token_unsigned_view_excludes_signature_enrichment() {
+        let sk = make_sk(1);
+        let token = build_basic_token(&sk);
+        let unsigned = build_unsigned_view(&token);
+        // The unsigned view should contain the sentinel, not the actual signature.
+        if let CanonicalValue::Map(ref map) = unsigned {
+            if let Some(CanonicalValue::Bytes(ref sig_bytes)) = map.get("signature") {
+                assert_eq!(
+                    sig_bytes.as_slice(),
+                    SIGNATURE_SENTINEL,
+                    "unsigned view must use signature sentinel"
+                );
+            } else {
+                panic!("signature field missing or wrong type in unsigned view");
+            }
+        } else {
+            panic!("unsigned view should be a Map");
+        }
+    }
+
+    #[test]
+    fn token_preimage_starts_with_domain_tag_enrichment() {
+        let sk = make_sk(1);
+        let token = build_basic_token(&sk);
+        let preimage = token.preimage_bytes();
+        let domain_tag = ObjectDomain::CapabilityToken.tag();
+        assert!(
+            preimage.starts_with(domain_tag),
+            "preimage must start with domain tag"
+        );
+    }
+
+    #[test]
+    fn inverted_temporal_window_exact_values_enrichment() {
+        let sk = make_sk(1);
+        let err = TokenBuilder::new(
+            sk,
+            DeterministicTimestamp(500),
+            DeterministicTimestamp(499),
+            SecurityEpoch::GENESIS,
+            "zone-a",
+        )
+        .add_audience(make_principal(10))
+        .add_capability(RuntimeCapability::VmDispatch)
+        .build()
+        .unwrap_err();
+
+        match err {
+            TokenError::InvertedTemporalWindow { not_before, expiry } => {
+                assert_eq!(not_before, 500);
+                assert_eq!(expiry, 499);
+            }
+            other => panic!("expected InvertedTemporalWindow, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn checkpoint_binding_exact_boundary_passes_enrichment() {
+        // Verifier checkpoint_seq == required seq should pass.
+        let sk = make_sk(1);
+        let token = TokenBuilder::new(
+            sk,
+            DeterministicTimestamp(100),
+            DeterministicTimestamp(1000),
+            SecurityEpoch::GENESIS,
+            "zone-a",
+        )
+        .add_audience(make_principal(10))
+        .add_capability(RuntimeCapability::VmDispatch)
+        .bind_checkpoint(make_checkpoint_ref(42))
+        .build()
+        .unwrap();
+
+        let ctx = VerificationContext {
+            current_tick: 500,
+            verifier_checkpoint_seq: 42, // exactly equal
+            verifier_revocation_seq: 5,
+        };
+        verify_token(&token, &make_principal(10), &ctx).unwrap();
+    }
+
+    #[test]
+    fn revocation_freshness_exact_boundary_passes_enrichment() {
+        let sk = make_sk(1);
+        let token = TokenBuilder::new(
+            sk,
+            DeterministicTimestamp(100),
+            DeterministicTimestamp(1000),
+            SecurityEpoch::GENESIS,
+            "zone-a",
+        )
+        .add_audience(make_principal(10))
+        .add_capability(RuntimeCapability::VmDispatch)
+        .bind_revocation_freshness(make_revocation_ref(42))
+        .build()
+        .unwrap();
+
+        let ctx = VerificationContext {
+            current_tick: 500,
+            verifier_checkpoint_seq: 10,
+            verifier_revocation_seq: 42, // exactly equal
+        };
+        verify_token(&token, &make_principal(10), &ctx).unwrap();
+    }
+
+    #[test]
+    fn both_bindings_checked_enrichment() {
+        let sk = make_sk(1);
+        let token = TokenBuilder::new(
+            sk,
+            DeterministicTimestamp(100),
+            DeterministicTimestamp(1000),
+            SecurityEpoch::GENESIS,
+            "zone-a",
+        )
+        .add_audience(make_principal(10))
+        .add_capability(RuntimeCapability::VmDispatch)
+        .bind_checkpoint(make_checkpoint_ref(20))
+        .bind_revocation_freshness(make_revocation_ref(15))
+        .build()
+        .unwrap();
+
+        // Both bindings satisfied.
+        let ctx_ok = VerificationContext {
+            current_tick: 500,
+            verifier_checkpoint_seq: 25,
+            verifier_revocation_seq: 20,
+        };
+        verify_token(&token, &make_principal(10), &ctx_ok).unwrap();
+
+        // Checkpoint fails, revocation ok.
+        let ctx_cp_fail = VerificationContext {
+            current_tick: 500,
+            verifier_checkpoint_seq: 10, // below 20
+            verifier_revocation_seq: 20,
+        };
+        let err = verify_token(&token, &make_principal(10), &ctx_cp_fail).unwrap_err();
+        assert!(matches!(
+            err,
+            TokenError::CheckpointBindingFailed { .. }
+        ));
+
+        // Checkpoint ok, revocation fails.
+        let ctx_rv_fail = VerificationContext {
+            current_tick: 500,
+            verifier_checkpoint_seq: 25,
+            verifier_revocation_seq: 10, // below 15
+        };
+        let err = verify_token(&token, &make_principal(10), &ctx_rv_fail).unwrap_err();
+        assert!(matches!(
+            err,
+            TokenError::RevocationFreshnessStale { .. }
+        ));
+    }
+
+    #[test]
+    fn token_event_type_display_rejected_contains_reason_enrichment() {
+        let et = TokenEventType::TokenRejected {
+            jti: EngineObjectId([2; 32]),
+            reason: "expired beyond window".to_string(),
+        };
+        let s = et.to_string();
+        assert!(s.contains("token_rejected"));
+        assert!(s.contains("expired beyond window"));
+    }
+
+    #[test]
+    fn token_event_type_display_verified_enrichment() {
+        let et = TokenEventType::TokenVerified {
+            jti: EngineObjectId([3; 32]),
+        };
+        let s = et.to_string();
+        assert!(s.contains("token_verified"));
+    }
+
+    #[test]
+    fn principal_id_from_different_vks_differ_enrichment() {
+        let sk1 = make_sk(1);
+        let sk2 = make_sk(2);
+        let p1 = PrincipalId::from_verification_key(&sk1.verification_key());
+        let p2 = PrincipalId::from_verification_key(&sk2.verification_key());
+        assert_ne!(p1, p2);
+    }
+
+    #[test]
+    fn token_schema_and_schema_id_consistent_enrichment() {
+        // Both are derived from the same definition, so they should be
+        // deterministic and non-trivial.
+        let s1 = token_schema();
+        let s2 = token_schema();
+        assert_eq!(s1, s2);
+        let id1 = token_schema_id();
+        let id2 = token_schema_id();
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn empty_zone_string_accepted_enrichment() {
+        let sk = make_sk(1);
+        let token = TokenBuilder::new(
+            sk,
+            DeterministicTimestamp(0),
+            DeterministicTimestamp(1000),
+            SecurityEpoch::GENESIS,
+            "", // empty zone
+        )
+        .add_audience(make_principal(1))
+        .add_capability(RuntimeCapability::VmDispatch)
+        .build()
+        .unwrap();
+
+        assert_eq!(token.zone, "");
+        let ctx = VerificationContext {
+            current_tick: 500,
+            verifier_checkpoint_seq: 0,
+            verifier_revocation_seq: 0,
+        };
+        verify_token(&token, &make_principal(1), &ctx).unwrap();
+    }
 }
