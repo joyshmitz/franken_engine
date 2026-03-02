@@ -94,6 +94,65 @@ rch_reject_local_fallback() {
   fi
 }
 
+relation_report_has_contract() {
+  local actual_schema actual_taxonomy
+
+  [[ -f "$relation_report_path" ]] || return 1
+  actual_schema="$(jq -r '.schema_version // empty' "$relation_report_path" 2>/dev/null || true)"
+  actual_taxonomy="$(jq -r '.taxonomy_version // empty' "$relation_report_path" 2>/dev/null || true)"
+
+  [[ "$actual_schema" == "$report_schema_version" && "$actual_taxonomy" == "$taxonomy_version" ]]
+}
+
+recover_relation_report_from_command_log() {
+  local command_log_path="$1"
+  local stripped_log_path candidate_report_path
+
+  [[ -f "$command_log_path" ]] || return 1
+
+  stripped_log_path="$(mktemp)"
+  candidate_report_path="$(mktemp)"
+  rch_strip_ansi "$command_log_path" >"$stripped_log_path"
+
+  awk '
+    BEGIN { capture = 0; depth = 0 }
+    {
+      line = $0
+      if (!capture) {
+        if (line ~ /^[[:space:]]*\{[[:space:]]*$/) {
+          capture = 1
+        } else {
+          next
+        }
+      }
+
+      print line
+      open_count = gsub(/\{/, "{", line)
+      close_count = gsub(/\}/, "}", line)
+      depth += open_count - close_count
+
+      if (capture && depth == 0) {
+        exit
+      }
+    }
+  ' "$stripped_log_path" >"$candidate_report_path"
+
+  rm -f "$stripped_log_path"
+
+  if ! jq -e '
+    (.schema_version // empty) != "" and
+    (.taxonomy_version // empty) != "" and
+    (.summary | type == "object") and
+    (.decision | type == "object")
+  ' "$candidate_report_path" >/dev/null 2>&1; then
+    rm -f "$candidate_report_path"
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$relation_report_path")"
+  mv "$candidate_report_path" "$relation_report_path"
+}
+
 pairs_for_partition() {
   case "$1" in
     smoke) echo "64" ;;
@@ -226,6 +285,7 @@ generate_drift_digest() {
 declare -a commands_run=()
 failed_command=""
 manifest_written=false
+last_command_log_path=""
 
 command_log_name() {
   local command_text="$1"
@@ -246,10 +306,17 @@ run_step() {
 
   log_path="$(mktemp)"
   if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
-    if rch_strip_ansi "$log_path" | rg -q "Remote command finished: exit=0"; then
+    remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
+
+    if [[ "$remote_exit_code" == "0" ]]; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" \
         | tee -a "$log_path"
-    elif rch_strip_ansi "$log_path" | rg -Eqi "timed out|timeout|signal: terminated|terminated"; then
+    elif [[ -n "$remote_exit_code" ]]; then
+      cp "$log_path" "$command_log_path"
+      rm -f "$log_path"
+      failed_command="${command_text} (remote-exit=${remote_exit_code})"
+      return 1
+    elif rch_strip_ansi "$log_path" | rg -qi -e "timed out|timeout after|signal: terminated|terminated by timeout"; then
       cp "$log_path" "$command_log_path"
       rm -f "$log_path"
       failed_command="${command_text} (timeout=${rch_timeout_seconds}s)"
@@ -278,6 +345,7 @@ run_step() {
   fi
 
   cp "$log_path" "$command_log_path"
+  last_command_log_path="$command_log_path"
   rm -f "$log_path"
 }
 
@@ -572,6 +640,13 @@ run_mode() {
           --policy-id "$policy_id" \
           --fixture-catalog "$fixture_catalog" \
           --out "$relation_report_path" || return 1
+
+      if ! relation_report_has_contract; then
+        if ! recover_relation_report_from_command_log "$last_command_log_path"; then
+          failed_command="recover parser oracle relation report from rch command log"
+          return 1
+        fi
+      fi
 
       if ! validate_relation_report_contract; then
         failed_command="validate parser oracle relation report schema/taxonomy contract"

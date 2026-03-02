@@ -67,3 +67,6 @@ ubs_output.*
 # Python bytecode
 __pycache__/
 *.pyc
+
+# bv (beads viewer) local config and caches
+.bv/

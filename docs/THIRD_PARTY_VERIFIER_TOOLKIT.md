@@ -23,6 +23,35 @@ Binary path:
 ./target/debug/franken-verify
 ```
 
+## Verifier Suite Gate (`bd-3gsv`)
+
+For deterministic verifier-lane validation, use the dedicated suite runner:
+
+```bash
+./scripts/run_third_party_verifier_suite.sh ci
+```
+
+Supported modes: `check`, `test`, `clippy`, and `ci` (default).
+
+Execution contract:
+
+- heavy Rust commands run through `rch`
+- if `rch` reports local fallback, the suite fails closed
+- deterministic environment metadata is sourced from `scripts/e2e/parser_deterministic_env.sh`
+- each run emits artifacts under `artifacts/third_party_verifier/<timestamp>/`
+
+Expected run artifacts:
+
+- `run_manifest.json`
+- `events.jsonl`
+- `commands.txt`
+
+Replay wrapper:
+
+```bash
+./scripts/e2e/third_party_verifier_replay.sh ci
+```
+
 ## Usage
 
 ```bash
@@ -307,6 +336,7 @@ Example report fields of interest:
 Suggested gate pattern:
 
 ```bash
+./scripts/run_third_party_verifier_suite.sh ci
 franken-verify benchmark --input <bundle.json> --summary
 franken-verify benchmark fairness --input <bundle.json> --summary
 franken-verify benchmark reproduce --bundle <bundle_dir> --summary

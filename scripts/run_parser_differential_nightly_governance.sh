@@ -57,13 +57,13 @@ run_step_timeout_recovered_success() {
   fi
 
   if [[ "$command_text" == *"cargo test"* ]]; then
-    if rg -q "test result: ok" "$log_path" && ! rg -Eq "test result: FAILED|error: test failed|error: could not compile|panicked at" "$log_path"; then
+    if rg -q "test result: ok" "$log_path" && ! rg -q -e "test result: FAILED|error: test failed|error: could not compile|panicked at" "$log_path"; then
       return 0
     fi
     return 1
   fi
 
-  if rg -q "Finished \`dev\` profile" "$log_path" && ! rg -Eq "error:|error\\[|could not compile|panicked at" "$log_path"; then
+  if rg -q "Finished \`dev\` profile" "$log_path" && ! rg -q -e "error:|error\\[|could not compile|panicked at" "$log_path"; then
     return 0
   fi
   return 1
