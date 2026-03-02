@@ -446,3 +446,58 @@ fn decision_artifact_is_deterministic_and_logs_use_stable_contract_keys() {
     assert_eq!(last_log.outcome, "pass");
     assert!(last_log.error_code.is_none());
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde, display, defaults, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn plas_activation_mode_serde_round_trip_all_variants() {
+    for mode in [
+        PlasActivationMode::Active,
+        PlasActivationMode::Shadow,
+        PlasActivationMode::AuditOnly,
+        PlasActivationMode::Disabled,
+    ] {
+        let json = serde_json::to_string(&mode).expect("serialize");
+        let recovered: PlasActivationMode = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(mode, recovered);
+        assert!(!mode.as_str().is_empty());
+    }
+}
+
+#[test]
+fn plas_release_gate_failure_code_serde_round_trip_all_variants() {
+    for code in [
+        PlasReleaseGateFailureCode::CohortPlasNotActive,
+        PlasReleaseGateFailureCode::CohortCoverageMissingGrantExercise,
+        PlasReleaseGateFailureCode::MissingCapabilityWitness,
+        PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed,
+        PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing,
+        PlasReleaseGateFailureCode::EscrowReplayMismatch,
+        PlasReleaseGateFailureCode::RevocationWitnessMissing,
+        PlasReleaseGateFailureCode::RevocationEscrowEventMissing,
+        PlasReleaseGateFailureCode::AmbientAuthorityDetected,
+    ] {
+        let json = serde_json::to_string(&code).expect("serialize");
+        let recovered: PlasReleaseGateFailureCode =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(code, recovered);
+        assert!(!code.error_code().is_empty());
+    }
+}
+
+#[test]
+fn plas_escrow_replay_evidence_serde_round_trip() {
+    let evidence = PlasEscrowReplayEvidence {
+        receipt_id: "receipt-serde".to_string(),
+        replay_decision_kind: "grant".to_string(),
+        replay_outcome: "allow".to_string(),
+        replay_policy_id: "policy-serde".to_string(),
+        deterministic_replay: true,
+        replay_trace_id: "replay-trace-serde".to_string(),
+    };
+    let json = serde_json::to_string(&evidence).expect("serialize");
+    let recovered: PlasEscrowReplayEvidence = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(evidence, recovered);
+}

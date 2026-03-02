@@ -242,3 +242,70 @@ fn structured_log_contract_is_stable() {
     );
     assert_eq!(final_log.lifecycle_state, BurnInLifecycleState::Rejection);
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde, display, defaults, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn extension_risk_class_serde_round_trip_all_variants() {
+    for risk_class in [
+        ExtensionRiskClass::Low,
+        ExtensionRiskClass::Standard,
+        ExtensionRiskClass::High,
+    ] {
+        let json = serde_json::to_string(&risk_class).expect("serialize");
+        let recovered: ExtensionRiskClass = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(risk_class, recovered);
+        assert!(!risk_class.as_str().is_empty());
+    }
+}
+
+#[test]
+fn burn_in_lifecycle_state_serde_round_trip_all_variants() {
+    for state in [
+        BurnInLifecycleState::ShadowStart,
+        BurnInLifecycleState::ShadowEvaluation,
+        BurnInLifecycleState::PromotionGate,
+        BurnInLifecycleState::AutoEnforcement,
+        BurnInLifecycleState::Rejection,
+    ] {
+        let json = serde_json::to_string(&state).expect("serialize");
+        let recovered: BurnInLifecycleState = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(state, recovered);
+        assert!(!state.as_str().is_empty());
+    }
+}
+
+#[test]
+fn burn_in_failure_code_serde_round_trip_all_variants() {
+    for code in [
+        BurnInFailureCode::EarlyTerminationFalseDeny,
+        BurnInFailureCode::InsufficientShadowDuration,
+        BurnInFailureCode::InsufficientShadowObservations,
+        BurnInFailureCode::ShadowSuccessRateBelowThreshold,
+        BurnInFailureCode::FalseDenyEnvelopeExceeded,
+        BurnInFailureCode::RollbackProofArtifactsMissing,
+    ] {
+        let json = serde_json::to_string(&code).expect("serialize");
+        let recovered: BurnInFailureCode = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(code, recovered);
+        assert!(!code.error_code().is_empty());
+    }
+}
+
+#[test]
+fn shadow_observation_serde_round_trip() {
+    let obs = observation("obs-serde", 1_000_500, true, false);
+    let json = serde_json::to_string(&obs).expect("serialize");
+    let recovered: ShadowObservation = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(obs, recovered);
+}
+
+#[test]
+fn burn_in_session_config_serde_round_trip() {
+    let config = session_config();
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: BurnInSessionConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(config, recovered);
+}

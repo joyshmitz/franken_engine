@@ -166,3 +166,67 @@ fn structured_log_fields_are_stable() {
     assert_eq!(evaluation.log.outcome, "fail");
     assert_eq!(evaluation.log.error_code.as_deref(), Some("capability_gap"));
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde, display, defaults, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn lockstep_runtime_serde_round_trip_all_variants() {
+    for runtime in [
+        LockstepRuntime::FrankenEngineFull,
+        LockstepRuntime::FrankenEngineMinimal,
+        LockstepRuntime::Node,
+        LockstepRuntime::Bun,
+    ] {
+        let json = serde_json::to_string(&runtime).expect("serialize");
+        let recovered: LockstepRuntime = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(runtime, recovered);
+        assert!(!runtime.as_str().is_empty());
+    }
+}
+
+#[test]
+fn lockstep_failure_class_serde_round_trip_all_variants() {
+    for failure_class in [
+        LockstepFailureClass::CorrectnessRegression,
+        LockstepFailureClass::CapabilityGap,
+        LockstepFailureClass::PlatformDivergence,
+    ] {
+        let json = serde_json::to_string(&failure_class).expect("serialize");
+        let recovered: LockstepFailureClass = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(failure_class, recovered);
+        assert!(!failure_class.error_code().is_empty());
+    }
+}
+
+#[test]
+fn runtime_observation_serde_round_trip() {
+    let obs = observation(LockstepRuntime::Node, "serde-test", 1_500);
+    let json = serde_json::to_string(&obs).expect("serialize");
+    let recovered: RuntimeObservation = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(obs, recovered);
+}
+
+#[test]
+fn runtime_tolerance_default_denies_all_mismatches() {
+    let tolerance = RuntimeTolerance {
+        allow_output_digest_mismatch: false,
+        allow_side_effect_digest_mismatch: false,
+        allow_state_digest_mismatch: false,
+        allowed_error_codes: BTreeSet::new(),
+    };
+    let json = serde_json::to_string(&tolerance).expect("serialize");
+    let recovered: RuntimeTolerance = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(tolerance, recovered);
+}
+
+#[test]
+fn plas_lockstep_error_display_is_non_empty() {
+    let err = PlasLockstepError::InvalidCase {
+        detail: "missing reference".to_string(),
+    };
+    let msg = err.to_string();
+    assert!(!msg.is_empty());
+    assert!(msg.contains("missing reference"));
+}
