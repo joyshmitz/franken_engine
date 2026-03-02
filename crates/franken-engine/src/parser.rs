@@ -2392,7 +2392,7 @@ fn parse_import_binding_clause(
         ));
     }
 
-    if is_identifier(binding_clause) {
+    if is_module_binding_identifier(binding_clause) {
         return Ok(Some(binding_clause.to_string()));
     }
 
@@ -2410,10 +2410,10 @@ fn parse_import_binding_clause(
         let default_binding = default_binding_raw.trim();
         let trailing_clause = trailing_clause_raw.trim();
 
-        if !is_identifier(default_binding) {
+        if !is_module_binding_identifier(default_binding) {
             return Err(ParseError::new(
                 ParseErrorCode::UnsupportedSyntax,
-                "default import binding must be an identifier",
+                "default import binding must be a non-keyword identifier",
                 source_label.to_string(),
                 Some(span.clone()),
             ));
@@ -2437,7 +2437,7 @@ fn parse_import_binding_clause(
 fn parse_namespace_import_binding(clause: &str) -> Option<String> {
     let rest = clause.strip_prefix('*')?.trim_start();
     let rest = rest.strip_prefix("as")?.trim_start();
-    if is_identifier(rest) {
+    if is_module_binding_identifier(rest) {
         Some(rest.to_string())
     } else {
         None
@@ -2471,8 +2471,10 @@ fn is_named_import_clause(clause: &str) -> bool {
         let fourth = parts.next();
 
         let is_valid = match (second, third, fourth) {
-            (None, None, None) => is_identifier(first),
-            (Some("as"), Some(local), None) => is_identifier(first) && is_identifier(local),
+            (None, None, None) => is_module_binding_identifier(first),
+            (Some("as"), Some(local), None) => {
+                is_identifier(first) && is_module_binding_identifier(local)
+            }
             _ => false,
         };
 
@@ -3163,6 +3165,62 @@ fn is_identifier(input: &str) -> bool {
         return false;
     }
     chars.all(is_identifier_continue)
+}
+
+fn is_module_binding_identifier(input: &str) -> bool {
+    is_identifier(input) && !is_disallowed_module_binding_name(input)
+}
+
+fn is_disallowed_module_binding_name(name: &str) -> bool {
+    matches!(
+        name,
+        "await"
+            | "break"
+            | "case"
+            | "catch"
+            | "class"
+            | "const"
+            | "continue"
+            | "debugger"
+            | "default"
+            | "delete"
+            | "do"
+            | "else"
+            | "enum"
+            | "export"
+            | "extends"
+            | "false"
+            | "finally"
+            | "for"
+            | "function"
+            | "if"
+            | "implements"
+            | "import"
+            | "in"
+            | "instanceof"
+            | "interface"
+            | "let"
+            | "new"
+            | "null"
+            | "package"
+            | "private"
+            | "protected"
+            | "public"
+            | "return"
+            | "static"
+            | "super"
+            | "switch"
+            | "this"
+            | "throw"
+            | "true"
+            | "try"
+            | "typeof"
+            | "var"
+            | "void"
+            | "while"
+            | "with"
+            | "yield"
+    )
 }
 
 fn canonicalize_whitespace(input: &str) -> String {
@@ -4119,6 +4177,33 @@ mod tests {
         let err = parser
             .parse("import { run as } from 'pkg'", ParseGoal::Module)
             .expect_err("invalid named import alias must fail");
+        assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
+    }
+
+    #[test]
+    fn import_default_binding_keyword_is_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("import for from 'pkg'", ParseGoal::Module)
+            .expect_err("keyword default import binding must fail");
+        assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
+    }
+
+    #[test]
+    fn import_namespace_binding_keyword_is_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("import * as for from 'pkg'", ParseGoal::Module)
+            .expect_err("keyword namespace import binding must fail");
+        assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
+    }
+
+    #[test]
+    fn import_named_clause_keyword_binding_is_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("import { run as for } from 'pkg'", ParseGoal::Module)
+            .expect_err("keyword named import binding must fail");
         assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
     }
 
@@ -5376,6 +5461,19 @@ mod tests {
         assert!(!is_identifier("2x"));
         assert!(!is_identifier("foo bar"));
         assert!(!is_identifier("-x"));
+    }
+
+    #[test]
+    fn module_binding_identifier_rejects_keywords() {
+        assert!(!is_module_binding_identifier("for"));
+        assert!(!is_module_binding_identifier("await"));
+        assert!(!is_module_binding_identifier("interface"));
+    }
+
+    #[test]
+    fn module_binding_identifier_accepts_valid_names() {
+        assert!(is_module_binding_identifier("dep"));
+        assert!(is_module_binding_identifier("_local1"));
     }
 
     #[test]

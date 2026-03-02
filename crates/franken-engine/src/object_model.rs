@@ -1857,6 +1857,227 @@ impl Reflect {
     ) -> Result<Option<PropertyDescriptor>, ObjectError> {
         heap.get_own_property_descriptor(target, key)
     }
+
+    /// `Reflect.apply(target, thisArgument, argumentsList)` — ES2020 §26.1.1.
+    ///
+    /// Returns the function index and arguments for the interpreter to dispatch.
+    /// The actual call is performed by the execution pipeline; this method
+    /// validates that the target is callable and returns the components.
+    pub fn apply(
+        heap: &ObjectHeap,
+        target: ObjectHandle,
+        this_arg: JsValue,
+        args: Vec<JsValue>,
+    ) -> Result<ReflectApplyRequest, ObjectError> {
+        let obj = heap.get(target)?;
+        match obj {
+            ManagedObject::Ordinary(o) => {
+                if !o.callable {
+                    return Err(ObjectError::TypeError(
+                        "Reflect.apply: target is not callable".to_string(),
+                    ));
+                }
+                Ok(ReflectApplyRequest {
+                    target,
+                    this_arg,
+                    arguments: args,
+                })
+            }
+            ManagedObject::Proxy(_) => {
+                // Proxy apply trap: interpreter must resolve handler.apply trap.
+                Ok(ReflectApplyRequest {
+                    target,
+                    this_arg,
+                    arguments: args,
+                })
+            }
+        }
+    }
+
+    /// `Reflect.construct(target, argumentsList[, newTarget])` — ES2020 §26.1.2.
+    ///
+    /// Returns the constructor call request for the interpreter to dispatch.
+    /// Validates that target and optional newTarget are constructors.
+    pub fn construct(
+        heap: &ObjectHeap,
+        target: ObjectHandle,
+        args: Vec<JsValue>,
+        new_target: Option<ObjectHandle>,
+    ) -> Result<ReflectConstructRequest, ObjectError> {
+        let obj = heap.get(target)?;
+        match obj {
+            ManagedObject::Ordinary(o) => {
+                if !o.constructable {
+                    return Err(ObjectError::TypeError(
+                        "Reflect.construct: target is not a constructor".to_string(),
+                    ));
+                }
+            }
+            ManagedObject::Proxy(_) => {
+                // Proxy construct trap: handled by interpreter.
+            }
+        }
+
+        // Validate newTarget if provided.
+        let effective_new_target = if let Some(nt) = new_target {
+            let nt_obj = heap.get(nt)?;
+            match nt_obj {
+                ManagedObject::Ordinary(o) => {
+                    if !o.constructable {
+                        return Err(ObjectError::TypeError(
+                            "Reflect.construct: newTarget is not a constructor".to_string(),
+                        ));
+                    }
+                }
+                ManagedObject::Proxy(_) => {
+                    // Proxy newTarget: handled by interpreter.
+                }
+            }
+            nt
+        } else {
+            target
+        };
+
+        Ok(ReflectConstructRequest {
+            target,
+            arguments: args,
+            new_target: effective_new_target,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ReflectApplyRequest / ReflectConstructRequest
+// ---------------------------------------------------------------------------
+
+/// Request produced by `Reflect.apply` for the interpreter to execute.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReflectApplyRequest {
+    /// The callable target object.
+    pub target: ObjectHandle,
+    /// The `this` argument.
+    pub this_arg: JsValue,
+    /// The arguments list.
+    pub arguments: Vec<JsValue>,
+}
+
+/// Request produced by `Reflect.construct` for the interpreter to execute.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReflectConstructRequest {
+    /// The constructor target.
+    pub target: ObjectHandle,
+    /// The arguments list.
+    pub arguments: Vec<JsValue>,
+    /// The effective newTarget (defaults to target if not specified).
+    pub new_target: ObjectHandle,
+}
+
+// ---------------------------------------------------------------------------
+// ObjectHeap — additional creation helpers
+// ---------------------------------------------------------------------------
+
+impl ObjectHeap {
+    /// `Object.create(proto, propertiesObject)` — create with prototype and
+    /// define properties atomically.
+    pub fn create_with_properties(
+        &mut self,
+        proto: Option<ObjectHandle>,
+        properties: Vec<(PropertyKey, PropertyDescriptor)>,
+    ) -> Result<ObjectHandle, ObjectError> {
+        let handle = self.alloc(proto);
+        for (key, desc) in properties {
+            self.define_property(handle, key, desc)?;
+        }
+        Ok(handle)
+    }
+
+    /// Allocate a callable (function) object with the given prototype.
+    pub fn alloc_callable(&mut self, proto: Option<ObjectHandle>) -> ObjectHandle {
+        let handle = ObjectHandle(self.objects.len() as u32);
+        let mut obj = OrdinaryObject::with_prototype(proto);
+        obj.callable = true;
+        self.objects.push(ManagedObject::Ordinary(obj));
+        handle
+    }
+
+    /// Allocate a constructor object with the given prototype.
+    pub fn alloc_constructor(&mut self, proto: Option<ObjectHandle>) -> ObjectHandle {
+        let handle = ObjectHandle(self.objects.len() as u32);
+        let mut obj = OrdinaryObject::with_prototype(proto);
+        obj.callable = true;
+        obj.constructable = true;
+        self.objects.push(ManagedObject::Ordinary(obj));
+        handle
+    }
+
+    /// `instanceof` operator check: walks the prototype chain of `obj`
+    /// looking for `proto_target`.
+    pub fn instance_of(
+        &self,
+        obj: ObjectHandle,
+        proto_target: ObjectHandle,
+    ) -> Result<bool, ObjectError> {
+        let mut current = self.get_prototype_of(obj)?;
+        let mut depth: u32 = 0;
+        let mut visited = BTreeSet::new();
+        visited.insert(obj);
+
+        while let Some(h) = current {
+            if h == proto_target {
+                return Ok(true);
+            }
+            if depth > MAX_PROTOTYPE_CHAIN_DEPTH {
+                return Err(ObjectError::PrototypeChainTooDeep {
+                    depth,
+                    max: MAX_PROTOTYPE_CHAIN_DEPTH,
+                });
+            }
+            if !visited.insert(h) {
+                return Err(ObjectError::PrototypeCycleDetected);
+            }
+            current = self.get_prototype_of(h)?;
+            depth += 1;
+        }
+        Ok(false)
+    }
+
+    /// Shallow copy of an ordinary object's own enumerable properties
+    /// using the spread syntax semantics (`{...source}`).
+    pub fn spread_into(
+        &mut self,
+        target: ObjectHandle,
+        source: ObjectHandle,
+    ) -> Result<(), ObjectError> {
+        // Collect source properties first to avoid borrow conflicts.
+        let props: Vec<(PropertyKey, JsValue)> = {
+            let obj = self.get(source)?;
+            match obj {
+                ManagedObject::Ordinary(o) => o
+                    .own_property_keys()
+                    .into_iter()
+                    .filter_map(|k| {
+                        o.properties.get(&k).and_then(|d| {
+                            if d.is_enumerable() {
+                                d.value().map(|v| (k, v.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect(),
+                ManagedObject::Proxy(_) => {
+                    return Err(ObjectError::TypeError(
+                        "spread source cannot be proxy (handled by interpreter)".to_string(),
+                    ));
+                }
+            }
+        };
+
+        for (key, value) in props {
+            self.set_property(target, key, value)?;
+        }
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -5242,5 +5463,371 @@ mod tests {
         let json = serde_json::to_string(&m).unwrap();
         let back: ManagedObject = serde_json::from_str(&json).unwrap();
         assert!(back.as_ordinary().is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Reflect.apply
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn reflect_apply_callable() {
+        let mut heap = ObjectHeap::new();
+        let func = heap.alloc_callable(None);
+        let req = Reflect::apply(
+            &heap,
+            func,
+            JsValue::Undefined,
+            vec![int_val(1), int_val(2)],
+        )
+        .unwrap();
+        assert_eq!(req.target, func);
+        assert_eq!(req.this_arg, JsValue::Undefined);
+        assert_eq!(req.arguments.len(), 2);
+    }
+
+    #[test]
+    fn reflect_apply_not_callable() {
+        let mut heap = ObjectHeap::new();
+        let obj = heap.alloc_plain();
+        let err = Reflect::apply(&heap, obj, JsValue::Null, vec![]).unwrap_err();
+        assert!(matches!(err, ObjectError::TypeError(_)));
+        assert!(err.to_string().contains("not callable"));
+    }
+
+    #[test]
+    fn reflect_apply_with_this_arg() {
+        let mut heap = ObjectHeap::new();
+        let func = heap.alloc_callable(None);
+        let this_obj = heap.alloc_plain();
+        let req = Reflect::apply(
+            &heap,
+            func,
+            JsValue::Object(this_obj),
+            vec![str_val("hello")],
+        )
+        .unwrap();
+        assert_eq!(req.this_arg, JsValue::Object(this_obj));
+        assert_eq!(req.arguments, vec![str_val("hello")]);
+    }
+
+    #[test]
+    fn reflect_apply_proxy_target() {
+        let mut heap = ObjectHeap::new();
+        let target = heap.alloc_callable(None);
+        let handler = heap.alloc_plain();
+        let proxy = heap.alloc_proxy(target, handler);
+        // Proxy apply should succeed (interpreter handles the trap).
+        let req = Reflect::apply(&heap, proxy, JsValue::Undefined, vec![]).unwrap();
+        assert_eq!(req.target, proxy);
+    }
+
+    #[test]
+    fn reflect_apply_empty_args() {
+        let mut heap = ObjectHeap::new();
+        let func = heap.alloc_callable(None);
+        let req = Reflect::apply(&heap, func, JsValue::Undefined, vec![]).unwrap();
+        assert!(req.arguments.is_empty());
+    }
+
+    #[test]
+    fn reflect_apply_request_serde_roundtrip() {
+        let req = ReflectApplyRequest {
+            target: ObjectHandle(1),
+            this_arg: JsValue::Int(42),
+            arguments: vec![JsValue::Bool(true), JsValue::Str("x".into())],
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: ReflectApplyRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.target, ObjectHandle(1));
+        assert_eq!(back.this_arg, JsValue::Int(42));
+        assert_eq!(back.arguments.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Reflect.construct
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn reflect_construct_basic() {
+        let mut heap = ObjectHeap::new();
+        let ctor = heap.alloc_constructor(None);
+        let req = Reflect::construct(&heap, ctor, vec![int_val(10)], None).unwrap();
+        assert_eq!(req.target, ctor);
+        assert_eq!(req.new_target, ctor); // defaults to target
+        assert_eq!(req.arguments, vec![int_val(10)]);
+    }
+
+    #[test]
+    fn reflect_construct_with_new_target() {
+        let mut heap = ObjectHeap::new();
+        let ctor = heap.alloc_constructor(None);
+        let new_target = heap.alloc_constructor(None);
+        let req = Reflect::construct(&heap, ctor, vec![], Some(new_target)).unwrap();
+        assert_eq!(req.target, ctor);
+        assert_eq!(req.new_target, new_target);
+    }
+
+    #[test]
+    fn reflect_construct_not_constructor() {
+        let mut heap = ObjectHeap::new();
+        let func = heap.alloc_callable(None); // callable but not constructable
+        let err = Reflect::construct(&heap, func, vec![], None).unwrap_err();
+        assert!(matches!(err, ObjectError::TypeError(_)));
+        assert!(err.to_string().contains("not a constructor"));
+    }
+
+    #[test]
+    fn reflect_construct_new_target_not_constructor() {
+        let mut heap = ObjectHeap::new();
+        let ctor = heap.alloc_constructor(None);
+        let non_ctor = heap.alloc_callable(None);
+        let err = Reflect::construct(&heap, ctor, vec![], Some(non_ctor)).unwrap_err();
+        assert!(matches!(err, ObjectError::TypeError(_)));
+        assert!(err.to_string().contains("newTarget is not a constructor"));
+    }
+
+    #[test]
+    fn reflect_construct_proxy_target() {
+        let mut heap = ObjectHeap::new();
+        let target = heap.alloc_constructor(None);
+        let handler = heap.alloc_plain();
+        let proxy = heap.alloc_proxy(target, handler);
+        let req = Reflect::construct(&heap, proxy, vec![int_val(1)], None).unwrap();
+        assert_eq!(req.target, proxy);
+    }
+
+    #[test]
+    fn reflect_construct_request_serde_roundtrip() {
+        let req = ReflectConstructRequest {
+            target: ObjectHandle(5),
+            arguments: vec![JsValue::Null],
+            new_target: ObjectHandle(5),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: ReflectConstructRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.target, ObjectHandle(5));
+        assert_eq!(back.arguments, vec![JsValue::Null]);
+        assert_eq!(back.new_target, ObjectHandle(5));
+    }
+
+    // -----------------------------------------------------------------------
+    // ObjectHeap — create_with_properties
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn create_with_properties_basic() {
+        let mut heap = ObjectHeap::new();
+        let handle = heap
+            .create_with_properties(
+                None,
+                vec![
+                    (str_key("a"), PropertyDescriptor::data(int_val(1))),
+                    (str_key("b"), PropertyDescriptor::data(int_val(2))),
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            heap.get_property(handle, &str_key("a")).unwrap(),
+            int_val(1)
+        );
+        assert_eq!(
+            heap.get_property(handle, &str_key("b")).unwrap(),
+            int_val(2)
+        );
+    }
+
+    #[test]
+    fn create_with_properties_with_prototype() {
+        let mut heap = ObjectHeap::new();
+        let proto = heap.alloc_plain();
+        heap.set_property(proto, str_key("inherited"), int_val(99))
+            .unwrap();
+        let child = heap
+            .create_with_properties(
+                Some(proto),
+                vec![(str_key("own"), PropertyDescriptor::data(int_val(1)))],
+            )
+            .unwrap();
+        assert_eq!(
+            heap.get_property(child, &str_key("own")).unwrap(),
+            int_val(1)
+        );
+        assert_eq!(
+            heap.get_property(child, &str_key("inherited")).unwrap(),
+            int_val(99)
+        );
+    }
+
+    #[test]
+    fn create_with_accessor_properties() {
+        let mut heap = ObjectHeap::new();
+        let getter = heap.alloc_callable(None);
+        let handle = heap
+            .create_with_properties(
+                None,
+                vec![(
+                    str_key("x"),
+                    PropertyDescriptor::Accessor {
+                        get: Some(getter),
+                        set: None,
+                        enumerable: true,
+                        configurable: true,
+                    },
+                )],
+            )
+            .unwrap();
+        let desc = heap
+            .get_own_property_descriptor(handle, &str_key("x"))
+            .unwrap()
+            .unwrap();
+        assert!(desc.is_accessor());
+    }
+
+    // -----------------------------------------------------------------------
+    // ObjectHeap — alloc_callable / alloc_constructor
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn alloc_callable_creates_callable() {
+        let mut heap = ObjectHeap::new();
+        let func = heap.alloc_callable(None);
+        let obj = heap.get(func).unwrap().as_ordinary().unwrap();
+        assert!(obj.callable);
+        assert!(!obj.constructable);
+    }
+
+    #[test]
+    fn alloc_constructor_creates_constructor() {
+        let mut heap = ObjectHeap::new();
+        let ctor = heap.alloc_constructor(None);
+        let obj = heap.get(ctor).unwrap().as_ordinary().unwrap();
+        assert!(obj.callable);
+        assert!(obj.constructable);
+    }
+
+    #[test]
+    fn alloc_callable_with_prototype() {
+        let mut heap = ObjectHeap::new();
+        let proto = heap.alloc_plain();
+        let func = heap.alloc_callable(Some(proto));
+        let obj = heap.get(func).unwrap().as_ordinary().unwrap();
+        assert_eq!(obj.prototype, Some(proto));
+        assert!(obj.callable);
+    }
+
+    // -----------------------------------------------------------------------
+    // ObjectHeap — instance_of
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn instance_of_direct_prototype() {
+        let mut heap = ObjectHeap::new();
+        let proto = heap.alloc_plain();
+        let obj = heap.alloc(Some(proto));
+        assert!(heap.instance_of(obj, proto).unwrap());
+    }
+
+    #[test]
+    fn instance_of_chain() {
+        let mut heap = ObjectHeap::new();
+        let grandproto = heap.alloc_plain();
+        let proto = heap.alloc(Some(grandproto));
+        let obj = heap.alloc(Some(proto));
+        assert!(heap.instance_of(obj, grandproto).unwrap());
+        assert!(heap.instance_of(obj, proto).unwrap());
+    }
+
+    #[test]
+    fn instance_of_no_match() {
+        let mut heap = ObjectHeap::new();
+        let proto = heap.alloc_plain();
+        let other = heap.alloc_plain();
+        let obj = heap.alloc(Some(proto));
+        assert!(!heap.instance_of(obj, other).unwrap());
+    }
+
+    #[test]
+    fn instance_of_null_prototype() {
+        let mut heap = ObjectHeap::new();
+        let target = heap.alloc_plain();
+        let obj = heap.alloc(None); // null prototype
+        assert!(!heap.instance_of(obj, target).unwrap());
+    }
+
+    // -----------------------------------------------------------------------
+    // ObjectHeap — spread_into
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn spread_into_copies_enumerable() {
+        let mut heap = ObjectHeap::new();
+        let src = heap.alloc_plain();
+        heap.set_property(src, str_key("a"), int_val(1)).unwrap();
+        heap.set_property(src, str_key("b"), int_val(2)).unwrap();
+
+        let dst = heap.alloc_plain();
+        heap.spread_into(dst, src).unwrap();
+
+        assert_eq!(heap.get_property(dst, &str_key("a")).unwrap(), int_val(1));
+        assert_eq!(heap.get_property(dst, &str_key("b")).unwrap(), int_val(2));
+    }
+
+    #[test]
+    fn spread_into_skips_non_enumerable() {
+        let mut heap = ObjectHeap::new();
+        let src = heap.alloc_plain();
+        heap.define_property(
+            src,
+            str_key("visible"),
+            PropertyDescriptor::data(int_val(1)),
+        )
+        .unwrap();
+        heap.define_property(
+            src,
+            str_key("hidden"),
+            PropertyDescriptor::Data {
+                value: int_val(2),
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            },
+        )
+        .unwrap();
+
+        let dst = heap.alloc_plain();
+        heap.spread_into(dst, src).unwrap();
+
+        assert_eq!(
+            heap.get_property(dst, &str_key("visible")).unwrap(),
+            int_val(1)
+        );
+        assert_eq!(
+            heap.get_property(dst, &str_key("hidden")).unwrap(),
+            JsValue::Undefined
+        );
+    }
+
+    #[test]
+    fn spread_into_overwrites_target() {
+        let mut heap = ObjectHeap::new();
+        let src = heap.alloc_plain();
+        heap.set_property(src, str_key("x"), int_val(99)).unwrap();
+
+        let dst = heap.alloc_plain();
+        heap.set_property(dst, str_key("x"), int_val(1)).unwrap();
+        heap.spread_into(dst, src).unwrap();
+
+        assert_eq!(heap.get_property(dst, &str_key("x")).unwrap(), int_val(99));
+    }
+
+    #[test]
+    fn spread_into_proxy_source_error() {
+        let mut heap = ObjectHeap::new();
+        let target = heap.alloc_plain();
+        let handler = heap.alloc_plain();
+        let proxy = heap.alloc_proxy(target, handler);
+        let dst = heap.alloc_plain();
+        let err = heap.spread_into(dst, proxy).unwrap_err();
+        assert!(matches!(err, ObjectError::TypeError(_)));
     }
 }

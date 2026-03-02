@@ -93,6 +93,15 @@ fn parser_supports_named_and_namespace_import_forms() {
 }
 
 #[test]
+fn parser_rejects_keyword_module_import_bindings() {
+    let parser = CanonicalEs2020Parser;
+    let error = parser
+        .parse("import { run as for } from \"pkg\";", ParseGoal::Module)
+        .expect_err("module import binding with keyword local name must fail");
+    assert_eq!(error.code, ParseErrorCode::UnsupportedSyntax);
+}
+
+#[test]
 fn parser_accepts_stream_and_file_inputs_with_equal_canonical_hash() {
     let parser = CanonicalEs2020Parser;
     let source = "import dep from \"pkg\";\nexport default dep;\n";
