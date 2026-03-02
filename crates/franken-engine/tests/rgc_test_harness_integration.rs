@@ -6,10 +6,11 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenengine_engine::rgc_test_harness::{
-    BaselineScenarioDomain, BaselineScenarioOutcome, DeterministicTestContext, EventInput,
-    HarnessLane, HarnessRunManifest, RGC_TEST_HARNESS_EVENT_SCHEMA_VERSION,
-    RGC_TEST_HARNESS_MANIFEST_SCHEMA_VERSION, baseline_e2e_scenario_registry, load_json_fixture,
-    select_baseline_e2e_scenarios, validate_artifact_triad, write_artifact_triad,
+    ArtifactBundleValidationErrorCode, BaselineScenarioDomain, BaselineScenarioOutcome,
+    DeterministicTestContext, EventInput, HarnessLane, HarnessRunManifest,
+    RGC_TEST_HARNESS_EVENT_SCHEMA_VERSION, RGC_TEST_HARNESS_MANIFEST_SCHEMA_VERSION,
+    baseline_e2e_scenario_registry, load_json_fixture, select_baseline_e2e_scenarios,
+    validate_artifact_bundle, validate_artifact_triad, write_artifact_triad,
 };
 use serde::{Deserialize, Serialize};
 
@@ -252,4 +253,87 @@ fn rgc_baseline_registry_selection_and_validator_cover_representative_lanes() {
             validation.findings
         );
     }
+}
+
+#[test]
+fn rgc_bundle_validator_detects_cross_lane_drift_even_when_lane_triads_pass() {
+    let root = temp_dir("rgc_bundle_validator");
+    let artifacts_root = root.join("artifacts");
+    fs::create_dir_all(&artifacts_root).expect("create artifacts root");
+
+    let scenario_id = "rgc-062b-integration";
+    let fixture_id = "fixture-shared";
+    let seed = 6207;
+    for lane in [HarnessLane::Runtime, HarnessLane::Security] {
+        let context = DeterministicTestContext::new(scenario_id, fixture_id, lane, seed);
+        let run_id = context.default_run_id();
+        let events = vec![context.event(EventInput {
+            sequence: 0,
+            component: "rgc_bundle_validator_integration",
+            event: "lane_done",
+            outcome: "pass",
+            error_code: None,
+            timing_us: 99,
+            timestamp_unix_ms: 1_700_400_000_100,
+        })];
+        let commands = vec![
+            "cargo test -p frankenengine-engine --test rgc_test_harness_integration".to_string(),
+        ];
+        let manifest = HarnessRunManifest::from_context(
+            &context,
+            run_id,
+            events.len(),
+            commands.len(),
+            "./scripts/e2e/rgc_artifact_validator_phase_b_replay.sh ci",
+            1_700_400_000_200,
+        );
+        write_artifact_triad(&artifacts_root, &manifest, &events, &commands)
+            .expect("write integration triad");
+    }
+
+    let security_context =
+        DeterministicTestContext::new(scenario_id, fixture_id, HarnessLane::Security, seed);
+    let security_run_dir = artifacts_root.join(security_context.default_run_id());
+    let manifest_path = security_run_dir.join("run_manifest.json");
+    let mut manifest: HarnessRunManifest =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("read security manifest"))
+            .expect("parse security manifest");
+    manifest.trace_id = "trace-rgc-corrupted-integration".to_string();
+    fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize security manifest"),
+    )
+    .expect("rewrite security manifest");
+
+    let events_path = security_run_dir.join("events.jsonl");
+    let mut rewritten = String::new();
+    for line in fs::read_to_string(&events_path)
+        .expect("read security events")
+        .lines()
+    {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let mut event =
+            serde_json::from_str::<frankenengine_engine::rgc_test_harness::HarnessLogEvent>(line)
+                .expect("parse event");
+        event.trace_id = "trace-rgc-corrupted-integration".to_string();
+        rewritten.push_str(&serde_json::to_string(&event).expect("serialize event"));
+        rewritten.push('\n');
+    }
+    fs::write(&events_path, rewritten).expect("rewrite security events");
+
+    let report = validate_artifact_bundle(
+        &artifacts_root,
+        &[HarnessLane::Runtime, HarnessLane::Security],
+    );
+    assert!(!report.valid);
+    assert!(
+        report.lane_reports.iter().all(|lane| lane.valid),
+        "lane triads should remain valid after synchronized corruption"
+    );
+    assert!(report.findings.iter().any(|finding| {
+        finding.error_code == ArtifactBundleValidationErrorCode::CorrelationMismatch
+            && finding.message.contains("non-deterministic trace_id")
+    }));
 }

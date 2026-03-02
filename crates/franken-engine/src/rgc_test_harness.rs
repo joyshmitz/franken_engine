@@ -6,7 +6,7 @@
 //! - structured test log event envelopes with stable keys,
 //! - artifact triad writers (`run_manifest.json`, `events.jsonl`, `commands.txt`).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -23,6 +23,8 @@ pub const RGC_TEST_HARNESS_MANIFEST_SCHEMA_VERSION: &str =
 pub const RGC_BASELINE_E2E_SCENARIO_SCHEMA_VERSION: &str =
     "franken-engine.rgc-baseline-e2e-scenario.v1";
 pub const RGC_ARTIFACT_VALIDATOR_SCHEMA_VERSION: &str = "franken-engine.rgc-artifact-validator.v1";
+pub const RGC_ARTIFACT_BUNDLE_VALIDATOR_SCHEMA_VERSION: &str =
+    "franken-engine.rgc-artifact-bundle-validator.v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -406,6 +408,52 @@ pub struct ArtifactValidationReport {
     pub findings: Vec<ArtifactValidationFinding>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactBundleValidationErrorCode {
+    MissingBundleDirectory,
+    MissingRunDirectory,
+    InvalidManifest,
+    InvalidTriad,
+    DuplicateLane,
+    DuplicateRunId,
+    MissingRequiredLane,
+    CorrelationMismatch,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactBundleValidationFinding {
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: ArtifactBundleValidationErrorCode,
+    pub message: String,
+    pub owner_hint: String,
+    pub remediation_hint: String,
+    pub repro_command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactBundleCorrelationSignature {
+    pub scenario_id: String,
+    pub seed: u64,
+    pub lanes: Vec<HarnessLane>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactBundleValidationReport {
+    pub schema_version: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub valid: bool,
+    pub bundle_dir: String,
+    pub correlation_signature: Option<ArtifactBundleCorrelationSignature>,
+    pub run_dirs: Vec<String>,
+    pub lane_reports: Vec<ArtifactValidationReport>,
+    pub findings: Vec<ArtifactBundleValidationFinding>,
+}
+
 impl ArtifactValidationFinding {
     fn new(error_code: ArtifactValidationErrorCode, message: impl Into<String>) -> Self {
         Self {
@@ -416,6 +464,39 @@ impl ArtifactValidationFinding {
             message: message.into(),
         }
     }
+}
+
+impl ArtifactBundleValidationFinding {
+    fn new(
+        error_code: ArtifactBundleValidationErrorCode,
+        message: impl Into<String>,
+        owner_hint: impl Into<String>,
+        remediation_hint: impl Into<String>,
+        repro_command: impl Into<String>,
+    ) -> Self {
+        Self {
+            component: "rgc_artifact_bundle_validator".to_string(),
+            event: "validate_artifact_bundle".to_string(),
+            outcome: "fail".to_string(),
+            error_code,
+            message: message.into(),
+            owner_hint: owner_hint.into(),
+            remediation_hint: remediation_hint.into(),
+            repro_command: repro_command.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ManifestCorrelationFields {
+    run_id: String,
+    scenario_id: String,
+    fixture_id: String,
+    lane: HarnessLane,
+    seed: u64,
+    trace_id: String,
+    decision_id: String,
+    policy_id: String,
 }
 
 fn manifest_required_field(
@@ -656,6 +737,287 @@ pub fn validate_artifact_triad(run_dir: impl AsRef<Path>) -> ArtifactValidationR
         trace_id,
         decision_id,
         policy_id,
+        findings,
+    }
+}
+
+fn load_manifest_correlation_fields(
+    manifest_path: &Path,
+) -> Result<ManifestCorrelationFields, String> {
+    let raw = fs::read_to_string(manifest_path).map_err(|err| err.to_string())?;
+    let manifest: HarnessRunManifest = serde_json::from_str(&raw).map_err(|err| err.to_string())?;
+    Ok(ManifestCorrelationFields {
+        run_id: manifest.run_id,
+        scenario_id: manifest.scenario_id,
+        fixture_id: manifest.fixture_id,
+        lane: manifest.lane,
+        seed: manifest.seed,
+        trace_id: manifest.trace_id,
+        decision_id: manifest.decision_id,
+        policy_id: manifest.policy_id,
+    })
+}
+
+fn triad_repro_command(run_dir: &Path) -> String {
+    format!(
+        "cargo run -p frankenengine-engine --bin rgc_artifact_validator -- --run-dir {} --pretty",
+        run_dir.display()
+    )
+}
+
+fn bundle_repro_command(bundle_dir: &Path, required_lanes: &[HarnessLane]) -> String {
+    let lanes = required_lanes
+        .iter()
+        .map(|lane| lane.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    if lanes.is_empty() {
+        format!(
+            "cargo run -p frankenengine-engine --bin rgc_artifact_validator -- --bundle-dir {} --pretty",
+            bundle_dir.display()
+        )
+    } else {
+        format!(
+            "cargo run -p frankenengine-engine --bin rgc_artifact_validator -- --bundle-dir {} --required-lanes {} --pretty",
+            bundle_dir.display(),
+            lanes
+        )
+    }
+}
+
+pub fn validate_artifact_bundle(
+    bundle_dir: impl AsRef<Path>,
+    required_lanes: &[HarnessLane],
+) -> ArtifactBundleValidationReport {
+    let bundle_dir = bundle_dir.as_ref();
+    let bundle_dir_label = bundle_dir.display().to_string();
+    let mut findings = Vec::new();
+    let mut run_dirs = Vec::new();
+
+    if !bundle_dir.exists() {
+        findings.push(ArtifactBundleValidationFinding::new(
+            ArtifactBundleValidationErrorCode::MissingBundleDirectory,
+            format!("bundle directory does not exist: `{bundle_dir_label}`"),
+            "operator",
+            "create or point to a deterministic artifact bundle directory",
+            bundle_repro_command(bundle_dir, required_lanes),
+        ));
+    } else if !bundle_dir.is_dir() {
+        findings.push(ArtifactBundleValidationFinding::new(
+            ArtifactBundleValidationErrorCode::MissingBundleDirectory,
+            format!("bundle path is not a directory: `{bundle_dir_label}`"),
+            "operator",
+            "pass a directory that contains artifact run subdirectories",
+            bundle_repro_command(bundle_dir, required_lanes),
+        ));
+    } else {
+        if bundle_dir.join("run_manifest.json").exists() {
+            run_dirs.push(bundle_dir.to_path_buf());
+        }
+        if let Ok(entries) = fs::read_dir(bundle_dir) {
+            for entry in entries.flatten() {
+                let candidate = entry.path();
+                if candidate.is_dir() && candidate.join("run_manifest.json").exists() {
+                    run_dirs.push(candidate);
+                }
+            }
+        }
+    }
+
+    run_dirs.sort();
+    run_dirs.dedup();
+    if run_dirs.is_empty() {
+        findings.push(ArtifactBundleValidationFinding::new(
+            ArtifactBundleValidationErrorCode::MissingRunDirectory,
+            format!("no run directories with `run_manifest.json` found in `{bundle_dir_label}`"),
+            "verification-owner",
+            "emit per-lane artifact triads before advanced bundle validation",
+            bundle_repro_command(bundle_dir, required_lanes),
+        ));
+    }
+
+    let mut lane_reports = Vec::new();
+    let mut correlation_rows = Vec::<(PathBuf, ManifestCorrelationFields)>::new();
+    for run_dir in &run_dirs {
+        let triad_report = validate_artifact_triad(run_dir);
+        if !triad_report.valid {
+            findings.push(ArtifactBundleValidationFinding::new(
+                ArtifactBundleValidationErrorCode::InvalidTriad,
+                format!(
+                    "triad validation failed for `{}` ({} finding(s))",
+                    run_dir.display(),
+                    triad_report.findings.len()
+                ),
+                "lane-owner",
+                "fix triad-level schema/count/correlation failures for this run directory",
+                triad_repro_command(run_dir),
+            ));
+        }
+        lane_reports.push(triad_report);
+
+        let manifest_path = run_dir.join("run_manifest.json");
+        match load_manifest_correlation_fields(&manifest_path) {
+            Ok(fields) => correlation_rows.push((run_dir.to_path_buf(), fields)),
+            Err(error) => findings.push(ArtifactBundleValidationFinding::new(
+                ArtifactBundleValidationErrorCode::InvalidManifest,
+                format!(
+                    "unable to parse `{}` as HarnessRunManifest: {error}",
+                    manifest_path.display()
+                ),
+                "lane-owner",
+                "write run manifests using HarnessRunManifest schema",
+                triad_repro_command(run_dir),
+            )),
+        }
+    }
+
+    let mut seen_run_ids = BTreeMap::<String, String>::new();
+    let mut lane_to_run = BTreeMap::<HarnessLane, String>::new();
+    for (run_dir, fields) in &correlation_rows {
+        if let Some(existing_run_dir) =
+            seen_run_ids.insert(fields.run_id.clone(), run_dir.display().to_string())
+        {
+            findings.push(ArtifactBundleValidationFinding::new(
+                ArtifactBundleValidationErrorCode::DuplicateRunId,
+                format!(
+                    "duplicate run_id `{}` found in `{}` and `{}`",
+                    fields.run_id,
+                    existing_run_dir,
+                    run_dir.display()
+                ),
+                "verification-owner",
+                "ensure each lane artifact triad uses a unique run_id",
+                bundle_repro_command(bundle_dir, required_lanes),
+            ));
+        }
+
+        if let Some(existing_run_id) = lane_to_run.insert(fields.lane, fields.run_id.clone()) {
+            findings.push(ArtifactBundleValidationFinding::new(
+                ArtifactBundleValidationErrorCode::DuplicateLane,
+                format!(
+                    "lane `{}` appears multiple times (run_ids `{}` and `{}`)",
+                    fields.lane, existing_run_id, fields.run_id
+                ),
+                "verification-owner",
+                "emit exactly one run triad per lane for advanced correlation checks",
+                bundle_repro_command(bundle_dir, required_lanes),
+            ));
+        }
+
+        let expected = DeterministicTestContext::new(
+            fields.scenario_id.clone(),
+            fields.fixture_id.clone(),
+            fields.lane,
+            fields.seed,
+        );
+
+        if fields.trace_id != expected.trace_id {
+            findings.push(ArtifactBundleValidationFinding::new(
+                ArtifactBundleValidationErrorCode::CorrelationMismatch,
+                format!(
+                    "run `{}` has non-deterministic trace_id: expected `{}` found `{}`",
+                    fields.run_id, expected.trace_id, fields.trace_id
+                ),
+                "lane-owner",
+                "regenerate manifest/events using DeterministicTestContext-derived identifiers",
+                triad_repro_command(run_dir),
+            ));
+        }
+        if fields.decision_id != expected.decision_id {
+            findings.push(ArtifactBundleValidationFinding::new(
+                ArtifactBundleValidationErrorCode::CorrelationMismatch,
+                format!(
+                    "run `{}` has non-deterministic decision_id: expected `{}` found `{}`",
+                    fields.run_id, expected.decision_id, fields.decision_id
+                ),
+                "lane-owner",
+                "regenerate manifest/events using DeterministicTestContext-derived identifiers",
+                triad_repro_command(run_dir),
+            ));
+        }
+        if fields.policy_id != expected.policy_id {
+            findings.push(ArtifactBundleValidationFinding::new(
+                ArtifactBundleValidationErrorCode::CorrelationMismatch,
+                format!(
+                    "run `{}` has non-deterministic policy_id: expected `{}` found `{}`",
+                    fields.run_id, expected.policy_id, fields.policy_id
+                ),
+                "lane-owner",
+                "regenerate manifest/events using DeterministicTestContext-derived identifiers",
+                triad_repro_command(run_dir),
+            ));
+        }
+    }
+
+    let required_lane_set: BTreeSet<HarnessLane> = required_lanes.iter().copied().collect();
+    for lane in &required_lane_set {
+        if !lane_to_run.contains_key(lane) {
+            findings.push(ArtifactBundleValidationFinding::new(
+                ArtifactBundleValidationErrorCode::MissingRequiredLane,
+                format!("required lane `{lane}` is missing from bundle"),
+                "verification-owner",
+                "add triad artifacts for each required lane before promotion checks",
+                bundle_repro_command(bundle_dir, required_lanes),
+            ));
+        }
+    }
+
+    let mut correlation_signature = None;
+    if let Some((_, baseline)) = correlation_rows.first() {
+        let mut lanes = BTreeSet::new();
+        lanes.insert(baseline.lane);
+        for (run_dir, fields) in correlation_rows.iter().skip(1) {
+            lanes.insert(fields.lane);
+            if fields.scenario_id != baseline.scenario_id {
+                findings.push(ArtifactBundleValidationFinding::new(
+                    ArtifactBundleValidationErrorCode::CorrelationMismatch,
+                    format!(
+                        "cross-lane scenario mismatch: baseline `{}` vs `{}` in `{}`",
+                        baseline.scenario_id,
+                        fields.scenario_id,
+                        run_dir.display()
+                    ),
+                    "verification-owner",
+                    "re-run lanes from the same scenario_id before advanced validation",
+                    bundle_repro_command(bundle_dir, required_lanes),
+                ));
+            }
+            if fields.seed != baseline.seed {
+                findings.push(ArtifactBundleValidationFinding::new(
+                    ArtifactBundleValidationErrorCode::CorrelationMismatch,
+                    format!(
+                        "cross-lane seed mismatch: baseline `{}` vs `{}` in `{}`",
+                        baseline.seed,
+                        fields.seed,
+                        run_dir.display()
+                    ),
+                    "verification-owner",
+                    "align lane seeds so replay and evidence linkage remain deterministic",
+                    bundle_repro_command(bundle_dir, required_lanes),
+                ));
+            }
+        }
+        correlation_signature = Some(ArtifactBundleCorrelationSignature {
+            scenario_id: baseline.scenario_id.clone(),
+            seed: baseline.seed,
+            lanes: lanes.into_iter().collect(),
+        });
+    }
+
+    let valid = findings.is_empty();
+    ArtifactBundleValidationReport {
+        schema_version: RGC_ARTIFACT_BUNDLE_VALIDATOR_SCHEMA_VERSION.to_string(),
+        component: "rgc_artifact_bundle_validator".to_string(),
+        event: "validate_artifact_bundle".to_string(),
+        outcome: if valid { "pass" } else { "fail" }.to_string(),
+        valid,
+        bundle_dir: bundle_dir_label,
+        correlation_signature,
+        run_dirs: run_dirs
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect(),
+        lane_reports,
         findings,
     }
 }
@@ -1080,5 +1442,187 @@ mod tests {
                 finding.error_code == ArtifactValidationErrorCode::EmptyCommands
             })
         );
+    }
+
+    fn write_lane_triad(
+        bundle_dir: &Path,
+        scenario_id: &str,
+        fixture_id: &str,
+        lane: HarnessLane,
+        seed: u64,
+    ) -> HarnessArtifactTriad {
+        let context = DeterministicTestContext::new(scenario_id, fixture_id, lane, seed);
+        let run_id = context.default_run_id();
+        let events = vec![context.event(EventInput {
+            sequence: 0,
+            component: "rgc_bundle_validator_test",
+            event: "lane_complete",
+            outcome: "pass",
+            error_code: None,
+            timing_us: 25,
+            timestamp_unix_ms: 1_700_300_000_000,
+        })];
+        let commands = vec![
+            "cargo test -p frankenengine-engine --test rgc_test_harness_integration".to_string(),
+        ];
+        let manifest = HarnessRunManifest::from_context(
+            &context,
+            run_id,
+            events.len(),
+            commands.len(),
+            "./scripts/e2e/rgc_artifact_validator_phase_b_replay.sh ci",
+            1_700_300_000_100,
+        );
+        write_artifact_triad(bundle_dir, &manifest, &events, &commands)
+            .expect("bundle triad should write")
+    }
+
+    #[test]
+    fn artifact_bundle_validator_accepts_valid_multi_lane_bundle() {
+        let root = temp_dir("artifact_bundle_validator_valid");
+        let bundle_dir = root.join("bundle");
+        fs::create_dir_all(&bundle_dir).expect("create bundle dir");
+
+        for lane in [
+            HarnessLane::Runtime,
+            HarnessLane::Security,
+            HarnessLane::E2e,
+        ] {
+            write_lane_triad(&bundle_dir, "rgc-062b-happy", "fixture-shared", lane, 6202);
+        }
+
+        let report = validate_artifact_bundle(
+            &bundle_dir,
+            &[
+                HarnessLane::Runtime,
+                HarnessLane::Security,
+                HarnessLane::E2e,
+            ],
+        );
+        assert!(
+            report.valid,
+            "expected valid bundle report, findings: {:?}",
+            report.findings
+        );
+        assert!(report.findings.is_empty());
+        assert_eq!(report.lane_reports.len(), 3);
+        let signature = report
+            .correlation_signature
+            .expect("signature should be present");
+        assert_eq!(signature.scenario_id, "rgc-062b-happy");
+        assert_eq!(signature.seed, 6202);
+        assert_eq!(signature.lanes.len(), 3);
+    }
+
+    #[test]
+    fn artifact_bundle_validator_reports_missing_required_lane() {
+        let root = temp_dir("artifact_bundle_validator_missing_lane");
+        let bundle_dir = root.join("bundle");
+        fs::create_dir_all(&bundle_dir).expect("create bundle dir");
+
+        write_lane_triad(
+            &bundle_dir,
+            "rgc-062b-missing-lane",
+            "fixture-shared",
+            HarnessLane::Runtime,
+            6203,
+        );
+
+        let report =
+            validate_artifact_bundle(&bundle_dir, &[HarnessLane::Runtime, HarnessLane::Security]);
+        assert!(!report.valid);
+        assert!(report.findings.iter().any(|finding| {
+            finding.error_code == ArtifactBundleValidationErrorCode::MissingRequiredLane
+        }));
+    }
+
+    #[test]
+    fn artifact_bundle_validator_detects_cross_lane_drift_even_when_triads_self_consistent() {
+        let root = temp_dir("artifact_bundle_validator_cross_lane_drift");
+        let bundle_dir = root.join("bundle");
+        fs::create_dir_all(&bundle_dir).expect("create bundle dir");
+
+        write_lane_triad(
+            &bundle_dir,
+            "rgc-062b-cross-lane",
+            "fixture-shared",
+            HarnessLane::Runtime,
+            6204,
+        );
+        let security_triad = write_lane_triad(
+            &bundle_dir,
+            "rgc-062b-cross-lane",
+            "fixture-shared",
+            HarnessLane::Security,
+            6204,
+        );
+
+        let bad_trace = "trace-rgc-corrupted";
+        let manifest_path = security_triad.run_dir.join("run_manifest.json");
+        let mut manifest: HarnessRunManifest = serde_json::from_str(
+            &fs::read_to_string(&manifest_path).expect("read security manifest"),
+        )
+        .expect("parse security manifest");
+        manifest.trace_id = bad_trace.to_string();
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).expect("serialize manifest"),
+        )
+        .expect("write corrupted manifest");
+
+        let events_path = security_triad.run_dir.join("events.jsonl");
+        let events_raw = fs::read_to_string(&events_path).expect("read security events");
+        let mut rewritten = String::new();
+        for line in events_raw.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let mut event: HarnessLogEvent =
+                serde_json::from_str(line).expect("parse security event");
+            event.trace_id = bad_trace.to_string();
+            rewritten.push_str(&serde_json::to_string(&event).expect("serialize event"));
+            rewritten.push('\n');
+        }
+        fs::write(&events_path, rewritten).expect("write corrupted events");
+
+        let report =
+            validate_artifact_bundle(&bundle_dir, &[HarnessLane::Runtime, HarnessLane::Security]);
+        assert!(!report.valid);
+        assert!(
+            report.lane_reports.iter().all(|lane| lane.valid),
+            "triads were rewritten consistently and should remain triad-valid"
+        );
+        assert!(report.findings.iter().any(|finding| {
+            finding.error_code == ArtifactBundleValidationErrorCode::CorrelationMismatch
+                && finding.message.contains("non-deterministic trace_id")
+        }));
+    }
+
+    #[test]
+    fn artifact_bundle_validator_rejects_duplicate_lanes() {
+        let root = temp_dir("artifact_bundle_validator_duplicate_lane");
+        let bundle_dir = root.join("bundle");
+        fs::create_dir_all(&bundle_dir).expect("create bundle dir");
+
+        write_lane_triad(
+            &bundle_dir,
+            "rgc-062b-dup-lane",
+            "fixture-a",
+            HarnessLane::Runtime,
+            6205,
+        );
+        write_lane_triad(
+            &bundle_dir,
+            "rgc-062b-dup-lane",
+            "fixture-b",
+            HarnessLane::Runtime,
+            6205,
+        );
+
+        let report = validate_artifact_bundle(&bundle_dir, &[HarnessLane::Runtime]);
+        assert!(!report.valid);
+        assert!(report.findings.iter().any(|finding| {
+            finding.error_code == ArtifactBundleValidationErrorCode::DuplicateLane
+        }));
     }
 }
