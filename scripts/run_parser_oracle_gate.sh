@@ -7,7 +7,6 @@ cd "$root_dir"
 mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
-target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_parser_oracle_gate}"
 artifact_root="${PARSER_ORACLE_ARTIFACT_ROOT:-artifacts/parser_oracle}"
 partition="${PARSER_ORACLE_PARTITION:-smoke}"
 gate_mode="${PARSER_ORACLE_GATE_MODE:-report_only}"
@@ -18,10 +17,16 @@ taxonomy_version="${PARSER_ORACLE_TAXONOMY_VERSION:-franken-engine.parser-oracle
 remediation_map_version="${PARSER_ORACLE_REMEDIATION_MAP_VERSION:-franken-engine.parser-oracle.remediation-map.v1}"
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+  target_dir="${CARGO_TARGET_DIR}"
+else
+  target_dir="/tmp/rch_target_franken_engine_parser_oracle_gate_${timestamp}"
+fi
 run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/manifest.json"
 events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
+command_logs_dir="${run_dir}/command_logs"
 baseline_path="${run_dir}/baseline.json"
 relation_report_path="${run_dir}/relation_report.json"
 relation_events_path="${run_dir}/relation_events.jsonl"
@@ -37,7 +42,7 @@ trace_id="trace-parser-oracle-${timestamp}"
 decision_id="decision-parser-oracle-${timestamp}"
 policy_id="policy-parser-oracle-v1"
 
-mkdir -p "$run_dir" "$failures_dir"
+mkdir -p "$run_dir" "$failures_dir" "$command_logs_dir"
 
 bootstrap_script="${root_dir}/scripts/e2e/parser_oracle_env_bootstrap.sh"
 if [[ -f "$bootstrap_script" ]]; then
@@ -222,11 +227,21 @@ declare -a commands_run=()
 failed_command=""
 manifest_written=false
 
+command_log_name() {
+  local command_text="$1"
+  local index="$2"
+  local sanitized
+  sanitized="$(printf '%s' "$command_text" | tr ' /:|()' '_' | tr -cd '[:alnum:]_.-' | cut -c1-120)"
+  printf '%03d_%s.log\n' "$index" "$sanitized"
+}
+
 run_step() {
   local command_text="$1"
-  local log_path remote_exit_code
+  local log_path remote_exit_code command_index command_log_path
   shift
   commands_run+=("$command_text")
+  command_index=$(( ${#commands_run[@]} - 1 ))
+  command_log_path="${command_logs_dir}/$(command_log_name "$command_text" "$command_index")"
   echo "==> $command_text"
 
   log_path="$(mktemp)"
@@ -234,7 +249,13 @@ run_step() {
     if rch_strip_ansi "$log_path" | rg -q "Remote command finished: exit=0"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" \
         | tee -a "$log_path"
+    elif rch_strip_ansi "$log_path" | rg -Eqi "timed out|timeout|signal: terminated|terminated"; then
+      cp "$log_path" "$command_log_path"
+      rm -f "$log_path"
+      failed_command="${command_text} (timeout=${rch_timeout_seconds}s)"
+      return 1
     else
+      cp "$log_path" "$command_log_path"
       rm -f "$log_path"
       failed_command="$command_text"
       return 1
@@ -242,6 +263,7 @@ run_step() {
   fi
 
   if ! rch_reject_local_fallback "$log_path"; then
+    cp "$log_path" "$command_log_path"
     rm -f "$log_path"
     failed_command="${command_text} (rch-local-fallback-detected)"
     return 1
@@ -249,11 +271,13 @@ run_step() {
 
   remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
   if [[ -n "$remote_exit_code" && "$remote_exit_code" != "0" ]]; then
+    cp "$log_path" "$command_log_path"
     rm -f "$log_path"
     failed_command="${command_text} (remote-exit=${remote_exit_code})"
     return 1
   fi
 
+  cp "$log_path" "$command_log_path"
   rm -f "$log_path"
 }
 
@@ -490,6 +514,7 @@ write_manifest() {
     echo "    \"manifest\": \"${manifest_path}\","
     echo "    \"events\": \"${events_path}\","
     echo "    \"commands\": \"${commands_path}\","
+    echo "    \"command_logs_dir\": \"${command_logs_dir}\","
     echo "    \"baseline\": \"${baseline_path}\","
     echo "    \"relation_report\": \"${relation_report_path}\","
     echo "    \"relation_events\": \"${relation_events_path}\","
@@ -506,6 +531,18 @@ write_manifest() {
 
   echo "parser oracle gate manifest: $manifest_path"
 }
+
+handle_signal() {
+  local signal="$1"
+  if [[ "$manifest_written" != true ]]; then
+    failed_command="${failed_command:-signal_${signal}}"
+    write_manifest 130
+  fi
+  exit 130
+}
+
+trap 'handle_signal INT' INT
+trap 'handle_signal TERM' TERM
 
 run_mode() {
   case "$mode" in

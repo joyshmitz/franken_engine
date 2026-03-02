@@ -37,9 +37,31 @@ run_rch() {
   timeout "${rch_timeout_seconds}" rch exec -q -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
 }
 
+rch_strip_ansi() {
+  local input="$1"
+  sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' "$input"
+}
+
+rch_remote_exit_code() {
+  local log_path="$1"
+  local remote_exit_line remote_exit_code
+
+  remote_exit_line="$(rch_strip_ansi "$log_path" | rg -o 'Remote command finished: exit=[0-9]+' | tail -n 1 || true)"
+  if [[ -z "$remote_exit_line" ]]; then
+    return 1
+  fi
+
+  remote_exit_code="${remote_exit_line##*=}"
+  if [[ -z "$remote_exit_code" ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "$remote_exit_code"
+}
+
 rch_reject_local_fallback() {
   local log_path="$1"
-  if grep -Eiq 'falling back to local|fallback to local|local fallback' "$log_path"; then
+  if rch_strip_ansi "$log_path" | grep -Eiq 'Remote execution failed: .*running locally|Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|running locally|\[RCH\] local \(|Failed to query daemon:.*running locally|Dependency preflight blocked remote execution|RCH-E326'; then
     echo "rch reported local fallback; refusing local execution for heavy command" >&2
     return 1
   fi
@@ -51,13 +73,13 @@ manifest_written=false
 
 run_step() {
   local command_text="$1"
-  local log_path
+  local log_path remote_exit_code
   shift
   commands_run+=("$command_text")
   echo "==> $command_text"
   log_path="$(mktemp)"
   if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
-    if rg -q "Remote command finished: exit=0" "$log_path"; then
+    if rch_strip_ansi "$log_path" | rg -q "Remote command finished: exit=0"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
     else
       rm -f "$log_path"
@@ -70,6 +92,20 @@ run_step() {
     failed_command="${command_text} (rch-local-fallback-detected)"
     return 1
   fi
+
+  remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
+  if [[ -z "$remote_exit_code" ]]; then
+    rm -f "$log_path"
+    failed_command="${command_text} (missing-remote-exit-marker)"
+    return 1
+  fi
+
+  if [[ "$remote_exit_code" != "0" ]]; then
+    rm -f "$log_path"
+    failed_command="${command_text} (remote-exit=${remote_exit_code})"
+    return 1
+  fi
+
   rm -f "$log_path"
 }
 

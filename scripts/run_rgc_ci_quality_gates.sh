@@ -72,7 +72,7 @@ rch_remote_exit_code() {
 
 rch_reject_local_fallback() {
   local log_path="$1"
-  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|\[RCH\] local \(' "$log_path"; then
+  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|running locally|\[RCH\] local \(|Remote execution failed: .*running locally' "$log_path"; then
     echo "rch reported local fallback; refusing local execution for heavy command" >&2
     return 1
   fi
@@ -159,6 +159,16 @@ run_step_rch() {
   fi
 
   remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
+  if [[ -z "$remote_exit_code" ]]; then
+    rm -f "$log_path"
+    failed_command="${command_text} (missing-remote-exit-marker)"
+    failure_lane="$lane"
+    failure_owner="$(default_owner_for_lane "$lane")"
+    failed_lanes+=("$lane")
+    record_event "lane_failed" "fail" "FE-RGC-CI-QUALITY-GATE-0008" "$lane" "$failed_command"
+    return 1
+  fi
+
   if [[ -n "$remote_exit_code" && "$remote_exit_code" != "0" ]]; then
     rm -f "$log_path"
     failed_command="${command_text} (remote-exit=${remote_exit_code})"

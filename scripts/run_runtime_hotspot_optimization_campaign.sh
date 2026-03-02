@@ -12,6 +12,8 @@ toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
 target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_runtime_hotspot_optimization_campaign}"
 artifact_root="${RUNTIME_HOTSPOT_OPTIMIZATION_CAMPAIGN_ARTIFACT_ROOT:-artifacts/runtime_hotspot_optimization_campaign}"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
+rch_retry_attempts="${RCH_RETRY_ATTEMPTS:-3}"
+rch_retry_probe_all="${RCH_RETRY_PROBE_ALL:-0}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
@@ -67,11 +69,16 @@ rch_reject_artifact_retrieval_failure() {
   fi
 }
 
+rch_failure_is_retryable() {
+  [[ "$failed_command" == *"(rch-local-fallback-detected)"* ]] || \
+    [[ "$failed_command" == *"(rch-artifact-retrieval-failed)"* ]]
+}
+
 declare -a commands_run=()
 failed_command=""
 manifest_written=false
 
-run_step() {
+run_step_once() {
   local command_text="$1"
   local log_path
   local run_status=0
@@ -111,6 +118,47 @@ run_step() {
   fi
 
   rm -f "$log_path"
+}
+
+run_step() {
+  local command_text="$1"
+  local attempt=1
+  shift
+
+  if ! [[ "$rch_retry_attempts" =~ ^[0-9]+$ ]] || [[ "$rch_retry_attempts" -lt 1 ]]; then
+    echo "RCH_RETRY_ATTEMPTS must be a positive integer (got: ${rch_retry_attempts})" >&2
+    exit 2
+  fi
+  if ! [[ "$rch_retry_probe_all" =~ ^[01]$ ]]; then
+    echo "RCH_RETRY_PROBE_ALL must be 0 or 1 (got: ${rch_retry_probe_all})" >&2
+    exit 2
+  fi
+
+  while true; do
+    local attempt_command_text="$command_text"
+    if [[ "$rch_retry_attempts" -gt 1 ]]; then
+      attempt_command_text="${command_text} [attempt ${attempt}/${rch_retry_attempts}]"
+    fi
+
+    if run_step_once "$attempt_command_text" "$@"; then
+      return 0
+    fi
+
+    if [[ "$attempt" -ge "$rch_retry_attempts" ]] || ! rch_failure_is_retryable; then
+      return 1
+    fi
+
+    if [[ "$rch_retry_probe_all" == "1" ]]; then
+      echo "==> transient rch failure detected; retrying after worker probe (${attempt}/${rch_retry_attempts})"
+    else
+      echo "==> transient rch failure detected; retrying (${attempt}/${rch_retry_attempts})"
+    fi
+    if [[ "$rch_retry_probe_all" == "1" ]]; then
+      rch workers probe --all >/dev/null 2>&1 || true
+    fi
+    sleep "$((attempt * 2))"
+    attempt=$((attempt + 1))
+  done
 }
 
 run_mode() {
