@@ -13,6 +13,8 @@ fixture_limit="${PARSER_MULTI_ENGINE_FIXTURE_LIMIT:-8}"
 fixture_id="${PARSER_MULTI_ENGINE_FIXTURE_ID:-}"
 seed="${PARSER_MULTI_ENGINE_SEED:-7}"
 fail_on_divergence="${PARSER_MULTI_ENGINE_FAIL_ON_DIVERGENCE:-0}"
+fail_on_critical_drift="${PARSER_MULTI_ENGINE_FAIL_ON_CRITICAL_DRIFT:-0}"
+emit_governance_actions="${PARSER_MULTI_ENGINE_EMIT_GOVERNANCE_ACTIONS:-1}"
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_dir="${artifact_root}/${timestamp}"
@@ -21,6 +23,7 @@ events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
 report_path="${run_dir}/report.json"
 repro_packs_dir="${run_dir}/repro_packs"
+governance_actions_path="${run_dir}/governance_actions.json"
 
 trace_id="trace-parser-multi-engine-harness-${timestamp}"
 decision_id="decision-parser-multi-engine-harness-${timestamp}"
@@ -118,7 +121,9 @@ failed_command=""
 manifest_written=false
 divergent_fixtures=0
 nondeterministic_fixtures=0
+critical_drift_fixtures=0
 repro_pack_fixtures=0
+governance_action_count=0
 step_log_index=0
 
 run_step() {
@@ -163,6 +168,12 @@ run_report_step() {
   fi
   if [[ "$fail_on_divergence" == "1" ]]; then
     command+=(--fail-on-divergence)
+  fi
+  if [[ "$fail_on_critical_drift" == "1" ]]; then
+    command+=(--fail-on-critical-drift)
+  fi
+  if [[ "$emit_governance_actions" == "1" ]]; then
+    command+=(--governance-actions-out "$governance_actions_path")
   fi
 
   local command_text
@@ -214,6 +225,7 @@ run_report_step() {
   if [[ -f "$report_path" ]]; then
     divergent_fixtures="$(jq -r '.summary.divergent_fixtures // 0' "$report_path")"
     nondeterministic_fixtures="$(jq -r '.summary.fixtures_with_nondeterminism // 0' "$report_path")"
+    critical_drift_fixtures="$(jq -r '.summary.drift_critical_fixtures // 0' "$report_path")"
     repro_pack_fixtures="$(jq -r '[.fixture_results[] | select(.repro_pack != null)] | length' "$report_path")"
     mkdir -p "$repro_packs_dir"
     jq -c '.fixture_results[] | select(.repro_pack != null) | .repro_pack' "$report_path" \
@@ -221,6 +233,57 @@ run_report_step() {
           fixture_key="$(jq -r '.fixture_id' <<<"$repro_json")"
           jq '.' <<<"$repro_json" >"${repro_packs_dir}/${fixture_key}.json"
         done
+  fi
+
+  if [[ "$emit_governance_actions" == "1" ]]; then
+    if [[ ! -f "$governance_actions_path" && -f "$report_path" ]]; then
+      jq '
+        {
+          schema_version: "franken-engine.parser-drift-governance-actions.v1",
+          generated_at_utc: .generated_at_utc,
+          run_id: .run_id,
+          trace_id: .trace_id,
+          decision_id: .decision_id,
+          policy_id: .policy_id,
+          actions: (
+            [
+              .fixture_results[]
+              | select(.drift_classification != null and .repro_pack != null)
+              | {
+                  schema_version: "franken-engine.parser-drift-governance-action.v1",
+                  action: "create",
+                  bead_id: (
+                    "bd-auto-" + (
+                      ((.repro_pack.provenance_hash | sub("^sha256:"; ""))[:8])
+                      | if length == 0 then "00000000" else . end
+                    )
+                  ),
+                  fingerprint: .repro_pack.provenance_hash,
+                  fixture_id: .fixture_id,
+                  category: .drift_classification.category,
+                  severity: .drift_classification.severity,
+                  owner_hint: .drift_classification.owner_hint,
+                  remediation_hint: .drift_classification.remediation_hint,
+                  replay_command: .replay_command,
+                  minimized_source_hash: .repro_pack.minimized_source_hash,
+                  provenance_hash: .repro_pack.provenance_hash
+                }
+            ]
+            | sort_by(.fingerprint)
+            | unique_by(.fingerprint)
+          )
+        }
+      ' "$report_path" >"$governance_actions_path"
+    fi
+    if [[ ! -f "$governance_actions_path" ]]; then
+      failed_command="${command_text} (governance actions artifact missing)"
+      return 6
+    fi
+    if ! jq -e '.actions and .schema_version' "$governance_actions_path" >/dev/null 2>&1; then
+      failed_command="${command_text} (governance actions artifact invalid)"
+      return 7
+    fi
+    governance_action_count="$(jq -r '.actions | length' "$governance_actions_path")"
   fi
 }
 
@@ -308,13 +371,17 @@ write_manifest() {
     echo "  \"fixture_id\": \"${fixture_id}\","
     echo "  \"seed\": ${seed},"
     echo "  \"fail_on_divergence\": ${fail_on_divergence},"
+    echo "  \"fail_on_critical_drift\": ${fail_on_critical_drift},"
+    echo "  \"emit_governance_actions\": ${emit_governance_actions},"
     echo "  \"generated_at_utc\": \"${timestamp}\","
     echo "  \"git_commit\": \"${git_commit}\","
     echo "  \"dirty_worktree\": ${dirty_worktree},"
     echo "  \"outcome\": \"${outcome}\","
     echo "  \"divergent_fixtures\": ${divergent_fixtures},"
     echo "  \"nondeterministic_fixtures\": ${nondeterministic_fixtures},"
+    echo "  \"critical_drift_fixtures\": ${critical_drift_fixtures},"
     echo "  \"repro_pack_fixtures\": ${repro_pack_fixtures},"
+    echo "  \"governance_action_count\": ${governance_action_count},"
     if [[ -n "$failed_command" ]]; then
       echo "  \"failed_command\": \"${failed_command}\","
     fi
@@ -332,13 +399,21 @@ write_manifest() {
     echo "    \"events\": \"${events_path}\","
     echo "    \"commands\": \"${commands_path}\","
     echo "    \"report\": \"${report_path}\","
-    echo "    \"repro_packs_dir\": \"${repro_packs_dir}\""
+    echo "    \"repro_packs_dir\": \"${repro_packs_dir}\","
+    if [[ "$emit_governance_actions" == "1" ]]; then
+      echo "    \"governance_actions\": \"${governance_actions_path}\""
+    else
+      echo '    "governance_actions": null'
+    fi
     echo "  },"
     echo '  "operator_verification": ['
     echo "    \"cat ${manifest_path}\","
     echo "    \"cat ${events_path}\","
     echo "    \"cat ${report_path}\","
     echo "    \"ls ${repro_packs_dir}\","
+    if [[ "$emit_governance_actions" == "1" ]]; then
+      echo "    \"cat ${governance_actions_path}\","
+    fi
     echo "    \"${0} report\""
     echo "  ]"
     echo "}"
