@@ -337,3 +337,118 @@ fn rgc_bundle_validator_detects_cross_lane_drift_even_when_lane_triads_pass() {
             && finding.message.contains("non-deterministic trace_id")
     }));
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde, display, defaults, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn harness_lane_serde_round_trip_all_variants() {
+    for lane in [
+        HarnessLane::Parser,
+        HarnessLane::Runtime,
+        HarnessLane::Security,
+        HarnessLane::Governance,
+        HarnessLane::E2e,
+    ] {
+        let json = serde_json::to_string(&lane).expect("serialize");
+        let recovered: HarnessLane = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(lane, recovered);
+    }
+}
+
+#[test]
+fn harness_lane_display_and_as_str_are_consistent() {
+    for lane in [
+        HarnessLane::Parser,
+        HarnessLane::Runtime,
+        HarnessLane::Security,
+        HarnessLane::Governance,
+        HarnessLane::E2e,
+    ] {
+        assert_eq!(lane.to_string(), lane.as_str());
+        assert!(!lane.as_str().is_empty());
+    }
+}
+
+#[test]
+fn baseline_scenario_domain_serde_round_trip_all_variants() {
+    for domain in [
+        BaselineScenarioDomain::Runtime,
+        BaselineScenarioDomain::Module,
+        BaselineScenarioDomain::Security,
+    ] {
+        let json = serde_json::to_string(&domain).expect("serialize");
+        let recovered: BaselineScenarioDomain = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(domain, recovered);
+    }
+}
+
+#[test]
+fn baseline_scenario_domain_display_and_as_str_are_consistent() {
+    for domain in [
+        BaselineScenarioDomain::Runtime,
+        BaselineScenarioDomain::Module,
+        BaselineScenarioDomain::Security,
+    ] {
+        assert_eq!(domain.to_string(), domain.as_str());
+        assert!(!domain.as_str().is_empty());
+    }
+}
+
+#[test]
+fn baseline_scenario_outcome_serde_round_trip() {
+    for outcome in [
+        BaselineScenarioOutcome::HappyPath,
+        BaselineScenarioOutcome::CanonicalFailure,
+    ] {
+        let json = serde_json::to_string(&outcome).expect("serialize");
+        let recovered: BaselineScenarioOutcome =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(outcome, recovered);
+    }
+}
+
+#[test]
+fn artifact_bundle_validation_error_code_serde_round_trip() {
+    for code in [
+        ArtifactBundleValidationErrorCode::MissingBundleDirectory,
+        ArtifactBundleValidationErrorCode::MissingRunDirectory,
+        ArtifactBundleValidationErrorCode::InvalidManifest,
+        ArtifactBundleValidationErrorCode::InvalidTriad,
+        ArtifactBundleValidationErrorCode::DuplicateLane,
+        ArtifactBundleValidationErrorCode::DuplicateRunId,
+        ArtifactBundleValidationErrorCode::MissingRequiredLane,
+        ArtifactBundleValidationErrorCode::CorrelationMismatch,
+    ] {
+        let json = serde_json::to_string(&code).expect("serialize");
+        let recovered: ArtifactBundleValidationErrorCode =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(code, recovered);
+    }
+}
+
+#[test]
+fn deterministic_test_context_same_inputs_produce_identical_trace_ids() {
+    let a = DeterministicTestContext::new("scenario-a", "fixture-a", HarnessLane::Runtime, 42);
+    let b = DeterministicTestContext::new("scenario-a", "fixture-a", HarnessLane::Runtime, 42);
+    assert_eq!(a.trace_id, b.trace_id);
+    assert_eq!(a.decision_id, b.decision_id);
+    assert_eq!(a.policy_id, b.policy_id);
+}
+
+#[test]
+fn harness_run_manifest_serde_round_trip() {
+    let context = DeterministicTestContext::new("serde-test", "fixture-serde", HarnessLane::E2e, 1);
+    let manifest = HarnessRunManifest::from_context(
+        &context,
+        context.default_run_id(),
+        2,
+        1,
+        "./scripts/replay.sh ci",
+        1_700_000_000_000,
+    );
+    let json = serde_json::to_string(&manifest).expect("serialize");
+    let recovered: HarnessRunManifest = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(manifest, recovered);
+}
