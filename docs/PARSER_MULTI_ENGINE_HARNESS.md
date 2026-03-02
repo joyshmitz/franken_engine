@@ -95,6 +95,21 @@ Minimization policy:
   signature are preserved
 - bounded rounds/candidate evaluations to keep runs finite and replayable
 
+## Governance Action Routing (RGC-104)
+
+The harness can derive deterministic remediation-routing actions directly from
+drift findings + repro packs:
+
+- action schema: `franken-engine.parser-drift-governance-action.v1`
+- report schema: `franken-engine.parser-drift-governance-actions.v1`
+- deterministic fingerprint: `fixture_results[].repro_pack.provenance_hash`
+- deterministic bead id: `bd-auto-<fingerprint-prefix>`
+- owner/team hint: `fixture_results[].drift_classification.owner_hint`
+
+Action emission is deterministic for a fixed harness report and de-duplicates
+findings by fingerprint so repeated fixtures do not fan out duplicate create
+requests.
+
 ## Engine Contract
 
 `external_command` engines must read one JSON request from stdin and emit one JSON response on stdout.
@@ -141,6 +156,8 @@ Optional flags:
 - `--fixture-limit <usize|none>`: cap fixture set
 - `--engine-specs <path>`: load engine list from JSON (array or `{ "engines": [...] }`)
 - `--fail-on-divergence`: exit `2` if any divergence/nondeterminism is observed
+- `--fail-on-critical-drift`: exit `3` if any critical drift class is observed
+- `--governance-actions-out <path>`: emit deterministic governance-action report JSON
 
 ## Deterministic Runner (`rch`-backed)
 
@@ -160,6 +177,12 @@ Modes:
 
 All CPU-intensive Rust operations are routed through `rch exec` when available.
 
+Relevant runner environment toggles:
+
+- `PARSER_MULTI_ENGINE_FAIL_ON_DIVERGENCE=1`
+- `PARSER_MULTI_ENGINE_FAIL_ON_CRITICAL_DRIFT=1`
+- `PARSER_MULTI_ENGINE_EMIT_GOVERNANCE_ACTIONS=1` (default)
+
 ## Artifacts
 
 Each run writes:
@@ -169,6 +192,7 @@ Each run writes:
 - `artifacts/parser_multi_engine_harness/<timestamp>/commands.txt`
 - `artifacts/parser_multi_engine_harness/<timestamp>/report.json`
 - `artifacts/parser_multi_engine_harness/<timestamp>/repro_packs/<fixture_id>.json`
+- `artifacts/parser_multi_engine_harness/<timestamp>/governance_actions.json` (when enabled)
 
 The report includes per-fixture replay commands:
 

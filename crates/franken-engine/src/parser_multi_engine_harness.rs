@@ -28,6 +28,10 @@ const DRIFT_CLASSIFICATION_TAXONOMY_VERSION: &str =
 const REPORT_SCHEMA_VERSION: &str = "franken-engine.parser-multi-engine.report.v2";
 const PARSER_TELEMETRY_SCHEMA_VERSION: &str = "franken-engine.parser-telemetry.v1";
 const DRIFT_REPRO_PACK_SCHEMA_VERSION: &str = "franken-engine.parser-drift-repro-pack.v1";
+const DRIFT_GOVERNANCE_ACTION_SCHEMA_VERSION: &str =
+    "franken-engine.parser-drift-governance-action.v1";
+const DRIFT_GOVERNANCE_ACTION_REPORT_SCHEMA_VERSION: &str =
+    "franken-engine.parser-drift-governance-actions.v1";
 const MAX_SOURCE_MINIMIZATION_ROUNDS: u32 = 32;
 const MAX_SOURCE_MINIMIZATION_CANDIDATES: u32 = 256;
 
@@ -337,6 +341,40 @@ pub struct DriftReproPack {
     pub minimization: DriftMinimizationStats,
     pub promotion_hooks: Vec<String>,
     pub provenance_hash: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GovernanceActionKind {
+    Create,
+    Update,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DriftGovernanceAction {
+    pub schema_version: String,
+    pub action: GovernanceActionKind,
+    pub bead_id: String,
+    pub fingerprint: String,
+    pub fixture_id: String,
+    pub category: DriftCategory,
+    pub severity: DriftSeverity,
+    pub owner_hint: String,
+    pub remediation_hint: String,
+    pub replay_command: String,
+    pub minimized_source_hash: String,
+    pub provenance_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DriftGovernanceActionReport {
+    pub schema_version: String,
+    pub generated_at_utc: String,
+    pub run_id: String,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub actions: Vec<DriftGovernanceAction>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -780,6 +818,79 @@ pub fn run_multi_engine_harness(
         },
         fixture_results,
     })
+}
+
+pub fn has_critical_drift(report: &MultiEngineHarnessReport) -> bool {
+    if report.summary.drift_critical_fixtures > 0 {
+        return true;
+    }
+    report.fixture_results.iter().any(|fixture| {
+        fixture
+            .drift_classification
+            .as_ref()
+            .is_some_and(|classification| classification.severity == DriftSeverity::Critical)
+    })
+}
+
+pub fn derive_drift_governance_actions(
+    report: &MultiEngineHarnessReport,
+) -> Vec<DriftGovernanceAction> {
+    let mut actions_by_fingerprint = BTreeMap::<String, DriftGovernanceAction>::new();
+    for fixture in &report.fixture_results {
+        let Some(classification) = fixture.drift_classification.as_ref() else {
+            continue;
+        };
+        let Some(repro_pack) = fixture.repro_pack.as_ref() else {
+            continue;
+        };
+
+        let fingerprint = repro_pack.provenance_hash.clone();
+        actions_by_fingerprint
+            .entry(fingerprint.clone())
+            .or_insert_with(|| DriftGovernanceAction {
+                schema_version: DRIFT_GOVERNANCE_ACTION_SCHEMA_VERSION.to_string(),
+                action: GovernanceActionKind::Create,
+                bead_id: auto_bead_id_from_fingerprint(&fingerprint),
+                fingerprint,
+                fixture_id: fixture.fixture_id.clone(),
+                category: classification.category,
+                severity: classification.severity,
+                owner_hint: classification.owner_hint.clone(),
+                remediation_hint: classification.remediation_hint.clone(),
+                replay_command: fixture.replay_command.clone(),
+                minimized_source_hash: repro_pack.minimized_source_hash.clone(),
+                provenance_hash: repro_pack.provenance_hash.clone(),
+            });
+    }
+
+    actions_by_fingerprint.into_values().collect::<Vec<_>>()
+}
+
+pub fn build_drift_governance_action_report(
+    report: &MultiEngineHarnessReport,
+) -> DriftGovernanceActionReport {
+    DriftGovernanceActionReport {
+        schema_version: DRIFT_GOVERNANCE_ACTION_REPORT_SCHEMA_VERSION.to_string(),
+        generated_at_utc: report.generated_at_utc.clone(),
+        run_id: report.run_id.clone(),
+        trace_id: report.trace_id.clone(),
+        decision_id: report.decision_id.clone(),
+        policy_id: report.policy_id.clone(),
+        actions: derive_drift_governance_actions(report),
+    }
+}
+
+fn auto_bead_id_from_fingerprint(fingerprint: &str) -> String {
+    let mut normalized = fingerprint
+        .strip_prefix("sha256:")
+        .unwrap_or(fingerprint)
+        .chars()
+        .take(8)
+        .collect::<String>();
+    if normalized.is_empty() {
+        normalized = "00000000".to_string();
+    }
+    format!("bd-auto-{normalized}")
 }
 
 fn derive_run_id(
@@ -3414,5 +3525,196 @@ mod tests {
         assert_eq!(dc.comparator_decision, "drift_minor");
         assert!(!dc.owner_hint.is_empty());
         assert!(!dc.remediation_hint.is_empty());
+    }
+
+    #[test]
+    fn auto_bead_id_from_fingerprint_uses_sha256_prefix() {
+        let bead = auto_bead_id_from_fingerprint(
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        );
+        assert_eq!(bead, "bd-auto-01234567");
+    }
+
+    #[test]
+    fn derive_drift_governance_actions_is_deterministic_and_owner_routed() {
+        let classification =
+            build_drift_classification(DriftCategory::Semantic, DriftSeverity::Critical);
+        let repro_pack = DriftReproPack {
+            schema_version: DRIFT_REPRO_PACK_SCHEMA_VERSION.to_string(),
+            fixture_id: "fixture-a".to_string(),
+            family_id: "family-a".to_string(),
+            source_hash: "sha256:source".to_string(),
+            minimized_source: "export const x = 1;\n".to_string(),
+            minimized_source_hash: "sha256:minimized".to_string(),
+            replay_command: "cargo run -- fixture-a".to_string(),
+            drift_classification: classification.clone(),
+            minimization: DriftMinimizationStats {
+                attempted: true,
+                rounds: 1,
+                candidates_evaluated: 1,
+                bytes_removed: 0,
+                original_bytes: 10,
+                minimized_bytes: 10,
+                fixed_point: true,
+            },
+            promotion_hooks: vec![],
+            provenance_hash:
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_string(),
+        };
+
+        let fixture = FixtureComparisonResult {
+            fixture_id: "fixture-a".to_string(),
+            family_id: "family-a".to_string(),
+            goal: "script".to_string(),
+            source_hash: "sha256:source".to_string(),
+            equivalent_across_engines: false,
+            nondeterministic_engine_count: 0,
+            divergence_reason: Some("semantic drift".to_string()),
+            drift_classification: Some(classification.clone()),
+            repro_pack: Some(repro_pack.clone()),
+            replay_command: "cargo run -- fixture-a".to_string(),
+            engine_results: vec![],
+        };
+        let duplicate_fingerprint_fixture = FixtureComparisonResult {
+            fixture_id: "fixture-b".to_string(),
+            family_id: "family-b".to_string(),
+            goal: "script".to_string(),
+            source_hash: "sha256:source-b".to_string(),
+            equivalent_across_engines: false,
+            nondeterministic_engine_count: 0,
+            divergence_reason: Some("semantic drift".to_string()),
+            drift_classification: Some(classification),
+            repro_pack: Some(DriftReproPack {
+                fixture_id: "fixture-b".to_string(),
+                family_id: "family-b".to_string(),
+                source_hash: "sha256:source-b".to_string(),
+                minimized_source: "export const y = 1;\n".to_string(),
+                minimized_source_hash: "sha256:minimized-b".to_string(),
+                replay_command: "cargo run -- fixture-b".to_string(),
+                provenance_hash: repro_pack.provenance_hash.clone(),
+                ..repro_pack.clone()
+            }),
+            replay_command: "cargo run -- fixture-b".to_string(),
+            engine_results: vec![],
+        };
+
+        let report = MultiEngineHarnessReport {
+            schema_version: REPORT_SCHEMA_VERSION.to_string(),
+            generated_at_utc: "2026-03-01T00:00:00Z".to_string(),
+            run_id: "sha256:run".to_string(),
+            trace_id: "trace-id".to_string(),
+            decision_id: "decision-id".to_string(),
+            policy_id: "policy-id".to_string(),
+            fixture_catalog_path: "fixtures.json".to_string(),
+            fixture_catalog_hash: "sha256:catalog".to_string(),
+            parser_mode: EXPECTED_FIXTURE_PARSER_MODE.to_string(),
+            seed: 7,
+            locale: "C".to_string(),
+            timezone: "UTC".to_string(),
+            fixture_count: 2,
+            engine_specs: vec![
+                HarnessEngineSpec::franken_canonical("workspace"),
+                HarnessEngineSpec::fixture_expected_hash("baseline"),
+            ],
+            parser_telemetry: ParserTelemetrySummary {
+                schema_version: PARSER_TELEMETRY_SCHEMA_VERSION.to_string(),
+                sample_count: 0,
+                throughput_sources_per_second_millionths: 0,
+                throughput_mib_per_second_millionths: 0,
+                latency_ns_p50: 0,
+                latency_ns_p95: 0,
+                latency_ns_p99: 0,
+                ns_per_token_millionths: 0,
+                allocs_per_token_millionths: 0,
+                bytes_per_source_avg: 0,
+                tokens_per_source_avg: 0,
+                peak_rss_bytes: 0,
+            },
+            summary: MultiEngineHarnessSummary {
+                total_fixtures: 2,
+                equivalent_fixtures: 0,
+                divergent_fixtures: 2,
+                fixtures_with_nondeterminism: 0,
+                drift_minor_fixtures: 0,
+                drift_critical_fixtures: 2,
+                drift_counts_by_category: BTreeMap::from([("semantic".to_string(), 2)]),
+            },
+            fixture_results: vec![fixture, duplicate_fingerprint_fixture],
+        };
+
+        let left = derive_drift_governance_actions(&report);
+        let right = derive_drift_governance_actions(&report);
+        assert_eq!(left, right);
+        assert_eq!(left.len(), 1);
+
+        let action = left.first().expect("action should exist");
+        assert_eq!(
+            action.schema_version,
+            DRIFT_GOVERNANCE_ACTION_SCHEMA_VERSION
+        );
+        assert_eq!(action.action, GovernanceActionKind::Create);
+        assert_eq!(action.bead_id, "bd-auto-01234567");
+        assert_eq!(action.category, DriftCategory::Semantic);
+        assert_eq!(action.severity, DriftSeverity::Critical);
+        assert_eq!(action.owner_hint, "parser-core");
+        assert!(action.fingerprint.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn has_critical_drift_checks_report_summary_and_classifications() {
+        let critical_report = MultiEngineHarnessReport {
+            schema_version: REPORT_SCHEMA_VERSION.to_string(),
+            generated_at_utc: "2026-03-01T00:00:00Z".to_string(),
+            run_id: "sha256:run".to_string(),
+            trace_id: "trace-id".to_string(),
+            decision_id: "decision-id".to_string(),
+            policy_id: "policy-id".to_string(),
+            fixture_catalog_path: "fixtures.json".to_string(),
+            fixture_catalog_hash: "sha256:catalog".to_string(),
+            parser_mode: EXPECTED_FIXTURE_PARSER_MODE.to_string(),
+            seed: 1,
+            locale: "C".to_string(),
+            timezone: "UTC".to_string(),
+            fixture_count: 0,
+            engine_specs: vec![
+                HarnessEngineSpec::franken_canonical("workspace"),
+                HarnessEngineSpec::fixture_expected_hash("baseline"),
+            ],
+            parser_telemetry: ParserTelemetrySummary {
+                schema_version: PARSER_TELEMETRY_SCHEMA_VERSION.to_string(),
+                sample_count: 0,
+                throughput_sources_per_second_millionths: 0,
+                throughput_mib_per_second_millionths: 0,
+                latency_ns_p50: 0,
+                latency_ns_p95: 0,
+                latency_ns_p99: 0,
+                ns_per_token_millionths: 0,
+                allocs_per_token_millionths: 0,
+                bytes_per_source_avg: 0,
+                tokens_per_source_avg: 0,
+                peak_rss_bytes: 0,
+            },
+            summary: MultiEngineHarnessSummary {
+                total_fixtures: 0,
+                equivalent_fixtures: 0,
+                divergent_fixtures: 0,
+                fixtures_with_nondeterminism: 0,
+                drift_minor_fixtures: 0,
+                drift_critical_fixtures: 1,
+                drift_counts_by_category: BTreeMap::new(),
+            },
+            fixture_results: vec![],
+        };
+        assert!(has_critical_drift(&critical_report));
+
+        let no_critical_report = MultiEngineHarnessReport {
+            summary: MultiEngineHarnessSummary {
+                drift_critical_fixtures: 0,
+                ..critical_report.summary.clone()
+            },
+            ..critical_report
+        };
+        assert!(!has_critical_drift(&no_critical_report));
     }
 }

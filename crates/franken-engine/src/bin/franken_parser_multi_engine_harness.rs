@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use frankenengine_engine::parser_multi_engine_harness::{
     DEFAULT_MULTI_ENGINE_FIXTURE_CATALOG_PATH, HarnessEngineSpec, MultiEngineHarnessConfig,
-    run_multi_engine_harness,
+    build_drift_governance_action_report, has_critical_drift, run_multi_engine_harness,
 };
 use serde::Deserialize;
 
@@ -15,6 +15,8 @@ struct CliArgs {
     config: MultiEngineHarnessConfig,
     out_path: Option<PathBuf>,
     fail_on_divergence: bool,
+    fail_on_critical_drift: bool,
+    governance_actions_out: Option<PathBuf>,
     print_help: bool,
 }
 
@@ -51,8 +53,19 @@ fn run() -> Result<i32, Box<dyn Error>> {
         fs::write(out_path, json.as_bytes())?;
     }
 
+    if let Some(out_path) = &args.governance_actions_out {
+        if let Some(parent) = out_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let governance = build_drift_governance_action_report(&report);
+        fs::write(out_path, serde_json::to_vec_pretty(&governance)?)?;
+    }
+
     println!("{json}");
 
+    if args.fail_on_critical_drift && has_critical_drift(&report) {
+        return Ok(3);
+    }
     if args.fail_on_divergence
         && (report.summary.divergent_fixtures > 0
             || report.summary.fixtures_with_nondeterminism > 0)
@@ -79,6 +92,8 @@ where
     let mut engine_specs = None::<Vec<HarnessEngineSpec>>;
     let mut out_path = None::<PathBuf>;
     let mut fail_on_divergence = false;
+    let mut fail_on_critical_drift = false;
+    let mut governance_actions_out = None::<PathBuf>;
     let mut print_help_flag = false;
 
     let mut iter = args.into_iter();
@@ -147,6 +162,15 @@ where
             "--fail-on-divergence" => {
                 fail_on_divergence = true;
             }
+            "--fail-on-critical-drift" => {
+                fail_on_critical_drift = true;
+            }
+            "--governance-actions-out" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "missing value for --governance-actions-out".to_string())?;
+                governance_actions_out = Some(PathBuf::from(value));
+            }
             "--out" => {
                 let value = iter
                     .next()
@@ -190,6 +214,8 @@ where
         config,
         out_path,
         fail_on_divergence,
+        fail_on_critical_drift,
+        governance_actions_out,
         print_help: print_help_flag,
     })
 }
@@ -228,5 +254,44 @@ fn print_help() {
     println!("  --timezone <timezone>");
     println!("  --engine-specs <path>");
     println!("  --fail-on-divergence");
+    println!("  --fail-on-critical-drift");
+    println!("  --governance-actions-out <path>");
     println!("  --out <path>");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_args_accepts_critical_drift_and_governance_output_flags() {
+        let args = vec![
+            "--seed".to_string(),
+            "11".to_string(),
+            "--fail-on-critical-drift".to_string(),
+            "--governance-actions-out".to_string(),
+            "artifacts/parser_multi_engine_harness/actions.json".to_string(),
+        ];
+
+        let parsed = parse_args(args).expect("args should parse");
+        assert_eq!(parsed.config.seed, 11);
+        assert!(parsed.fail_on_critical_drift);
+        assert_eq!(
+            parsed.governance_actions_out,
+            Some(PathBuf::from(
+                "artifacts/parser_multi_engine_harness/actions.json"
+            ))
+        );
+    }
+
+    #[test]
+    fn parse_args_requires_governance_output_value() {
+        let err = parse_args(vec!["--governance-actions-out".to_string()])
+            .expect_err("missing path should fail");
+        assert!(
+            err.to_string()
+                .contains("missing value for --governance-actions-out"),
+            "unexpected error: {err}"
+        );
+    }
 }

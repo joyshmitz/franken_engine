@@ -4,7 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenengine_engine::parser_multi_engine_harness::{
     DriftCategory, DriftSeverity, HarnessEngineKind, HarnessEngineSpec, MultiEngineHarnessConfig,
-    MultiEngineHarnessError, run_multi_engine_harness,
+    MultiEngineHarnessError, build_drift_governance_action_report, derive_drift_governance_actions,
+    has_critical_drift, run_multi_engine_harness,
 };
 
 type EngineSignature = (String, String, bool, bool);
@@ -192,6 +193,23 @@ fn harness_detects_external_engine_divergence_deterministically() {
     assert!(repro_pack.minimized_source_hash.starts_with("sha256:"));
     assert!(repro_pack.minimization.minimized_bytes <= repro_pack.minimization.original_bytes);
     assert_eq!(repro_pack.promotion_hooks.len(), 3);
+    assert!(has_critical_drift(&report));
+
+    let actions = derive_drift_governance_actions(&report);
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].owner_hint, "parser-core");
+    assert_eq!(actions[0].severity, DriftSeverity::Critical);
+    assert_eq!(actions[0].bead_id.len(), "bd-auto-".len() + 8);
+    assert_eq!(actions[0].fingerprint, repro_pack.provenance_hash);
+    assert_eq!(
+        actions[0].minimized_source_hash,
+        repro_pack.minimized_source_hash
+    );
+
+    let governance = build_drift_governance_action_report(&report);
+    assert_eq!(governance.run_id, report.run_id);
+    assert_eq!(governance.trace_id, report.trace_id);
+    assert_eq!(governance.actions, actions);
 }
 
 #[test]
@@ -313,6 +331,12 @@ fn harness_classifies_diagnostics_drift_as_minor() {
         .expect("repro pack should exist");
     assert_eq!(repro_pack.drift_classification, *classification);
     assert!(repro_pack.minimized_source_hash.starts_with("sha256:"));
+    assert!(!has_critical_drift(&report));
+
+    let actions = derive_drift_governance_actions(&report);
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].owner_hint, "parser-diagnostics-taxonomy");
+    assert_eq!(actions[0].severity, DriftSeverity::Minor);
 
     let _ = fs::remove_file(fixture_catalog);
 }
