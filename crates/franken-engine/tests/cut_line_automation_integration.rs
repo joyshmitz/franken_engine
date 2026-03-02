@@ -61,10 +61,188 @@ fn make_c0_inputs(ts: u64) -> Vec<GateInput> {
 }
 
 fn make_c1_inputs(ts: u64) -> Vec<GateInput> {
+    fn with_c1_metadata(mut input: GateInput) -> GateInput {
+        match input.category {
+            GateCategory::CompilerCorrectness => {
+                input.metadata.insert(
+                    "frx20_1_unit_taxonomy_ref".to_string(),
+                    "docs/FRX_UNIT_TEST_TAXONOMY_V1.md".to_string(),
+                );
+            }
+            GateCategory::RuntimeParity => {
+                input.metadata.insert(
+                    "frx20_3_e2e_manifest_ref".to_string(),
+                    "artifacts/frx_end_to_end_scenario_matrix/latest/run_manifest.json".to_string(),
+                );
+                input.metadata.insert(
+                    "known_gap_ledger_ref".to_string(),
+                    "artifacts/frx_known_gap_ledger/latest/known_gaps.jsonl".to_string(),
+                );
+                if !input.passed {
+                    input.metadata.insert(
+                        "divergence_replay_manifest_ref".to_string(),
+                        "artifacts/frx_divergence_replay/latest/run_manifest.json".to_string(),
+                    );
+                }
+            }
+            GateCategory::DeterministicReplay => {
+                input.metadata.insert(
+                    "replay_manifest_ref".to_string(),
+                    "artifacts/frx_replay/latest/run_manifest.json".to_string(),
+                );
+            }
+            GateCategory::ObservabilityIntegrity => {
+                input.metadata.insert(
+                    "log_schema_ref".to_string(),
+                    "docs/frx_test_logging_schema_v1.json".to_string(),
+                );
+                input.metadata.insert(
+                    "frx20_4_logging_schema_ref".to_string(),
+                    "docs/FRX_TEST_LOGGING_SCHEMA_V1.md".to_string(),
+                );
+            }
+            _ => {}
+        }
+        input
+    }
+
     vec![
-        make_passing_input(GateCategory::CompilerCorrectness, ts),
-        make_passing_input(GateCategory::RuntimeParity, ts),
-        make_passing_input(GateCategory::FlakeBurden, ts),
+        with_c1_metadata(make_passing_input(GateCategory::CompilerCorrectness, ts)),
+        with_c1_metadata(make_passing_input(GateCategory::RuntimeParity, ts)),
+        with_c1_metadata(make_passing_input(GateCategory::DeterministicReplay, ts)),
+        with_c1_metadata(make_passing_input(GateCategory::ObservabilityIntegrity, ts)),
+        with_c1_metadata(make_passing_input(GateCategory::FlakeBurden, ts)),
+    ]
+}
+
+fn make_c2_inputs(ts: u64) -> Vec<GateInput> {
+    fn with_c2_metadata(mut input: GateInput) -> GateInput {
+        match input.category {
+            GateCategory::HandoffReadiness => {
+                input.metadata.insert(
+                    "route_adoption_control_ref".to_string(),
+                    "docs/FRX_ROUTE_ADOPTION_CONTROL_V1.md".to_string(),
+                );
+            }
+            GateCategory::RuntimeParity => {
+                input.metadata.insert(
+                    "frx20_3_e2e_manifest_ref".to_string(),
+                    "artifacts/frx_end_to_end_scenario_matrix/latest/run_manifest.json".to_string(),
+                );
+                input.metadata.insert(
+                    "frx20_3_chaos_matrix_manifest_ref".to_string(),
+                    "artifacts/frx_end_to_end_scenario_matrix/latest/chaos_manifest.json"
+                        .to_string(),
+                );
+            }
+            GateCategory::DeterministicReplay => {
+                input.metadata.insert(
+                    "incident_replay_manifest_ref".to_string(),
+                    "artifacts/frx_route_scale_incident_replay/latest/run_manifest.json"
+                        .to_string(),
+                );
+                input.metadata.insert(
+                    "divergence_replay_manifest_ref".to_string(),
+                    "artifacts/frx_divergence_replay/latest/run_manifest.json".to_string(),
+                );
+            }
+            GateCategory::SecuritySurvival => {
+                input.metadata.insert(
+                    "rollback_drill_report_ref".to_string(),
+                    "artifacts/frx_route_scale_rollback_drills/latest/report.json".to_string(),
+                );
+                input.metadata.insert(
+                    "safe_fallback_policy_ref".to_string(),
+                    "docs/FRX_SAFE_FALLBACK_POLICY_V1.md".to_string(),
+                );
+            }
+            GateCategory::FlakeBurden => {
+                input.metadata.insert(
+                    "frx20_5_flake_report_ref".to_string(),
+                    "artifacts/frx_flake_detection/latest/flake_report.json".to_string(),
+                );
+            }
+            _ => {}
+        }
+        input
+    }
+
+    vec![
+        with_c2_metadata(make_passing_input(GateCategory::HandoffReadiness, ts)),
+        with_c2_metadata(make_passing_input(GateCategory::RuntimeParity, ts)),
+        with_c2_metadata(make_passing_input(GateCategory::DeterministicReplay, ts)),
+        with_c2_metadata(make_passing_input(GateCategory::SecuritySurvival, ts)),
+        with_c2_metadata(make_passing_input(GateCategory::FlakeBurden, ts)),
+    ]
+}
+
+fn make_c3_inputs(ts: u64) -> Vec<GateInput> {
+    fn with_c3_metadata(mut input: GateInput) -> GateInput {
+        match input.category {
+            GateCategory::RuntimeParity => {
+                input.metadata.insert(
+                    "wasm_parity_manifest_ref".to_string(),
+                    "artifacts/frx_hybrid_router_wasm_parity/latest/run_manifest.json".to_string(),
+                );
+                input.metadata.insert(
+                    "frx20_3_e2e_manifest_ref".to_string(),
+                    "artifacts/frx_end_to_end_scenario_matrix/latest/run_manifest.json".to_string(),
+                );
+            }
+            GateCategory::SecuritySurvival => {
+                input.metadata.insert(
+                    "hybrid_router_calibration_report_ref".to_string(),
+                    "artifacts/frx_hybrid_router_calibration/latest/calibration_report.json"
+                        .to_string(),
+                );
+                input.metadata.insert(
+                    "router_regime_shift_manifest_ref".to_string(),
+                    "artifacts/frx_hybrid_router_regime_shift/latest/run_manifest.json".to_string(),
+                );
+                input.metadata.insert(
+                    "safe_fallback_policy_ref".to_string(),
+                    "docs/FRX_SAFE_FALLBACK_POLICY_V1.md".to_string(),
+                );
+            }
+            GateCategory::ObservabilityIntegrity => {
+                input.metadata.insert(
+                    "evidence_ledger_manifest_ref".to_string(),
+                    "artifacts/frx_evidence_ledger/latest/run_manifest.json".to_string(),
+                );
+                input.metadata.insert(
+                    "lane_explainability_report_ref".to_string(),
+                    "artifacts/frx_hybrid_lane_explainability/latest/explainability_report.json"
+                        .to_string(),
+                );
+                input.metadata.insert(
+                    "frx20_4_logging_correlation_ref".to_string(),
+                    "artifacts/frx_logging_correlation/latest/correlation_manifest.json"
+                        .to_string(),
+                );
+            }
+            GateCategory::FlakeBurden => {
+                input.metadata.insert(
+                    "frx20_5_flake_report_ref".to_string(),
+                    "artifacts/frx_flake_detection/latest/flake_report.json".to_string(),
+                );
+            }
+            GateCategory::GovernanceCompliance => {
+                input.metadata.insert(
+                    "frx20_6_test_evidence_integrator_manifest_ref".to_string(),
+                    "artifacts/frx_milestone_release_test_evidence_integrator/latest/run_manifest.json".to_string(),
+                );
+            }
+            _ => {}
+        }
+        input
+    }
+
+    vec![
+        with_c3_metadata(make_passing_input(GateCategory::RuntimeParity, ts)),
+        with_c3_metadata(make_passing_input(GateCategory::SecuritySurvival, ts)),
+        with_c3_metadata(make_passing_input(GateCategory::ObservabilityIntegrity, ts)),
+        with_c3_metadata(make_passing_input(GateCategory::FlakeBurden, ts)),
+        with_c3_metadata(make_passing_input(GateCategory::GovernanceCompliance, ts)),
     ]
 }
 
@@ -255,8 +433,26 @@ fn default_c1_spec_properties() {
     let spec = CutLineSpec::default_c1();
     assert_eq!(spec.cut_line, CutLine::C1);
     assert!(spec.requires_predecessor);
-    assert_eq!(spec.requirements.len(), 3);
-    assert_eq!(spec.mandatory_count(), 3);
+    assert_eq!(spec.requirements.len(), 5);
+    assert_eq!(spec.mandatory_count(), 5);
+}
+
+#[test]
+fn default_c2_spec_properties() {
+    let spec = CutLineSpec::default_c2();
+    assert_eq!(spec.cut_line, CutLine::C2);
+    assert!(spec.requires_predecessor);
+    assert_eq!(spec.requirements.len(), 5);
+    assert_eq!(spec.mandatory_count(), 5);
+}
+
+#[test]
+fn default_c3_spec_properties() {
+    let spec = CutLineSpec::default_c3();
+    assert_eq!(spec.cut_line, CutLine::C3);
+    assert!(spec.requires_predecessor);
+    assert_eq!(spec.requirements.len(), 5);
+    assert_eq!(spec.mandatory_count(), 5);
 }
 
 #[test]
@@ -351,6 +547,8 @@ fn evaluator_with_defaults() {
     let eval = CutLineEvaluator::with_defaults();
     assert!(!eval.is_promoted(CutLine::C0));
     assert!(!eval.is_promoted(CutLine::C1));
+    assert!(!eval.is_promoted(CutLine::C2));
+    assert!(!eval.is_promoted(CutLine::C3));
     assert_eq!(eval.history_len(), 0);
 }
 
@@ -596,25 +794,335 @@ fn evaluate_c1_score_below_threshold_denied() {
     });
 
     // C1 CompilerCorrectness requires 1_000_000, give 999_999
-    let mut cc_input = make_passing_input(GateCategory::CompilerCorrectness, now_ns());
-    cc_input.score_millionths = Some(999_999);
+    let mut c1_inputs = make_c1_inputs(now_ns());
+    c1_inputs
+        .iter_mut()
+        .find(|input| input.category == GateCategory::CompilerCorrectness)
+        .expect("compiler correctness input must exist")
+        .score_millionths = Some(999_999);
 
     let record = eval
         .evaluate(GateEvaluationInput {
             cut_line: CutLine::C1,
             now_ns: now_ns(),
             epoch: epoch(),
-            inputs: vec![
-                cc_input,
-                make_passing_input(GateCategory::RuntimeParity, now_ns()),
-                make_passing_input(GateCategory::FlakeBurden, now_ns()),
-            ],
+            inputs: c1_inputs,
             predecessor_promoted: false,
             zone: "prod".into(),
         })
         .unwrap();
 
     assert_eq!(record.verdict, GateVerdict::Denied);
+}
+
+#[test]
+fn evaluate_c1_missing_known_gap_metadata_denied() {
+    let mut eval = CutLineEvaluator::with_defaults();
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C0,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c0_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+
+    let mut c1_inputs = make_c1_inputs(now_ns());
+    c1_inputs
+        .iter_mut()
+        .find(|input| input.category == GateCategory::RuntimeParity)
+        .expect("runtime parity input must exist")
+        .metadata
+        .remove("known_gap_ledger_ref");
+
+    let record = eval
+        .evaluate(GateEvaluationInput {
+            cut_line: CutLine::C1,
+            now_ns: now_ns(),
+            epoch: epoch(),
+            inputs: c1_inputs,
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        })
+        .unwrap();
+
+    assert_eq!(record.verdict, GateVerdict::Denied);
+    let runtime_eval = record
+        .evaluations
+        .iter()
+        .find(|evaluation| evaluation.category == GateCategory::RuntimeParity)
+        .expect("runtime parity evaluation must exist");
+    assert!(matches!(
+        runtime_eval.input_validity,
+        InputValidity::Incompatible { .. }
+    ));
+}
+
+#[test]
+fn evaluate_c1_divergence_without_replay_manifest_denied() {
+    let mut eval = CutLineEvaluator::with_defaults();
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C0,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c0_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+
+    let mut c1_inputs = make_c1_inputs(now_ns());
+    let runtime = c1_inputs
+        .iter_mut()
+        .find(|input| input.category == GateCategory::RuntimeParity)
+        .expect("runtime parity input must exist");
+    runtime.passed = false;
+    runtime.metadata.remove("divergence_replay_manifest_ref");
+
+    let record = eval
+        .evaluate(GateEvaluationInput {
+            cut_line: CutLine::C1,
+            now_ns: now_ns(),
+            epoch: epoch(),
+            inputs: c1_inputs,
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        })
+        .unwrap();
+
+    assert_eq!(record.verdict, GateVerdict::Denied);
+    let runtime_eval = record
+        .evaluations
+        .iter()
+        .find(|evaluation| evaluation.category == GateCategory::RuntimeParity)
+        .expect("runtime parity evaluation must exist");
+    assert!(matches!(
+        runtime_eval.input_validity,
+        InputValidity::Incompatible { .. }
+    ));
+}
+
+#[test]
+fn evaluate_c2_without_predecessor_denied() {
+    let mut eval = CutLineEvaluator::with_defaults();
+    let record = eval
+        .evaluate(GateEvaluationInput {
+            cut_line: CutLine::C2,
+            now_ns: now_ns(),
+            epoch: epoch(),
+            inputs: make_c2_inputs(now_ns()),
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        })
+        .unwrap();
+
+    assert_eq!(record.verdict, GateVerdict::Denied);
+    assert_eq!(record.risk_level, RiskLevel::Critical);
+}
+
+#[test]
+fn evaluate_c2_after_c1_promoted() {
+    let mut eval = CutLineEvaluator::with_defaults();
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C0,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c0_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C1,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c1_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+
+    let record = eval
+        .evaluate(GateEvaluationInput {
+            cut_line: CutLine::C2,
+            now_ns: now_ns(),
+            epoch: epoch(),
+            inputs: make_c2_inputs(now_ns()),
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        })
+        .unwrap();
+
+    assert_eq!(record.verdict, GateVerdict::Approved);
+    assert!(eval.is_promoted(CutLine::C2));
+}
+
+#[test]
+fn evaluate_c2_missing_route_adoption_metadata_denied() {
+    let mut eval = CutLineEvaluator::with_defaults();
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C0,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c0_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C1,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c1_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+
+    let mut c2_inputs = make_c2_inputs(now_ns());
+    c2_inputs
+        .iter_mut()
+        .find(|input| input.category == GateCategory::HandoffReadiness)
+        .expect("handoff readiness input must exist")
+        .metadata
+        .remove("route_adoption_control_ref");
+
+    let record = eval
+        .evaluate(GateEvaluationInput {
+            cut_line: CutLine::C2,
+            now_ns: now_ns(),
+            epoch: epoch(),
+            inputs: c2_inputs,
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        })
+        .unwrap();
+
+    assert_eq!(record.verdict, GateVerdict::Denied);
+    let handoff_eval = record
+        .evaluations
+        .iter()
+        .find(|evaluation| evaluation.category == GateCategory::HandoffReadiness)
+        .expect("handoff readiness evaluation must exist");
+    assert!(matches!(
+        handoff_eval.input_validity,
+        InputValidity::Incompatible { .. }
+    ));
+}
+
+#[test]
+fn evaluate_c3_without_predecessor_denied() {
+    let mut eval = CutLineEvaluator::with_defaults();
+    let record = eval
+        .evaluate(GateEvaluationInput {
+            cut_line: CutLine::C3,
+            now_ns: now_ns(),
+            epoch: epoch(),
+            inputs: make_c3_inputs(now_ns()),
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        })
+        .unwrap();
+
+    assert_eq!(record.verdict, GateVerdict::Denied);
+    assert_eq!(record.risk_level, RiskLevel::Critical);
+}
+
+#[test]
+fn evaluate_c3_after_c2_promoted() {
+    let mut eval = CutLineEvaluator::with_defaults();
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C0,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c0_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C1,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c1_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C2,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c2_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+
+    let record = eval
+        .evaluate(GateEvaluationInput {
+            cut_line: CutLine::C3,
+            now_ns: now_ns(),
+            epoch: epoch(),
+            inputs: make_c3_inputs(now_ns()),
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        })
+        .unwrap();
+
+    assert_eq!(record.verdict, GateVerdict::Approved);
+    assert!(eval.is_promoted(CutLine::C3));
+}
+
+#[test]
+fn evaluate_c3_missing_wasm_parity_metadata_denied() {
+    let mut eval = CutLineEvaluator::with_defaults();
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C0,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c0_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C1,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c1_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+    eval.evaluate(GateEvaluationInput {
+        cut_line: CutLine::C2,
+        now_ns: now_ns(),
+        epoch: epoch(),
+        inputs: make_c2_inputs(now_ns()),
+        predecessor_promoted: false,
+        zone: "prod".into(),
+    });
+
+    let mut c3_inputs = make_c3_inputs(now_ns());
+    c3_inputs
+        .iter_mut()
+        .find(|input| input.category == GateCategory::RuntimeParity)
+        .expect("runtime parity input must exist")
+        .metadata
+        .remove("wasm_parity_manifest_ref");
+
+    let record = eval
+        .evaluate(GateEvaluationInput {
+            cut_line: CutLine::C3,
+            now_ns: now_ns(),
+            epoch: epoch(),
+            inputs: c3_inputs,
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        })
+        .unwrap();
+
+    assert_eq!(record.verdict, GateVerdict::Denied);
+    let runtime_eval = record
+        .evaluations
+        .iter()
+        .find(|evaluation| evaluation.category == GateCategory::RuntimeParity)
+        .expect("runtime parity evaluation must exist");
+    assert!(matches!(
+        runtime_eval.input_validity,
+        InputValidity::Incompatible { .. }
+    ));
 }
 
 // =========================================================================
