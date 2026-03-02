@@ -70,6 +70,11 @@ Artifacts are emitted under:
 - `artifacts/parser_parallel_interference/<timestamp>/run_manifest.json`
 - `artifacts/parser_parallel_interference/<timestamp>/events.jsonl`
 - `artifacts/parser_parallel_interference/<timestamp>/commands.txt`
+- `artifacts/parser_parallel_interference/<timestamp>/step-*.log`
 
 The manifest includes deterministic environment fingerprinting and a one-command
 replay entry suitable for PSRP-07.2 and PSRP-08.2 consumption.
+
+`rch` execution is fail-closed for this gate: if daemon/toolchain errors trigger
+local fallback signatures, the run is marked failed with
+`rch-local-fallback-detected` command attribution.

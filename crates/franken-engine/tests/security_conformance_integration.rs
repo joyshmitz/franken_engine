@@ -851,3 +851,109 @@ fn malicious_label_serde_round_trip() {
     );
     assert_eq!(back.expected_outcome, SecurityOutcome::Contain);
 }
+
+// ===========================================================================
+// 26. Determinism meta-test
+// ===========================================================================
+
+#[test]
+fn evaluate_repeated_runs_are_deterministic_within_latency_tolerance() {
+    let mut records = vec![];
+    let mut observations = vec![];
+
+    for i in 0..500 {
+        let id = format!("b-{i}");
+        records.push(label_record(benign_label(&id)));
+        observations.push(benign_observation(&id));
+    }
+
+    for i in 0..500 {
+        let id = format!("m-{i}");
+        let taxonomy = match i % 6 {
+            0 => SecurityAttackTaxonomy::Exfil,
+            1 => SecurityAttackTaxonomy::Escalation,
+            2 => SecurityAttackTaxonomy::Evasion,
+            3 => SecurityAttackTaxonomy::Dos,
+            4 => SecurityAttackTaxonomy::SideChannel,
+            _ => SecurityAttackTaxonomy::Staging,
+        };
+        records.push(label_record(malicious_label(&id, taxonomy)));
+        observations.push(malicious_observation(&id));
+    }
+
+    let thresholds = SecurityConformanceThresholds::default();
+    let baseline = evaluate_security_conformance(&records, &observations, &thresholds).unwrap();
+    let baseline_p95 = baseline.summary.malicious_latency_p95_us;
+
+    for _ in 0..5 {
+        let rerun = evaluate_security_conformance(&records, &observations, &thresholds).unwrap();
+        assert_eq!(baseline.summary, rerun.summary);
+        assert_eq!(baseline.observations_by_workload, rerun.observations_by_workload);
+        assert!(rerun.summary.malicious_latency_p95_us.abs_diff(baseline_p95) <= 1_000);
+    }
+}
+
+// ===========================================================================
+// 27. Latency bound meta-test
+// ===========================================================================
+
+#[test]
+fn evaluate_gate_fails_when_malicious_latency_p95_exceeds_threshold() {
+    let mut records = vec![];
+    let mut observations = vec![];
+
+    for i in 0..500 {
+        let id = format!("b-{i}");
+        records.push(label_record(benign_label(&id)));
+        observations.push(benign_observation(&id));
+    }
+
+    for i in 0..500 {
+        let id = format!("m-{i}");
+        let taxonomy = match i % 6 {
+            0 => SecurityAttackTaxonomy::Exfil,
+            1 => SecurityAttackTaxonomy::Escalation,
+            2 => SecurityAttackTaxonomy::Evasion,
+            3 => SecurityAttackTaxonomy::Dos,
+            4 => SecurityAttackTaxonomy::SideChannel,
+            _ => SecurityAttackTaxonomy::Staging,
+        };
+        records.push(label_record(malicious_label(&id, taxonomy)));
+
+        let mut obs = malicious_observation(&id);
+        obs.detection_latency_us = 300_000;
+        observations.push(obs);
+    }
+
+    let thresholds = SecurityConformanceThresholds::default();
+    let evaluation = evaluate_security_conformance(&records, &observations, &thresholds).unwrap();
+
+    assert!(!evaluation.summary.gate_pass);
+    assert!(
+        evaluation
+            .summary
+            .gate_failure_reasons
+            .iter()
+            .any(|reason| reason.contains("malicious latency p95")),
+        "gate_failure_reasons={:?}",
+        evaluation.summary.gate_failure_reasons
+    );
+    assert!(
+        !evaluation
+            .summary
+            .gate_failure_reasons
+            .iter()
+            .any(|reason| reason.contains("TPR lower CI bound")),
+        "unexpected TPR gate failure: {:?}",
+        evaluation.summary.gate_failure_reasons
+    );
+    assert!(
+        !evaluation
+            .summary
+            .gate_failure_reasons
+            .iter()
+            .any(|reason| reason.contains("FPR upper CI bound")),
+        "unexpected FPR gate failure: {:?}",
+        evaluation.summary.gate_failure_reasons
+    );
+}
