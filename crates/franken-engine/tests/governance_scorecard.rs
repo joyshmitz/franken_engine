@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use frankenengine_engine::dp_budget_accountant::{AccountantConfig, BudgetAccountant};
 use frankenengine_engine::governance_scorecard::{
     AttestedReceiptObservation, CrossRepoConformanceInput, GOVERNANCE_SCORECARD_SCHEMA_VERSION,
-    GovernanceScorecardOutcome, GovernanceScorecardRequest, GovernanceScorecardThresholds,
-    GovernanceScorecardTrendPoint, MoonshotGovernorHealthInput, PrivacyBudgetHealthInput,
-    publish_governance_scorecard, verify_governance_scorecard_signature,
+    GovernanceScorecardOutcome, GovernanceScorecardPublication, GovernanceScorecardRequest,
+    GovernanceScorecardThresholds, GovernanceScorecardTrendPoint, MoonshotGovernorHealthInput,
+    PrivacyBudgetHealthInput, publish_governance_scorecard, verify_governance_scorecard_signature,
 };
 use frankenengine_engine::portfolio_governor::governance_audit_ledger::{
     GovernanceActor, GovernanceAuditLedger, GovernanceDecisionType, GovernanceLedgerConfig,
@@ -322,4 +322,167 @@ fn derived_scorecard_id_is_deterministic_for_reordered_receipts() {
         publication_b.attested_receipt_coverage
     );
     assert_eq!(publication_a.outcome, publication_b.outcome);
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde, error paths, thresholds, events, markdown
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn scorecard_outcome_as_str_round_trips() {
+    assert_eq!(GovernanceScorecardOutcome::Healthy.as_str(), "healthy");
+    assert_eq!(GovernanceScorecardOutcome::Warning.as_str(), "warning");
+    assert_eq!(GovernanceScorecardOutcome::Critical.as_str(), "critical");
+}
+
+#[test]
+fn scorecard_outcome_serde_round_trip() {
+    for outcome in [
+        GovernanceScorecardOutcome::Healthy,
+        GovernanceScorecardOutcome::Warning,
+        GovernanceScorecardOutcome::Critical,
+    ] {
+        let json = serde_json::to_string(&outcome).expect("serialize");
+        let recovered: GovernanceScorecardOutcome =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(outcome, recovered);
+    }
+}
+
+#[test]
+fn thresholds_default_round_trips_via_serde() {
+    let thresholds = GovernanceScorecardThresholds::default();
+    let json = serde_json::to_string(&thresholds).expect("serialize");
+    let recovered: GovernanceScorecardThresholds =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(thresholds, recovered);
+}
+
+#[test]
+fn publication_serde_round_trip() {
+    let request = baseline_request();
+    let mut governance_ledger = ledger();
+    let publication = publish_governance_scorecard(
+        &request,
+        &signing_key(),
+        &mut governance_ledger,
+        GovernanceActor::System("scorecard-publisher".to_string()),
+    )
+    .expect("publication");
+
+    let json = serde_json::to_string(&publication).expect("serialize");
+    let recovered: GovernanceScorecardPublication =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(publication.scorecard_id, recovered.scorecard_id);
+    assert_eq!(publication.outcome, recovered.outcome);
+    assert_eq!(publication.artifact_hash_hex, recovered.artifact_hash_hex);
+}
+
+#[test]
+fn error_display_and_stable_codes_are_non_empty() {
+    use frankenengine_engine::governance_scorecard::GovernanceScorecardError;
+
+    let errors: Vec<GovernanceScorecardError> = vec![
+        GovernanceScorecardError::InvalidInput {
+            field: "trace_id".to_string(),
+            detail: "empty".to_string(),
+        },
+        GovernanceScorecardError::SerializationFailure("broken".to_string()),
+        GovernanceScorecardError::SignatureFailure("bad key".to_string()),
+        GovernanceScorecardError::LedgerWriteFailure("full".to_string()),
+    ];
+    for err in &errors {
+        assert!(!err.to_string().is_empty());
+        assert!(!err.stable_code().is_empty());
+    }
+}
+
+#[test]
+fn events_contain_required_structured_fields() {
+    let request = baseline_request();
+    let mut governance_ledger = ledger();
+    let publication = publish_governance_scorecard(
+        &request,
+        &signing_key(),
+        &mut governance_ledger,
+        GovernanceActor::System("scorecard-publisher".to_string()),
+    )
+    .expect("publication");
+
+    assert!(!publication.events.is_empty());
+    for event in &publication.events {
+        assert!(!event.trace_id.is_empty());
+        assert!(!event.decision_id.is_empty());
+        assert!(!event.policy_id.is_empty());
+        assert!(!event.component.is_empty());
+        assert!(!event.event.is_empty());
+        assert!(!event.outcome.is_empty());
+    }
+}
+
+#[test]
+fn markdown_report_contains_dimensions_and_outcome() {
+    let request = baseline_request();
+    let mut governance_ledger = ledger();
+    let publication = publish_governance_scorecard(
+        &request,
+        &signing_key(),
+        &mut governance_ledger,
+        GovernanceActor::System("scorecard-publisher".to_string()),
+    )
+    .expect("publication");
+
+    let md = publication.to_markdown_report();
+    assert!(md.contains("# Governance Scorecard"));
+    assert!(md.contains("## Dimensions"));
+    assert!(md.contains("HEALTHY"));
+    assert!(md.contains(&publication.scorecard_id));
+}
+
+#[test]
+fn signature_verification_fails_for_tampered_publication() {
+    let request = baseline_request();
+    let mut governance_ledger = ledger();
+    let mut publication = publish_governance_scorecard(
+        &request,
+        &signing_key(),
+        &mut governance_ledger,
+        GovernanceActor::System("scorecard-publisher".to_string()),
+    )
+    .expect("publication");
+
+    // Tamper with the publication
+    publication.outcome = GovernanceScorecardOutcome::Critical;
+    let result = verify_governance_scorecard_signature(&publication);
+    assert!(result.is_err());
+}
+
+#[test]
+fn attested_receipt_observation_serde_round_trip() {
+    let obs = AttestedReceiptObservation {
+        receipt_id: "r-serde".to_string(),
+        high_impact: true,
+        attestation_binding_valid: true,
+        timestamp_ns: 42,
+    };
+    let json = serde_json::to_string(&obs).expect("serialize");
+    let recovered: AttestedReceiptObservation = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(obs, recovered);
+}
+
+#[test]
+fn trend_point_serde_round_trip() {
+    let point = GovernanceScorecardTrendPoint {
+        scorecard_id: "tp-1".to_string(),
+        generated_at_ns: 1_000_000,
+        attested_receipt_coverage_millionths: 950_000,
+        privacy_epoch_consumption_millionths: 300_000,
+        moonshot_override_frequency_millionths: 100_000,
+        conformance_pass_rate_millionths: 1_000_000,
+        outcome: GovernanceScorecardOutcome::Healthy,
+    };
+    let json = serde_json::to_string(&point).expect("serialize");
+    let recovered: GovernanceScorecardTrendPoint =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(point, recovered);
 }

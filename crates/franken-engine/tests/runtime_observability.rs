@@ -246,3 +246,128 @@ fn metric_label_sets_are_bounded_enums() {
         .collect::<BTreeSet<_>>();
     assert_eq!(zone_labels.len(), CrossZoneReferenceType::ALL.len());
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde, reset, multiple events, error paths
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn security_event_context_serde_round_trip() {
+    let ctx = context(42, "test_component");
+    let json = serde_json::to_string(&ctx).expect("serialize");
+    let recovered: SecurityEventContext = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(ctx.timestamp_ns, recovered.timestamp_ns);
+    assert_eq!(ctx.component, recovered.component);
+    assert_eq!(ctx.trace_id, recovered.trace_id);
+}
+
+#[test]
+fn auth_failure_type_serde_round_trip() {
+    for failure_type in AuthFailureType::ALL {
+        let json = serde_json::to_string(&failure_type).expect("serialize");
+        let recovered: AuthFailureType = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(failure_type, recovered);
+    }
+}
+
+#[test]
+fn multiple_events_accumulate_in_order() {
+    let mut observability = RuntimeSecurityObservability::new();
+
+    observability.record_auth_failure(
+        context(1, "auth"),
+        AuthFailureType::KeyRevoked,
+        None,
+        None,
+    );
+    observability.record_capability_denial(
+        context(2, "cap"),
+        CapabilityDenialReason::AudienceMismatch,
+        "test_policy",
+    );
+    observability.record_replay_drop(
+        context(3, "session"),
+        ReplayDropReason::DuplicateSeq,
+        1,
+        2,
+        "sess-001",
+    );
+
+    let logs = observability.logs();
+    assert_eq!(logs.len(), 3);
+    assert_eq!(logs[0].event_type, "auth_failure");
+    assert_eq!(logs[1].event_type, "capability_denial");
+    assert_eq!(logs[2].event_type, "replay_drop");
+    assert!(logs[0].timestamp_ns <= logs[1].timestamp_ns);
+    assert!(logs[1].timestamp_ns <= logs[2].timestamp_ns);
+}
+
+#[test]
+fn sensitive_key_material_is_hashed_not_leaked() {
+    let mut observability = RuntimeSecurityObservability::new();
+    let secret = "super-secret-key-material";
+
+    observability.record_auth_failure(
+        context(10, "auth"),
+        AuthFailureType::SignatureInvalid,
+        Some(secret),
+        Some("bearer-token-content"),
+    );
+
+    let log = &observability.logs()[0];
+    let all_values: Vec<&str> = log.metadata.values().map(|v| v.as_str()).collect();
+    for value in &all_values {
+        assert!(
+            !value.contains(secret),
+            "raw key material must not appear in logs"
+        );
+        assert!(
+            !value.contains("bearer-token-content"),
+            "token content must not appear in logs"
+        );
+    }
+}
+
+#[test]
+fn metrics_count_increments_correctly() {
+    let mut observability = RuntimeSecurityObservability::new();
+
+    for _ in 0..5 {
+        observability.record_auth_failure(
+            context(1, "auth"),
+            AuthFailureType::KeyRevoked,
+            None,
+            None,
+        );
+    }
+    for _ in 0..3 {
+        observability.record_auth_failure(
+            context(2, "auth"),
+            AuthFailureType::SignatureInvalid,
+            None,
+            None,
+        );
+    }
+
+    let metrics = observability.metrics();
+    assert_eq!(metrics.auth_failure_total[&AuthFailureType::KeyRevoked], 5);
+    assert_eq!(
+        metrics.auth_failure_total[&AuthFailureType::SignatureInvalid],
+        3
+    );
+}
+
+#[test]
+fn cross_zone_reference_allowed_type_emits_pass_outcome() {
+    let mut observability = RuntimeSecurityObservability::new();
+
+    let event = observability.record_cross_zone_reference(
+        context(100, "zone_checker"),
+        CrossZoneReferenceType::ProvenanceAllowed,
+        "zone-a",
+        "zone-b",
+    );
+
+    assert_eq!(event.event_type, "cross_zone_reference");
+    assert_eq!(event.outcome, "allowed");
+}

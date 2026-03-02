@@ -3,8 +3,8 @@ use frankenengine_engine::receipt_verifier_pipeline::{
 };
 use frankenengine_engine::safe_mode_fallback::{
     ActionTier, AttestationActionRequest, AttestationFallbackConfig, AttestationFallbackDecision,
-    AttestationFallbackManager, AttestationFallbackState, AttestationHealth, AutonomousAction,
-    attestation_health_from_verdict,
+    AttestationFallbackError, AttestationFallbackManager, AttestationFallbackState,
+    AttestationHealth, AutonomousAction, attestation_health_from_verdict,
 };
 use frankenengine_engine::signature_preimage::SigningKey;
 
@@ -282,4 +282,162 @@ fn verifier_verdict_maps_to_attestation_health_classes() {
         attestation_health_from_verdict(&verdict),
         AttestationHealth::VerificationFailed
     );
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: state lifecycle, serde, error display, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn initial_state_is_normal() {
+    let mgr = mk_manager(1_000);
+    assert_eq!(mgr.state(), AttestationFallbackState::Normal);
+    assert!(!mgr.operator_review_required());
+    assert!(mgr.pending_decisions().is_empty());
+    assert!(mgr.transition_receipts().is_empty());
+    assert!(mgr.events().is_empty());
+}
+
+#[test]
+fn valid_health_action_executes_normally() {
+    let mut mgr = mk_manager(1_000);
+    let req = mk_request(
+        "trace-valid",
+        "decision-valid",
+        "policy-valid",
+        AutonomousAction::Terminate,
+        ActionTier::HighImpact,
+        100,
+    );
+    let decision = mgr
+        .evaluate_action(req, AttestationHealth::Valid)
+        .expect("decision");
+    match decision {
+        AttestationFallbackDecision::Execute {
+            attestation_status,
+            warning,
+        } => {
+            assert_eq!(attestation_status, "valid");
+            assert!(warning.is_none());
+        }
+        other => panic!("expected execute, got {other:?}"),
+    }
+    assert_eq!(mgr.state(), AttestationFallbackState::Normal);
+}
+
+#[test]
+fn attestation_health_is_healthy_classification() {
+    assert!(AttestationHealth::Valid.is_healthy());
+    assert!(!AttestationHealth::EvidenceExpired.is_healthy());
+    assert!(!AttestationHealth::EvidenceUnavailable.is_healthy());
+    assert!(!AttestationHealth::VerificationFailed.is_healthy());
+}
+
+#[test]
+fn autonomous_action_default_tiers() {
+    assert_eq!(
+        AutonomousAction::Terminate.default_tier(),
+        ActionTier::HighImpact
+    );
+    assert_eq!(
+        AutonomousAction::Quarantine.default_tier(),
+        ActionTier::HighImpact
+    );
+    assert_eq!(
+        AutonomousAction::PolicyPromotion.default_tier(),
+        ActionTier::HighImpact
+    );
+    assert_eq!(
+        AutonomousAction::RoutineMonitoring.default_tier(),
+        ActionTier::Standard
+    );
+    assert_eq!(
+        AutonomousAction::MetricsEmission.default_tier(),
+        ActionTier::LowImpact
+    );
+}
+
+#[test]
+fn attestation_action_request_new_constructor() {
+    let req = AttestationActionRequest::new(
+        "t1",
+        "d1",
+        "p1",
+        AutonomousAction::Terminate,
+        500,
+    );
+    assert_eq!(req.trace_id, "t1");
+    assert_eq!(req.decision_id, "d1");
+    assert_eq!(req.policy_id, "p1");
+    assert_eq!(req.tier, ActionTier::HighImpact);
+    assert_eq!(req.timestamp_ns, 500);
+}
+
+#[test]
+fn attestation_health_serde_round_trip() {
+    for health in [
+        AttestationHealth::Valid,
+        AttestationHealth::EvidenceExpired,
+        AttestationHealth::EvidenceUnavailable,
+        AttestationHealth::VerificationFailed,
+    ] {
+        let json = serde_json::to_string(&health).expect("serialize");
+        let recovered: AttestationHealth = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(health, recovered);
+    }
+}
+
+#[test]
+fn attestation_fallback_state_serde_round_trip() {
+    for state in [
+        AttestationFallbackState::Normal,
+        AttestationFallbackState::Degraded,
+        AttestationFallbackState::Restoring,
+    ] {
+        let json = serde_json::to_string(&state).expect("serialize");
+        let recovered: AttestationFallbackState = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(state, recovered);
+    }
+}
+
+#[test]
+fn attestation_fallback_error_display_is_non_empty() {
+    let err = AttestationFallbackError::SignatureFailure {
+        detail: "bad signature".to_string(),
+    };
+    assert!(!err.to_string().is_empty());
+    assert!(err.to_string().contains("bad signature"));
+}
+
+#[test]
+fn fallback_config_serde_round_trip() {
+    let config = AttestationFallbackConfig {
+        unavailable_timeout_ns: 5_000,
+        challenge_on_fallback: true,
+        sandbox_on_fallback: false,
+    };
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: AttestationFallbackConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(config.unavailable_timeout_ns, recovered.unavailable_timeout_ns);
+    assert_eq!(config.challenge_on_fallback, recovered.challenge_on_fallback);
+    assert_eq!(config.sandbox_on_fallback, recovered.sandbox_on_fallback);
+}
+
+#[test]
+fn multiple_degraded_actions_accumulate_pending_decisions() {
+    let mut mgr = mk_manager(1_000);
+    for i in 0..3 {
+        let req = mk_request(
+            &format!("trace-multi-{i}"),
+            &format!("decision-multi-{i}"),
+            "policy-multi",
+            AutonomousAction::Terminate,
+            ActionTier::HighImpact,
+            100 + i as u64,
+        );
+        mgr.evaluate_action(req, AttestationHealth::VerificationFailed)
+            .expect("decision");
+    }
+    assert_eq!(mgr.pending_decisions().len(), 3);
+    assert_eq!(mgr.state(), AttestationFallbackState::Degraded);
 }
