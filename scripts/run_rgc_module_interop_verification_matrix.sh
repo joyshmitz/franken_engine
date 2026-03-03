@@ -14,8 +14,7 @@ rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 default_target_dir="/tmp/rch_target_franken_engine_rgc_module_interop_matrix_${timestamp}_$$"
 target_dir="${CARGO_TARGET_DIR:-${default_target_dir}}"
-default_cargo_home="/tmp/rch_cargo_home_franken_engine_rgc_module_interop_matrix_${timestamp}_$$"
-cargo_home="${CARGO_HOME:-${default_cargo_home}}"
+cargo_home="${CARGO_HOME:-}"
 run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
 events_path="${run_dir}/events.jsonl"
@@ -36,11 +35,18 @@ if ! command -v rch >/dev/null 2>&1; then
 fi
 
 run_rch() {
+  local -a env_args
+  env_args=(
+    "RUSTUP_TOOLCHAIN=${toolchain}"
+    "CARGO_TARGET_DIR=${target_dir}"
+  )
+  if [[ -n "$cargo_home" ]]; then
+    env_args+=("CARGO_HOME=${cargo_home}")
+  fi
+
   timeout "${rch_timeout_seconds}" \
     rch exec -q -- env \
-    "RUSTUP_TOOLCHAIN=${toolchain}" \
-    "CARGO_TARGET_DIR=${target_dir}" \
-    "CARGO_HOME=${cargo_home}" \
+    "${env_args[@]}" \
     "$@"
 }
 
@@ -187,7 +193,11 @@ write_manifest() {
     echo "  \"mode\": \"${mode}\"," 
     echo "  \"toolchain\": \"${toolchain}\"," 
     echo "  \"cargo_target_dir\": \"${target_dir}\"," 
-    echo "  \"cargo_home\": \"${cargo_home}\"," 
+    if [[ -n "$cargo_home" ]]; then
+      echo "  \"cargo_home\": \"${cargo_home}\"," 
+    else
+      echo '  "cargo_home": null,'
+    fi
     echo "  \"rch_exec_timeout_seconds\": ${rch_timeout_seconds},"
     echo "  \"trace_id\": \"${trace_id}\"," 
     echo "  \"decision_id\": \"${decision_id}\"," 
