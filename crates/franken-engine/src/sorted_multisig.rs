@@ -1670,4 +1670,230 @@ mod tests {
         let arr = SortedSignatureArray::new(entries).unwrap();
         assert!(!arr.contains_signer(&vk_absent));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch: Display, serde, clone/eq, error variants, edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn multisig_error_display_all_seven_unique() {
+        let displays: std::collections::BTreeSet<String> = [
+            MultiSigError::UnsortedSignatureArray {
+                position: 1,
+                prev_key_hex: "aa".to_string(),
+                current_key_hex: "bb".to_string(),
+            },
+            MultiSigError::DuplicateSignerKey {
+                key_hex: "cc".to_string(),
+                positions: (0, 1),
+            },
+            MultiSigError::QuorumNotMet {
+                required: 3,
+                valid: 1,
+                total: 5,
+            },
+            MultiSigError::EmptyArray,
+            MultiSigError::ZeroQuorumThreshold,
+            MultiSigError::ThresholdExceedsSignerCount {
+                threshold: 5,
+                signer_count: 3,
+            },
+            MultiSigError::SignatureError {
+                detail: "bad sig".to_string(),
+            },
+        ]
+        .iter()
+        .map(|e| e.to_string())
+        .collect();
+        assert_eq!(
+            displays.len(),
+            7,
+            "all 7 error variants must have unique Display"
+        );
+    }
+
+    #[test]
+    fn multisig_error_serde_all_variants() {
+        let variants = vec![
+            MultiSigError::EmptyArray,
+            MultiSigError::ZeroQuorumThreshold,
+            MultiSigError::UnsortedSignatureArray {
+                position: 2,
+                prev_key_hex: "ab".to_string(),
+                current_key_hex: "cd".to_string(),
+            },
+            MultiSigError::DuplicateSignerKey {
+                key_hex: "ff".to_string(),
+                positions: (0, 3),
+            },
+            MultiSigError::QuorumNotMet {
+                required: 2,
+                valid: 1,
+                total: 3,
+            },
+            MultiSigError::ThresholdExceedsSignerCount {
+                threshold: 10,
+                signer_count: 5,
+            },
+            MultiSigError::SignatureError {
+                detail: "invalid".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: MultiSigError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn multisig_event_type_serde_all_six_roundtrip() {
+        let variants = vec![
+            MultiSigEventType::ArrayCreated { signer_count: 3 },
+            MultiSigEventType::SignatureInserted {
+                signer_hex: "ab01".to_string(),
+            },
+            MultiSigEventType::QuorumVerified {
+                valid: 2,
+                threshold: 2,
+                total: 3,
+            },
+            MultiSigEventType::QuorumFailed {
+                valid: 1,
+                threshold: 2,
+                total: 3,
+            },
+            MultiSigEventType::SortingViolation {
+                detail: "out of order".to_string(),
+            },
+            MultiSigEventType::DuplicateSigner {
+                key_hex: "ff".to_string(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: MultiSigEventType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn quorum_result_clone_eq() {
+        let result = QuorumResult {
+            quorum_met: true,
+            valid_count: 3,
+            invalid_count: 0,
+            unauthorized_count: 1,
+            total: 4,
+            threshold: 3,
+            invalid_signers: vec![],
+            unauthorized_signers: vec![],
+        };
+        let cloned = result.clone();
+        assert_eq!(result, cloned);
+    }
+
+    #[test]
+    fn multisig_event_clone_eq() {
+        let event = MultiSigEvent {
+            event_type: MultiSigEventType::ArrayCreated { signer_count: 5 },
+            trace_id: "t-clone".to_string(),
+        };
+        let cloned = event.clone();
+        assert_eq!(event, cloned);
+    }
+
+    #[test]
+    fn multisig_error_clone_eq() {
+        let err = MultiSigError::QuorumNotMet {
+            required: 3,
+            valid: 1,
+            total: 5,
+        };
+        let cloned = err.clone();
+        assert_eq!(err, cloned);
+    }
+
+    #[test]
+    fn sorted_array_is_empty_when_no_entries() {
+        let (sk1, vk1) = make_sig_pair(1);
+        let obj = test_obj();
+        let entries = vec![SignerSignature::new(vk1, sign_with(&sk1, &obj))];
+        let arr = SortedSignatureArray::new(entries).unwrap();
+        assert!(!arr.is_empty());
+    }
+
+    #[test]
+    fn sorted_array_signer_keys_unique() {
+        let (sk1, vk1) = make_sig_pair(1);
+        let (sk2, vk2) = make_sig_pair(2);
+        let (sk3, vk3) = make_sig_pair(3);
+        let obj = test_obj();
+        let mut entries = vec![
+            SignerSignature::new(vk1, sign_with(&sk1, &obj)),
+            SignerSignature::new(vk2, sign_with(&sk2, &obj)),
+            SignerSignature::new(vk3, sign_with(&sk3, &obj)),
+        ];
+        entries.sort();
+        let arr = SortedSignatureArray::new(entries).unwrap();
+        let keys = arr.signer_keys();
+        assert_eq!(keys.len(), 3);
+        // All keys should be unique
+        let unique: std::collections::BTreeSet<_> = keys.iter().collect();
+        assert_eq!(unique.len(), 3);
+    }
+
+    #[test]
+    fn multisig_error_display_contains_detail() {
+        let err = MultiSigError::UnsortedSignatureArray {
+            position: 5,
+            prev_key_hex: "aabb".to_string(),
+            current_key_hex: "ccdd".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("5") || msg.contains("position"));
+        assert!(msg.contains("aabb") || msg.contains("ccdd"));
+    }
+
+    #[test]
+    fn multisig_error_display_quorum_not_met_info() {
+        let err = MultiSigError::QuorumNotMet {
+            required: 3,
+            valid: 1,
+            total: 5,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("3") || msg.contains("quorum"));
+    }
+
+    #[test]
+    fn multisig_error_display_threshold_exceeds() {
+        let err = MultiSigError::ThresholdExceedsSignerCount {
+            threshold: 10,
+            signer_count: 3,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("10") || msg.contains("threshold"));
+    }
+
+    #[test]
+    fn context_drain_events_empties_list() {
+        let mut ctx = MultiSigContext::new();
+        let (sk1, vk1) = make_sig_pair(1);
+        let obj = test_obj();
+        let mut entries = vec![SignerSignature::new(vk1, sign_with(&sk1, &obj))];
+        entries.sort();
+        let _arr = ctx.create_sorted(entries, "t-drain").unwrap();
+        assert!(!ctx.drain_events().is_empty());
+        assert!(ctx.drain_events().is_empty());
+    }
+
+    #[test]
+    fn signer_signature_clone_eq() {
+        let (sk1, vk1) = make_sig_pair(1);
+        let obj = test_obj();
+        let ss = SignerSignature::new(vk1, sign_with(&sk1, &obj));
+        let cloned = ss.clone();
+        assert_eq!(ss, cloned);
+    }
 }

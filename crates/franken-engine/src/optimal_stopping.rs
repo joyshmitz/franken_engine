@@ -1373,4 +1373,250 @@ mod tests {
         let err = StoppingError::DegenerateKL;
         assert!(std::error::Error::source(&err).is_none());
     }
+
+    // ── Enrichment batch 2: Copy semantics, Clone/Eq gaps, JSON fields ──
+
+    #[test]
+    fn enrichment_stopping_decision_copy_semantics() {
+        let a = StoppingDecision::Stop;
+        let b = a; // Copy
+        let c = a; // still valid after copy
+        assert_eq!(b, c);
+        assert_eq!(a, StoppingDecision::Stop);
+    }
+
+    #[test]
+    fn enrichment_stopping_decision_ord_total() {
+        // Continue < Stop, verify Ord consistency with PartialOrd
+        let mut v = vec![
+            StoppingDecision::Stop,
+            StoppingDecision::Continue,
+            StoppingDecision::Stop,
+        ];
+        v.sort();
+        assert_eq!(v[0], StoppingDecision::Continue);
+        assert_eq!(v[1], StoppingDecision::Stop);
+        assert_eq!(v[2], StoppingDecision::Stop);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_stopping_error_all_variants() {
+        let variants = vec![
+            StoppingError::HorizonTooLarge {
+                horizon: 50_000,
+                max: 10_000,
+            },
+            StoppingError::InvalidThreshold { threshold: -42 },
+            StoppingError::InvalidDiscount {
+                discount: 2_000_000,
+            },
+            StoppingError::EmptyObservations,
+            StoppingError::DegenerateKL,
+            StoppingError::IndexOutOfBounds {
+                index: 99,
+                size: 10,
+            },
+        ];
+        for v in &variants {
+            let cloned = v.clone();
+            assert_eq!(v, &cloned);
+        }
+    }
+
+    #[test]
+    fn enrichment_serde_roundtrip_stopping_error_all_variants() {
+        let variants = vec![
+            StoppingError::HorizonTooLarge {
+                horizon: 20_000,
+                max: 10_000,
+            },
+            StoppingError::InvalidThreshold { threshold: -1 },
+            StoppingError::InvalidDiscount { discount: 0 },
+            StoppingError::EmptyObservations,
+            StoppingError::DegenerateKL,
+            StoppingError::IndexOutOfBounds { index: 5, size: 3 },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: StoppingError = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, &back);
+        }
+    }
+
+    #[test]
+    fn enrichment_clone_eq_gittins_index_computer() {
+        let a = GittinsIndexComputer::new(vec!["x".into(), "y".into()], 900_000, 50).unwrap();
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_clone_eq_certificate() {
+        let cert = OptimalStoppingCertificate {
+            schema: STOPPING_SCHEMA_VERSION.to_string(),
+            algorithm: "gittins".to_string(),
+            observations_before_stop: 7,
+            cusum_statistic_millionths: None,
+            arl0_lower_bound: None,
+            snell_optimal_value_millionths: None,
+            gittins_index_millionths: Some(750_000),
+            epoch: SecurityEpoch::from_raw(3),
+            certificate_hash: ContentHash::compute(b"clone_test"),
+        };
+        let cloned = cert.clone();
+        assert_eq!(cert, cloned);
+    }
+
+    #[test]
+    fn enrichment_json_fields_observation() {
+        let obs = make_observation(100_000, 200_000, 99);
+        let json = serde_json::to_string(&obs).unwrap();
+        assert!(json.contains("llr_millionths"));
+        assert!(json.contains("risk_score_millionths"));
+        assert!(json.contains("timestamp_us"));
+        assert!(json.contains("source"));
+    }
+
+    #[test]
+    fn enrichment_json_fields_secretary_selector() {
+        let sel = SecretarySelector::new(20);
+        let json = serde_json::to_string(&sel).unwrap();
+        assert!(json.contains("total_items"));
+        assert!(json.contains("exploration_length"));
+        assert!(json.contains("observed"));
+        assert!(json.contains("exploration_best_millionths"));
+        assert!(json.contains("exploration_complete"));
+        assert!(json.contains("selected"));
+        assert!(json.contains("selected_index"));
+    }
+
+    #[test]
+    fn enrichment_json_fields_escalation_policy() {
+        let policy = EscalationPolicy::new(5_000_000, 500_000, 50).unwrap();
+        let json = serde_json::to_string(&policy).unwrap();
+        assert!(json.contains("cusum"));
+        assert!(json.contains("cusum_enabled"));
+        assert!(json.contains("secretary"));
+        assert!(json.contains("secretary_enabled"));
+        assert!(json.contains("total_observations"));
+        assert!(json.contains("trigger_source"));
+    }
+
+    #[test]
+    fn enrichment_json_fields_snell_envelope() {
+        let env = SnellEnvelope::compute(vec![1_000_000, 2_000_000], MILLION).unwrap();
+        let json = serde_json::to_string(&env).unwrap();
+        assert!(json.contains("payoffs_millionths"));
+        assert!(json.contains("envelope_millionths"));
+        assert!(json.contains("optimal_stopping_time"));
+        assert!(json.contains("optimal_value_millionths"));
+        assert!(json.contains("discount_millionths"));
+    }
+
+    #[test]
+    fn enrichment_cusum_high_water_mark_tracks_peak() {
+        let mut chart = CusumChart::new(10_000_000, 500_000).unwrap();
+        // Push the statistic up, then down, then check high_water_mark stayed at peak
+        chart.observe(&make_observation(2_000_000, 500_000, 0));
+        chart.observe(&make_observation(2_000_000, 500_000, 1));
+        let peak = chart.statistic_millionths;
+        assert!(peak > 0);
+        // Push it back toward zero
+        for i in 2..20 {
+            chart.observe(&make_observation(-1_000_000, 100_000, i));
+        }
+        assert_eq!(chart.statistic_millionths, 0);
+        assert_eq!(chart.high_water_mark_millionths, peak);
+    }
+
+    #[test]
+    fn enrichment_cusum_post_signal_keeps_returning_stop() {
+        let mut chart = CusumChart::new(1_000_000, 0).unwrap();
+        // Force a signal
+        chart.observe(&make_observation(2_000_000, 500_000, 0));
+        assert!(chart.signaled);
+        // Subsequent benign observations still return Stop
+        let d = chart.observe(&make_observation(0, 0, 1));
+        assert_eq!(d, StoppingDecision::Stop);
+        let d2 = chart.observe(&make_observation(-500_000, 0, 2));
+        assert_eq!(d2, StoppingDecision::Stop);
+    }
+
+    #[test]
+    fn enrichment_cusum_arl0_zero_post_change_mean() {
+        let chart = CusumChart::new(5_000_000, 500_000).unwrap();
+        let arl0 = chart.arl0_lower_bound(0);
+        assert_eq!(arl0, i64::MAX);
+    }
+
+    #[test]
+    fn enrichment_cusum_arl0_negative_post_change_mean() {
+        let chart = CusumChart::new(5_000_000, 500_000).unwrap();
+        let arl0 = chart.arl0_lower_bound(-100);
+        assert_eq!(arl0, i64::MAX);
+    }
+
+    #[test]
+    fn enrichment_gittins_observe_failure_decreases_index() {
+        let mut gc = GittinsIndexComputer::new(vec!["a".into()], 900_000, 100).unwrap();
+        let initial_index = gc.arms[0].gittins_index_millionths;
+        for _ in 0..10 {
+            gc.observe(0, false).unwrap();
+        }
+        assert!(gc.arms[0].gittins_index_millionths < initial_index);
+    }
+
+    #[test]
+    fn enrichment_snell_should_stop_at_past_horizon() {
+        let env = SnellEnvelope::compute(vec![1_000_000, 2_000_000], MILLION).unwrap();
+        // Index beyond the envelope length should return true (must stop)
+        assert!(env.should_stop_at(100));
+        assert!(env.should_stop_at(usize::MAX));
+    }
+
+    #[test]
+    fn enrichment_secretary_two_items() {
+        let mut sel = SecretarySelector::new(2);
+        // With 2 items, exploration_length should be 1
+        assert_eq!(sel.exploration_length, 1);
+        // First item: exploration
+        let d1 = sel.observe(500_000);
+        assert_eq!(d1, StoppingDecision::Continue);
+        assert!(sel.exploration_complete);
+        // Second item: if it beats exploration best, stop; if not, forced stop at end
+        let d2 = sel.observe(600_000);
+        assert_eq!(d2, StoppingDecision::Stop);
+        assert!(sel.selected);
+    }
+
+    #[test]
+    fn enrichment_schema_version_constant() {
+        assert!(STOPPING_SCHEMA_VERSION.contains("optimal-stopping"));
+        assert!(STOPPING_SCHEMA_VERSION.starts_with("franken-engine."));
+    }
+
+    #[test]
+    fn enrichment_stopping_decision_debug_format() {
+        let dbg_continue = format!("{:?}", StoppingDecision::Continue);
+        let dbg_stop = format!("{:?}", StoppingDecision::Stop);
+        assert!(dbg_continue.contains("Continue"));
+        assert!(dbg_stop.contains("Stop"));
+    }
+
+    #[test]
+    fn enrichment_snell_envelope_zero_discount() {
+        // With discount factor 0, continuation value is always 0,
+        // so optimal stopping is at the max payoff if it's positive
+        let payoffs = vec![-1_000_000, 3_000_000, -500_000];
+        let env = SnellEnvelope::compute(payoffs, 0).unwrap();
+        // With zero discount, each envelope value is just max(payoff, 0 * next)
+        // so envelope = max(payoff, 0) for each step
+        // optimal_stopping_time = first t where envelope_t == payoff_t
+        // envelope[2] = payoff[2] = -500_000
+        // envelope[1] = max(3_000_000, 0) = 3_000_000
+        // envelope[0] = max(-1_000_000, 0) = 0, payoff[0] = -1_000_000 != 0
+        // first match: t=1 where envelope=3M and payoff=3M
+        assert_eq!(env.optimal_stopping_time, 1);
+        assert_eq!(env.optimal_value_millionths, 3_000_000);
+    }
 }

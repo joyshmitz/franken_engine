@@ -1935,4 +1935,308 @@ mod tests {
         let msg = orch_err.to_string();
         assert!(msg.contains("ledger"), "should mention ledger: {msg}");
     }
+
+    // -----------------------------------------------------------------------
+    // enrichment_ tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_extension_package_json_field_names_present() {
+        let pkg = ExtensionPackage {
+            extension_id: "id-1".to_string(),
+            source: "1".to_string(),
+            capabilities: vec!["net".to_string()],
+            version: "0.1.0".to_string(),
+            metadata: {
+                let mut m = BTreeMap::new();
+                m.insert("k".to_string(), "v".to_string());
+                m
+            },
+        };
+        let json = serde_json::to_string(&pkg).unwrap();
+        assert!(json.contains("\"extension_id\""), "missing extension_id field");
+        assert!(json.contains("\"source\""), "missing source field");
+        assert!(json.contains("\"capabilities\""), "missing capabilities field");
+        assert!(json.contains("\"version\""), "missing version field");
+        assert!(json.contains("\"metadata\""), "missing metadata field");
+    }
+
+    #[test]
+    fn enrichment_loss_matrix_preset_clone_semantics() {
+        let original = LossMatrixPreset::Conservative;
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        // After clone, original is still usable (Copy).
+        let _use_original = original;
+        let _use_cloned = cloned;
+    }
+
+    #[test]
+    fn enrichment_orchestrator_error_display_exact_empty_source() {
+        let err = OrchestratorError::EmptySource;
+        assert_eq!(err.to_string(), "extension source is empty");
+    }
+
+    #[test]
+    fn enrichment_orchestrator_error_display_exact_empty_extension_id() {
+        let err = OrchestratorError::EmptyExtensionId;
+        assert_eq!(err.to_string(), "extension_id is empty");
+    }
+
+    #[test]
+    fn enrichment_extension_package_large_metadata_serde_roundtrip() {
+        let mut metadata = BTreeMap::new();
+        for i in 0..50 {
+            metadata.insert(format!("key_{i}"), format!("value_{i}"));
+        }
+        let pkg = ExtensionPackage {
+            extension_id: "ext-large-meta".to_string(),
+            source: "42".to_string(),
+            capabilities: vec![],
+            version: "1.0.0".to_string(),
+            metadata,
+        };
+        let json = serde_json::to_string(&pkg).unwrap();
+        let restored: ExtensionPackage = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.metadata.len(), 50);
+        assert_eq!(restored.metadata.get("key_0").unwrap(), "value_0");
+        assert_eq!(restored.metadata.get("key_49").unwrap(), "value_49");
+    }
+
+    #[test]
+    fn enrichment_stable_symbol_multiple_distinct_inputs() {
+        let inputs = ["alpha", "beta", "gamma", "delta", "epsilon"];
+        let symbols: std::collections::BTreeSet<u32> = inputs
+            .iter()
+            .map(|s| ExecutionOrchestrator::stable_symbol(s))
+            .collect();
+        assert_eq!(
+            symbols.len(),
+            inputs.len(),
+            "all distinct inputs should produce distinct symbols"
+        );
+    }
+
+    #[test]
+    fn enrichment_build_evidence_zero_instructions_no_panic() {
+        let pkg = simple_package();
+        let exec = ExecutionResult {
+            value: crate::baseline_interpreter::Value::Null,
+            hostcall_decisions: Vec::new(),
+            instructions_executed: 0,
+            witness_events: Vec::new(),
+            events: Vec::new(),
+        };
+        let ev = ExecutionOrchestrator::build_evidence(&pkg, &exec, SecurityEpoch::from_raw(1));
+        // Division by zero for hostcall_rate should be handled (returns 0).
+        assert_eq!(ev.hostcall_rate_millionths, 0);
+        assert_eq!(ev.resource_score_millionths, 0);
+    }
+
+    #[test]
+    fn enrichment_execution_reward_hostcall_penalty_only() {
+        use crate::ir_contract::{CapabilityTag, HostcallDecisionRecord};
+        let exec = ExecutionResult {
+            value: crate::baseline_interpreter::Value::Null,
+            hostcall_decisions: vec![
+                HostcallDecisionRecord {
+                    seq: 0,
+                    capability: CapabilityTag("fs_read".to_string()),
+                    allowed: true,
+                    instruction_index: 0,
+                },
+                HostcallDecisionRecord {
+                    seq: 1,
+                    capability: CapabilityTag("net".to_string()),
+                    allowed: false,
+                    instruction_index: 1,
+                },
+            ],
+            instructions_executed: 0, // no instruction penalty
+            witness_events: Vec::new(),
+            events: Vec::new(),
+        };
+        let reward = ExecutionOrchestrator::execution_reward_millionths(&exec);
+        // 2 hostcalls => penalty = 2 * 25_000 = 50_000. Reward = 1M - 0 - 50_000 = 950_000.
+        assert_eq!(reward, 950_000);
+    }
+
+    #[test]
+    fn enrichment_execution_reward_saturates_hostcall_penalty() {
+        use crate::ir_contract::{CapabilityTag, HostcallDecisionRecord};
+        let many_hostcalls: Vec<HostcallDecisionRecord> = (0..100)
+            .map(|i| HostcallDecisionRecord {
+                seq: i,
+                capability: CapabilityTag(format!("cap_{i}")),
+                allowed: true,
+                instruction_index: i as u32,
+            })
+            .collect();
+        let exec = ExecutionResult {
+            value: crate::baseline_interpreter::Value::Null,
+            hostcall_decisions: many_hostcalls,
+            instructions_executed: 0,
+            witness_events: Vec::new(),
+            events: Vec::new(),
+        };
+        let reward = ExecutionOrchestrator::execution_reward_millionths(&exec);
+        // 100 hostcalls => penalty = min(100*25_000, 300_000) = 300_000. Reward = 700_000.
+        assert_eq!(reward, 700_000);
+    }
+
+    #[test]
+    fn enrichment_force_lane_quickjs_propagates() {
+        let cfg = OrchestratorConfig {
+            force_lane: Some(LaneChoice::QuickJs),
+            ..OrchestratorConfig::default()
+        };
+        let mut orch = ExecutionOrchestrator::new(cfg);
+        let result = orch.execute(&simple_package()).unwrap();
+        assert_eq!(result.lane, LaneChoice::QuickJs);
+    }
+
+    #[test]
+    fn enrichment_force_lane_v8_propagates() {
+        let cfg = OrchestratorConfig {
+            force_lane: Some(LaneChoice::V8),
+            ..OrchestratorConfig::default()
+        };
+        let mut orch = ExecutionOrchestrator::new(cfg);
+        let result = orch.execute(&simple_package()).unwrap();
+        assert_eq!(result.lane, LaneChoice::V8);
+    }
+
+    #[test]
+    fn enrichment_evidence_metadata_extension_version_recorded() {
+        let pkg = ExtensionPackage {
+            extension_id: "ext-ver".to_string(),
+            source: "42".to_string(),
+            capabilities: vec![],
+            version: "7.3.1".to_string(),
+            metadata: BTreeMap::new(),
+        };
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let result = orch.execute(&pkg).unwrap();
+        let entry = &result.evidence_entries[0];
+        assert_eq!(
+            entry.metadata.get("extension_version").unwrap(),
+            "7.3.1",
+            "evidence must record exact extension version"
+        );
+    }
+
+    #[test]
+    fn enrichment_rapid_sequential_executions_no_panic() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        for i in 0..10 {
+            let pkg = package_with_id(&format!("ext-rapid-{i}"));
+            orch.execute(&pkg).expect("rapid execution should succeed");
+        }
+        assert_eq!(orch.execution_count(), 10);
+        assert!(orch.ledger().len() >= 10);
+    }
+
+    #[test]
+    fn enrichment_orchestrator_error_debug_format() {
+        let err = OrchestratorError::EmptySource;
+        let dbg = format!("{err:?}");
+        assert!(dbg.contains("EmptySource"), "Debug should name variant: {dbg}");
+
+        let err2 = OrchestratorError::EmptyExtensionId;
+        let dbg2 = format!("{err2:?}");
+        assert!(
+            dbg2.contains("EmptyExtensionId"),
+            "Debug should name variant: {dbg2}"
+        );
+    }
+
+    #[test]
+    fn enrichment_extension_package_unicode_source_and_id() {
+        let pkg = ExtensionPackage {
+            extension_id: "ext-\u{00e9}\u{00f1}\u{00fc}".to_string(),
+            source: "42".to_string(),
+            capabilities: vec![],
+            version: "1.0.0".to_string(),
+            metadata: BTreeMap::new(),
+        };
+        let json = serde_json::to_string(&pkg).unwrap();
+        let restored: ExtensionPackage = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.extension_id, pkg.extension_id);
+    }
+
+    #[test]
+    fn enrichment_evidence_compression_certificate_fields() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let result = orch.execute(&simple_package()).unwrap();
+        let cert = result
+            .evidence_compression_certificate
+            .as_ref()
+            .expect("compression certificate should be present");
+        // Entropy estimates should be non-negative.
+        assert!(cert.entropy_millibits_per_symbol >= 0);
+        assert!(cert.shannon_lower_bound_bits >= 0);
+        // Overhead ratio is in fixed-point millionths; should be non-negative.
+        assert!(cert.overhead_ratio_millionths >= 0);
+    }
+
+    #[test]
+    fn enrichment_build_evidence_epoch_propagation() {
+        let pkg = simple_package();
+        let exec = ExecutionResult {
+            value: crate::baseline_interpreter::Value::Int(1_000_000),
+            hostcall_decisions: Vec::new(),
+            instructions_executed: 5,
+            witness_events: Vec::new(),
+            events: Vec::new(),
+        };
+        for raw_epoch in [1u64, 100, u64::MAX] {
+            let epoch = SecurityEpoch::from_raw(raw_epoch);
+            let ev = ExecutionOrchestrator::build_evidence(&pkg, &exec, epoch);
+            assert_eq!(ev.epoch, epoch);
+        }
+    }
+
+    #[test]
+    fn enrichment_result_lane_field_populated() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let result = orch.execute(&simple_package()).unwrap();
+        // Lane should be one of the valid choices.
+        assert!(
+            result.lane == LaneChoice::QuickJs || result.lane == LaneChoice::V8,
+            "lane should be QuickJs or V8, got {:?}",
+            result.lane
+        );
+    }
+
+    #[test]
+    fn enrichment_stopping_policies_grow_per_distinct_extension() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        assert!(orch.stopping_policies.is_empty());
+
+        orch.execute(&package_with_id("ext-stop-a")).unwrap();
+        assert_eq!(orch.stopping_policies.len(), 1);
+
+        orch.execute(&package_with_id("ext-stop-b")).unwrap();
+        assert_eq!(orch.stopping_policies.len(), 2);
+
+        // Re-executing same extension should NOT add a new policy.
+        orch.execute(&package_with_id("ext-stop-a")).unwrap();
+        assert_eq!(orch.stopping_policies.len(), 2);
+    }
+
+    #[test]
+    fn enrichment_ledger_entries_monotonically_grow() {
+        let mut orch = ExecutionOrchestrator::with_defaults();
+        let mut prev_len = 0usize;
+        for i in 0..5 {
+            orch.execute(&package_with_id(&format!("ext-mono-{i}")))
+                .unwrap();
+            let cur_len = orch.ledger().len();
+            assert!(
+                cur_len > prev_len,
+                "ledger should grow: was {prev_len}, now {cur_len}"
+            );
+            prev_len = cur_len;
+        }
+    }
 }

@@ -1575,4 +1575,104 @@ mod tests {
         assert_eq!(variants[0], FaultType::NetworkPartition);
         assert_eq!(variants[4], FaultType::ClockSkew);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 6: Copy, Hash, blocked summary, fnv
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_fault_type_copy_semantics() {
+        let a = FaultType::ResourceExhaustion;
+        let b = a; // Copy
+        assert_eq!(a, b);
+        assert_eq!(b.to_string(), "resource_exhaustion");
+    }
+
+    #[test]
+    fn enrichment_fault_type_hash_in_btreeset() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(FaultType::NetworkPartition);
+        set.insert(FaultType::ByzantineBehavior);
+        set.insert(FaultType::CascadingFailure);
+        set.insert(FaultType::ResourceExhaustion);
+        set.insert(FaultType::ClockSkew);
+        assert_eq!(set.len(), 5);
+        assert!(!set.insert(FaultType::ClockSkew)); // dup
+    }
+
+    #[test]
+    fn enrichment_blocked_summary_contains_scenario_ids() {
+        // Build a manually blocked result
+        let result = GateValidationResult {
+            seed: 99,
+            scenarios: vec![
+                FaultScenarioResult {
+                    scenario_id: "fail-a".to_string(),
+                    fault_type: FaultType::NetworkPartition,
+                    passed: false,
+                    criteria: vec![],
+                    receipts_emitted: 0,
+                    final_state: None,
+                    detection_latency_ns: 0,
+                    isolation_verified: false,
+                    recovery_verified: false,
+                },
+                FaultScenarioResult {
+                    scenario_id: "pass-b".to_string(),
+                    fault_type: FaultType::ClockSkew,
+                    passed: true,
+                    criteria: vec![],
+                    receipts_emitted: 0,
+                    final_state: None,
+                    detection_latency_ns: 0,
+                    isolation_verified: true,
+                    recovery_verified: true,
+                },
+            ],
+            passed: false,
+            total_scenarios: 2,
+            passed_scenarios: 1,
+            events: vec![],
+            result_digest: "0000000000000000".to_string(),
+        };
+        let summary = result.summary();
+        assert!(summary.starts_with("BLOCKED:"));
+        assert!(summary.contains("fail-a"));
+        assert!(!summary.contains("pass-b"));
+    }
+
+    #[test]
+    fn enrichment_gate_validation_result_clone_eq() {
+        let mut runner = QuarantineMeshGateRunner::new(42);
+        let result = runner.run_all();
+        let cloned = result.clone();
+        assert_eq!(result, cloned);
+    }
+
+    #[test]
+    fn enrichment_fnv_deterministic_same_input() {
+        let a = fnv1a64(b"quarantine-mesh-gate");
+        let b = fnv1a64(b"quarantine-mesh-gate");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_fnv_different_inputs_differ() {
+        let a = fnv1a64(b"input-a");
+        let b = fnv1a64(b"input-b");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn enrichment_fnv_empty_input() {
+        let h = fnv1a64(b"");
+        // FNV-1a with empty input returns the offset basis
+        assert_eq!(h, 0xcbf2_9ce4_8422_2325);
+    }
+
+    #[test]
+    fn enrichment_detection_sla_constant() {
+        assert_eq!(DETECTION_SLA_NS, 500_000_000);
+    }
 }

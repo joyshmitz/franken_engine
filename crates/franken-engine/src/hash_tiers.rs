@@ -1020,4 +1020,247 @@ mod tests {
         assert_eq!(tiers_a[1], HashTier::Content);
         assert_eq!(tiers_a[2], HashTier::Authenticity);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: copy/Ord/bit-flip, cross-tier, edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn integrity_hash_copy_semantics() {
+        let h = IntegrityHash::compute(b"copy-test");
+        let copied = h;
+        // Both usable after copy (IntegrityHash is Copy).
+        assert_eq!(h.as_u64(), copied.as_u64());
+    }
+
+    #[test]
+    fn integrity_hash_ord_in_btreeset() {
+        let mut set = std::collections::BTreeSet::new();
+        let h1 = IntegrityHash::compute(b"aaa");
+        let h2 = IntegrityHash::compute(b"bbb");
+        let h3 = IntegrityHash::compute(b"ccc");
+        set.insert(h1);
+        set.insert(h2);
+        set.insert(h3);
+        assert_eq!(set.len(), 3);
+        // Re-insert duplicate.
+        set.insert(h1);
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn integrity_hash_single_bit_flip_sensitivity() {
+        let mut data = vec![0u8; 16];
+        let base = IntegrityHash::compute(&data);
+        data[7] ^= 1; // flip one bit
+        let flipped = IntegrityHash::compute(&data);
+        assert_ne!(base, flipped, "single bit flip must change hash");
+    }
+
+    #[test]
+    fn integrity_hash_json_format_is_number() {
+        let h = IntegrityHash(42);
+        let json = serde_json::to_string(&h).expect("serialize");
+        // IntegrityHash(u64) serializes as a number.
+        assert_eq!(json, "42");
+    }
+
+    #[test]
+    fn content_hash_empty_input_produces_valid_hash() {
+        let h = ContentHash::compute(b"");
+        assert_eq!(h.as_bytes().len(), 32);
+        // Should be deterministic.
+        assert_eq!(h, ContentHash::compute(b""));
+    }
+
+    #[test]
+    fn content_hash_to_hex_matches_display_suffix() {
+        let h = ContentHash::compute(b"hex-vs-display");
+        let display = h.to_string();
+        let hex = h.to_hex();
+        assert_eq!(display, format!("content:{hex}"));
+    }
+
+    #[test]
+    fn content_hash_large_input_deterministic() {
+        let data: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
+        let a = ContentHash::compute(&data);
+        let b = ContentHash::compute(&data);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn content_hash_single_bit_flip_sensitivity() {
+        let mut data = vec![0u8; 64];
+        let base = ContentHash::compute(&data);
+        data[31] ^= 0x80;
+        let flipped = ContentHash::compute(&data);
+        assert_ne!(base, flipped, "single bit flip must change content hash");
+    }
+
+    #[test]
+    fn content_hash_ord_sort_deterministic() {
+        let hashes: Vec<ContentHash> = (0u8..10).map(|i| ContentHash::compute(&[i])).collect();
+        let mut sorted_a = hashes.clone();
+        let mut sorted_b = hashes.clone();
+        sorted_a.sort();
+        sorted_b.sort();
+        assert_eq!(sorted_a, sorted_b);
+    }
+
+    #[test]
+    fn authenticity_hash_constant_time_eq_all_zeros() {
+        let h = AuthenticityHash([0u8; 32]);
+        assert!(h.constant_time_eq(&AuthenticityHash([0u8; 32])));
+        assert!(!h.constant_time_eq(&AuthenticityHash([
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 1
+        ])));
+    }
+
+    #[test]
+    fn authenticity_hash_constant_time_eq_single_bit_diff() {
+        let a = AuthenticityHash::compute_keyed(b"key", b"data");
+        let mut bytes = *a.as_bytes();
+        bytes[0] ^= 1;
+        let b = AuthenticityHash(bytes);
+        assert!(!a.constant_time_eq(&b));
+    }
+
+    #[test]
+    fn authenticity_hash_long_key_works() {
+        let long_key: Vec<u8> = (0..256).map(|i| (i % 256) as u8).collect();
+        let h = AuthenticityHash::compute_keyed(&long_key, b"msg");
+        assert_eq!(h.as_bytes().len(), 32);
+        // Deterministic with long key.
+        assert_eq!(h, AuthenticityHash::compute_keyed(&long_key, b"msg"));
+    }
+
+    #[test]
+    fn authenticity_hash_empty_key_differs_from_unkeyed() {
+        // Domain separation in keyed_hash means even empty key differs.
+        let keyed_empty = AuthenticityHash::compute_keyed(b"", b"data");
+        let unkeyed = AuthenticityHash::compute(b"data");
+        assert_ne!(keyed_empty.as_bytes(), unkeyed.as_bytes());
+    }
+
+    #[test]
+    fn authenticity_hash_to_hex_matches_display_suffix() {
+        let h = AuthenticityHash::compute_keyed(b"k", b"d");
+        let display = h.to_string();
+        let hex = h.to_hex();
+        assert_eq!(display, format!("authenticity:{hex}"));
+    }
+
+    #[test]
+    fn hash_event_clone_eq() {
+        let event = HashEvent {
+            tier: HashTier::Content,
+            algorithm: HashAlgorithm::SipInspiredCr,
+            input_len: 100,
+            component: "clone_test".to_string(),
+            trace_id: "t-999".to_string(),
+        };
+        let cloned = event.clone();
+        assert_eq!(event, cloned);
+    }
+
+    #[test]
+    fn hash_event_json_field_input_len_present() {
+        let event = HashEvent {
+            tier: HashTier::Integrity,
+            algorithm: HashAlgorithm::WyhashInspired,
+            input_len: 12345,
+            component: "len_check".to_string(),
+            trace_id: "t-len".to_string(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        assert!(json.contains("\"input_len\""));
+        assert!(json.contains("12345"));
+    }
+
+    #[test]
+    fn hash_algorithm_ord_sort_deterministic() {
+        let mut algs_a = vec![
+            HashAlgorithm::SipInspiredKeyed,
+            HashAlgorithm::WyhashInspired,
+            HashAlgorithm::SipInspiredCr,
+        ];
+        let mut algs_b = algs_a.clone();
+        algs_a.sort();
+        algs_b.sort();
+        assert_eq!(algs_a, algs_b);
+        assert_eq!(algs_a[0], HashAlgorithm::WyhashInspired);
+    }
+
+    #[test]
+    fn hash_algorithm_tier_bijection() {
+        // Each algorithm maps to a unique tier.
+        let algs = [
+            HashAlgorithm::WyhashInspired,
+            HashAlgorithm::SipInspiredCr,
+            HashAlgorithm::SipInspiredKeyed,
+        ];
+        let mut seen_tiers = std::collections::BTreeSet::new();
+        for alg in &algs {
+            seen_tiers.insert(alg.tier());
+        }
+        assert_eq!(seen_tiers.len(), 3, "each algorithm maps to unique tier");
+    }
+
+    #[test]
+    fn integrity_hash_std_hash_consistent() {
+        use std::hash::{Hash, Hasher};
+        let h = IntegrityHash::compute(b"hash-trait-test");
+        let mut hasher_a = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher_b = std::collections::hash_map::DefaultHasher::new();
+        h.hash(&mut hasher_a);
+        h.hash(&mut hasher_b);
+        assert_eq!(hasher_a.finish(), hasher_b.finish());
+    }
+
+    #[test]
+    fn content_hash_all_zeros_input() {
+        let data = [0u8; 32];
+        let h = ContentHash::compute(&data);
+        assert_eq!(h.as_bytes().len(), 32);
+        // Not all zeros in output (hash should mix).
+        assert_ne!(h.as_bytes(), &[0u8; 32]);
+    }
+
+    #[test]
+    fn keyed_hash_key_data_not_commutative() {
+        let a = AuthenticityHash::compute_keyed(b"alpha", b"beta");
+        let b = AuthenticityHash::compute_keyed(b"beta", b"alpha");
+        assert_ne!(a, b, "hash(k=alpha, d=beta) != hash(k=beta, d=alpha)");
+    }
+
+    #[test]
+    fn integrity_hash_boundary_zero() {
+        let h = IntegrityHash(0);
+        assert_eq!(h.as_u64(), 0);
+        assert_eq!(h.to_string(), "integrity:0000000000000000");
+    }
+
+    #[test]
+    fn content_hash_hash_trait_works() {
+        use std::hash::{Hash, Hasher};
+        let h = ContentHash::compute(b"hash-trait");
+        let mut hasher_a = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher_b = std::collections::hash_map::DefaultHasher::new();
+        h.hash(&mut hasher_a);
+        h.hash(&mut hasher_b);
+        assert_eq!(hasher_a.finish(), hasher_b.finish());
+    }
+
+    #[test]
+    fn authenticity_hash_hash_trait_works() {
+        use std::hash::{Hash, Hasher};
+        let h = AuthenticityHash::compute_keyed(b"k", b"d");
+        let mut hasher_a = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher_b = std::collections::hash_map::DefaultHasher::new();
+        h.hash(&mut hasher_a);
+        h.hash(&mut hasher_b);
+        assert_eq!(hasher_a.finish(), hasher_b.finish());
+    }
 }

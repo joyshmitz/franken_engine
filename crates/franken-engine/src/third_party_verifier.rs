@@ -2357,4 +2357,165 @@ mod tests {
             vec!["limited-to-unit-tests".to_string()]
         );
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn verdict_serde_exact_snake_case_all_4() {
+        assert_eq!(
+            serde_json::to_string(&VerificationVerdict::Verified).unwrap(),
+            "\"verified\""
+        );
+        assert_eq!(
+            serde_json::to_string(&VerificationVerdict::PartiallyVerified).unwrap(),
+            "\"partially_verified\""
+        );
+        assert_eq!(
+            serde_json::to_string(&VerificationVerdict::Failed).unwrap(),
+            "\"failed\""
+        );
+        assert_eq!(
+            serde_json::to_string(&VerificationVerdict::Inconclusive).unwrap(),
+            "\"inconclusive\""
+        );
+    }
+
+    #[test]
+    fn render_attestation_summary_with_failed_verdict() {
+        let report = make_report(VerificationVerdict::Failed);
+        let input = make_attestation_input(report, None);
+        let attestation = generate_attestation(&input).unwrap();
+        let summary = render_attestation_summary(&attestation);
+        assert!(summary.contains("verdict=failed"), "summary: {summary}");
+        assert!(summary.contains("signed=false"), "summary: {summary}");
+    }
+
+    #[test]
+    fn scope_limitations_deduplicated_and_trimmed_in_attestation() {
+        let report = make_report(VerificationVerdict::Verified);
+        let mut input = make_attestation_input(report, None);
+        input.scope_limitations = vec![
+            "  alpha  ".to_string(),
+            "beta".to_string(),
+            "alpha".to_string(), // duplicate after trim
+            "  ".to_string(),    // empty after trim → filtered
+        ];
+        let attestation = generate_attestation(&input).unwrap();
+        assert_eq!(attestation.scope_limitations, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn attestation_input_serde_with_signing_key_hex_some() {
+        let report = make_report(VerificationVerdict::Verified);
+        let key = SigningKey::from_bytes([7u8; SIGNING_KEY_LEN]);
+        let input = make_attestation_input(report, Some(hex::encode(key.as_bytes())));
+        let json = serde_json::to_string(&input).unwrap();
+        let back: VerificationAttestationInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.signing_key_hex, input.signing_key_hex);
+    }
+
+    #[test]
+    fn verify_attestation_decision_id_mismatch_fails() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, None);
+        let mut attestation = generate_attestation(&input).unwrap();
+        attestation.decision_id = "wrong-decision".to_string();
+        let verification = verify_attestation(&attestation);
+        assert_eq!(verification.verdict, VerificationVerdict::Failed);
+        let failed = verification
+            .checks
+            .iter()
+            .find(|c| c.name == "context_matches_report")
+            .unwrap();
+        assert!(!failed.passed);
+    }
+
+    #[test]
+    fn verify_attestation_sig_without_key_fails() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, None);
+        let mut attestation = generate_attestation(&input).unwrap();
+        // Set signature_hex but leave signer_verification_key_hex as None
+        attestation.signature_hex = Some(hex::encode([1u8; SIGNATURE_LEN]));
+        let verification = verify_attestation(&attestation);
+        assert_eq!(verification.verdict, VerificationVerdict::Failed);
+        let failed = verification
+            .checks
+            .iter()
+            .find(|c| c.name == "signature_presence_consistent")
+            .unwrap();
+        assert!(!failed.passed);
+    }
+
+    #[test]
+    fn containment_verified_confidence_exact_format() {
+        let result = make_gate_result(vec![
+            make_scenario("s1", true, 100_000),
+            make_scenario("s2", true, 200_000),
+        ]);
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        assert_eq!(report.verdict, VerificationVerdict::Verified);
+        let total = report.checks.len();
+        assert_eq!(
+            report.confidence_statement,
+            format!("all {total} checks passed with no skipped verification scope")
+        );
+    }
+
+    #[test]
+    fn containment_failed_confidence_exact_format() {
+        let scenarios = vec![make_scenario("s1", true, 100_000)];
+        let mut result = make_gate_result(scenarios);
+        result.total_scenarios = 99; // mismatch forces failure
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        assert_eq!(report.verdict, VerificationVerdict::Failed);
+        let total = report.checks.len();
+        let failed = report.checks.iter().filter(|c| !c.passed).count();
+        assert_eq!(
+            report.confidence_statement,
+            format!("{failed} of {total} checks failed; claim verification failed")
+        );
+    }
+
+    #[test]
+    fn attestation_report_digest_is_valid_hex() {
+        let report = make_report(VerificationVerdict::Verified);
+        let input = make_attestation_input(report, None);
+        let attestation = generate_attestation(&input).unwrap();
+        let decoded = hex::decode(&attestation.report_digest_hex);
+        assert!(decoded.is_ok(), "digest should be valid hex");
+        assert!(!decoded.unwrap().is_empty());
+    }
+
+    #[test]
+    fn render_report_summary_confidence_is_quoted() {
+        let report = make_report(VerificationVerdict::Verified);
+        let summary = render_report_summary(&report);
+        // confidence= value is wrapped in double quotes in the format string
+        assert!(
+            summary.contains("confidence=\""),
+            "summary should contain quoted confidence: {summary}"
+        );
+    }
+
+    #[test]
+    fn containment_per_scenario_produces_four_check_types() {
+        let result = make_gate_result(vec![make_scenario("s1", true, 100_000)]);
+        let bundle = make_containment_bundle(result);
+        let report = verify_containment_claim(&bundle);
+        // 3 global checks + 4 per-scenario checks = 7 total for 1 scenario
+        let per_scenario: Vec<_> = report
+            .checks
+            .iter()
+            .filter(|c| c.name.contains(":s1"))
+            .collect();
+        assert_eq!(per_scenario.len(), 4);
+        let names: Vec<&str> = per_scenario.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"criteria_consistency:s1"));
+        assert!(names.contains(&"latency_sla:s1"));
+        assert!(names.contains(&"isolation_verified:s1"));
+        assert!(names.contains(&"recovery_verified:s1"));
+    }
 }

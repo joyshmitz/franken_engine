@@ -1185,7 +1185,7 @@ mod tests {
     }
 
     #[test]
-    fn epoch_budget_serde_roundtrip() {
+    fn epoch_budget_serde_roundtrip_small_budget_profile() {
         let eb = EpochBudget {
             epoch: SecurityEpoch::from_raw(3),
             epsilon_budget_millionths: 1_000_000,
@@ -1427,5 +1427,283 @@ mod tests {
             serde_json::to_string(&acc).unwrap()
         };
         assert_eq!(run(), run());
+    }
+
+    // ── Enrichment batch: clone/eq, serde, error coverage ──────────────
+
+    #[test]
+    fn epoch_budget_clone_eq() {
+        let eb = EpochBudget {
+            epoch: SecurityEpoch::from_raw(1),
+            epsilon_budget_millionths: 1_000_000,
+            delta_budget_millionths: 100_000,
+            epsilon_spent_millionths: 0,
+            delta_spent_millionths: 0,
+            composition_method: CompositionMethod::Basic,
+            operations_count: 0,
+            created_at_ns: 0,
+            exhausted: false,
+        };
+        let cloned = eb.clone();
+        assert_eq!(eb, cloned);
+    }
+
+    #[test]
+    fn budget_consumption_clone_eq() {
+        let bc = BudgetConsumption {
+            operation_id: 1,
+            epoch: SecurityEpoch::from_raw(1),
+            epsilon_consumed_millionths: 100,
+            delta_consumed_millionths: 10,
+            composed_epsilon_millionths: 100,
+            composed_delta_millionths: 10,
+            timestamp_ns: 1_000,
+            description: "test".to_string(),
+        };
+        let cloned = bc.clone();
+        assert_eq!(bc, cloned);
+    }
+
+    #[test]
+    fn budget_forecast_clone_eq() {
+        let fc = BudgetForecast {
+            epoch_epsilon_remaining_millionths: 500_000,
+            epoch_delta_remaining_millionths: 50_000,
+            lifetime_epsilon_remaining_millionths: 5_000_000,
+            lifetime_delta_remaining_millionths: 500_000,
+            estimated_remaining_operations: 10,
+            exhausted: false,
+        };
+        let cloned = fc.clone();
+        assert_eq!(fc, cloned);
+    }
+
+    #[test]
+    fn epoch_summary_clone_eq() {
+        let es = EpochSummary {
+            epoch: SecurityEpoch::from_raw(1),
+            zone: "z".to_string(),
+            total_epsilon_spent_millionths: 100,
+            total_delta_spent_millionths: 10,
+            operations_count: 1,
+            exhausted: false,
+            started_at_ns: 0,
+            closed_at_ns: 1000,
+            composition_method: CompositionMethod::Basic,
+        };
+        let cloned = es.clone();
+        assert_eq!(es, cloned);
+    }
+
+    #[test]
+    fn accountant_config_clone_eq() {
+        let cfg = test_config();
+        let cloned = cfg.clone();
+        assert_eq!(cfg, cloned);
+    }
+
+    #[test]
+    fn accountant_error_clone_eq() {
+        let err = AccountantError::BudgetExhausted {
+            dimension: "epoch".into(),
+            epsilon_remaining: -100,
+            delta_remaining: 0,
+        };
+        let cloned = err.clone();
+        assert_eq!(err, cloned);
+    }
+
+    #[test]
+    fn epoch_budget_serde_roundtrip() {
+        let eb = EpochBudget {
+            epoch: SecurityEpoch::from_raw(3),
+            epsilon_budget_millionths: 500_000,
+            delta_budget_millionths: 50_000,
+            epsilon_spent_millionths: 100_000,
+            delta_spent_millionths: 10_000,
+            composition_method: CompositionMethod::Renyi,
+            operations_count: 5,
+            created_at_ns: 42,
+            exhausted: false,
+        };
+        let json = serde_json::to_string(&eb).unwrap();
+        let back: EpochBudget = serde_json::from_str(&json).unwrap();
+        assert_eq!(eb, back);
+    }
+
+    #[test]
+    fn budget_consumption_serde_roundtrip() {
+        let bc = BudgetConsumption {
+            operation_id: 7,
+            epoch: SecurityEpoch::from_raw(2),
+            epsilon_consumed_millionths: 200_000,
+            delta_consumed_millionths: 20_000,
+            composed_epsilon_millionths: 160_000,
+            composed_delta_millionths: 20_000,
+            timestamp_ns: 99_000,
+            description: "serde-test".to_string(),
+        };
+        let json = serde_json::to_string(&bc).unwrap();
+        let back: BudgetConsumption = serde_json::from_str(&json).unwrap();
+        assert_eq!(bc, back);
+    }
+
+    #[test]
+    fn budget_forecast_serde_roundtrip_exhausted_profile() {
+        let fc = BudgetForecast {
+            epoch_epsilon_remaining_millionths: 300_000,
+            epoch_delta_remaining_millionths: 30_000,
+            lifetime_epsilon_remaining_millionths: 3_000_000,
+            lifetime_delta_remaining_millionths: 300_000,
+            estimated_remaining_operations: 15,
+            exhausted: true,
+        };
+        let json = serde_json::to_string(&fc).unwrap();
+        let back: BudgetForecast = serde_json::from_str(&json).unwrap();
+        assert_eq!(fc, back);
+    }
+
+    #[test]
+    fn epoch_summary_serde_roundtrip() {
+        let es = EpochSummary {
+            epoch: SecurityEpoch::from_raw(5),
+            zone: "zone-B".to_string(),
+            total_epsilon_spent_millionths: 800_000,
+            total_delta_spent_millionths: 80_000,
+            operations_count: 12,
+            exhausted: true,
+            started_at_ns: 1_000,
+            closed_at_ns: 5_000,
+            composition_method: CompositionMethod::ZeroCdp,
+        };
+        let json = serde_json::to_string(&es).unwrap();
+        let back: EpochSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(es, back);
+    }
+
+    #[test]
+    fn accountant_error_serde_roundtrip_all_variants() {
+        let errors = vec![
+            AccountantError::BudgetExhausted {
+                dimension: "epoch".into(),
+                epsilon_remaining: -50,
+                delta_remaining: 0,
+            },
+            AccountantError::EpochNotAdvanced {
+                current: SecurityEpoch::from_raw(3),
+                proposed: SecurityEpoch::from_raw(2),
+            },
+            AccountantError::InvalidConsumption {
+                reason: "negative".into(),
+            },
+            AccountantError::InvalidConfiguration {
+                reason: "zero".into(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: AccountantError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    #[test]
+    fn accountant_error_display_all_unique() {
+        let errors = vec![
+            AccountantError::BudgetExhausted {
+                dimension: "epoch".into(),
+                epsilon_remaining: 0,
+                delta_remaining: 0,
+            },
+            AccountantError::EpochNotAdvanced {
+                current: SecurityEpoch::from_raw(1),
+                proposed: SecurityEpoch::from_raw(1),
+            },
+            AccountantError::InvalidConsumption {
+                reason: "neg".into(),
+            },
+            AccountantError::InvalidConfiguration {
+                reason: "bad".into(),
+            },
+        ];
+        let displays: std::collections::BTreeSet<String> =
+            errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(
+            displays.len(),
+            4,
+            "all 4 error variants have unique Display"
+        );
+    }
+
+    #[test]
+    fn accountant_error_implements_std_error_single_variant() {
+        let err: Box<dyn std::error::Error> = Box::new(AccountantError::InvalidConsumption {
+            reason: "test".into(),
+        });
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn forecast_no_operations_unlimited_estimate() {
+        let acc = test_accountant();
+        let fc = acc.forecast();
+        assert_eq!(fc.estimated_remaining_operations, u64::MAX);
+        assert!(!fc.exhausted);
+    }
+
+    #[test]
+    fn lifetime_exhaustion_trips_on_advance() {
+        let mut acc = BudgetAccountant::new(AccountantConfig {
+            lifetime_epsilon_budget_millionths: 500_000,
+            lifetime_delta_budget_millionths: 50_000,
+            ..test_config()
+        })
+        .unwrap();
+        acc.consume(500_000, 50_000, "all-of-it", 2_000_000_000)
+            .unwrap();
+        // Advance epoch; new epoch should start exhausted.
+        acc.advance_epoch(SecurityEpoch::from_raw(2), 3_000_000_000)
+            .unwrap();
+        assert!(acc.is_exhausted());
+    }
+
+    #[test]
+    fn consumption_log_grows_with_operations() {
+        let mut acc = test_accountant();
+        assert!(acc.consumption_log().is_empty());
+        acc.consume(10_000, 1_000, "op1", 2_000_000_000).unwrap();
+        acc.consume(20_000, 2_000, "op2", 3_000_000_000).unwrap();
+        assert_eq!(acc.consumption_log().len(), 2);
+        assert_eq!(acc.consumption_log()[0].description, "op1");
+        assert_eq!(acc.consumption_log()[1].description, "op2");
+    }
+
+    #[test]
+    fn operation_ids_are_monotonically_increasing() {
+        let mut acc = test_accountant();
+        let r1 = acc.consume(10_000, 1_000, "op1", 2_000_000_000).unwrap();
+        let r2 = acc.consume(10_000, 1_000, "op2", 3_000_000_000).unwrap();
+        let r3 = acc.consume(10_000, 1_000, "op3", 4_000_000_000).unwrap();
+        assert!(r1.operation_id < r2.operation_id);
+        assert!(r2.operation_id < r3.operation_id);
+    }
+
+    #[test]
+    fn isqrt_millionths_zero_returns_one() {
+        assert_eq!(isqrt_millionths(0), 1);
+    }
+
+    #[test]
+    fn isqrt_millionths_negative_returns_one() {
+        assert_eq!(isqrt_millionths(-10), 1);
+    }
+
+    #[test]
+    fn isqrt_millionths_perfect_squares() {
+        assert_eq!(isqrt_millionths(1), 1);
+        assert_eq!(isqrt_millionths(4), 2);
+        assert_eq!(isqrt_millionths(9), 3);
+        assert_eq!(isqrt_millionths(100), 10);
+        assert_eq!(isqrt_millionths(10000), 100);
     }
 }

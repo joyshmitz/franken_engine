@@ -2649,6 +2649,188 @@ mod tests {
         );
     }
 
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn storage_error_display_exact_format_all_9() {
+        assert_eq!(
+            StorageError::InvalidContext {
+                field: "trace_id".into()
+            }
+            .to_string(),
+            "invalid context field: trace_id"
+        );
+        assert_eq!(
+            StorageError::InvalidKey { key: "bad".into() }.to_string(),
+            "invalid key: `bad`"
+        );
+        assert_eq!(
+            StorageError::InvalidQuery {
+                detail: "limit=0".into()
+            }
+            .to_string(),
+            "invalid query: limit=0"
+        );
+        assert_eq!(
+            StorageError::NotFound {
+                store: StoreKind::PolicyCache,
+                key: "missing".into()
+            }
+            .to_string(),
+            "record not found: policy_cache/missing"
+        );
+        assert_eq!(
+            StorageError::SchemaVersionMismatch {
+                expected: 1,
+                actual: 2
+            }
+            .to_string(),
+            "schema version mismatch: expected 1, got 2"
+        );
+        assert_eq!(
+            StorageError::MigrationFailed {
+                from: 1,
+                to: 2,
+                reason: "oops".into()
+            }
+            .to_string(),
+            "migration failed: 1 -> 2: oops"
+        );
+        assert_eq!(
+            StorageError::IntegrityViolation {
+                store: StoreKind::ReplayIndex,
+                detail: "corrupt".into()
+            }
+            .to_string(),
+            "integrity violation in replay_index: corrupt"
+        );
+        assert_eq!(
+            StorageError::BackendUnavailable {
+                backend: "sqlite".into(),
+                detail: "down".into()
+            }
+            .to_string(),
+            "backend unavailable (sqlite): down"
+        );
+        assert_eq!(
+            StorageError::WriteRejected {
+                detail: "full".into()
+            }
+            .to_string(),
+            "write rejected: full"
+        );
+    }
+
+    #[test]
+    fn event_context_new_whitespace_only_trace_id_fails() {
+        let err = EventContext::new("   ", "d", "p").unwrap_err();
+        assert_eq!(err.code(), "FE-STOR-0001");
+    }
+
+    #[test]
+    fn event_context_new_whitespace_only_decision_id_fails() {
+        let err = EventContext::new("t", " \t ", "p").unwrap_err();
+        assert_eq!(err.code(), "FE-STOR-0001");
+    }
+
+    #[test]
+    fn event_context_new_whitespace_only_policy_id_fails() {
+        let err = EventContext::new("t", "d", "  ").unwrap_err();
+        assert_eq!(err.code(), "FE-STOR-0001");
+    }
+
+    #[test]
+    fn digest_hex_is_16_char_lowercase_hex() {
+        let h = digest_hex(b"deterministic");
+        assert_eq!(h.len(), 16);
+        assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(h, h.to_lowercase());
+    }
+
+    #[test]
+    fn canonicalize_records_tiebreaks_by_revision() {
+        let r1 = StoreRecord {
+            store: StoreKind::ReplayIndex,
+            key: "same".into(),
+            value: vec![2],
+            metadata: BTreeMap::new(),
+            revision: 5,
+        };
+        let r2 = StoreRecord {
+            store: StoreKind::ReplayIndex,
+            key: "same".into(),
+            value: vec![2],
+            metadata: BTreeMap::new(),
+            revision: 1,
+        };
+        let sorted = canonicalize_records(vec![r1, r2], None);
+        assert_eq!(sorted[0].revision, 1);
+        assert_eq!(sorted[1].revision, 5);
+    }
+
+    #[test]
+    fn in_memory_get_empty_key_returns_invalid_key() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let err = adapter.get(StoreKind::ReplayIndex, "", &ctx()).unwrap_err();
+        assert_eq!(err.code(), "FE-STOR-0002");
+    }
+
+    #[test]
+    fn in_memory_delete_empty_key_returns_invalid_key() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let err = adapter
+            .delete(StoreKind::ReplayIndex, "", &ctx())
+            .unwrap_err();
+        assert_eq!(err.code(), "FE-STOR-0002");
+    }
+
+    #[test]
+    fn in_memory_batch_put_empty_entries_succeeds() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let results = adapter
+            .put_batch(StoreKind::ReplayIndex, vec![], &ctx())
+            .unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn storage_error_source_returns_none() {
+        use std::error::Error;
+        let err = StorageError::NotFound {
+            store: StoreKind::ReplayIndex,
+            key: "k".into(),
+        };
+        assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn in_memory_migration_receipt_stores_touched_reflects_populated_stores() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let context = ctx();
+        adapter
+            .put(
+                StoreKind::ReplayIndex,
+                "k1".into(),
+                vec![1],
+                BTreeMap::new(),
+                &context,
+            )
+            .unwrap();
+        adapter
+            .put(
+                StoreKind::PolicyCache,
+                "k2".into(),
+                vec![2],
+                BTreeMap::new(),
+                &context,
+            )
+            .unwrap();
+        let receipt = adapter.migrate_to(STORAGE_SCHEMA_VERSION + 1).unwrap();
+        assert!(receipt.stores_touched.contains(&StoreKind::ReplayIndex));
+        assert!(receipt.stores_touched.contains(&StoreKind::PolicyCache));
+        assert_eq!(receipt.records_touched, 2);
+    }
+
     #[test]
     fn storage_error_code_all_unique() {
         let errors = vec![

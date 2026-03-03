@@ -1979,4 +1979,382 @@ mod tests {
             assert_eq!(*t, restored);
         }
     }
+
+    // ---------------------------------------------------------------
+    // Enrichment: Clone/Eq trait coverage
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn enrichment_enforcement_point_clone_eq() {
+        let a = EnforcementPoint::TokenAcceptance;
+        let b = a;
+        assert_eq!(a, b);
+        let c = EnforcementPoint::HighRiskOperation;
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn enrichment_high_risk_category_clone_eq() {
+        let a = HighRiskCategory::DataExport;
+        let b = a;
+        assert_eq!(a, b);
+        let c = HighRiskCategory::CrossZoneAction;
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn enrichment_revocation_denial_clone_eq() {
+        let a = RevocationDenial {
+            target_type: RevocationTargetType::Key,
+            target_id: EngineObjectId([7; 32]),
+            transitive: true,
+            transitive_root: Some(EngineObjectId([8; 32])),
+            enforcement_point: EnforcementPoint::HighRiskOperation,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_enforcement_stats_clone_eq() {
+        let a = EnforcementStats {
+            checks: 5,
+            cleared: 3,
+            denied: 2,
+            transitive_denials: 1,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: Hash trait coverage
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn enrichment_enforcement_point_hash_consistency() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(EnforcementPoint::TokenAcceptance);
+        set.insert(EnforcementPoint::HighRiskOperation);
+        set.insert(EnforcementPoint::ExtensionActivation);
+        set.insert(EnforcementPoint::TokenAcceptance); // duplicate
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn enrichment_high_risk_category_hash_consistency() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        for cat in [
+            HighRiskCategory::PolicyChange,
+            HighRiskCategory::KeyOperation,
+            HighRiskCategory::DataExport,
+            HighRiskCategory::CrossZoneAction,
+            HighRiskCategory::ExtensionLifecycleChange,
+        ] {
+            set.insert(cat);
+        }
+        assert_eq!(set.len(), 5);
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: JSON field presence checks
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn enrichment_revocation_denial_json_field_names() {
+        let denial = RevocationDenial {
+            target_type: RevocationTargetType::Extension,
+            target_id: EngineObjectId([9; 32]),
+            transitive: true,
+            transitive_root: Some(EngineObjectId([10; 32])),
+            enforcement_point: EnforcementPoint::ExtensionActivation,
+        };
+        let json = serde_json::to_string(&denial).unwrap();
+        assert!(json.contains("\"target_type\""));
+        assert!(json.contains("\"target_id\""));
+        assert!(json.contains("\"transitive\""));
+        assert!(json.contains("\"transitive_root\""));
+        assert!(json.contains("\"enforcement_point\""));
+    }
+
+    #[test]
+    fn enrichment_revocation_check_event_json_field_names() {
+        let event = RevocationCheckEvent {
+            enforcement_point: EnforcementPoint::TokenAcceptance,
+            target_id: EngineObjectId([11; 32]),
+            target_type: RevocationTargetType::Token,
+            is_revoked: false,
+            transitive: false,
+            trace_id: "trace-field-check".to_string(),
+            checked_at: DeterministicTimestamp(9999),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"enforcement_point\""));
+        assert!(json.contains("\"target_id\""));
+        assert!(json.contains("\"target_type\""));
+        assert!(json.contains("\"is_revoked\""));
+        assert!(json.contains("\"transitive\""));
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"checked_at\""));
+        assert!(json.contains("trace-field-check"));
+    }
+
+    #[test]
+    fn enrichment_enforcement_stats_json_field_names() {
+        let stats = EnforcementStats {
+            checks: 42,
+            cleared: 30,
+            denied: 12,
+            transitive_denials: 5,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        assert!(json.contains("\"checks\":42"));
+        assert!(json.contains("\"cleared\":30"));
+        assert!(json.contains("\"denied\":12"));
+        assert!(json.contains("\"transitive_denials\":5"));
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: Display format edge cases
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn enrichment_revocation_denial_display_transitive_without_root() {
+        // Transitive flag set but transitive_root is None => shows "unknown"
+        let denial = RevocationDenial {
+            target_type: RevocationTargetType::Key,
+            target_id: EngineObjectId([12; 32]),
+            transitive: true,
+            transitive_root: None,
+            enforcement_point: EnforcementPoint::HighRiskOperation,
+        };
+        let display = denial.to_string();
+        assert!(display.contains("transitively revoked via unknown"));
+        assert!(display.contains("high_risk_operation"));
+    }
+
+    #[test]
+    fn enrichment_revocation_denial_display_extension_direct() {
+        let denial = RevocationDenial {
+            target_type: RevocationTargetType::Extension,
+            target_id: EngineObjectId([13; 32]),
+            transitive: false,
+            transitive_root: None,
+            enforcement_point: EnforcementPoint::ExtensionActivation,
+        };
+        let display = denial.to_string();
+        assert!(display.contains("directly revoked"));
+        assert!(display.contains("extension_activation"));
+        assert!(display.contains("extension"));
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: RevocationDenial serde with null transitive_root
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn enrichment_revocation_denial_serde_null_transitive_root() {
+        let denial = RevocationDenial {
+            target_type: RevocationTargetType::Token,
+            target_id: EngineObjectId([14; 32]),
+            transitive: false,
+            transitive_root: None,
+            enforcement_point: EnforcementPoint::TokenAcceptance,
+        };
+        let json = serde_json::to_string(&denial).unwrap();
+        assert!(json.contains("\"transitive_root\":null"));
+        let restored: RevocationDenial = serde_json::from_str(&json).unwrap();
+        assert_eq!(denial, restored);
+        assert!(restored.transitive_root.is_none());
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: EnforcementResult serde with all variants
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn enrichment_enforcement_result_cleared_all_points_serde() {
+        for point in [
+            EnforcementPoint::TokenAcceptance,
+            EnforcementPoint::HighRiskOperation,
+            EnforcementPoint::ExtensionActivation,
+        ] {
+            let result = EnforcementResult::Cleared {
+                enforcement_point: point,
+                checks_performed: 2,
+            };
+            let json = serde_json::to_string(&result).unwrap();
+            let restored: EnforcementResult = serde_json::from_str(&json).unwrap();
+            assert_eq!(result, restored);
+            assert!(restored.is_cleared());
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: key_id_from_verification_key edge cases
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn enrichment_key_id_from_all_zeros() {
+        let vk = VerificationKey::from_bytes([0; 32]);
+        let id = key_id_from_verification_key(&vk);
+        // Must still produce a valid id
+        assert_eq!(id.as_bytes().len(), 32);
+        // And must be deterministic
+        assert_eq!(id, key_id_from_verification_key(&vk));
+    }
+
+    #[test]
+    fn enrichment_key_id_from_all_ones() {
+        let vk = VerificationKey::from_bytes([0xFF; 32]);
+        let id = key_id_from_verification_key(&vk);
+        assert_eq!(id.as_bytes().len(), 32);
+        // Different from all-zeros key
+        let zero_id = key_id_from_verification_key(&VerificationKey::from_bytes([0; 32]));
+        assert_ne!(id, zero_id);
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: high-risk both attestation and key revoked
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn enrichment_high_risk_direct_beats_transitive_when_both_revoked() {
+        let mut enforcer = make_enforcer();
+        let principal_key = VerificationKey::from_bytes([60; 32]);
+        let key_id = key_id_from_verification_key(&principal_key);
+        let attestation_id = EngineObjectId([50; 32]);
+
+        // Revoke both attestation and key
+        revoke_target(&mut enforcer, RevocationTargetType::Attestation, [50; 32]);
+        revoke_target(&mut enforcer, RevocationTargetType::Key, *key_id.as_bytes());
+        enforcer.drain_audit_log();
+
+        let result = enforcer.check_high_risk_operation(
+            &attestation_id,
+            &principal_key,
+            HighRiskCategory::KeyOperation,
+            "t-hr-both",
+        );
+        match result {
+            EnforcementResult::Denied(denial) => {
+                // Direct attestation denial checked first, takes precedence
+                assert!(!denial.transitive);
+                assert!(denial.transitive_root.is_none());
+                assert_eq!(denial.target_type, RevocationTargetType::Attestation);
+            }
+            _ => panic!("expected direct denial"),
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: extension both extension and key revoked
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn enrichment_extension_direct_beats_transitive_when_both_revoked() {
+        let mut enforcer = make_enforcer();
+        let signing_key = VerificationKey::from_bytes([90; 32]);
+        let key_id = key_id_from_verification_key(&signing_key);
+        let ext_id = EngineObjectId([80; 32]);
+
+        // Revoke both extension and signing key
+        revoke_target(&mut enforcer, RevocationTargetType::Extension, [80; 32]);
+        revoke_target(&mut enforcer, RevocationTargetType::Key, *key_id.as_bytes());
+        enforcer.drain_audit_log();
+
+        let result = enforcer.check_extension_activation(&ext_id, &signing_key, "t-ext-both");
+        match result {
+            EnforcementResult::Denied(denial) => {
+                assert!(!denial.transitive);
+                assert!(denial.transitive_root.is_none());
+                assert_eq!(denial.target_type, RevocationTargetType::Extension);
+            }
+            _ => panic!("expected direct denial"),
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: stats accumulation across many operations
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn enrichment_stats_accumulate_across_many_operations() {
+        let mut enforcer = make_enforcer();
+
+        // 5 cleared token checks
+        for i in 0..5u8 {
+            enforcer.check_token_acceptance(
+                &EngineObjectId([i + 100; 32]),
+                &VerificationKey::from_bytes([i + 200; 32]),
+                &format!("t-acc-{i}"),
+            );
+        }
+
+        // 3 denied token checks
+        for i in 0..3u8 {
+            let target = [i + 150; 32];
+            revoke_target(&mut enforcer, RevocationTargetType::Token, target);
+            enforcer.check_token_acceptance(
+                &EngineObjectId(target),
+                &VerificationKey::from_bytes([i + 210; 32]),
+                &format!("t-deny-{i}"),
+            );
+        }
+
+        let stats = enforcer.stats();
+        let token_stats = &stats[&EnforcementPoint::TokenAcceptance];
+        assert_eq!(token_stats.checks, 8);
+        assert_eq!(token_stats.cleared, 5);
+        assert_eq!(token_stats.denied, 3);
+        assert_eq!(token_stats.transitive_denials, 0);
+    }
+
+    // ---------------------------------------------------------------
+    // Enrichment: audit events carry correct target_type per point
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn enrichment_audit_events_carry_correct_target_types() {
+        let mut enforcer = make_enforcer();
+
+        // Token acceptance => target types Token + Key
+        enforcer.check_token_acceptance(
+            &EngineObjectId([1; 32]),
+            &VerificationKey::from_bytes([2; 32]),
+            "t-tt",
+        );
+
+        // High-risk => target types Attestation + Key
+        enforcer.check_high_risk_operation(
+            &EngineObjectId([3; 32]),
+            &VerificationKey::from_bytes([4; 32]),
+            HighRiskCategory::DataExport,
+            "t-hr-tt",
+        );
+
+        // Extension => target types Extension + Key
+        enforcer.check_extension_activation(
+            &EngineObjectId([5; 32]),
+            &VerificationKey::from_bytes([6; 32]),
+            "t-ext-tt",
+        );
+
+        let events = enforcer.drain_audit_log();
+        assert_eq!(events.len(), 6);
+
+        // Token acceptance events
+        assert_eq!(events[0].target_type, RevocationTargetType::Token);
+        assert_eq!(events[1].target_type, RevocationTargetType::Key);
+
+        // High-risk events
+        assert_eq!(events[2].target_type, RevocationTargetType::Attestation);
+        assert_eq!(events[3].target_type, RevocationTargetType::Key);
+
+        // Extension events
+        assert_eq!(events[4].target_type, RevocationTargetType::Extension);
+        assert_eq!(events[5].target_type, RevocationTargetType::Key);
+    }
 }

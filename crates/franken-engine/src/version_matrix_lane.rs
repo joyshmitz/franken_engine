@@ -1334,4 +1334,210 @@ mod tests {
         };
         assert!(err.source().is_none());
     }
+
+    // ── Enrichment batch: clone/eq, Copy, serde, JSON, edge cases ─────
+
+    #[test]
+    fn enrichment_matrix_lane_kind_copy_semantics() {
+        let kind = MatrixLaneKind::Current;
+        let copied = kind;
+        assert_eq!(kind, copied);
+    }
+
+    #[test]
+    fn enrichment_matrix_outcome_copy_semantics() {
+        let outcome = MatrixOutcome::Pass;
+        let copied = outcome;
+        assert_eq!(outcome, copied);
+    }
+
+    #[test]
+    fn enrichment_failure_scope_kind_copy_semantics() {
+        let scope = FailureScopeKind::Universal;
+        let copied = scope;
+        assert_eq!(scope, copied);
+    }
+
+    #[test]
+    fn enrichment_version_source_clone_equality() {
+        let vs = VersionSource {
+            tags: vec!["v1.0.0".into()],
+            branch_names: vec!["main".into()],
+            current_override: Some("1.0.0".into()),
+            previous_override: None,
+            next_override: None,
+        };
+        let cloned = vs.clone();
+        assert_eq!(vs, cloned);
+    }
+
+    #[test]
+    fn enrichment_pinned_version_combination_clone_equality() {
+        let pvc = PinnedVersionCombination {
+            local_version: "1.0.0".into(),
+            remote_version: "2.0.0".into(),
+            reason: "compat".into(),
+        };
+        let cloned = pvc.clone();
+        assert_eq!(pvc, cloned);
+    }
+
+    #[test]
+    fn enrichment_version_matrix_cell_clone_equality() {
+        let cell = VersionMatrixCell {
+            cell_id: "c1".into(),
+            boundary_surface: "ifc".into(),
+            local_repo: "local".into(),
+            remote_repo: "remote".into(),
+            local_version: "1.0.0".into(),
+            remote_version: "2.0.0".into(),
+            lane_kind: MatrixLaneKind::Current,
+            pinned: false,
+            expected_conformance_command: "test".into(),
+        };
+        let cloned = cell.clone();
+        assert_eq!(cell, cloned);
+    }
+
+    #[test]
+    fn enrichment_matrix_health_summary_clone_equality() {
+        let mhs = MatrixHealthSummary {
+            total_cells: 10,
+            passed_cells: 7,
+            failed_cells: 3,
+            universal_failures: 1,
+            version_specific_failures: 2,
+        };
+        let cloned = mhs.clone();
+        assert_eq!(mhs, cloned);
+    }
+
+    #[test]
+    fn enrichment_matrix_lane_kind_serde_snake_case() {
+        let json = serde_json::to_string(&MatrixLaneKind::Current).unwrap();
+        assert_eq!(json, "\"current\"");
+        let json = serde_json::to_string(&MatrixLaneKind::Previous).unwrap();
+        assert_eq!(json, "\"previous\"");
+        let json = serde_json::to_string(&MatrixLaneKind::Next).unwrap();
+        assert_eq!(json, "\"next\"");
+        let json = serde_json::to_string(&MatrixLaneKind::Pinned).unwrap();
+        assert_eq!(json, "\"pinned\"");
+    }
+
+    #[test]
+    fn enrichment_matrix_outcome_serde_snake_case() {
+        let json = serde_json::to_string(&MatrixOutcome::Pass).unwrap();
+        assert_eq!(json, "\"pass\"");
+        let json = serde_json::to_string(&MatrixOutcome::Fail).unwrap();
+        assert_eq!(json, "\"fail\"");
+    }
+
+    #[test]
+    fn enrichment_failure_scope_kind_serde_snake_case() {
+        let json = serde_json::to_string(&FailureScopeKind::Universal).unwrap();
+        assert_eq!(json, "\"universal\"");
+        let json = serde_json::to_string(&FailureScopeKind::VersionSpecific).unwrap();
+        assert_eq!(json, "\"version_specific\"");
+    }
+
+    #[test]
+    fn enrichment_matrix_cell_result_json_fields_present() {
+        let result = MatrixCellResult {
+            trace_id: "t1".into(),
+            decision_id: "d1".into(),
+            policy_id: "p1".into(),
+            cell_id: "c1".into(),
+            boundary_surface: "ifc".into(),
+            lane_kind: MatrixLaneKind::Current,
+            outcome: MatrixOutcome::Pass,
+            error_code: None,
+            failure_fingerprint: None,
+            failure_class: None,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"cell_id\""));
+        assert!(json.contains("\"boundary_surface\""));
+        assert!(json.contains("\"lane_kind\""));
+        assert!(json.contains("\"outcome\""));
+    }
+
+    #[test]
+    fn enrichment_matrix_lane_kind_as_str_all_unique() {
+        let kinds = [
+            MatrixLaneKind::Current,
+            MatrixLaneKind::Previous,
+            MatrixLaneKind::Next,
+            MatrixLaneKind::Pinned,
+        ];
+        let strs: BTreeSet<&str> = kinds.iter().map(|k| k.as_str()).collect();
+        assert_eq!(strs.len(), 4, "all lane kinds have unique as_str");
+    }
+
+    #[test]
+    fn enrichment_matrix_lane_kind_ord_deterministic() {
+        let mut kinds = vec![
+            MatrixLaneKind::Pinned,
+            MatrixLaneKind::Next,
+            MatrixLaneKind::Current,
+            MatrixLaneKind::Previous,
+        ];
+        let mut kinds2 = kinds.clone();
+        kinds.sort();
+        kinds2.sort();
+        assert_eq!(kinds, kinds2);
+    }
+
+    #[test]
+    fn enrichment_version_source_default_is_empty() {
+        let vs = VersionSource::default();
+        assert!(vs.tags.is_empty());
+        assert!(vs.branch_names.is_empty());
+        assert!(vs.current_override.is_none());
+        assert!(vs.previous_override.is_none());
+        assert!(vs.next_override.is_none());
+    }
+
+    #[test]
+    fn enrichment_parsed_version_parse_rejects_four_parts() {
+        assert!(ParsedVersion::parse("1.2.3.4").is_none());
+    }
+
+    #[test]
+    fn enrichment_parsed_version_parse_rejects_non_numeric() {
+        assert!(ParsedVersion::parse("a.b.c").is_none());
+    }
+
+    #[test]
+    fn enrichment_parsed_version_strips_v_prefix() {
+        let v = ParsedVersion::parse("v1.2.3").unwrap();
+        assert_eq!(v.major, 1);
+        assert_eq!(v.minor, 2);
+        assert_eq!(v.patch, 3);
+        assert!(v.prerelease.is_none());
+    }
+
+    #[test]
+    fn enrichment_parsed_version_bump_patch_next() {
+        let v = ParsedVersion::parse("3.5.7").unwrap();
+        assert_eq!(v.bump_patch_next(), "3.5.8-next");
+    }
+
+    #[test]
+    fn enrichment_version_matrix_error_clone() {
+        let err = VersionMatrixError::InvalidPinnedCombination {
+            boundary_surface: "surf".into(),
+            reason: "bad".into(),
+        };
+        let cloned = err.clone();
+        assert_eq!(err, cloned);
+    }
+
+    #[test]
+    fn enrichment_schema_constant_nonempty() {
+        assert!(!VERSION_MATRIX_SCHEMA.is_empty());
+        assert!(VERSION_MATRIX_SCHEMA.contains("version-matrix"));
+    }
 }

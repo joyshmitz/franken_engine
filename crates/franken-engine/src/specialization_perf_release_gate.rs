@@ -1667,4 +1667,147 @@ mod tests {
             GateFailureCode::EmptyInput.to_string(),
         );
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn enrichment_lane_type_copy_semantics() {
+        let a = LaneType::ProofSpecialized;
+        let b = a;
+        assert_eq!(a, b); // both usable after copy
+    }
+
+    #[test]
+    fn enrichment_lane_type_hash_in_btreeset() {
+        let mut set = std::collections::BTreeSet::new();
+        set.insert(LaneType::ProofSpecialized);
+        set.insert(LaneType::AmbientAuthority);
+        set.insert(LaneType::ProofSpecialized); // duplicate
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn enrichment_gate_failure_code_copy_semantics() {
+        let a = GateFailureCode::FallbackCrashed;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_gate_failure_code_hash_in_btreeset() {
+        let mut set = std::collections::BTreeSet::new();
+        for v in [
+            GateFailureCode::NoPositiveDelta,
+            GateFailureCode::InsufficientSignificance,
+            GateFailureCode::InsufficientReceiptCoverage,
+            GateFailureCode::FallbackIncorrectOutput,
+            GateFailureCode::FallbackCrashed,
+            GateFailureCode::FallbackHung,
+            GateFailureCode::FallbackNoReceipt,
+            GateFailureCode::FallbackPerformanceRegression,
+            GateFailureCode::ReceiptChainReplayFailed,
+            GateFailureCode::InsufficientSamples,
+            GateFailureCode::EmptyInput,
+        ] {
+            set.insert(v);
+        }
+        assert_eq!(set.len(), 11);
+    }
+
+    #[test]
+    fn enrichment_statistical_summary_serde_roundtrip() {
+        let comps: Vec<_> = (0..10)
+            .map(|i| comparison(&format!("ss{i}"), 85, 100))
+            .collect();
+        let s = StatisticalSummary::from_comparisons(&comps);
+        let json = serde_json::to_string(&s).unwrap();
+        let back: StatisticalSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn enrichment_receipt_chain_replay_result_serde_roundtrip() {
+        let r = passing_replay();
+        let json = serde_json::to_string(&r).unwrap();
+        let back: ReceiptChainReplayResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn enrichment_fallback_test_result_serde_roundtrip() {
+        let fb = passing_fallback("serde-fb");
+        let json = serde_json::to_string(&fb).unwrap();
+        let back: FallbackTestResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(fb, back);
+    }
+
+    #[test]
+    fn enrichment_gate_log_event_serde_roundtrip() {
+        let evt = GateLogEvent {
+            trace_id: "t-serde".into(),
+            lane_type: Some("proof_specialized".into()),
+            optimization_pass: Some("opt-1".into()),
+            proof_status: Some("valid".into()),
+            capability_witness_ref: None,
+            specialization_receipt_hash: Some("hash-abc".into()),
+            fallback_triggered: Some(false),
+            wall_time_ns: Some(5000),
+            memory_peak_bytes: Some(2048),
+            event: "serde_test".into(),
+            outcome: "ok".into(),
+        };
+        let json = serde_json::to_string(&evt).unwrap();
+        let back: GateLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(evt, back);
+    }
+
+    #[test]
+    fn enrichment_statistical_summary_json_field_presence() {
+        let comps: Vec<_> = (0..5)
+            .map(|i| comparison(&format!("jf{i}"), 90, 100))
+            .collect();
+        let s = StatisticalSummary::from_comparisons(&comps);
+        let j = serde_json::to_string(&s).unwrap();
+        assert!(j.contains("\"sample_count\""));
+        assert!(j.contains("\"mean_wall_time_delta_millionths\""));
+        assert!(j.contains("\"mean_memory_delta_millionths\""));
+        assert!(j.contains("\"positive_wall_time_count\""));
+        assert!(j.contains("\"positive_memory_count\""));
+        assert!(j.contains("\"significance_met\""));
+    }
+
+    #[test]
+    fn enrichment_constants_match_expected() {
+        assert_eq!(GATE_COMPONENT, "specialization_perf_release_gate");
+        assert!(GATE_SCHEMA_VERSION.starts_with("franken-engine."));
+        assert!(GATE_SCHEMA_VERSION.contains(".v"));
+    }
+
+    #[test]
+    fn enrichment_decision_schema_version_matches_constant() {
+        let input = full_input(20);
+        let decision = evaluate(&input);
+        assert_eq!(decision.schema_version, GATE_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn enrichment_stats_very_few_samples_not_significant() {
+        // Fewer than 5 samples should never be significant
+        let comps: Vec<_> = (0..4)
+            .map(|i| comparison(&format!("tiny{i}"), 50, 100))
+            .collect();
+        let s = StatisticalSummary::from_comparisons(&comps);
+        assert_eq!(s.sample_count, 4);
+        assert!(!s.significance_met);
+    }
+
+    #[test]
+    fn enrichment_gate_decision_different_inputs_different_ids() {
+        let input_a = full_input(20);
+        let mut input_b = full_input(20);
+        input_b.trace_id = "trace-different".to_string();
+        let da = evaluate(&input_a);
+        let db = evaluate(&input_b);
+        assert_ne!(da.decision_id, db.decision_id);
+    }
 }

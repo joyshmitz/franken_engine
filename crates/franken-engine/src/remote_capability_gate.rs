@@ -1386,4 +1386,368 @@ mod tests {
         let events = gate.drain_events();
         assert_eq!(events[0].outcome, "permitted");
     }
+
+    // -- Enrichment batch 4 --
+
+    #[test]
+    fn enrichment_policy_profile_denies_all_remote_ops() {
+        let mut gate = RemoteOperationGate::new(test_epoch());
+        let policy = CapabilityProfile::policy();
+        let ops = [
+            RemoteOperationType::HttpRequest,
+            RemoteOperationType::GrpcCall,
+            RemoteOperationType::DnsResolution,
+            RemoteOperationType::DistributedStateMutation,
+            RemoteOperationType::LeaseRenewal,
+            RemoteOperationType::RemoteIpc,
+        ];
+        for op in ops {
+            let result = gate.check(&policy, op.clone(), "policy_comp", "ep", "t", 0);
+            assert!(result.is_err(), "PolicyCaps should deny {op}");
+            let err = result.unwrap_err();
+            assert_eq!(err.held_profile, ProfileKind::Policy);
+        }
+        assert_eq!(gate.total_denied(), 6);
+        assert_eq!(gate.total_permitted(), 0);
+    }
+
+    #[test]
+    fn enrichment_remote_operation_type_clone_eq() {
+        let original = RemoteOperationType::DistributedStateMutation;
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        // Different variant is not equal
+        assert_ne!(
+            RemoteOperationType::HttpRequest,
+            RemoteOperationType::GrpcCall
+        );
+    }
+
+    #[test]
+    fn enrichment_denied_json_field_presence() {
+        let denied = RemoteCapabilityDenied {
+            operation: RemoteOperationType::RemoteIpc,
+            component: "ipc_handler".to_string(),
+            held_profile: ProfileKind::EngineCore,
+            required_capabilities: vec![RuntimeCapability::NetworkEgress],
+            trace_id: "trace-json-check".to_string(),
+        };
+        let json = serde_json::to_string(&denied).unwrap();
+        assert!(json.contains("\"operation\""));
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"held_profile\""));
+        assert!(json.contains("\"required_capabilities\""));
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("ipc_handler"));
+        assert!(json.contains("trace-json-check"));
+    }
+
+    #[test]
+    fn enrichment_transport_error_clone_eq() {
+        let err1 = RemoteTransportError::ConnectionFailed {
+            endpoint: "http://a".to_string(),
+            reason: "refused".to_string(),
+        };
+        let err2 = err1.clone();
+        assert_eq!(err1, err2);
+
+        let err3 = RemoteTransportError::RemoteError {
+            status: 404,
+            message: "not found".to_string(),
+        };
+        assert_ne!(err1, err3);
+    }
+
+    #[test]
+    fn enrichment_recorded_operation_clone_eq() {
+        let op = RecordedOperation {
+            operation: RemoteOperationType::DnsResolution,
+            endpoint: "dns://1.1.1.1".to_string(),
+            payload: vec![1, 2, 3],
+        };
+        let cloned = op.clone();
+        assert_eq!(op, cloned);
+
+        let different = RecordedOperation {
+            operation: RemoteOperationType::DnsResolution,
+            endpoint: "dns://8.8.8.8".to_string(),
+            payload: vec![1, 2, 3],
+        };
+        assert_ne!(op, different);
+    }
+
+    #[test]
+    fn enrichment_remote_gate_event_clone_eq() {
+        let event = RemoteGateEvent {
+            trace_id: "t1".to_string(),
+            component: "sync".to_string(),
+            operation_type: "grpc_call".to_string(),
+            remote_endpoint: "grpc://node".to_string(),
+            epoch_id: 10,
+            timestamp_ticks: 999,
+            outcome: "permitted".to_string(),
+            held_profile: "RemoteCaps".to_string(),
+        };
+        let cloned = event.clone();
+        assert_eq!(event, cloned);
+    }
+
+    #[test]
+    fn enrichment_sanitize_ftp_scheme_with_credentials() {
+        assert_eq!(
+            sanitize_endpoint("ftp://admin:secret@ftp.example.com/pub"),
+            "ftp://***@ftp.example.com/pub"
+        );
+    }
+
+    #[test]
+    fn enrichment_sanitize_scheme_only_no_host() {
+        // "abc://" has no '@', so returned as-is.
+        assert_eq!(sanitize_endpoint("abc://"), "abc://");
+    }
+
+    #[test]
+    fn enrichment_sanitize_no_scheme_with_at_sign() {
+        // No "://" means the at-sign is not treated as userinfo separator.
+        assert_eq!(sanitize_endpoint("user@host"), "user@host");
+    }
+
+    #[test]
+    fn enrichment_gate_interleaved_permit_deny_events_ordering() {
+        let mut gate = RemoteOperationGate::new(test_epoch());
+        let remote = remote_profile();
+        let compute = compute_only_profile();
+
+        gate.check(
+            &remote,
+            RemoteOperationType::HttpRequest,
+            "a",
+            "e",
+            "t1",
+            10,
+        )
+        .unwrap();
+        let _ = gate.check(&compute, RemoteOperationType::GrpcCall, "b", "e", "t2", 20);
+        gate.check(
+            &remote,
+            RemoteOperationType::DnsResolution,
+            "c",
+            "e",
+            "t3",
+            30,
+        )
+        .unwrap();
+        let _ = gate.check(
+            &compute,
+            RemoteOperationType::LeaseRenewal,
+            "d",
+            "e",
+            "t4",
+            40,
+        );
+
+        let events = gate.drain_events();
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[0].outcome, "permitted");
+        assert_eq!(events[0].trace_id, "t1");
+        assert_eq!(events[1].outcome, "denied");
+        assert_eq!(events[1].trace_id, "t2");
+        assert_eq!(events[2].outcome, "permitted");
+        assert_eq!(events[2].trace_id, "t3");
+        assert_eq!(events[3].outcome, "denied");
+        assert_eq!(events[3].trace_id, "t4");
+    }
+
+    #[test]
+    fn enrichment_mock_transport_records_before_failing() {
+        let mut transport = MockRemoteTransport {
+            fail_with: Some(RemoteTransportError::ConnectionFailed {
+                endpoint: "ep".to_string(),
+                reason: "reset".to_string(),
+            }),
+            ..Default::default()
+        };
+
+        let _ = transport.execute(&RemoteOperationType::RemoteIpc, "ep", b"data");
+        // Even on failure, the operation should be recorded.
+        assert_eq!(transport.recorded.len(), 1);
+        assert_eq!(
+            transport.recorded[0].operation,
+            RemoteOperationType::RemoteIpc
+        );
+        assert_eq!(transport.recorded[0].payload, b"data");
+    }
+
+    #[test]
+    fn enrichment_required_capabilities_all_six_types() {
+        let cases: Vec<(RemoteOperationType, usize)> = vec![
+            (RemoteOperationType::HttpRequest, 1),
+            (RemoteOperationType::GrpcCall, 1),
+            (RemoteOperationType::DnsResolution, 1),
+            (RemoteOperationType::DistributedStateMutation, 1),
+            (RemoteOperationType::LeaseRenewal, 2),
+            (RemoteOperationType::RemoteIpc, 1),
+        ];
+        for (op, expected_count) in cases {
+            let caps = required_capabilities(&op);
+            assert_eq!(
+                caps.len(),
+                expected_count,
+                "{op} should require {expected_count} capabilities"
+            );
+            // All operations require NetworkEgress.
+            assert!(
+                caps.contains(&RuntimeCapability::NetworkEgress),
+                "{op} must require NetworkEgress"
+            );
+        }
+    }
+
+    #[test]
+    fn enrichment_denied_error_with_empty_required_capabilities() {
+        let denied = RemoteCapabilityDenied {
+            operation: RemoteOperationType::HttpRequest,
+            component: "empty_caps".to_string(),
+            held_profile: ProfileKind::ComputeOnly,
+            required_capabilities: vec![],
+            trace_id: "t-empty".to_string(),
+        };
+        let json = serde_json::to_string(&denied).unwrap();
+        let back: RemoteCapabilityDenied = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.required_capabilities.len(), 0);
+        // Display still works fine with empty capabilities.
+        let msg = denied.to_string();
+        assert!(msg.contains("http_request"));
+    }
+
+    #[test]
+    fn enrichment_gate_event_component_field_matches_input() {
+        let mut gate = RemoteOperationGate::new(test_epoch());
+        gate.check(
+            &remote_profile(),
+            RemoteOperationType::DistributedStateMutation,
+            "anti_entropy_sync",
+            "https://peer.local/sync",
+            "t-comp",
+            42,
+        )
+        .unwrap();
+
+        let events = gate.drain_events();
+        assert_eq!(events[0].component, "anti_entropy_sync");
+        assert_eq!(events[0].operation_type, "distributed_state_mutation");
+    }
+
+    #[test]
+    fn enrichment_transport_error_connection_failed_serde() {
+        let err = RemoteTransportError::ConnectionFailed {
+            endpoint: "https://unreachable.example.com".to_string(),
+            reason: "connection timed out".to_string(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let back: RemoteTransportError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+        assert!(json.contains("unreachable.example.com"));
+        assert!(json.contains("connection timed out"));
+    }
+
+    #[test]
+    fn enrichment_multiple_denied_types_in_counters() {
+        let mut gate = RemoteOperationGate::new(test_epoch());
+        let compute = compute_only_profile();
+
+        let _ = gate.check(&compute, RemoteOperationType::HttpRequest, "c", "e", "t", 0);
+        let _ = gate.check(&compute, RemoteOperationType::HttpRequest, "c", "e", "t", 0);
+        let _ = gate.check(&compute, RemoteOperationType::GrpcCall, "c", "e", "t", 0);
+        let _ = gate.check(
+            &compute,
+            RemoteOperationType::DnsResolution,
+            "c",
+            "e",
+            "t",
+            0,
+        );
+
+        assert_eq!(gate.total_denied(), 4);
+        assert_eq!(gate.denied_counts().get("http_request"), Some(&2));
+        assert_eq!(gate.denied_counts().get("grpc_call"), Some(&1));
+        assert_eq!(gate.denied_counts().get("dns_resolution"), Some(&1));
+        assert_eq!(gate.total_permitted(), 0);
+    }
+
+    #[test]
+    fn enrichment_denied_error_eq_reflexive() {
+        let denied = RemoteCapabilityDenied {
+            operation: RemoteOperationType::LeaseRenewal,
+            component: "lease_mgr".to_string(),
+            held_profile: ProfileKind::EngineCore,
+            required_capabilities: vec![
+                RuntimeCapability::NetworkEgress,
+                RuntimeCapability::LeaseManagement,
+            ],
+            trace_id: "ref-check".to_string(),
+        };
+        assert_eq!(denied, denied.clone());
+    }
+
+    #[test]
+    fn enrichment_gate_events_accumulate_across_checks() {
+        let mut gate = RemoteOperationGate::new(test_epoch());
+        let remote = remote_profile();
+        let compute = compute_only_profile();
+
+        // 3 permitted + 2 denied = 5 events total before drain.
+        gate.check(&remote, RemoteOperationType::HttpRequest, "a", "e", "t1", 0)
+            .unwrap();
+        gate.check(&remote, RemoteOperationType::GrpcCall, "a", "e", "t2", 0)
+            .unwrap();
+        let _ = gate.check(
+            &compute,
+            RemoteOperationType::DnsResolution,
+            "b",
+            "e",
+            "t3",
+            0,
+        );
+        gate.check(&remote, RemoteOperationType::RemoteIpc, "a", "e", "t4", 0)
+            .unwrap();
+        let _ = gate.check(
+            &compute,
+            RemoteOperationType::LeaseRenewal,
+            "b",
+            "e",
+            "t5",
+            0,
+        );
+
+        let events = gate.drain_events();
+        assert_eq!(events.len(), 5);
+        assert_eq!(gate.total_permitted(), 3);
+        assert_eq!(gate.total_denied(), 2);
+        // Counters persist after drain, only events buffer is cleared.
+        assert_eq!(gate.total_permitted(), 3);
+    }
+
+    #[test]
+    fn enrichment_operation_type_ord_all_pairs_comparable() {
+        let ops = [
+            RemoteOperationType::HttpRequest,
+            RemoteOperationType::GrpcCall,
+            RemoteOperationType::DnsResolution,
+            RemoteOperationType::DistributedStateMutation,
+            RemoteOperationType::LeaseRenewal,
+            RemoteOperationType::RemoteIpc,
+        ];
+        // Verify Ord is total: every pair produces a defined ordering.
+        for (i, a) in ops.iter().enumerate() {
+            for (j, b) in ops.iter().enumerate() {
+                let ord = a.cmp(b);
+                if i == j {
+                    assert_eq!(ord, std::cmp::Ordering::Equal);
+                } else {
+                    assert_ne!(ord, std::cmp::Ordering::Equal);
+                }
+            }
+        }
+    }
 }

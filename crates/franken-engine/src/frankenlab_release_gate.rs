@@ -1541,4 +1541,113 @@ mod tests {
             GateKind::all().iter().map(|k| k.as_str()).collect();
         assert_eq!(set.len(), 4);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 5: Copy, Hash, JSON, boundary
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_gate_kind_copy_semantics() {
+        let a = GateKind::ReplayDeterminism;
+        let b = a; // Copy
+        assert_eq!(a, b);
+        assert_eq!(b.as_str(), "replay_determinism");
+    }
+
+    #[test]
+    fn enrichment_gate_kind_hash_in_btreeset() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        for kind in GateKind::all() {
+            assert!(set.insert(*kind));
+        }
+        assert_eq!(set.len(), 4);
+        assert!(!set.insert(GateKind::FrankenlabScenarios)); // dup
+    }
+
+    #[test]
+    fn enrichment_config_json_field_presence() {
+        let cfg = GateConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        for field in &[
+            "seed",
+            "timeout_ticks",
+            "check_replay",
+            "check_obligations",
+            "check_evidence",
+            "replay_iterations",
+        ] {
+            assert!(json.contains(field), "JSON missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn enrichment_overall_verdict_blocked_empty_failing_list() {
+        let v = OverallVerdict::Blocked {
+            failing_gates: vec![],
+        };
+        assert!(!v.is_released());
+        let display = v.to_string();
+        assert!(display.contains("BLOCKED"));
+    }
+
+    #[test]
+    fn enrichment_gate_events_have_gate_start_names() {
+        let config = GateConfig {
+            seed: 42,
+            replay_iterations: 2,
+            check_replay: false,
+            ..Default::default()
+        };
+        let mut runner = ReleaseGateRunner::new(config);
+        let mut cx = mock_cx(500_000);
+        let _ = runner.run(&mut cx);
+
+        let start_events: Vec<_> = runner
+            .events()
+            .iter()
+            .filter(|e| e.event == "gate_start")
+            .collect();
+        // Frankenlab scenarios + obligations + evidence = 3 gates enabled
+        assert_eq!(start_events.len(), 3);
+        assert!(start_events.iter().all(|e| e.outcome == "starting"));
+    }
+
+    #[test]
+    fn enrichment_replay_iterations_one_still_passes() {
+        let config = GateConfig {
+            seed: 42,
+            replay_iterations: 1,
+            ..Default::default()
+        };
+        let mut runner = ReleaseGateRunner::new(config);
+        let mut cx = mock_cx(500_000);
+        let report = runner.run(&mut cx);
+        assert!(report.overall_verdict.is_released());
+    }
+
+    #[test]
+    fn enrichment_gate_result_fail_checks_passed_less_than_performed() {
+        let result = GateResult::fail(GateKind::EvidenceCompleteness, "gaps".to_string(), 10, 7);
+        assert!(result.checks_passed < result.checks_performed);
+        assert_eq!(result.checks_performed, 10);
+        assert_eq!(result.checks_passed, 7);
+    }
+
+    #[test]
+    fn enrichment_gate_kind_display_equals_as_str() {
+        for kind in GateKind::all() {
+            assert_eq!(kind.to_string(), kind.as_str());
+        }
+    }
+
+    #[test]
+    fn enrichment_constant_component_name() {
+        assert_eq!(COMPONENT_NAME, "frankenlab_release_gate");
+    }
+
+    #[test]
+    fn enrichment_default_gate_timeout_constant() {
+        assert_eq!(DEFAULT_GATE_TIMEOUT_TICKS, 600);
+    }
 }

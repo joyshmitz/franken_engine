@@ -1281,4 +1281,320 @@ mod tests {
             ]
         );
     }
+
+    // ── Enrichment batch 2: Copy semantics, JSON field names, edge cases ──
+
+    #[test]
+    fn enrichment_lever_category_copy_semantics() {
+        let a = LeverCategory::Memory;
+        let b = a; // Copy
+        let c = a; // still usable after copy
+        assert_eq!(b, c);
+        assert_eq!(a, LeverCategory::Memory);
+    }
+
+    #[test]
+    fn enrichment_lever_category_serde_snake_case_field_names() {
+        let json = serde_json::to_string(&LeverCategory::Execution).unwrap();
+        assert_eq!(json, "\"execution\"");
+        let json = serde_json::to_string(&LeverCategory::Memory).unwrap();
+        assert_eq!(json, "\"memory\"");
+        let json = serde_json::to_string(&LeverCategory::Security).unwrap();
+        assert_eq!(json, "\"security\"");
+        let json = serde_json::to_string(&LeverCategory::Benchmark).unwrap();
+        assert_eq!(json, "\"benchmark\"");
+        let json = serde_json::to_string(&LeverCategory::Config).unwrap();
+        assert_eq!(json, "\"config\"");
+    }
+
+    #[test]
+    fn enrichment_evidence_refs_clone_inequality() {
+        let a = full_evidence(1_000_000);
+        let mut b = a.clone();
+        b.opportunity_score_millionths = Some(2_000_000);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn enrichment_policy_event_json_field_presence() {
+        let ev = OneLeverPolicyEvent {
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            component: "comp".to_string(),
+            event: "started".to_string(),
+            outcome: "pass".to_string(),
+            error_code: Some("ERR-1".to_string()),
+            change_id: Some("chg-1".to_string()),
+            path: Some("/a/b.rs".to_string()),
+            lever_category: Some("execution".to_string()),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"event\""));
+        assert!(json.contains("\"outcome\""));
+        assert!(json.contains("\"error_code\""));
+        assert!(json.contains("\"change_id\""));
+        assert!(json.contains("\"path\""));
+        assert!(json.contains("\"lever_category\""));
+    }
+
+    #[test]
+    fn enrichment_policy_decision_clone_eq() {
+        let req = single_lever_opt_request(3_000_000);
+        let decision = evaluate_one_lever_policy(&req);
+        let cloned = decision.clone();
+        assert_eq!(decision, cloned);
+    }
+
+    #[test]
+    fn enrichment_path_lever_classification_none_category_serde() {
+        let plc = PathLeverClassification {
+            path: "docs/readme.md".to_string(),
+            category: None,
+        };
+        let json = serde_json::to_string(&plc).unwrap();
+        let back: PathLeverClassification = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, plc);
+        assert!(json.contains("\"category\":null"));
+    }
+
+    #[test]
+    fn enrichment_classify_security_keywords_extended() {
+        assert_eq!(
+            classify_changed_path("crates/franken-engine/src/ifc_artifacts.rs"),
+            Some(LeverCategory::Security)
+        );
+        assert_eq!(
+            classify_changed_path("crates/franken-engine/src/revocation_enforcement.rs"),
+            Some(LeverCategory::Security)
+        );
+        assert_eq!(
+            classify_changed_path("crates/franken-engine/src/attestation_policy.rs"),
+            Some(LeverCategory::Security)
+        );
+        assert_eq!(
+            classify_changed_path("crates/franken-engine/src/declassification_pipeline.rs"),
+            Some(LeverCategory::Security)
+        );
+        assert_eq!(
+            classify_changed_path("crates/franken-engine/src/guard_plane.rs"),
+            Some(LeverCategory::Security)
+        );
+    }
+
+    #[test]
+    fn enrichment_classify_memory_keywords_extended() {
+        assert_eq!(
+            classify_changed_path("crates/franken-engine/src/alloc_pool.rs"),
+            Some(LeverCategory::Memory)
+        );
+        assert_eq!(
+            classify_changed_path("crates/franken-engine/src/heap_manager.rs"),
+            Some(LeverCategory::Memory)
+        );
+    }
+
+    #[test]
+    fn enrichment_classify_execution_keywords_extended() {
+        assert_eq!(
+            classify_changed_path("some/path/parser_arena.rs"),
+            Some(LeverCategory::Execution)
+        );
+        assert_eq!(
+            classify_changed_path("some/path/interpreter_loop.rs"),
+            Some(LeverCategory::Execution)
+        );
+        assert_eq!(
+            classify_changed_path("some/path/ir_contract.rs"),
+            Some(LeverCategory::Execution)
+        );
+        assert_eq!(
+            classify_changed_path("some/path/scheduler_core.rs"),
+            Some(LeverCategory::Execution)
+        );
+        assert_eq!(
+            classify_changed_path("some/path/object_model.rs"),
+            Some(LeverCategory::Execution)
+        );
+    }
+
+    #[test]
+    fn enrichment_classify_config_ron_and_yml() {
+        assert_eq!(
+            classify_changed_path("config/engine.ron"),
+            Some(LeverCategory::Config)
+        );
+        assert_eq!(
+            classify_changed_path("deploy/service.yml"),
+            Some(LeverCategory::Config)
+        );
+    }
+
+    #[test]
+    fn enrichment_classify_md_outside_docs_exempt() {
+        // .md files are exempt regardless of location
+        assert_eq!(
+            classify_changed_path("crates/franken-engine/CHANGELOG.md"),
+            None
+        );
+        assert_eq!(classify_changed_path("src/notes.md"), None);
+    }
+
+    #[test]
+    fn enrichment_classify_scripts_benchmark_variants() {
+        assert_eq!(
+            classify_changed_path("scripts/run_flamegraph.sh"),
+            Some(LeverCategory::Benchmark)
+        );
+        assert_eq!(
+            classify_changed_path("scripts/measure_performance.py"),
+            Some(LeverCategory::Benchmark)
+        );
+        assert_eq!(
+            classify_changed_path("scripts/calc_opportunity.sh"),
+            Some(LeverCategory::Benchmark)
+        );
+    }
+
+    #[test]
+    fn enrichment_normalize_all_evidence_fields_trimmed() {
+        let mut req = non_opt_request();
+        req.evidence = OneLeverEvidenceRefs {
+            baseline_benchmark_run_id: Some("  base  ".to_string()),
+            post_change_benchmark_run_id: Some("  post  ".to_string()),
+            delta_report_ref: Some("  delta  ".to_string()),
+            semantic_equivalence_ref: Some("  equiv  ".to_string()),
+            trace_replay_ref: Some("  trace  ".to_string()),
+            isomorphism_ledger_ref: Some("  iso  ".to_string()),
+            rollback_instructions_ref: Some("  roll  ".to_string()),
+            reprofile_after_merge_ref: Some("  repro  ".to_string()),
+            opportunity_score_millionths: Some(1_000_000),
+        };
+        normalize_request(&mut req);
+        assert_eq!(
+            req.evidence.baseline_benchmark_run_id.as_deref(),
+            Some("base")
+        );
+        assert_eq!(
+            req.evidence.post_change_benchmark_run_id.as_deref(),
+            Some("post")
+        );
+        assert_eq!(req.evidence.delta_report_ref.as_deref(), Some("delta"));
+        assert_eq!(
+            req.evidence.semantic_equivalence_ref.as_deref(),
+            Some("equiv")
+        );
+        assert_eq!(req.evidence.trace_replay_ref.as_deref(), Some("trace"));
+        assert_eq!(req.evidence.isomorphism_ledger_ref.as_deref(), Some("iso"));
+        assert_eq!(
+            req.evidence.rollback_instructions_ref.as_deref(),
+            Some("roll")
+        );
+        assert_eq!(
+            req.evidence.reprofile_after_merge_ref.as_deref(),
+            Some("repro")
+        );
+    }
+
+    #[test]
+    fn enrichment_change_id_differs_for_different_requests() {
+        let req1 = non_opt_request();
+        let mut req2 = non_opt_request();
+        req2.commit_sha = "def456".to_string();
+        let d1 = evaluate_one_lever_policy(&req1);
+        let d2 = evaluate_one_lever_policy(&req2);
+        assert_ne!(d1.change_id, d2.change_id);
+    }
+
+    #[test]
+    fn enrichment_multi_lever_override_below_threshold_denied() {
+        // Multi-lever override allows past multi-lever check, but score still matters
+        let req = OneLeverPolicyRequest {
+            trace_id: "t-1".to_string(),
+            decision_id: "d-1".to_string(),
+            policy_id: "p-1".to_string(),
+            commit_sha: "abc".to_string(),
+            commit_message: "perf: [multi-lever: coupled gc and interpreter]".to_string(),
+            changed_paths: vec![
+                "crates/franken-engine/src/baseline_interpreter.rs".to_string(),
+                "crates/franken-engine/src/gc_pause.rs".to_string(),
+            ],
+            evidence: full_evidence(1_500_000), // below 2.0 threshold
+        };
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(!decision.allows_change());
+        assert!(decision.blocked);
+        assert!(decision.is_multi_lever);
+        assert_eq!(
+            decision.error_code.as_deref(),
+            Some(ERROR_SCORE_BELOW_THRESHOLD)
+        );
+    }
+
+    #[test]
+    fn enrichment_negative_opportunity_score_denied() {
+        let req = single_lever_opt_request(-1_000_000);
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(!decision.allows_change());
+        assert!(decision.blocked);
+        assert_eq!(
+            decision.error_code.as_deref(),
+            Some(ERROR_SCORE_BELOW_THRESHOLD)
+        );
+        assert_eq!(decision.opportunity_score_millionths, Some(-1_000_000));
+    }
+
+    #[test]
+    fn enrichment_events_contain_path_classifications() {
+        let req = single_lever_opt_request(3_000_000);
+        let decision = evaluate_one_lever_policy(&req);
+        // Should have: started, one path classification event, completed
+        assert!(decision.events.len() >= 3);
+        let classify_events: Vec<_> = decision
+            .events
+            .iter()
+            .filter(|e| e.event == "changed_path_classified")
+            .collect();
+        assert_eq!(classify_events.len(), 1);
+        assert_eq!(
+            classify_events[0].lever_category.as_deref(),
+            Some("execution")
+        );
+        assert!(classify_events[0].path.is_some());
+    }
+
+    #[test]
+    fn enrichment_validation_empty_policy_id_blocked() {
+        let mut req = non_opt_request();
+        req.policy_id = "   ".to_string();
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(decision.blocked);
+        assert_eq!(decision.error_code.as_deref(), Some(ERROR_INVALID_REQUEST));
+        assert!(decision.missing_requirements[0].contains("policy_id"));
+    }
+
+    #[test]
+    fn enrichment_decision_events_json_field_names() {
+        let decision = evaluate_one_lever_policy(&non_opt_request());
+        let json = serde_json::to_string(&decision).unwrap();
+        assert!(json.contains("\"events\""));
+        assert!(json.contains("\"missing_requirements\""));
+        assert!(json.contains("\"is_multi_lever\""));
+        assert!(json.contains("\"override_reason\""));
+        assert!(json.contains("\"blocked\""));
+        assert!(json.contains("\"error_code\""));
+    }
+
+    #[test]
+    fn enrichment_large_score_above_threshold_allowed() {
+        let req = single_lever_opt_request(i64::MAX);
+        let decision = evaluate_one_lever_policy(&req);
+        assert!(decision.allows_change());
+        assert!(!decision.blocked);
+        assert_eq!(decision.opportunity_score_millionths, Some(i64::MAX));
+    }
 }

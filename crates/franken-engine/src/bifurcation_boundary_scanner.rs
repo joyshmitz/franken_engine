@@ -1777,4 +1777,229 @@ mod tests {
             Err(ScannerError::InvalidRiskBudget { value: -500_000 })
         ));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: serde roundtrips for remaining types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_stability_map_entry_serde_roundtrip() {
+        let entry = StabilityMapEntry {
+            value_millionths: 400_000,
+            regime: RegimeLabel::Elevated,
+            stability_millionths: 200_000,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: StabilityMapEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn enrichment_early_warning_indicator_serde_roundtrip() {
+        let ewi = EarlyWarningIndicator {
+            indicator_id: "ew-serde".to_string(),
+            parameter_id: "p-serde".to_string(),
+            risk_value_millionths: 700_000,
+            threshold_millionths: 750_000,
+            active: true,
+            trend_millionths: 15_000,
+            observation_count: 30,
+        };
+        let json = serde_json::to_string(&ewi).unwrap();
+        let back: EarlyWarningIndicator = serde_json::from_str(&json).unwrap();
+        assert_eq!(ewi, back);
+    }
+
+    #[test]
+    fn enrichment_preemptive_action_serde_roundtrip() {
+        let action = PreemptiveAction {
+            action_id: "pa-serde".to_string(),
+            trigger_indicator_id: "ew-serde".to_string(),
+            parameter_id: "p-serde".to_string(),
+            lane_action: LaneAction::FallbackSafe,
+            epoch: SecurityEpoch::GENESIS,
+            trigger_risk_millionths: 800_000,
+            rationale: "serde roundtrip test".to_string(),
+        };
+        let json = serde_json::to_string(&action).unwrap();
+        let back: PreemptiveAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(action, back);
+    }
+
+    #[test]
+    fn enrichment_parameter_observation_serde_roundtrip() {
+        let obs = ParameterObservation {
+            parameter_id: "obs-serde".to_string(),
+            value_millionths: 600_000,
+            tick: 42,
+            regime: RegimeLabel::Normal,
+        };
+        let json = serde_json::to_string(&obs).unwrap();
+        let back: ParameterObservation = serde_json::from_str(&json).unwrap();
+        assert_eq!(obs, back);
+    }
+
+    #[test]
+    fn enrichment_bifurcation_point_serde_roundtrip() {
+        let bp = BifurcationPoint {
+            parameter_id: "bp-serde".to_string(),
+            critical_value_millionths: 350_000,
+            bifurcation_type: BifurcationType::Transcritical,
+            regime_before: RegimeLabel::Elevated,
+            regime_after: RegimeLabel::Degraded,
+            confidence_millionths: 850_000,
+        };
+        let json = serde_json::to_string(&bp).unwrap();
+        let back: BifurcationPoint = serde_json::from_str(&json).unwrap();
+        assert_eq!(bp, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: JSON field presence for remaining types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_json_field_presence_control_parameter() {
+        let p = make_param("cp-json", 500_000);
+        let j = serde_json::to_string(&p).unwrap();
+        assert!(j.contains("\"id\""));
+        assert!(j.contains("\"label\""));
+        assert!(j.contains("\"domain\""));
+        assert!(j.contains("\"current_value_millionths\""));
+        assert!(j.contains("\"policy_tunable\""));
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_early_warning_indicator() {
+        let ewi = EarlyWarningIndicator {
+            indicator_id: "ew-json".to_string(),
+            parameter_id: "p-json".to_string(),
+            risk_value_millionths: 600_000,
+            threshold_millionths: 750_000,
+            active: false,
+            trend_millionths: 0,
+            observation_count: 5,
+        };
+        let j = serde_json::to_string(&ewi).unwrap();
+        assert!(j.contains("\"indicator_id\""));
+        assert!(j.contains("\"risk_value_millionths\""));
+        assert!(j.contains("\"threshold_millionths\""));
+        assert!(j.contains("\"active\""));
+        assert!(j.contains("\"trend_millionths\""));
+        assert!(j.contains("\"observation_count\""));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: observe unknown parameter does not crash
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_observe_unknown_parameter_no_panic() {
+        let mut scanner = default_scanner();
+        scanner.observe(ParameterObservation {
+            parameter_id: "nonexistent".to_string(),
+            value_millionths: 999_999,
+            tick: 1,
+            regime: RegimeLabel::Normal,
+        });
+        assert_eq!(scanner.observation_count(), 1);
+        // Scan still works
+        let result = scanner.scan().unwrap();
+        assert_eq!(result.parameters_scanned, 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: scan with partially unmonitored parameter
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_scan_unmonitored_parameter_regime_summary() {
+        // 2 params, only 1 has an envelope → the other is "unmonitored"
+        let params = vec![
+            make_param("monitored", 500_000),
+            make_param("unmonitored", 300_000),
+        ];
+        let envelopes = vec![make_envelope("monitored", 100_000, 900_000, 500_000)];
+        let mut scanner =
+            BifurcationBoundaryScanner::new(ScannerConfig::default(), params, envelopes).unwrap();
+        let result = scanner.scan().unwrap();
+        assert_eq!(result.parameters_scanned, 2);
+        assert!(result.regime_summary.contains_key("unmonitored"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: stability map has correct ordering
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_stability_map_entries_ordered_by_value() {
+        let config = ScannerConfig {
+            record_stability_maps: true,
+            ..Default::default()
+        };
+        let params = vec![make_param("x", 500_000)];
+        let envelopes = vec![make_envelope("x", 0, MILLION, 500_000)];
+        let mut scanner = BifurcationBoundaryScanner::new(config, params, envelopes).unwrap();
+        scanner.scan().unwrap();
+        let map = scanner.stability_maps().get("x").unwrap();
+        // Entries should be in ascending order of value_millionths
+        for w in map.windows(2) {
+            assert!(w[0].value_millionths <= w[1].value_millionths);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: artifact hash differs between different scan states
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_artifact_hash_differs_for_different_states() {
+        let params_a = vec![make_param("x", 500_000)];
+        let params_b = vec![make_param("x", 110_000)]; // near boundary
+        let envs = vec![make_envelope("x", 100_000, 900_000, 500_000)];
+        let mut sa =
+            BifurcationBoundaryScanner::new(ScannerConfig::default(), params_a, envs.clone())
+                .unwrap();
+        let mut sb =
+            BifurcationBoundaryScanner::new(ScannerConfig::default(), params_b, envs).unwrap();
+        let ra = sa.scan().unwrap();
+        let rb = sb.scan().unwrap();
+        // Different parameter states should produce different artifact hashes
+        assert_ne!(ra.artifact_hash, rb.artifact_hash);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: clone/eq for ParameterObservation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_clone_eq_parameter_observation() {
+        let obs = ParameterObservation {
+            parameter_id: "obs-clone".to_string(),
+            value_millionths: 333_333,
+            tick: 99,
+            regime: RegimeLabel::Degraded,
+        };
+        let cloned = obs.clone();
+        assert_eq!(obs, cloned);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: too many envelopes boundary
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_too_many_envelopes_rejected() {
+        let params: Vec<_> = (0..65)
+            .map(|i| make_param(&format!("p-{i}"), 500_000))
+            .collect();
+        let envelopes: Vec<_> = (0..65)
+            .map(|i| make_envelope(&format!("p-{i}"), 0, MILLION, 500_000))
+            .collect();
+        let result = BifurcationBoundaryScanner::new(ScannerConfig::default(), params, envelopes);
+        assert!(matches!(
+            result,
+            Err(ScannerError::TooManyEnvelopes { count: 65, max: 64 })
+        ));
+    }
 }

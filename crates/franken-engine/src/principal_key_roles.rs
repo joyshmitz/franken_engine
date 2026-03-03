@@ -1904,4 +1904,187 @@ mod tests {
         let pk2 = sk.public_key();
         assert_eq!(pk1, pk2);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch: Display, serde, clone/eq, status semantics
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn key_role_display_all_three() {
+        assert_eq!(KeyRole::Signing.to_string(), "signing");
+        assert_eq!(KeyRole::Encryption.to_string(), "encryption");
+        assert_eq!(KeyRole::Issuance.to_string(), "issuance");
+    }
+
+    #[test]
+    fn key_role_display_uniqueness() {
+        let displays: std::collections::BTreeSet<String> =
+            KeyRole::ALL.iter().map(|r| r.to_string()).collect();
+        assert_eq!(displays.len(), 3);
+    }
+
+    #[test]
+    fn key_role_serde_all_variants() {
+        for role in KeyRole::ALL {
+            let json = serde_json::to_string(role).unwrap();
+            let back: KeyRole = serde_json::from_str(&json).unwrap();
+            assert_eq!(*role, back);
+        }
+    }
+
+    #[test]
+    fn key_role_derivation_domain_unique() {
+        let domains: std::collections::BTreeSet<&[u8]> =
+            KeyRole::ALL.iter().map(|r| r.derivation_domain()).collect();
+        assert_eq!(domains.len(), 3);
+    }
+
+    #[test]
+    fn key_status_display_all_five() {
+        assert_eq!(KeyStatus::Pending.to_string(), "pending");
+        assert_eq!(KeyStatus::Active.to_string(), "active");
+        assert_eq!(KeyStatus::Rotated.to_string(), "rotated");
+        assert_eq!(KeyStatus::Revoked.to_string(), "revoked");
+        assert_eq!(KeyStatus::Expired.to_string(), "expired");
+    }
+
+    #[test]
+    fn key_status_display_uniqueness() {
+        let displays: std::collections::BTreeSet<String> = [
+            KeyStatus::Pending,
+            KeyStatus::Active,
+            KeyStatus::Rotated,
+            KeyStatus::Revoked,
+            KeyStatus::Expired,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(displays.len(), 5);
+    }
+
+    #[test]
+    fn key_status_serde_all_variants() {
+        for status in [
+            KeyStatus::Pending,
+            KeyStatus::Active,
+            KeyStatus::Rotated,
+            KeyStatus::Revoked,
+            KeyStatus::Expired,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let back: KeyStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(status, back);
+        }
+    }
+
+    #[test]
+    fn key_status_allows_creation_only_active() {
+        assert!(!KeyStatus::Pending.allows_creation());
+        assert!(KeyStatus::Active.allows_creation());
+        assert!(!KeyStatus::Rotated.allows_creation());
+        assert!(!KeyStatus::Revoked.allows_creation());
+        assert!(!KeyStatus::Expired.allows_creation());
+    }
+
+    #[test]
+    fn key_status_allows_verification_active_and_rotated() {
+        assert!(!KeyStatus::Pending.allows_verification());
+        assert!(KeyStatus::Active.allows_verification());
+        assert!(KeyStatus::Rotated.allows_verification());
+        assert!(!KeyStatus::Revoked.allows_verification());
+        assert!(!KeyStatus::Expired.allows_verification());
+    }
+
+    #[test]
+    fn encryption_public_key_display_hex_length() {
+        let pk = EncryptionPublicKey::from_bytes([0xab; 32]);
+        let display = pk.to_string();
+        assert_eq!(display.len(), 64); // 32 bytes * 2 hex chars
+        assert!(display.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn encryption_public_key_bytes_serde_roundtrip() {
+        let pk = EncryptionPublicKey::from_bytes([0x01; 32]);
+        let json = serde_json::to_string(&pk).unwrap();
+        let back: EncryptionPublicKey = serde_json::from_str(&json).unwrap();
+        assert_eq!(pk, back);
+    }
+
+    #[test]
+    fn encryption_private_key_bytes_serde_roundtrip() {
+        let sk = EncryptionPrivateKey::from_bytes([0x99; 32]);
+        let json = serde_json::to_string(&sk).unwrap();
+        let back: EncryptionPrivateKey = serde_json::from_str(&json).unwrap();
+        assert_eq!(sk, back);
+    }
+
+    #[test]
+    fn encryption_public_key_clone_eq() {
+        let pk = EncryptionPublicKey::from_bytes([0x42; 32]);
+        let cloned = pk.clone();
+        assert_eq!(pk, cloned);
+    }
+
+    #[test]
+    fn encryption_private_key_clone_eq() {
+        let sk = EncryptionPrivateKey::from_bytes([0x42; 32]);
+        let cloned = sk.clone();
+        assert_eq!(sk, cloned);
+    }
+
+    #[test]
+    fn different_private_keys_produce_different_public_keys() {
+        let sk1 = EncryptionPrivateKey::from_bytes([0x01; 32]);
+        let sk2 = EncryptionPrivateKey::from_bytes([0x02; 32]);
+        assert_ne!(sk1.public_key(), sk2.public_key());
+    }
+
+    #[test]
+    fn encryption_public_key_from_bytes_roundtrip() {
+        let bytes = [0xde; 32];
+        let pk = EncryptionPublicKey::from_bytes(bytes);
+        assert_eq!(*pk.as_bytes(), bytes);
+    }
+
+    #[test]
+    fn encryption_private_key_as_bytes_roundtrip() {
+        let bytes = [0xfe; 32];
+        let sk = EncryptionPrivateKey::from_bytes(bytes);
+        assert_eq!(*sk.as_bytes(), bytes);
+    }
+
+    #[test]
+    fn key_role_copy_semantics() {
+        let role = KeyRole::Signing;
+        let copied = role;
+        assert_eq!(role, copied);
+    }
+
+    #[test]
+    fn key_status_copy_semantics() {
+        let status = KeyStatus::Active;
+        let copied = status;
+        assert_eq!(status, copied);
+    }
+
+    #[test]
+    fn key_role_all_has_three_elements() {
+        assert_eq!(KeyRole::ALL.len(), 3);
+    }
+
+    #[test]
+    fn bundle_schema_fn_deterministic() {
+        let s1 = bundle_schema();
+        let s2 = bundle_schema();
+        assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn bundle_schema_id_fn_deterministic() {
+        let id1 = bundle_schema_id();
+        let id2 = bundle_schema_id();
+        assert_eq!(id1, id2);
+    }
 }

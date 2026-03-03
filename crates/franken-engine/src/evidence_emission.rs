@@ -1501,4 +1501,199 @@ mod tests {
         let keys: Vec<&String> = req.metadata.keys().collect();
         assert_eq!(keys, vec!["a_key", "m_key", "z_key"]);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: Copy, Hash, JSON fields, edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_action_category_copy_semantics() {
+        let a = ActionCategory::ContainmentAction;
+        let b = a; // Copy
+        assert_eq!(a, b);
+        assert_eq!(b.as_str(), "containment_action");
+    }
+
+    #[test]
+    fn enrichment_action_category_hash_in_btreeset() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        for cat in &ActionCategory::ALL {
+            assert!(set.insert(*cat));
+        }
+        assert_eq!(set.len(), 6);
+        // Duplicate insertion returns false
+        assert!(!set.insert(ActionCategory::DecisionContract));
+    }
+
+    #[test]
+    fn enrichment_evidence_entry_id_clone_eq() {
+        let a = EvidenceEntryId::new("ev-clone-test");
+        let b = a.clone();
+        assert_eq!(a, b);
+        assert_eq!(a.as_str(), b.as_str());
+    }
+
+    #[test]
+    fn enrichment_emitter_config_clone_eq() {
+        let a = EmitterConfig {
+            buffer_capacity: 100,
+            budget_cost_ms: 5,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_event_json_fields_present() {
+        let event = EvidenceEmissionEvent {
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            component: "evidence-emission".to_string(),
+            event: "evidence_emit".to_string(),
+            outcome: "ok".to_string(),
+            error_code: Some("buffer_full".to_string()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        for field in &[
+            "trace_id",
+            "decision_id",
+            "policy_id",
+            "component",
+            "event",
+            "outcome",
+            "error_code",
+        ] {
+            assert!(json.contains(field), "JSON missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn enrichment_config_json_fields_present() {
+        let cfg = EmitterConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("buffer_capacity"));
+        assert!(json.contains("budget_cost_ms"));
+    }
+
+    #[test]
+    fn enrichment_request_json_fields_present() {
+        let req = make_request(ActionCategory::DecisionContract, "allow");
+        let json = serde_json::to_string(&req).unwrap();
+        for field in &[
+            "category",
+            "action_name",
+            "trace_id",
+            "decision_id",
+            "policy_id",
+            "ts_unix_ms",
+            "posterior",
+            "expected_losses",
+            "chosen_expected_loss",
+            "calibration_score",
+            "fallback_active",
+            "top_features",
+            "metadata",
+        ] {
+            assert!(json.contains(field), "JSON missing field: {field}");
+        }
+    }
+
+    #[test]
+    fn enrichment_entry_id_format_contains_category_and_sequence() {
+        let mut em = emitter();
+        let mut cx = mock_cx();
+        let req = make_request(ActionCategory::ExtensionLifecycle, "load");
+        let id = em.emit(&mut cx, &req).unwrap();
+        let s = id.as_str();
+        assert!(s.starts_with("ev-"), "entry ID should start with ev-");
+        assert!(
+            s.contains("extension_lifecycle"),
+            "entry ID should contain category"
+        );
+        assert!(s.contains("-0-"), "entry ID should contain sequence 0");
+    }
+
+    #[test]
+    fn enrichment_rolling_hash_genesis_is_deterministic() {
+        let em1 = emitter();
+        let em2 = emitter();
+        assert_eq!(em1.rolling_hash(), em2.rolling_hash());
+    }
+
+    #[test]
+    fn enrichment_schema_version_constant() {
+        let mut em = emitter();
+        let mut cx = mock_cx();
+        em.emit(
+            &mut cx,
+            &make_request(ActionCategory::DecisionContract, "a"),
+        )
+        .unwrap();
+        assert_eq!(em.entries()[0].schema_version, "evidence-v1");
+    }
+
+    #[test]
+    fn enrichment_component_name_in_ledger() {
+        let mut em = emitter();
+        let mut cx = mock_cx();
+        em.emit(
+            &mut cx,
+            &make_request(ActionCategory::Cancellation, "cancel"),
+        )
+        .unwrap();
+        let component = &em.entries()[0].ledger_entry.component;
+        assert!(
+            component.contains("evidence-emission"),
+            "ledger component should reference evidence-emission"
+        );
+        assert!(
+            component.contains("cancellation"),
+            "ledger component should reference category"
+        );
+    }
+
+    #[test]
+    fn enrichment_events_for_budget_exhaustion() {
+        let mut em = CanonicalEvidenceEmitter::new(EmitterConfig {
+            budget_cost_ms: 100,
+            ..EmitterConfig::default()
+        });
+        let mut cx = MockCx::new(trace_id_from_seed(1), MockBudget::new(50));
+        let req = make_request(ActionCategory::DecisionContract, "deny");
+        let _ = em.emit(&mut cx, &req);
+
+        assert_eq!(em.events().len(), 1);
+        assert_eq!(em.events()[0].outcome, "rejected");
+        assert_eq!(
+            em.events()[0].error_code.as_deref(),
+            Some("budget_exhausted")
+        );
+    }
+
+    #[test]
+    fn enrichment_by_category_empty_for_unused() {
+        let mut em = emitter();
+        let mut cx = mock_cx();
+        em.emit(
+            &mut cx,
+            &make_request(ActionCategory::DecisionContract, "a"),
+        )
+        .unwrap();
+        assert!(
+            em.by_category(ActionCategory::ObligationLifecycle)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn enrichment_evidence_entry_id_ord_deterministic() {
+        use std::collections::BTreeSet;
+        let ids: Vec<EvidenceEntryId> = (0..5)
+            .map(|i| EvidenceEntryId::new(format!("ev-{i}")))
+            .collect();
+        let set: BTreeSet<_> = ids.iter().collect();
+        assert_eq!(set.len(), 5);
+    }
 }

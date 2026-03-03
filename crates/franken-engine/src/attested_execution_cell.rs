@@ -2121,4 +2121,196 @@ mod tests {
         assert!(CellFunction::PolicyEvaluator < CellFunction::ProofValidator);
         assert!(CellFunction::ProofValidator < CellFunction::ExtensionRuntime);
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn enrichment_cell_lifecycle_copy_semantics() {
+        let a = CellLifecycle::Active;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_trust_level_copy_semantics() {
+        let a = TrustLevel::Hardware;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_platform_kind_copy_semantics() {
+        let a = PlatformKind::AmdSevSnp;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_cell_function_copy_semantics() {
+        let a = CellFunction::ProofValidator;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_cell_lifecycle_hash_in_btreeset() {
+        let mut set = std::collections::BTreeSet::new();
+        for v in [
+            CellLifecycle::Provisioning,
+            CellLifecycle::Measured,
+            CellLifecycle::Attested,
+            CellLifecycle::Active,
+            CellLifecycle::Suspended,
+            CellLifecycle::Decommissioned,
+        ] {
+            set.insert(v);
+        }
+        set.insert(CellLifecycle::Active); // duplicate
+        assert_eq!(set.len(), 6);
+    }
+
+    #[test]
+    fn enrichment_cell_function_hash_in_btreeset() {
+        let mut set = std::collections::BTreeSet::new();
+        for v in [
+            CellFunction::DecisionReceiptSigner,
+            CellFunction::EvidenceAccumulator,
+            CellFunction::PolicyEvaluator,
+            CellFunction::ProofValidator,
+            CellFunction::ExtensionRuntime,
+        ] {
+            set.insert(v);
+        }
+        set.insert(CellFunction::PolicyEvaluator); // duplicate
+        assert_eq!(set.len(), 5);
+    }
+
+    #[test]
+    fn enrichment_lifecycle_receipt_clone_eq() {
+        let r = LifecycleReceipt {
+            from_state: CellLifecycle::Provisioning,
+            to_state: CellLifecycle::Measured,
+            timestamp_ns: 1_000,
+            epoch: SecurityEpoch::GENESIS,
+            reason: "initial measure".to_string(),
+            signature_bytes: vec![1, 2, 3],
+        };
+        let c = r.clone();
+        assert_eq!(r, c);
+    }
+
+    #[test]
+    fn enrichment_cell_event_clone_eq() {
+        let e = CellEvent {
+            seq: 1,
+            timestamp_ns: 5_000,
+            epoch: SecurityEpoch::from_raw(2),
+            cell_id: "cell-1".to_string(),
+            event_type: CellEventType::Activated,
+        };
+        let c = e.clone();
+        assert_eq!(e, c);
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_measurement_digest() {
+        let root = SoftwareTrustRoot::new("k1", 42);
+        let m = root.measure(b"code", b"cfg", b"pol", b"evi", "v1.0");
+        let j = serde_json::to_string(&m).unwrap();
+        assert!(j.contains("\"code_hash\""));
+        assert!(j.contains("\"config_hash\""));
+        assert!(j.contains("\"policy_hash\""));
+        assert!(j.contains("\"evidence_schema_hash\""));
+        assert!(j.contains("\"runtime_version\""));
+        assert!(j.contains("\"platform\""));
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_cell_event() {
+        let e = CellEvent {
+            seq: 0,
+            timestamp_ns: 100,
+            epoch: SecurityEpoch::GENESIS,
+            cell_id: "c-json".to_string(),
+            event_type: CellEventType::Created,
+        };
+        let j = serde_json::to_string(&e).unwrap();
+        assert!(j.contains("\"seq\""));
+        assert!(j.contains("\"timestamp_ns\""));
+        assert!(j.contains("\"epoch\""));
+        assert!(j.contains("\"cell_id\""));
+        assert!(j.contains("\"event_type\""));
+    }
+
+    #[test]
+    fn enrichment_cell_error_serde_all_variants() {
+        let variants = vec![
+            CellError::IdDerivation("bad".to_string()),
+            CellError::NotFound {
+                cell_id: "c1".to_string(),
+            },
+            CellError::Duplicate {
+                cell_id: "c2".to_string(),
+            },
+            CellError::InvalidTransition {
+                from: CellLifecycle::Provisioning,
+                to: CellLifecycle::Active,
+            },
+            CellError::NotOperational {
+                lifecycle: CellLifecycle::Suspended,
+            },
+            CellError::AttestationFailed {
+                reason: "expired".to_string(),
+            },
+            CellError::NotMeasured,
+            CellError::TrustRootRevoked {
+                key_id: "k-rev".to_string(),
+            },
+            CellError::EmptyLabel,
+            CellError::EmptyZone,
+            CellError::EmptyAuthority,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: CellError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn enrichment_cell_error_source_is_none() {
+        use std::error::Error as _;
+        let err = CellError::NotMeasured;
+        assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn enrichment_measurement_composite_hash_deterministic() {
+        let root = SoftwareTrustRoot::new("det", 99);
+        let m1 = root.measure(b"code-x", b"cfg-x", b"pol-x", b"evi-x", "v2.0");
+        let m2 = root.measure(b"code-x", b"cfg-x", b"pol-x", b"evi-x", "v2.0");
+        assert_eq!(m1.composite_hash(), m2.composite_hash());
+    }
+
+    #[test]
+    fn enrichment_registry_clone_preserves_state() {
+        let mut reg = CellRegistry::new();
+        let mut auth = BTreeSet::new();
+        auth.insert("exec".to_string());
+        reg.create_cell(
+            CreateCellInput {
+                label: "cell-clone".to_string(),
+                function: CellFunction::PolicyEvaluator,
+                zone: "zone-clone".to_string(),
+                epoch: SecurityEpoch::GENESIS,
+                trust_level: TrustLevel::SoftwareOnly,
+                authority_envelope: auth,
+            },
+            1000,
+        )
+        .unwrap();
+        let cloned = reg.clone();
+        assert_eq!(reg.cell_count(), cloned.cell_count());
+        assert_eq!(reg.event_count(), cloned.event_count());
+    }
 }

@@ -2641,4 +2641,168 @@ mod tests {
         assert_eq!(back.lanes.len(), config.lanes.len());
         assert_eq!(back.risk_weights.len(), config.risk_weights.len());
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn regime_label_display_exact_all_5() {
+        assert_eq!(RegimeLabel::Normal.to_string(), "normal");
+        assert_eq!(RegimeLabel::Elevated.to_string(), "elevated");
+        assert_eq!(RegimeLabel::Attack.to_string(), "attack");
+        assert_eq!(RegimeLabel::Degraded.to_string(), "degraded");
+        assert_eq!(RegimeLabel::Recovery.to_string(), "recovery");
+    }
+
+    #[test]
+    fn regime_label_ordering() {
+        assert!(RegimeLabel::Normal < RegimeLabel::Elevated);
+        assert!(RegimeLabel::Elevated < RegimeLabel::Attack);
+        assert!(RegimeLabel::Attack < RegimeLabel::Degraded);
+        assert!(RegimeLabel::Degraded < RegimeLabel::Recovery);
+    }
+
+    #[test]
+    fn risk_factor_ordering() {
+        assert!(RiskFactor::Compatibility < RiskFactor::Latency);
+        assert!(RiskFactor::Latency < RiskFactor::Memory);
+        assert!(RiskFactor::Memory < RiskFactor::IncidentSeverity);
+    }
+
+    #[test]
+    fn cvar_config_serde_roundtrip() {
+        let config = CvarConfig {
+            alpha_millionths: 900_000,
+            max_cvar_millionths: 25 * MILLION,
+            min_observations: 50,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: CvarConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn conformal_config_serde_roundtrip() {
+        let config = ConformalConfig {
+            alpha_millionths: 50_000,
+            min_calibration_observations: 100,
+            max_consecutive_violations: 10,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: ConformalConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn drift_config_serde_roundtrip() {
+        let config = DriftConfig {
+            kl_threshold_millionths: 200_000,
+            reference_window: 50,
+            test_window: 25,
+            min_samples: 15,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: DriftConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn budget_config_serde_roundtrip() {
+        let config = BudgetConfig {
+            compute_budget_us: 100_000,
+            memory_budget_bytes: 256 * 1024 * 1024,
+            warning_threshold_millionths: 750_000,
+            deterministic_fallback_on_exhaust: false,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: BudgetConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn cvar_returns_none_with_insufficient_data() {
+        let config = CvarConfig {
+            min_observations: 10,
+            ..Default::default()
+        };
+        let mut cvar = CvarGuardrail::new(config);
+        assert!(cvar.cvar().is_none());
+        assert!(cvar.var().is_none());
+        for i in 0..5 {
+            cvar.observe(i * MILLION);
+        }
+        assert!(cvar.cvar().is_none(), "still below min_observations");
+    }
+
+    #[test]
+    fn budget_no_fallback_when_deterministic_disabled() {
+        let config = BudgetConfig {
+            compute_budget_us: 100,
+            deterministic_fallback_on_exhaust: false,
+            ..Default::default()
+        };
+        let mut budget = BudgetController::new(config, epoch(1));
+        let status = budget.record_compute(100);
+        assert!(matches!(status, BudgetStatus::Exhausted { .. }));
+        assert!(
+            !budget.is_fallback_active(),
+            "fallback should not activate when deterministic_fallback_on_exhaust=false"
+        );
+        assert!(budget.events().is_empty());
+    }
+
+    #[test]
+    fn context_degraded_regime_uses_safe_lane() {
+        let config = DecisionContextConfig::default();
+        let mut ctx = DecisionContext::new(config, epoch(1));
+        let mut state = default_state();
+        state.regime = RegimeLabel::Degraded;
+        let outcome = ctx.decide(&state);
+        if let LaneAction::RouteTo(lane) = &outcome.action {
+            assert_eq!(lane.0, "quickjs_inspired_native");
+        } else {
+            panic!("expected RouteTo, got {:?}", outcome.action);
+        }
+    }
+
+    #[test]
+    fn drift_detector_last_kl_initially_none() {
+        let drift = DriftDetector::new(DriftConfig::default());
+        assert!(drift.last_kl_millionths().is_none());
+        assert!(drift.drift_epoch().is_none());
+        assert!(!drift.is_drift_detected());
+    }
+
+    #[test]
+    fn calibration_ledger_entry_serde_roundtrip() {
+        let entry = CalibrationLedgerEntry {
+            epoch: epoch(42),
+            prediction_covered: false,
+            running_coverage_millionths: 800_000,
+            e_value_millionths: 9_000_000,
+            violation: true,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: CalibrationLedgerEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn fallback_trigger_event_with_from_action() {
+        let event = FallbackTriggerEvent {
+            epoch: epoch(5),
+            trigger: DemotionReason::DriftDetected,
+            from_action: Some(LaneAction::RouteTo(LaneId("v8_lane".into()))),
+            to_action: LaneAction::FallbackSafe,
+            metrics: FallbackMetrics {
+                cvar_millionths: Some(10 * MILLION),
+                drift_kl_millionths: Some(200_000),
+                budget_remaining_millionths: 600_000,
+                coverage_millionths: 850_000,
+                e_value_millionths: 3 * MILLION,
+            },
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: FallbackTriggerEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
 }

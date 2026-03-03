@@ -1317,4 +1317,354 @@ mod tests {
             assert!(err.source().is_none());
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2 — deeper coverage: Ord derivation, Debug formatting,
+    // metadata propagation, optimizer edge cases, coverage math, certificate
+    // headroom, ledger entries, JSON value checks, schedule determinism
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_probe_domain_ord_all_variants() {
+        // ProbeDomain derives Ord — verify the derive-order matches definition order
+        let mut domains = vec![
+            ProbeDomain::Governance,
+            ProbeDomain::Scheduler,
+            ProbeDomain::Router,
+            ProbeDomain::EvidencePipeline,
+            ProbeDomain::Runtime,
+            ProbeDomain::Compiler,
+        ];
+        domains.sort();
+        assert_eq!(
+            domains,
+            vec![
+                ProbeDomain::Compiler,
+                ProbeDomain::Runtime,
+                ProbeDomain::Router,
+                ProbeDomain::EvidencePipeline,
+                ProbeDomain::Scheduler,
+                ProbeDomain::Governance,
+            ]
+        );
+    }
+
+    #[test]
+    fn enrichment_probe_granularity_ord_all_variants() {
+        let mut gs = vec![
+            ProbeGranularity::Trace,
+            ProbeGranularity::Fine,
+            ProbeGranularity::Coarse,
+            ProbeGranularity::Medium,
+        ];
+        gs.sort();
+        assert_eq!(
+            gs,
+            vec![
+                ProbeGranularity::Coarse,
+                ProbeGranularity::Medium,
+                ProbeGranularity::Fine,
+                ProbeGranularity::Trace,
+            ]
+        );
+    }
+
+    #[test]
+    fn enrichment_candidate_probe_debug_contains_name() {
+        let p = make_probe("dbg_probe", ProbeDomain::Router, 100_000, 5, 50, &["z"]);
+        let dbg = format!("{:?}", p);
+        assert!(dbg.contains("dbg_probe"));
+        assert!(dbg.contains("Router"));
+    }
+
+    #[test]
+    fn enrichment_candidate_probe_metadata_round_trip() {
+        let mut p = make_probe("meta_p", ProbeDomain::Governance, 200_000, 10, 100, &["m"]);
+        p.metadata
+            .insert("owner".to_string(), "team-obs".to_string());
+        p.metadata.insert("version".to_string(), "3".to_string());
+        let json = serde_json::to_string(&p).unwrap();
+        let p2: CandidateProbe = serde_json::from_str(&json).unwrap();
+        assert_eq!(p2.metadata.get("owner").unwrap(), "team-obs");
+        assert_eq!(p2.metadata.get("version").unwrap(), "3");
+        assert_eq!(p2.metadata.len(), 2);
+    }
+
+    #[test]
+    fn enrichment_efficiency_ratio_with_zero_latency_uses_max_one() {
+        // latency_overhead_micros = 0 => .max(1) = 1 in efficiency_ratio
+        let p = make_probe("zero_lat", ProbeDomain::Compiler, MILLION, 0, 100, &["a"]);
+        let ratio = p.efficiency_ratio_millionths();
+        // utility * MILLION / 1 = 1_000_000 * 1_000_000 = 1_000_000_000_000
+        assert_eq!(ratio, MILLION * MILLION);
+    }
+
+    #[test]
+    fn enrichment_marginal_gain_single_of_three_covered() {
+        // 3 events, 1 already covered => 2/3 fraction
+        let p = make_probe(
+            "frac",
+            ProbeDomain::Runtime,
+            MILLION,
+            10,
+            50,
+            &["a", "b", "c"],
+        );
+        let mut covered = BTreeSet::new();
+        covered.insert("b".to_string());
+        let gain = p.marginal_gain(&covered);
+        // fraction = 2 * 1_000_000 / 3 = 666_666
+        // gain = 1_000_000 * 666_666 / 1_000_000 = 666_666
+        assert_eq!(gain, 666_666);
+    }
+
+    #[test]
+    fn enrichment_greedy_overlapping_events_diminishing_returns() {
+        // Two probes covering overlapping events; second probe gains less
+        let mut u = ProbeUniverse::new();
+        u.add_probe(make_probe(
+            "overlap_a",
+            ProbeDomain::Compiler,
+            MILLION,
+            10,
+            100,
+            &["shared", "unique_a"],
+        ))
+        .unwrap();
+        u.add_probe(make_probe(
+            "overlap_b",
+            ProbeDomain::Runtime,
+            MILLION,
+            10,
+            100,
+            &["shared", "unique_b"],
+        ))
+        .unwrap();
+        let budget = ObservabilityBudget {
+            max_latency_micros: 100,
+            max_memory_bytes: 100_000,
+            max_probe_count: 10,
+            min_event_coverage_millionths: 0,
+        };
+        let result = greedy_submodular_select(&u, &budget);
+        // Both should be selected (budget allows)
+        assert_eq!(result.selected_indices.len(), 2);
+        // Total utility should be less than 2*MILLION because of overlap
+        assert!(result.total_utility_millionths < 2 * MILLION);
+    }
+
+    #[test]
+    fn enrichment_greedy_single_probe_exactly_at_budget() {
+        // Probe latency/memory exactly equals budget limits
+        let mut u = ProbeUniverse::new();
+        u.add_probe(make_probe(
+            "exact_fit",
+            ProbeDomain::Scheduler,
+            500_000,
+            100,
+            1000,
+            &["fit_event"],
+        ))
+        .unwrap();
+        let budget = ObservabilityBudget {
+            max_latency_micros: 100,
+            max_memory_bytes: 1000,
+            max_probe_count: 5,
+            min_event_coverage_millionths: 0,
+        };
+        let result = greedy_submodular_select(&u, &budget);
+        assert_eq!(result.selected_indices.len(), 1);
+        assert_eq!(result.total_latency_micros, 100);
+        assert_eq!(result.total_memory_bytes, 1000);
+    }
+
+    #[test]
+    fn enrichment_greedy_probe_exceeds_budget_skipped() {
+        // Single probe that exceeds latency budget is not selected
+        let mut u = ProbeUniverse::new();
+        u.add_probe(make_probe(
+            "too_expensive",
+            ProbeDomain::Compiler,
+            MILLION,
+            1000,
+            100,
+            &["ex_event"],
+        ))
+        .unwrap();
+        let budget = ObservabilityBudget {
+            max_latency_micros: 999,
+            max_memory_bytes: 100_000,
+            max_probe_count: 10,
+            min_event_coverage_millionths: 0,
+        };
+        let result = greedy_submodular_select(&u, &budget);
+        assert!(result.selected_indices.is_empty());
+    }
+
+    #[test]
+    fn enrichment_schedule_coverage_fraction_computed_correctly() {
+        // Build a universe where we know exactly how many events are covered
+        let mut u = ProbeUniverse::new();
+        u.add_probe(make_probe(
+            "cov_p1",
+            ProbeDomain::Compiler,
+            MILLION,
+            10,
+            100,
+            &["e1", "e2"],
+        ))
+        .unwrap();
+        u.add_probe(make_probe(
+            "cov_p2",
+            ProbeDomain::Runtime,
+            800_000,
+            10,
+            100,
+            &["e3", "e4"],
+        ))
+        .unwrap();
+        // Universe has 4 events total. Normal budget can pick both.
+        let schedule = build_schedule(&u, OperatingMode::Normal, ObservabilityBudget::normal());
+        // Both probes selected => 4/4 = 1.0 = MILLION
+        assert_eq!(schedule.event_coverage_millionths, MILLION);
+    }
+
+    #[test]
+    fn enrichment_certificate_headroom_zero_when_fully_consumed() {
+        // Craft budget that probe fully consumes
+        let mut u = ProbeUniverse::new();
+        u.add_probe(make_probe(
+            "headroom_p",
+            ProbeDomain::Compiler,
+            MILLION,
+            500,
+            1024,
+            &["h1"],
+        ))
+        .unwrap();
+        let budget = ObservabilityBudget {
+            max_latency_micros: 500,
+            max_memory_bytes: 1024,
+            max_probe_count: 10,
+            min_event_coverage_millionths: 0,
+        };
+        let result = greedy_submodular_select(&u, &budget);
+        let cert = build_approximation_certificate(&result, &budget);
+        assert_eq!(cert.budget_headroom_latency_micros, 0);
+        assert_eq!(cert.budget_headroom_memory_bytes, 0);
+    }
+
+    #[test]
+    fn enrichment_certificate_headroom_positive_when_under_budget() {
+        let u = make_universe_with_probes();
+        let budget = ObservabilityBudget::incident(); // generous
+        let result = greedy_submodular_select(&u, &budget);
+        let cert = build_approximation_certificate(&result, &budget);
+        // Incident budget is 10_000 latency, sum of all probes is 460
+        assert!(cert.budget_headroom_latency_micros > 0);
+        assert!(cert.budget_headroom_memory_bytes > 0);
+    }
+
+    #[test]
+    fn enrichment_utility_ledger_final_entry_has_full_coverage() {
+        // When all probes are selected, final ledger entry should reach 100% coverage
+        let mut u = ProbeUniverse::new();
+        u.add_probe(make_probe(
+            "led_p1",
+            ProbeDomain::Compiler,
+            MILLION,
+            10,
+            100,
+            &["le1"],
+        ))
+        .unwrap();
+        u.add_probe(make_probe(
+            "led_p2",
+            ProbeDomain::Runtime,
+            800_000,
+            10,
+            100,
+            &["le2"],
+        ))
+        .unwrap();
+        let budget = ObservabilityBudget::incident();
+        let result = greedy_submodular_select(&u, &budget);
+        let ledger = ProbeUtilityLedger::from_optimization(&u, &result);
+        assert_eq!(result.selected_indices.len(), 2);
+        let last = ledger.entries.last().unwrap();
+        assert_eq!(last.cumulative_coverage_millionths, MILLION);
+    }
+
+    #[test]
+    fn enrichment_utility_ledger_empty_optimization() {
+        let u = ProbeUniverse::new();
+        let budget = ObservabilityBudget::normal();
+        let result = greedy_submodular_select(&u, &budget);
+        let ledger = ProbeUtilityLedger::from_optimization(&u, &result);
+        assert!(ledger.entries.is_empty());
+    }
+
+    #[test]
+    fn enrichment_json_value_check_operating_mode_variants() {
+        // Verify the JSON representation of each mode variant
+        let normal_json = serde_json::to_string(&OperatingMode::Normal).unwrap();
+        let degraded_json = serde_json::to_string(&OperatingMode::Degraded).unwrap();
+        let incident_json = serde_json::to_string(&OperatingMode::Incident).unwrap();
+        assert_eq!(normal_json, "\"Normal\"");
+        assert_eq!(degraded_json, "\"Degraded\"");
+        assert_eq!(incident_json, "\"Incident\"");
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_utility_ledger_entry() {
+        let u = make_universe_with_probes();
+        let budget = ObservabilityBudget::normal();
+        let result = greedy_submodular_select(&u, &budget);
+        let ledger = ProbeUtilityLedger::from_optimization(&u, &result);
+        let json = serde_json::to_string(&ledger.entries[0]).unwrap();
+        assert!(json.contains("\"probe_id\""));
+        assert!(json.contains("\"probe_name\""));
+        assert!(json.contains("\"marginal_gain_millionths\""));
+        assert!(json.contains("\"cumulative_coverage_millionths\""));
+        assert!(json.contains("\"selection_round\""));
+    }
+
+    #[test]
+    fn enrichment_multi_mode_manifest_different_hashes_per_schedule() {
+        let u = make_universe_with_probes();
+        let manifest = MultiModeManifest::build(&u);
+        // Each schedule should have a distinct hash (different modes, different selections)
+        let hashes: BTreeSet<Vec<u8>> = [
+            &manifest.normal_schedule,
+            &manifest.degraded_schedule,
+            &manifest.incident_schedule,
+        ]
+        .iter()
+        .map(|s| s.schedule_hash.as_bytes().to_vec())
+        .collect();
+        // At least normal vs incident should differ because they select different probes
+        assert!(hashes.len() >= 2);
+    }
+
+    #[test]
+    fn enrichment_schedule_within_budget_false_when_too_many_probes() {
+        // Manually construct a schedule that violates probe count budget
+        let u = make_universe_with_probes();
+        let mut schedule =
+            build_schedule(&u, OperatingMode::Incident, ObservabilityBudget::incident());
+        // Force budget to disallow the number of probes selected
+        schedule.budget.max_probe_count = 0;
+        // within_budget was computed at build time, but we can check meets_coverage
+        // The within_budget field is pre-computed, so we verify the field is correct
+        // by rebuilding with a very restrictive budget
+        let tiny_budget = ObservabilityBudget {
+            max_latency_micros: 1,
+            max_memory_bytes: 1,
+            max_probe_count: 0,
+            min_event_coverage_millionths: 0,
+        };
+        let restrictive = build_schedule(&u, OperatingMode::Normal, tiny_budget);
+        assert_eq!(restrictive.probe_count(), 0);
+        assert!(restrictive.within_budget);
+    }
 }

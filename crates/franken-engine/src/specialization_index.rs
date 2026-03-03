@@ -1730,4 +1730,390 @@ mod tests {
         let codes: BTreeSet<&str> = errors.iter().map(|e| error_code(e)).collect();
         assert_eq!(codes.len(), errors.len(), "all error codes must be unique");
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: deeper coverage, edge cases, Debug, JSON fields
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_specialization_record_debug_format() {
+        let rec = make_record("dbg-1", 1);
+        let dbg = format!("{rec:?}");
+        assert!(dbg.contains("SpecializationRecord"));
+        assert!(dbg.contains("receipt_id"));
+        assert!(dbg.contains("active"));
+    }
+
+    #[test]
+    fn enrichment_benchmark_outcome_debug_format() {
+        let bm = make_benchmark("dbg-bm", "r1");
+        let dbg = format!("{bm:?}");
+        assert!(dbg.contains("BenchmarkOutcome"));
+        assert!(dbg.contains("latency_reduction_millionths"));
+        assert!(dbg.contains("sample_count"));
+    }
+
+    #[test]
+    fn enrichment_invalidation_entry_debug_format() {
+        let entry = InvalidationEntry {
+            receipt_id: make_id("dbg-inv"),
+            reason: InvalidationReason::ManualRevocation {
+                operator: "ops-team".to_string(),
+            },
+            timestamp_ns: 999,
+            fallback_confirmed: false,
+        };
+        let dbg = format!("{entry:?}");
+        assert!(dbg.contains("InvalidationEntry"));
+        assert!(dbg.contains("ManualRevocation"));
+        assert!(dbg.contains("ops-team"));
+    }
+
+    #[test]
+    fn enrichment_audit_chain_entry_debug_format() {
+        let ace = AuditChainEntry {
+            proof_id: make_id("p-dbg"),
+            proof_type: ProofType::ReplayMotif,
+            receipt_id: make_id("r-dbg"),
+            optimization_class: OptimizationClass::SuperinstructionFusion,
+            benchmark_id: None,
+            latency_reduction_millionths: None,
+            epoch: SecurityEpoch::from_raw(7),
+        };
+        let dbg = format!("{ace:?}");
+        assert!(dbg.contains("AuditChainEntry"));
+        assert!(dbg.contains("ReplayMotif"));
+        assert!(dbg.contains("SuperinstructionFusion"));
+    }
+
+    #[test]
+    fn enrichment_extension_summary_debug_format() {
+        let summary = ExtensionSpecializationSummary {
+            extension_id: "ext-dbg".to_string(),
+            total_specializations: 3,
+            active_specializations: 2,
+            invalidated_specializations: 1,
+            total_benchmarks: 5,
+            avg_latency_reduction_millionths: 150_000,
+            proof_utilization_count: 4,
+        };
+        let dbg = format!("{summary:?}");
+        assert!(dbg.contains("ExtensionSpecializationSummary"));
+        assert!(dbg.contains("proof_utilization_count"));
+    }
+
+    #[test]
+    fn enrichment_event_debug_format() {
+        let evt = SpecializationIndexEvent {
+            trace_id: "t-dbg".to_string(),
+            decision_id: "d-dbg".to_string(),
+            policy_id: "p-dbg".to_string(),
+            component: "specialization_index".to_string(),
+            event: "test_event".to_string(),
+            outcome: "ok".to_string(),
+            error_code: Some("TEST_CODE".to_string()),
+        };
+        let dbg = format!("{evt:?}");
+        assert!(dbg.contains("SpecializationIndexEvent"));
+        assert!(dbg.contains("TEST_CODE"));
+    }
+
+    #[test]
+    fn enrichment_record_with_all_optimization_classes() {
+        let mut index = make_index();
+        let classes = [
+            OptimizationClass::HostcallDispatchSpecialization,
+            OptimizationClass::IfcCheckElision,
+            OptimizationClass::SuperinstructionFusion,
+            OptimizationClass::PathElimination,
+        ];
+        for (i, class) in classes.iter().enumerate() {
+            let mut rec = make_record(&format!("opt-{i}"), 1);
+            rec.optimization_class = *class;
+            index.insert_receipt(&rec, &format!("t-{i}")).unwrap();
+        }
+        let all = index.query_receipts(None, "t-q").unwrap();
+        assert_eq!(all.len(), 4);
+        let found_classes: std::collections::BTreeSet<String> = all
+            .iter()
+            .map(|r| r.optimization_class.to_string())
+            .collect();
+        assert_eq!(found_classes.len(), 4);
+    }
+
+    #[test]
+    fn enrichment_record_with_all_proof_types() {
+        let mut index = make_index();
+        let types = [
+            ProofType::CapabilityWitness,
+            ProofType::FlowProof,
+            ProofType::ReplayMotif,
+        ];
+        for (i, pt) in types.iter().enumerate() {
+            let mut rec = make_record(&format!("pt-{i}"), 1);
+            rec.proof_types = vec![*pt];
+            index.insert_receipt(&rec, &format!("t-{i}")).unwrap();
+        }
+        let all = index.query_receipts(None, "t-q").unwrap();
+        assert_eq!(all.len(), 3);
+        // Query order is not guaranteed, so collect all proof types
+        let found_types: std::collections::BTreeSet<String> =
+            all.iter().map(|r| r.proof_types[0].to_string()).collect();
+        assert_eq!(found_types.len(), 3);
+        assert!(found_types.contains("capability_witness"));
+        assert!(found_types.contains("flow_proof"));
+        assert!(found_types.contains("replay_motif"));
+    }
+
+    #[test]
+    fn enrichment_record_empty_proof_inputs() {
+        let mut rec = make_record("empty-proofs", 1);
+        rec.proof_input_ids = vec![];
+        rec.proof_types = vec![];
+        let mut index = make_index();
+        index.insert_receipt(&rec, "t1").unwrap();
+        let chain = index.build_audit_chain("t2").unwrap();
+        // No proof inputs means no chain entries for this receipt
+        assert!(chain.is_empty());
+    }
+
+    #[test]
+    fn enrichment_record_many_proof_inputs() {
+        let mut rec = make_record("many-proofs", 1);
+        rec.proof_input_ids = (0..5).map(|i| make_id(&format!("proof-{i}"))).collect();
+        rec.proof_types = vec![
+            ProofType::CapabilityWitness,
+            ProofType::FlowProof,
+            ProofType::ReplayMotif,
+            ProofType::CapabilityWitness,
+            ProofType::FlowProof,
+        ];
+        let mut index = make_index();
+        index.insert_receipt(&rec, "t1").unwrap();
+        let chain = index.build_audit_chain("t2").unwrap();
+        assert_eq!(chain.len(), 5);
+        assert_eq!(chain[2].proof_type, ProofType::ReplayMotif);
+    }
+
+    #[test]
+    fn enrichment_benchmark_zero_latency_and_throughput() {
+        let bm = BenchmarkOutcome {
+            benchmark_id: "bm-zero".to_string(),
+            receipt_id: make_id("r-zero"),
+            latency_reduction_millionths: 0,
+            throughput_increase_millionths: 0,
+            sample_count: 0,
+            timestamp_ns: 0,
+        };
+        let json = serde_json::to_string(&bm).unwrap();
+        let decoded: BenchmarkOutcome = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.latency_reduction_millionths, 0);
+        assert_eq!(decoded.throughput_increase_millionths, 0);
+        assert_eq!(decoded.sample_count, 0);
+    }
+
+    #[test]
+    fn enrichment_benchmark_max_values() {
+        let bm = BenchmarkOutcome {
+            benchmark_id: "bm-max".to_string(),
+            receipt_id: make_id("r-max"),
+            latency_reduction_millionths: u64::MAX,
+            throughput_increase_millionths: u64::MAX,
+            sample_count: u64::MAX,
+            timestamp_ns: u64::MAX,
+        };
+        let json = serde_json::to_string(&bm).unwrap();
+        let decoded: BenchmarkOutcome = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.latency_reduction_millionths, u64::MAX);
+        assert_eq!(decoded.timestamp_ns, u64::MAX);
+    }
+
+    #[test]
+    fn enrichment_invalidation_for_nonexistent_receipt_stores_entry() {
+        let mut index = make_index();
+        // No receipt inserted — invalidation should still succeed
+        let entry = InvalidationEntry {
+            receipt_id: make_id("ghost"),
+            reason: InvalidationReason::ProofExpired {
+                proof_id: make_id("expired-proof"),
+            },
+            timestamp_ns: 7777,
+            fallback_confirmed: false,
+        };
+        index.record_invalidation(&entry, "t1").unwrap();
+        let results = index.query_invalidations(None, None, "t2").unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].fallback_confirmed);
+    }
+
+    #[test]
+    fn enrichment_delete_receipt_emits_event() {
+        let mut index = make_index();
+        let rec = make_record("del-evt", 1);
+        index.insert_receipt(&rec, "t1").unwrap();
+        index.delete_receipt(&rec.receipt_id, "t2").unwrap();
+
+        let delete_events: Vec<_> = index
+            .events()
+            .iter()
+            .filter(|e| e.event == "delete_receipt")
+            .collect();
+        assert_eq!(delete_events.len(), 1);
+        assert_eq!(delete_events[0].outcome, "ok");
+    }
+
+    #[test]
+    fn enrichment_delete_nonexistent_receipt_emits_not_found_event() {
+        let mut index = make_index();
+        let id = make_id("missing");
+        let deleted = index.delete_receipt(&id, "t1").unwrap();
+        assert!(!deleted);
+
+        let delete_events: Vec<_> = index
+            .events()
+            .iter()
+            .filter(|e| e.event == "delete_receipt")
+            .collect();
+        assert_eq!(delete_events.len(), 1);
+        assert_eq!(delete_events[0].outcome, "not_found");
+    }
+
+    #[test]
+    fn enrichment_audit_chain_entry_json_field_presence() {
+        let ace = AuditChainEntry {
+            proof_id: make_id("p-json"),
+            proof_type: ProofType::FlowProof,
+            receipt_id: make_id("r-json"),
+            optimization_class: OptimizationClass::PathElimination,
+            benchmark_id: Some("bm-json".to_string()),
+            latency_reduction_millionths: Some(500_000),
+            epoch: SecurityEpoch::from_raw(10),
+        };
+        let json = serde_json::to_string(&ace).unwrap();
+        assert!(json.contains("\"proof_id\""));
+        assert!(json.contains("\"proof_type\""));
+        assert!(json.contains("\"receipt_id\""));
+        assert!(json.contains("\"optimization_class\""));
+        assert!(json.contains("\"benchmark_id\""));
+        assert!(json.contains("\"latency_reduction_millionths\""));
+        assert!(json.contains("\"epoch\""));
+    }
+
+    #[test]
+    fn enrichment_extension_summary_json_field_presence() {
+        let summary = ExtensionSpecializationSummary {
+            extension_id: "ext-json".to_string(),
+            total_specializations: 10,
+            active_specializations: 7,
+            invalidated_specializations: 3,
+            total_benchmarks: 20,
+            avg_latency_reduction_millionths: 180_000,
+            proof_utilization_count: 15,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"extension_id\""));
+        assert!(json.contains("\"total_specializations\""));
+        assert!(json.contains("\"active_specializations\""));
+        assert!(json.contains("\"invalidated_specializations\""));
+        assert!(json.contains("\"total_benchmarks\""));
+        assert!(json.contains("\"avg_latency_reduction_millionths\""));
+        assert!(json.contains("\"proof_utilization_count\""));
+    }
+
+    #[test]
+    fn enrichment_invalidation_entry_json_field_presence() {
+        let entry = InvalidationEntry {
+            receipt_id: make_id("inv-json"),
+            reason: InvalidationReason::ProofRevoked {
+                proof_id: make_id("rev-proof"),
+            },
+            timestamp_ns: 12345,
+            fallback_confirmed: true,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"receipt_id\""));
+        assert!(json.contains("\"reason\""));
+        assert!(json.contains("\"timestamp_ns\""));
+        assert!(json.contains("\"fallback_confirmed\""));
+        assert!(json.contains("\"ProofRevoked\""));
+    }
+
+    #[test]
+    fn enrichment_event_json_field_presence() {
+        let evt = SpecializationIndexEvent {
+            trace_id: "t-jf".to_string(),
+            decision_id: "d-jf".to_string(),
+            policy_id: "p-jf".to_string(),
+            component: "specialization_index".to_string(),
+            event: "test".to_string(),
+            outcome: "ok".to_string(),
+            error_code: Some("E001".to_string()),
+        };
+        let json = serde_json::to_string(&evt).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"event\""));
+        assert!(json.contains("\"outcome\""));
+        assert!(json.contains("\"error_code\""));
+    }
+
+    #[test]
+    fn enrichment_extension_summary_proof_utilization_count() {
+        let mut index = make_index();
+        let mut r1 = make_record("r-util-1", 1);
+        r1.proof_input_ids = vec![make_id("p1"), make_id("p2"), make_id("p3")];
+        let mut r2 = make_record("r-util-2", 1);
+        r2.proof_input_ids = vec![make_id("p4")];
+        index.insert_receipt(&r1, "t1").unwrap();
+        index.insert_receipt(&r2, "t2").unwrap();
+
+        let summary = index.extension_summary("ext-1", "t3").unwrap();
+        assert_eq!(summary.proof_utilization_count, 4); // 3 + 1
+    }
+
+    #[test]
+    fn enrichment_query_invalidations_empty_window_returns_empty() {
+        let mut index = make_index();
+        let rec = make_record("r-ew", 1);
+        index.insert_receipt(&rec, "t1").unwrap();
+        let inv = InvalidationEntry {
+            receipt_id: make_id("r-ew"),
+            reason: InvalidationReason::EpochChange {
+                old_epoch: 1,
+                new_epoch: 2,
+            },
+            timestamp_ns: 5000,
+            fallback_confirmed: true,
+        };
+        index.record_invalidation(&inv, "t2").unwrap();
+
+        // Window entirely before the invalidation
+        let results = index.query_invalidations(Some(1), Some(100), "t3").unwrap();
+        assert!(results.is_empty());
+
+        // Window entirely after the invalidation
+        let results = index
+            .query_invalidations(Some(10_000), Some(20_000), "t4")
+            .unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn enrichment_error_display_contains_payload() {
+        let err = SpecializationIndexError::Storage("backend-unavailable".to_string());
+        assert!(err.to_string().contains("backend-unavailable"));
+
+        let err = SpecializationIndexError::NotFound {
+            receipt_id: "abc-123".to_string(),
+        };
+        assert!(err.to_string().contains("abc-123"));
+
+        let err = SpecializationIndexError::SerializationFailed("invalid utf8".to_string());
+        assert!(err.to_string().contains("invalid utf8"));
+
+        let err = SpecializationIndexError::InvalidContext("no trace id".to_string());
+        assert!(err.to_string().contains("no trace id"));
+    }
 }

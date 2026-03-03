@@ -1902,4 +1902,325 @@ mod tests {
         assert!(PromotionDecision::Promote < PromotionDecision::Hold);
         assert!(PromotionDecision::Hold < PromotionDecision::Reject);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 2: Copy semantics, Hash, missing coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_frontier_program_copy_semantics() {
+        let a = FrontierProgram::CausalTimeMachine;
+        let b = a; // Copy
+        assert_eq!(a, b);
+        assert_eq!(a.code(), "9H.3");
+    }
+
+    #[test]
+    fn enrichment_artifact_category_copy_semantics() {
+        let a = ArtifactCategory::ReplayFidelity;
+        let b = a; // Copy
+        assert_eq!(a, b);
+        assert_eq!(a.to_string(), "ReplayFidelity");
+    }
+
+    #[test]
+    fn enrichment_promotion_decision_copy_semantics() {
+        let a = PromotionDecision::Hold;
+        let b = a; // Copy
+        assert_eq!(a, b);
+        assert_eq!(b.to_string(), "hold");
+    }
+
+    #[test]
+    fn enrichment_frontier_program_hash_in_btreeset() {
+        let mut set = BTreeSet::new();
+        for p in FrontierProgram::all() {
+            assert!(set.insert(*p));
+        }
+        assert_eq!(set.len(), 10);
+        // Inserting duplicates returns false
+        assert!(!set.insert(FrontierProgram::ProofCarryingOptimizer));
+    }
+
+    #[test]
+    fn enrichment_artifact_category_ord_in_btreeset() {
+        let mut set = BTreeSet::new();
+        set.insert(ArtifactCategory::CrossRuntimeFairness);
+        set.insert(ArtifactCategory::TranslationValidation);
+        set.insert(ArtifactCategory::AttackerRoiTrend);
+        set.insert(ArtifactCategory::CrossRuntimeFairness); // dup
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn enrichment_artifact_category_serde_all_21_variants() {
+        let all = [
+            ArtifactCategory::TranslationValidation,
+            ArtifactCategory::PerformanceBenchmark,
+            ArtifactCategory::RollbackTest,
+            ArtifactCategory::ConvergenceMeasurement,
+            ArtifactCategory::ErrorRateEvidence,
+            ArtifactCategory::PartitionBehavior,
+            ArtifactCategory::ReplayFidelity,
+            ArtifactCategory::CounterfactualAnalysis,
+            ArtifactCategory::CrossNodeReplay,
+            ArtifactCategory::AttestationChain,
+            ArtifactCategory::AttestationFallback,
+            ArtifactCategory::PropertyProof,
+            ArtifactCategory::CounterexampleEvidence,
+            ArtifactCategory::CampaignEvolution,
+            ArtifactCategory::DefenseImprovement,
+            ArtifactCategory::DecisionScoring,
+            ArtifactCategory::AttackerRoiTrend,
+            ArtifactCategory::CompromiseWindowReduction,
+            ArtifactCategory::OperatorWorkflow,
+            ArtifactCategory::IndependentReproduction,
+            ArtifactCategory::CrossRuntimeFairness,
+        ];
+        assert_eq!(all.len(), 21);
+        for cat in &all {
+            let json = serde_json::to_string(cat).unwrap();
+            let back: ArtifactCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(*cat, back);
+        }
+    }
+
+    #[test]
+    fn enrichment_program_gate_status_clone_eq() {
+        let status = ProgramGateStatus {
+            program: FrontierProgram::TrustEconomics,
+            gate_defined: true,
+            latest_decision: Some(PromotionDecision::Hold),
+            categories_required: 2,
+            categories_satisfied: 1,
+        };
+        let cloned = status.clone();
+        assert_eq!(status, cloned);
+    }
+
+    #[test]
+    fn enrichment_program_gate_status_serde_roundtrip() {
+        let status = ProgramGateStatus {
+            program: FrontierProgram::AutonomousRedBlue,
+            gate_defined: false,
+            latest_decision: None,
+            categories_required: 0,
+            categories_satisfied: 0,
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        let back: ProgramGateStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(status, back);
+    }
+
+    #[test]
+    fn enrichment_program_gate_status_json_fields() {
+        let status = ProgramGateStatus {
+            program: FrontierProgram::BenchmarkStandard,
+            gate_defined: true,
+            latest_decision: Some(PromotionDecision::Promote),
+            categories_required: 2,
+            categories_satisfied: 2,
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("program"));
+        assert!(json.contains("gate_defined"));
+        assert!(json.contains("latest_decision"));
+        assert!(json.contains("categories_required"));
+        assert!(json.contains("categories_satisfied"));
+    }
+
+    #[test]
+    fn enrichment_verification_summary_entry_clone_eq() {
+        let entry = VerificationSummaryEntry {
+            category: ArtifactCategory::PropertyProof,
+            passed: true,
+            detail: "proof checked".to_string(),
+        };
+        let cloned = entry.clone();
+        assert_eq!(entry, cloned);
+    }
+
+    #[test]
+    fn enrichment_verification_summary_entry_serde_roundtrip() {
+        let entry = VerificationSummaryEntry {
+            category: ArtifactCategory::DefenseImprovement,
+            passed: false,
+            detail: "defense regression".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: VerificationSummaryEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn enrichment_gate_registry_default_is_empty() {
+        let registry = GateRegistry::default();
+        assert!(registry.gates.is_empty());
+        assert!(registry.latest_receipts.is_empty());
+        assert_eq!(registry, GateRegistry::new());
+    }
+
+    #[test]
+    fn enrichment_registry_gates_sorted_by_program() {
+        let mut registry = GateRegistry::new();
+        // Register in reverse order
+        registry.register_gate(GateDefinition::for_program(
+            FrontierProgram::BenchmarkStandard,
+            test_gate_id("sort-10"),
+        ));
+        registry.register_gate(GateDefinition::for_program(
+            FrontierProgram::ProofCarryingOptimizer,
+            test_gate_id("sort-1"),
+        ));
+        registry.register_gate(GateDefinition::for_program(
+            FrontierProgram::FleetImmuneSystem,
+            test_gate_id("sort-2"),
+        ));
+        // Should be sorted by program Ord
+        assert_eq!(
+            registry.gates[0].program,
+            FrontierProgram::ProofCarryingOptimizer
+        );
+        assert_eq!(
+            registry.gates[1].program,
+            FrontierProgram::FleetImmuneSystem
+        );
+        assert_eq!(
+            registry.gates[2].program,
+            FrontierProgram::BenchmarkStandard
+        );
+    }
+
+    #[test]
+    fn enrichment_can_promote_false_when_no_receipt() {
+        let mut registry = GateRegistry::new();
+        registry.register_gate(GateDefinition::for_program(
+            FrontierProgram::PolicyTheoremEngine,
+            test_gate_id("no-receipt"),
+        ));
+        assert!(!registry.can_promote(FrontierProgram::PolicyTheoremEngine));
+    }
+
+    #[test]
+    fn enrichment_release_check_mixed_states() {
+        let mut registry = GateRegistry::new();
+
+        // Gate 1: passed
+        let gate1 =
+            GateDefinition::for_program(FrontierProgram::OperatorCopilot, test_gate_id("mix-op"));
+        registry.register_gate(gate1.clone());
+        let art1 = test_artifact(ArtifactCategory::OperatorWorkflow, "mix-ow");
+        let ver1 = passing_verification(&art1);
+        let receipt1 = evaluate_gate(
+            &GateEvaluationInput {
+                gate: gate1,
+                artifacts: vec![art1],
+                verifications: vec![ver1],
+                override_justification: None,
+            },
+            50000,
+        );
+        registry.record_receipt(receipt1);
+
+        // Gate 2: registered but no receipt (blocked)
+        registry.register_gate(GateDefinition::for_program(
+            FrontierProgram::TrustEconomics,
+            test_gate_id("mix-te"),
+        ));
+
+        let check = check_release_readiness(
+            &registry,
+            &[
+                FrontierProgram::OperatorCopilot,
+                FrontierProgram::TrustEconomics,
+                FrontierProgram::CausalTimeMachine, // undefined
+            ],
+        );
+        assert!(!check.release_allowed);
+        assert_eq!(check.passed.len(), 1);
+        assert_eq!(check.blocked.len(), 1);
+        assert_eq!(check.undefined.len(), 1);
+    }
+
+    #[test]
+    fn enrichment_skipped_external_not_counted_as_passed() {
+        let gate =
+            GateDefinition::for_program(FrontierProgram::ReputationGraph, test_gate_id("skip-ext"));
+        let art = test_artifact(ArtifactCategory::CompromiseWindowReduction, "skip-art");
+        let mut ver = passing_verification(&art);
+        ver.external_verification = Some(VerificationResult::Skipped {
+            reason: "verifier offline".to_string(),
+        });
+
+        let input = GateEvaluationInput {
+            gate,
+            artifacts: vec![art],
+            verifications: vec![ver],
+            override_justification: None,
+        };
+        let receipt = evaluate_gate(&input, 60000);
+        // External skipped → not counted as external pass → gate holds
+        assert_eq!(receipt.decision, PromotionDecision::Hold);
+        assert!(!receipt.has_external_verification);
+    }
+
+    #[test]
+    fn enrichment_receipt_replaces_existing_in_registry() {
+        let mut registry = GateRegistry::new();
+        let gate = GateDefinition::for_program(
+            FrontierProgram::OperatorCopilot,
+            test_gate_id("replace-rec"),
+        );
+        registry.register_gate(gate.clone());
+
+        // First evaluation: hold (no artifacts)
+        let receipt1 = evaluate_gate(
+            &GateEvaluationInput {
+                gate: gate.clone(),
+                artifacts: vec![],
+                verifications: vec![],
+                override_justification: None,
+            },
+            70000,
+        );
+        registry.record_receipt(receipt1);
+        assert!(!registry.can_promote(FrontierProgram::OperatorCopilot));
+
+        // Second evaluation: pass
+        let art = test_artifact(ArtifactCategory::OperatorWorkflow, "replace-art");
+        let ver = passing_verification(&art);
+        let receipt2 = evaluate_gate(
+            &GateEvaluationInput {
+                gate,
+                artifacts: vec![art],
+                verifications: vec![ver],
+                override_justification: None,
+            },
+            71000,
+        );
+        registry.record_receipt(receipt2);
+        assert!(registry.can_promote(FrontierProgram::OperatorCopilot));
+        // Only one receipt stored (replaced)
+        assert_eq!(registry.latest_receipts.len(), 1);
+    }
+
+    #[test]
+    fn enrichment_gate_codes_start_with_9h() {
+        for program in FrontierProgram::all() {
+            assert!(
+                program.code().starts_with("9H."),
+                "code {} should start with 9H.",
+                program.code()
+            );
+        }
+    }
+
+    #[test]
+    fn enrichment_all_programs_have_nonempty_display() {
+        for program in FrontierProgram::all() {
+            let display = program.to_string();
+            assert!(!display.is_empty());
+            assert!(display.len() > 5, "display '{}' too short", display);
+        }
+    }
 }

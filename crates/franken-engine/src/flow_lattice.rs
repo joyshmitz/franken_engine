@@ -1611,4 +1611,534 @@ mod tests {
         let set: std::collections::BTreeSet<String> = all.iter().map(|l| format!("{l}")).collect();
         assert_eq!(set.len(), all.len());
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn enrichment_label_class_clone_eq_independence() {
+        let original = LabelClass::Confidential;
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        // Mutating through a new binding does not affect the clone
+        let replaced = LabelClass::TopSecret;
+        assert_ne!(replaced, cloned);
+        assert_eq!(cloned, LabelClass::Confidential);
+    }
+
+    #[test]
+    fn enrichment_clearance_clone_eq_independence() {
+        let original = Clearance::AuditedSink;
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        let replaced = Clearance::NeverSink;
+        assert_ne!(replaced, cloned);
+        assert_eq!(cloned, Clearance::AuditedSink);
+    }
+
+    #[test]
+    fn enrichment_label_class_ord_determinism_in_btreeset() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(LabelClass::TopSecret);
+        set.insert(LabelClass::Public);
+        set.insert(LabelClass::Secret);
+        set.insert(LabelClass::Internal);
+        set.insert(LabelClass::Confidential);
+        // BTreeSet Ord ordering should match the derive(Ord) variant declaration order
+        let ordered: Vec<_> = set.into_iter().collect();
+        assert_eq!(
+            ordered,
+            vec![
+                LabelClass::Public,
+                LabelClass::Internal,
+                LabelClass::Confidential,
+                LabelClass::Secret,
+                LabelClass::TopSecret,
+            ]
+        );
+    }
+
+    #[test]
+    fn enrichment_clearance_ord_determinism_in_btreeset() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(Clearance::NeverSink);
+        set.insert(Clearance::OpenSink);
+        set.insert(Clearance::SealedSink);
+        set.insert(Clearance::RestrictedSink);
+        set.insert(Clearance::AuditedSink);
+        let ordered: Vec<_> = set.into_iter().collect();
+        assert_eq!(
+            ordered,
+            vec![
+                Clearance::OpenSink,
+                Clearance::RestrictedSink,
+                Clearance::AuditedSink,
+                Clearance::SealedSink,
+                Clearance::NeverSink,
+            ]
+        );
+    }
+
+    #[test]
+    fn enrichment_label_class_hash_in_btreeset_dedup() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(LabelClass::Secret);
+        set.insert(LabelClass::Secret);
+        set.insert(LabelClass::Secret);
+        assert_eq!(set.len(), 1);
+        assert!(set.contains(&LabelClass::Secret));
+    }
+
+    #[test]
+    fn enrichment_clearance_hash_in_btreeset_dedup() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(Clearance::SealedSink);
+        set.insert(Clearance::SealedSink);
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn enrichment_label_class_display_exact_all_variants() {
+        assert_eq!(format!("{}", LabelClass::Public), "public");
+        assert_eq!(format!("{}", LabelClass::Internal), "internal");
+        assert_eq!(format!("{}", LabelClass::Confidential), "confidential");
+        assert_eq!(format!("{}", LabelClass::Secret), "secret");
+        assert_eq!(format!("{}", LabelClass::TopSecret), "top_secret");
+    }
+
+    #[test]
+    fn enrichment_clearance_display_exact_all_variants() {
+        assert_eq!(format!("{}", Clearance::OpenSink), "open_sink");
+        assert_eq!(format!("{}", Clearance::RestrictedSink), "restricted_sink");
+        assert_eq!(format!("{}", Clearance::AuditedSink), "audited_sink");
+        assert_eq!(format!("{}", Clearance::SealedSink), "sealed_sink");
+        assert_eq!(format!("{}", Clearance::NeverSink), "never_sink");
+    }
+
+    #[test]
+    fn enrichment_flow_lattice_error_display_exact_format() {
+        assert_eq!(
+            format!(
+                "{}",
+                FlowLatticeError::ObligationExhausted {
+                    obligation_id: "ob-42".into()
+                }
+            ),
+            "declassification obligation exhausted: ob-42"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                FlowLatticeError::ObligationNotFound {
+                    obligation_id: "ob-99".into()
+                }
+            ),
+            "declassification obligation not found: ob-99"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                FlowLatticeError::DuplicateObligation {
+                    obligation_id: "ob-dup".into()
+                }
+            ),
+            "duplicate obligation: ob-dup"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                FlowLatticeError::FlowBlocked {
+                    detail: "topsecret->neversink".into()
+                }
+            ),
+            "flow blocked: topsecret->neversink"
+        );
+    }
+
+    #[test]
+    fn enrichment_flow_lattice_error_serde_roundtrip_all_variants() {
+        let variants = [
+            FlowLatticeError::ObligationExhausted {
+                obligation_id: "x".into(),
+            },
+            FlowLatticeError::ObligationNotFound {
+                obligation_id: "y".into(),
+            },
+            FlowLatticeError::DuplicateObligation {
+                obligation_id: "z".into(),
+            },
+            FlowLatticeError::FlowBlocked {
+                detail: "d".into(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: FlowLatticeError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn enrichment_flow_lattice_event_serde_roundtrip() {
+        let event = FlowLatticeEvent {
+            trace_id: "t-1".into(),
+            decision_id: "d-1".into(),
+            policy_id: "p-1".into(),
+            component: "flow_lattice".into(),
+            event: "check_flow".into(),
+            outcome: "legal_by_lattice".into(),
+            error_code: None,
+            obligation_id: Some("obl-1".into()),
+            decision_contract_id: Some("dc-1".into()),
+            receipt_id: None,
+            receipt_replay_command: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: FlowLatticeEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn enrichment_flow_lattice_event_json_skip_none_fields() {
+        let event = FlowLatticeEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "c".into(),
+            event: "e".into(),
+            outcome: "o".into(),
+            error_code: None,
+            obligation_id: None,
+            decision_contract_id: None,
+            receipt_id: None,
+            receipt_replay_command: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        // Optional fields with skip_serializing_if should not appear
+        assert!(!json.contains("obligation_id"));
+        assert!(!json.contains("decision_contract_id"));
+        assert!(!json.contains("receipt_id"));
+        assert!(!json.contains("receipt_replay_command"));
+        // But required fields must be present
+        assert!(json.contains("trace_id"));
+        assert!(json.contains("policy_id"));
+        assert!(json.contains("component"));
+    }
+
+    #[test]
+    fn enrichment_flow_lattice_event_json_includes_some_fields() {
+        let event = FlowLatticeEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "c".into(),
+            event: "e".into(),
+            outcome: "o".into(),
+            error_code: Some("ERR_1".into()),
+            obligation_id: Some("obl-x".into()),
+            decision_contract_id: Some("dc-x".into()),
+            receipt_id: Some("rcpt-x".into()),
+            receipt_replay_command: Some("cmd".into()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"obligation_id\""));
+        assert!(json.contains("\"decision_contract_id\""));
+        assert!(json.contains("\"receipt_id\""));
+        assert!(json.contains("\"receipt_replay_command\""));
+        assert!(json.contains("\"error_code\""));
+    }
+
+    #[test]
+    fn enrichment_label_class_from_label_custom_boundary_levels() {
+        // level 0 -> Public
+        let custom_0 = Label::Custom {
+            name: "custom_0".into(),
+            level: 0,
+        };
+        assert_eq!(LabelClass::from_label(&custom_0), LabelClass::Public);
+
+        // level 1 -> Internal
+        let custom_1 = Label::Custom {
+            name: "custom_1".into(),
+            level: 1,
+        };
+        assert_eq!(LabelClass::from_label(&custom_1), LabelClass::Internal);
+
+        // level 2 -> Confidential
+        let custom_2 = Label::Custom {
+            name: "custom_2".into(),
+            level: 2,
+        };
+        assert_eq!(LabelClass::from_label(&custom_2), LabelClass::Confidential);
+
+        // level 3 -> Secret
+        let custom_3 = Label::Custom {
+            name: "custom_3".into(),
+            level: 3,
+        };
+        assert_eq!(LabelClass::from_label(&custom_3), LabelClass::Secret);
+
+        // level 4 -> TopSecret (the catch-all branch)
+        let custom_4 = Label::Custom {
+            name: "custom_4".into(),
+            level: 4,
+        };
+        assert_eq!(LabelClass::from_label(&custom_4), LabelClass::TopSecret);
+
+        // level 999 -> also TopSecret (any >= 4)
+        let custom_high = Label::Custom {
+            name: "custom_high".into(),
+            level: 999,
+        };
+        assert_eq!(LabelClass::from_label(&custom_high), LabelClass::TopSecret);
+    }
+
+    #[test]
+    fn enrichment_obligation_has_remaining_uses_boundary() {
+        // max_uses == 0 means unlimited
+        let ob_unlimited = DeclassificationObligation {
+            obligation_id: "u".into(),
+            source_label: LabelClass::Public,
+            target_clearance: Clearance::OpenSink,
+            decision_contract_id: "c".into(),
+            requires_operator_approval: false,
+            max_uses: 0,
+            use_count: u64::MAX,
+        };
+        assert!(ob_unlimited.has_remaining_uses());
+
+        // max_uses == 1, use_count == 0 -> has remaining
+        let ob_one = DeclassificationObligation {
+            obligation_id: "o1".into(),
+            source_label: LabelClass::Public,
+            target_clearance: Clearance::OpenSink,
+            decision_contract_id: "c".into(),
+            requires_operator_approval: false,
+            max_uses: 1,
+            use_count: 0,
+        };
+        assert!(ob_one.has_remaining_uses());
+
+        // max_uses == 1, use_count == 1 -> exhausted
+        let ob_done = DeclassificationObligation {
+            obligation_id: "o2".into(),
+            source_label: LabelClass::Public,
+            target_clearance: Clearance::OpenSink,
+            decision_contract_id: "c".into(),
+            requires_operator_approval: false,
+            max_uses: 1,
+            use_count: 1,
+        };
+        assert!(!ob_done.has_remaining_uses());
+
+        // max_uses == use_count at high value
+        let ob_high = DeclassificationObligation {
+            obligation_id: "oh".into(),
+            source_label: LabelClass::Public,
+            target_clearance: Clearance::OpenSink,
+            decision_contract_id: "c".into(),
+            requires_operator_approval: false,
+            max_uses: 1_000_000,
+            use_count: 1_000_000,
+        };
+        assert!(!ob_high.has_remaining_uses());
+    }
+
+    #[test]
+    fn enrichment_obligation_record_use_increments_count() {
+        let mut ob = DeclassificationObligation {
+            obligation_id: "inc".into(),
+            source_label: LabelClass::Internal,
+            target_clearance: Clearance::RestrictedSink,
+            decision_contract_id: "c".into(),
+            requires_operator_approval: false,
+            max_uses: 5,
+            use_count: 0,
+        };
+        for expected in 1..=5 {
+            ob.record_use().unwrap();
+            assert_eq!(ob.use_count, expected);
+        }
+        // 6th use should fail
+        assert!(ob.record_use().is_err());
+        // use_count should not have changed on failure
+        assert_eq!(ob.use_count, 5);
+    }
+
+    #[test]
+    fn enrichment_flow_check_result_is_legal_is_blocked_predicates() {
+        let legal = FlowCheckResult::LegalByLattice;
+        assert!(legal.is_legal());
+        assert!(!legal.is_blocked());
+
+        let requires = FlowCheckResult::RequiresDeclassification {
+            obligation_id: "x".into(),
+        };
+        assert!(!requires.is_legal());
+        assert!(!requires.is_blocked());
+
+        let blocked = FlowCheckResult::Blocked {
+            source: LabelClass::TopSecret,
+            sink: Clearance::NeverSink,
+        };
+        assert!(!blocked.is_legal());
+        assert!(blocked.is_blocked());
+    }
+
+    #[test]
+    fn enrichment_lattice_multiple_obligations_selects_first_match() {
+        let mut lattice = Ir2FlowLattice::new("policy-multi");
+        // Register two obligations for the same source/sink pair
+        lattice
+            .register_obligation(DeclassificationObligation {
+                obligation_id: "alpha".into(),
+                source_label: LabelClass::TopSecret,
+                target_clearance: Clearance::NeverSink,
+                decision_contract_id: "c-a".into(),
+                requires_operator_approval: false,
+                max_uses: 1,
+                use_count: 0,
+            })
+            .unwrap();
+        lattice
+            .register_obligation(DeclassificationObligation {
+                obligation_id: "beta".into(),
+                source_label: LabelClass::TopSecret,
+                target_clearance: Clearance::NeverSink,
+                decision_contract_id: "c-b".into(),
+                requires_operator_approval: false,
+                max_uses: 0,
+                use_count: 0,
+            })
+            .unwrap();
+
+        // BTreeMap iteration is alphabetical; "alpha" < "beta", so alpha is matched first
+        let result = lattice.check_flow(&LabelClass::TopSecret, &Clearance::NeverSink, "t");
+        assert_eq!(
+            result,
+            FlowCheckResult::RequiresDeclassification {
+                obligation_id: "alpha".into()
+            }
+        );
+
+        // Exhaust alpha
+        lattice.use_declassification("alpha", "t-use").unwrap();
+
+        // Now alpha is exhausted, beta should be returned
+        let result2 = lattice.check_flow(&LabelClass::TopSecret, &Clearance::NeverSink, "t2");
+        assert_eq!(
+            result2,
+            FlowCheckResult::RequiresDeclassification {
+                obligation_id: "beta".into()
+            }
+        );
+    }
+
+    #[test]
+    fn enrichment_receipt_with_mismatched_source_label_rejected() {
+        let mut lattice = Ir2FlowLattice::new("policy-mismatch");
+        lattice
+            .register_obligation(DeclassificationObligation {
+                obligation_id: "obl-m".into(),
+                source_label: LabelClass::Secret,
+                target_clearance: Clearance::NeverSink,
+                decision_contract_id: "dc-m".into(),
+                requires_operator_approval: false,
+                max_uses: 0,
+                use_count: 0,
+            })
+            .unwrap();
+
+        let signing_key = SigningKey::from_bytes([7u8; 32]);
+        // Receipt's source_label is Public but obligation expects Secret
+        let receipt = DeclassificationReceipt {
+            receipt_id: "rcpt-m".into(),
+            source_label: Label::Public,
+            sink_clearance: Label::Internal,
+            declassification_route_ref: "route-m".into(),
+            policy_evaluation_summary: "approved".into(),
+            loss_assessment_milli: 0,
+            decision: DeclassificationDecision::Allow,
+            authorized_by: signing_key.verification_key(),
+            replay_linkage: "trace-m".into(),
+            timestamp_ms: 1_700_000_000_000,
+            schema_version: crate::ifc_artifacts::IfcSchemaVersion::CURRENT,
+            signature: Signature::from_bytes(SIGNATURE_SENTINEL),
+        };
+
+        let err = lattice
+            .use_declassification_with_receipt("obl-m", &receipt, "trace-m")
+            .unwrap_err();
+        assert!(matches!(err, FlowLatticeError::FlowBlocked { .. }));
+        let msg = format!("{err}");
+        assert!(msg.contains("source label does not match"));
+        // Obligation use_count should not be advanced
+        assert_eq!(lattice.obligation("obl-m").unwrap().use_count, 0);
+    }
+
+    #[test]
+    fn enrichment_obligation_serde_json_field_names() {
+        let ob = DeclassificationObligation {
+            obligation_id: "x".into(),
+            source_label: LabelClass::Public,
+            target_clearance: Clearance::OpenSink,
+            decision_contract_id: "dc".into(),
+            requires_operator_approval: true,
+            max_uses: 10,
+            use_count: 3,
+        };
+        let json = serde_json::to_string(&ob).unwrap();
+        assert!(json.contains("\"obligation_id\""));
+        assert!(json.contains("\"source_label\""));
+        assert!(json.contains("\"target_clearance\""));
+        assert!(json.contains("\"decision_contract_id\""));
+        assert!(json.contains("\"requires_operator_approval\""));
+        assert!(json.contains("\"max_uses\""));
+        assert!(json.contains("\"use_count\""));
+    }
+
+    #[test]
+    fn enrichment_data_source_ord_determinism() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(DataSource::KeyMaterial);
+        set.insert(DataSource::Literal);
+        set.insert(DataSource::EnvironmentVariable);
+        set.insert(DataSource::GeneralFileRead);
+        set.insert(DataSource::CredentialFileRead);
+        set.insert(DataSource::PolicyProtectedArtifact);
+        // All six unit-like variants are distinct
+        assert_eq!(set.len(), 6);
+        // Verify ordering is the enum declaration order (derive(Ord))
+        let ordered: Vec<_> = set.into_iter().collect();
+        assert_eq!(ordered[0], DataSource::Literal);
+        assert_eq!(ordered[1], DataSource::EnvironmentVariable);
+        assert_eq!(ordered[2], DataSource::CredentialFileRead);
+        assert_eq!(ordered[3], DataSource::GeneralFileRead);
+        assert_eq!(ordered[4], DataSource::KeyMaterial);
+        assert_eq!(ordered[5], DataSource::PolicyProtectedArtifact);
+    }
+
+    #[test]
+    fn enrichment_sink_kind_ord_determinism() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(SinkKind::MetricsExport);
+        set.insert(SinkKind::NetworkEgress);
+        set.insert(SinkKind::LoggingRedacted);
+        set.insert(SinkKind::SubprocessIpc);
+        set.insert(SinkKind::PersistenceExport);
+        set.insert(SinkKind::DeclassificationEndpoint);
+        assert_eq!(set.len(), 6);
+        let ordered: Vec<_> = set.into_iter().collect();
+        assert_eq!(ordered[0], SinkKind::NetworkEgress);
+        assert_eq!(ordered[1], SinkKind::SubprocessIpc);
+        assert_eq!(ordered[2], SinkKind::PersistenceExport);
+        assert_eq!(ordered[3], SinkKind::DeclassificationEndpoint);
+        assert_eq!(ordered[4], SinkKind::LoggingRedacted);
+        assert_eq!(ordered[5], SinkKind::MetricsExport);
+    }
 }

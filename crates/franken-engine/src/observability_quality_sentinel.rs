@@ -1525,4 +1525,344 @@ mod tests {
                 < DemotionTarget::EmergencyRingBuffer.severity_rank()
         );
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn enrichment_quality_dimension_copy_semantics() {
+        let a = QualityDimension::SignalFidelity;
+        let b = a;
+        assert_eq!(a, b);
+        // a is still usable after copy
+        assert_eq!(a.to_string(), "signal_fidelity");
+    }
+
+    #[test]
+    fn enrichment_degradation_regime_copy_semantics() {
+        let a = DegradationRegime::Emergency;
+        let b = a;
+        assert_eq!(a, b);
+        assert_eq!(a.to_string(), "emergency");
+    }
+
+    #[test]
+    fn enrichment_demotion_target_copy_semantics() {
+        let a = DemotionTarget::EmergencyRingBuffer;
+        let b = a;
+        assert_eq!(a, b);
+        assert_eq!(a.severity_rank(), 4);
+    }
+
+    #[test]
+    fn enrichment_quality_dimension_hash_in_btreeset() {
+        let mut set = std::collections::BTreeSet::new();
+        for dim in &QualityDimension::ALL {
+            assert!(set.insert(*dim));
+        }
+        assert_eq!(set.len(), 5);
+        // inserting duplicates does not grow the set
+        for dim in &QualityDimension::ALL {
+            assert!(!set.insert(*dim));
+        }
+        assert_eq!(set.len(), 5);
+    }
+
+    #[test]
+    fn enrichment_degradation_regime_hash_in_btreeset() {
+        let variants = [
+            DegradationRegime::Nominal,
+            DegradationRegime::Elevated,
+            DegradationRegime::Breached,
+            DegradationRegime::Emergency,
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            assert!(set.insert(*v));
+        }
+        assert_eq!(set.len(), 4);
+    }
+
+    #[test]
+    fn enrichment_demotion_target_ord_deterministic() {
+        let mut targets = vec![
+            DemotionTarget::EmergencyRingBuffer,
+            DemotionTarget::IncreasedSampling,
+            DemotionTarget::FullReplayCapture,
+            DemotionTarget::UncompressedEvidence,
+        ];
+        targets.sort();
+        let sorted_again = {
+            let mut v = targets.clone();
+            v.sort();
+            v
+        };
+        assert_eq!(targets, sorted_again);
+    }
+
+    #[test]
+    fn enrichment_degradation_regime_ord_deterministic() {
+        let mut regimes = vec![
+            DegradationRegime::Emergency,
+            DegradationRegime::Nominal,
+            DegradationRegime::Breached,
+            DegradationRegime::Elevated,
+        ];
+        regimes.sort();
+        let first_sort = regimes.clone();
+        regimes.sort();
+        assert_eq!(regimes, first_sort);
+    }
+
+    #[test]
+    fn enrichment_quality_observation_serde_roundtrip() {
+        let obs = qobs(QualityDimension::TailUndercoverage, 123_456, 9999);
+        let json = serde_json::to_string(&obs).unwrap();
+        let back: QualityObservation = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.dimension, QualityDimension::TailUndercoverage);
+        assert_eq!(back.value_millionths, 123_456);
+        assert_eq!(back.timestamp_ns, 9999);
+        assert_eq!(back.channel_id, "ch-test");
+    }
+
+    #[test]
+    fn enrichment_quality_observation_json_field_names() {
+        let obs = qobs(QualityDimension::SignalFidelity, 500_000, 42);
+        let json = serde_json::to_string(&obs).unwrap();
+        assert!(json.contains("\"dimension\""));
+        assert!(json.contains("\"value_millionths\""));
+        assert!(json.contains("\"timestamp_ns\""));
+        assert!(json.contains("\"channel_id\""));
+    }
+
+    #[test]
+    fn enrichment_quality_threshold_serde_roundtrip() {
+        let t = QualityThreshold {
+            dimension: QualityDimension::EvidenceStaleness,
+            limit_millionths: 200_000,
+            warning_millionths: 150_000,
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: QualityThreshold = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.dimension, QualityDimension::EvidenceStaleness);
+        assert_eq!(back.limit_millionths, 200_000);
+        assert_eq!(back.warning_millionths, 150_000);
+    }
+
+    #[test]
+    fn enrichment_threshold_at_exact_boundary_fidelity() {
+        let t = QualityThreshold {
+            dimension: QualityDimension::SignalFidelity,
+            limit_millionths: 800_000,
+            warning_millionths: 900_000,
+        };
+        // value exactly at limit: not breached (< is breach for fidelity)
+        assert!(!t.is_breached(800_000));
+        // value exactly at warning: not warning (< is warning for fidelity)
+        assert!(!t.is_warning(900_000));
+        // value one below limit: breached
+        assert!(t.is_breached(799_999));
+        // value one below warning but above limit: warning
+        assert!(t.is_warning(899_999));
+    }
+
+    #[test]
+    fn enrichment_threshold_at_exact_boundary_non_fidelity() {
+        let t = QualityThreshold {
+            dimension: QualityDimension::BlindSpotRatio,
+            limit_millionths: 50_000,
+            warning_millionths: 30_000,
+        };
+        // value exactly at limit: not breached (> is breach for non-fidelity)
+        assert!(!t.is_breached(50_000));
+        // value one above limit: breached
+        assert!(t.is_breached(50_001));
+        // value exactly at warning: not warning
+        assert!(!t.is_warning(30_000));
+        // value one above warning but below limit: warning
+        assert!(t.is_warning(30_001));
+    }
+
+    #[test]
+    fn enrichment_demotion_rule_serde_roundtrip() {
+        let rule = DemotionRule {
+            rule_id: "test-rule-42".into(),
+            trigger_dimension: QualityDimension::ReconstructionAmbiguity,
+            trigger_regime: DegradationRegime::Emergency,
+            target: DemotionTarget::EmergencyRingBuffer,
+            cooldown_epochs: 5,
+            rationale: "test rationale".into(),
+        };
+        let json = serde_json::to_string(&rule).unwrap();
+        let back: DemotionRule = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.rule_id, "test-rule-42");
+        assert_eq!(back.trigger_dimension, QualityDimension::ReconstructionAmbiguity);
+        assert_eq!(back.trigger_regime, DegradationRegime::Emergency);
+        assert_eq!(back.target, DemotionTarget::EmergencyRingBuffer);
+        assert_eq!(back.cooldown_epochs, 5);
+        assert_eq!(back.rationale, "test rationale");
+    }
+
+    #[test]
+    fn enrichment_demotion_policy_serde_roundtrip() {
+        let policy = make_policy();
+        let json = serde_json::to_string(&policy).unwrap();
+        let back: DemotionPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.policy_id, policy.policy_id);
+        assert_eq!(back.epoch.as_u64(), policy.epoch.as_u64());
+        assert_eq!(back.thresholds.len(), policy.thresholds.len());
+        assert_eq!(back.rules.len(), policy.rules.len());
+    }
+
+    #[test]
+    fn enrichment_demotion_policy_compute_id_varies_with_epoch() {
+        let p1 = canonical_demotion_policy(SecurityEpoch::from_raw(1));
+        let p2 = canonical_demotion_policy(SecurityEpoch::from_raw(2));
+        assert_ne!(p1.policy_id, p2.policy_id);
+    }
+
+    #[test]
+    fn enrichment_degradation_artifact_hash_varies_on_regime() {
+        let h1 = DegradationArtifact::compute_hash(
+            test_epoch(),
+            QualityDimension::SignalFidelity,
+            DegradationRegime::Breached,
+            700_000,
+            1000,
+        );
+        let h2 = DegradationArtifact::compute_hash(
+            test_epoch(),
+            QualityDimension::SignalFidelity,
+            DegradationRegime::Emergency,
+            700_000,
+            1000,
+        );
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn enrichment_demotion_receipt_hash_varies_on_target() {
+        let h1 = DemotionReceipt::compute_hash(
+            test_epoch(),
+            QualityDimension::SignalFidelity,
+            DemotionTarget::IncreasedSampling,
+            1000,
+        );
+        let h2 = DemotionReceipt::compute_hash(
+            test_epoch(),
+            QualityDimension::SignalFidelity,
+            DemotionTarget::FullReplayCapture,
+            1000,
+        );
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn enrichment_sentinel_observe_unknown_dimension_no_effect() {
+        // Build a policy with only one threshold (SignalFidelity).
+        let policy = DemotionPolicy {
+            policy_id: "test".into(),
+            epoch: test_epoch(),
+            thresholds: vec![QualityThreshold {
+                dimension: QualityDimension::SignalFidelity,
+                limit_millionths: 800_000,
+                warning_millionths: 900_000,
+            }],
+            rules: vec![],
+        };
+        let mut sentinel = ObservabilityQualitySentinel::new(policy);
+        // Observe on a dimension not in the policy
+        let (artifacts, receipts) =
+            sentinel.observe(&qobs(QualityDimension::EvidenceStaleness, 999_999, 100));
+        assert!(artifacts.is_empty());
+        assert!(receipts.is_empty());
+        // Observation count still increments
+        assert_eq!(sentinel.total_observations, 1);
+    }
+
+    #[test]
+    fn enrichment_dimension_state_clone_independence() {
+        let mut ds = DimensionState::new(QualityDimension::BlindSpotRatio);
+        ds.degradation_count = 7;
+        ds.last_value_millionths = Some(42_000);
+        let cloned = ds.clone();
+        ds.degradation_count = 99;
+        ds.last_value_millionths = Some(0);
+        // Clone is independent of original mutations
+        assert_eq!(cloned.degradation_count, 7);
+        assert_eq!(cloned.last_value_millionths, Some(42_000));
+    }
+
+    #[test]
+    fn enrichment_sentinel_serde_full_roundtrip() {
+        let mut sentinel = make_sentinel();
+        sentinel.observe(&qobs(QualityDimension::SignalFidelity, 700_000, 100));
+        sentinel.observe(&qobs(QualityDimension::BlindSpotRatio, 60_000, 200));
+        let json = serde_json::to_string(&sentinel).unwrap();
+        let back: ObservabilityQualitySentinel = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.epoch.as_u64(), sentinel.epoch.as_u64());
+        assert_eq!(back.total_observations, sentinel.total_observations);
+        assert_eq!(
+            back.total_degradation_artifacts,
+            sentinel.total_degradation_artifacts
+        );
+        assert_eq!(
+            back.total_demotion_receipts,
+            sentinel.total_demotion_receipts
+        );
+        assert_eq!(back.dimension_states.len(), sentinel.dimension_states.len());
+    }
+
+    #[test]
+    fn enrichment_dimension_summary_json_field_names() {
+        let sentinel = make_sentinel();
+        let report = generate_report(&sentinel);
+        let json = serde_json::to_string(&report.dimensions[0]).unwrap();
+        assert!(json.contains("\"dimension\""));
+        assert!(json.contains("\"current_regime\""));
+        assert!(json.contains("\"last_value_millionths\""));
+        assert!(json.contains("\"e_value_millionths\""));
+        assert!(json.contains("\"observation_count\""));
+        assert!(json.contains("\"degradation_count\""));
+        assert!(json.contains("\"demotion_count\""));
+        assert!(json.contains("\"active_demotion\""));
+    }
+
+    #[test]
+    fn enrichment_demotion_target_display_all_variants() {
+        assert_eq!(
+            DemotionTarget::UncompressedEvidence.to_string(),
+            "uncompressed_evidence"
+        );
+        assert_eq!(
+            DemotionTarget::EmergencyRingBuffer.to_string(),
+            "emergency_ring_buffer"
+        );
+    }
+
+    #[test]
+    fn enrichment_report_hash_varies_on_total_obs() {
+        let h1 = SentinelReport::compute_hash(test_epoch(), true, 100);
+        let h2 = SentinelReport::compute_hash(test_epoch(), true, 101);
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn enrichment_sentinel_emergency_fidelity_below_half_limit() {
+        let mut sentinel = make_sentinel();
+        // limit is 800_000; half is 400_000; value 399_999 should trigger Emergency
+        let (artifacts, _) =
+            sentinel.observe(&qobs(QualityDimension::SignalFidelity, 399_999, 100));
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].regime, DegradationRegime::Emergency);
+    }
+
+    #[test]
+    fn enrichment_sentinel_non_fidelity_emergency_above_double_limit() {
+        let mut sentinel = make_sentinel();
+        // BlindSpotRatio limit is 50_000; double is 100_000; value 100_001 should trigger Emergency
+        let (artifacts, _) =
+            sentinel.observe(&qobs(QualityDimension::BlindSpotRatio, 100_001, 100));
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].regime, DegradationRegime::Emergency);
+    }
 }

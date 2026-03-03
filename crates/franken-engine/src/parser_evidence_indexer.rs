@@ -1798,4 +1798,388 @@ mod tests {
             .validate_event_schema_compatibility("fam.event.v99")
             .unwrap();
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn enrichment_schema_version_parse_multiple_dot_v_picks_last() {
+        // rsplit_once(".v") picks the last ".v" so family includes earlier segments.
+        let tag = SchemaVersionTag::parse("a.v1.v2").unwrap();
+        assert_eq!(tag.family, "a.v1");
+        assert_eq!(tag.major, 2);
+    }
+
+    #[test]
+    fn enrichment_schema_version_parse_large_major() {
+        let tag = SchemaVersionTag::parse("franken-engine.v999999").unwrap();
+        assert_eq!(tag.family, "franken-engine");
+        assert_eq!(tag.major, 999_999);
+    }
+
+    #[test]
+    fn enrichment_schema_version_tag_clone_eq() {
+        let a = SchemaVersionTag {
+            family: "fam".into(),
+            major: 7,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_schema_migration_step_clone_eq() {
+        let a = SchemaMigrationStep {
+            migration_id: "mig-x".into(),
+            from_schema: "fam.v1".into(),
+            to_schema: "fam.v2".into(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_applied_schema_migration_clone_eq() {
+        let a = AppliedSchemaMigration {
+            migration_id: "mig-a".into(),
+            from_schema: "fam.v1".into(),
+            to_schema: "fam.v3".into(),
+            affected_records: 100,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enrichment_parser_evidence_index_full_serde_roundtrip() {
+        let index = ParserEvidenceIndex {
+            schema_version: PARSER_EVIDENCE_INDEX_SCHEMA_V1.into(),
+            runs: vec![ParserRunArtifactRef {
+                run_id: "run-rt".into(),
+                manifest_schema_version: "fam.run.v1".into(),
+                manifest_path: "/m.json".into(),
+                events_path: "/e.jsonl".into(),
+                commands_path: "/c.txt".into(),
+                replay_command: "replay --run run-rt".into(),
+                generated_at_utc: Some("2026-03-02T00:00:00Z".into()),
+                outcome: Some("pass".into()),
+            }],
+            events: vec![IndexedParserEvent {
+                run_id: "run-rt".into(),
+                sequence: 0,
+                schema_version: "fam.event.v1".into(),
+                trace_id: "t-1".into(),
+                decision_id: "d-1".into(),
+                policy_id: "pol-1".into(),
+                component: "gate".into(),
+                event: "check".into(),
+                outcome: "pass".into(),
+                error_code: None,
+                replay_command: None,
+                scenario_id: Some("scen-1".into()),
+            }],
+            schema_migrations: vec![SchemaMigrationBoundary {
+                run_id: "run-rt".into(),
+                sequence: 1,
+                from_schema: "fam.event.v1".into(),
+                to_schema: "fam.event.v2".into(),
+            }],
+        };
+        let json = serde_json::to_string_pretty(&index).unwrap();
+        let back: ParserEvidenceIndex = serde_json::from_str(&json).unwrap();
+        assert_eq!(index, back);
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_parser_run_artifact_ref() {
+        let r = ParserRunArtifactRef {
+            run_id: "run-fp".into(),
+            manifest_schema_version: "fam.run.v1".into(),
+            manifest_path: "/m.json".into(),
+            events_path: "/e.jsonl".into(),
+            commands_path: "/c.txt".into(),
+            replay_command: "replay".into(),
+            generated_at_utc: Some("2026-03-02T12:00:00Z".into()),
+            outcome: None,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"run_id\""));
+        assert!(json.contains("\"manifest_schema_version\""));
+        assert!(json.contains("\"manifest_path\""));
+        assert!(json.contains("\"events_path\""));
+        assert!(json.contains("\"commands_path\""));
+        assert!(json.contains("\"replay_command\""));
+        assert!(json.contains("\"generated_at_utc\""));
+        assert!(json.contains("\"outcome\""));
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_schema_migration_boundary() {
+        let b = SchemaMigrationBoundary {
+            run_id: "run-x".into(),
+            sequence: 3,
+            from_schema: "fam.event.v1".into(),
+            to_schema: "fam.event.v2".into(),
+        };
+        let json = serde_json::to_string(&b).unwrap();
+        assert!(json.contains("\"run_id\""));
+        assert!(json.contains("\"sequence\""));
+        assert!(json.contains("\"from_schema\""));
+        assert!(json.contains("\"to_schema\""));
+    }
+
+    #[test]
+    fn enrichment_json_field_presence_schema_migration_step() {
+        let s = SchemaMigrationStep {
+            migration_id: "mig-fp".into(),
+            from_schema: "fam.event.v1".into(),
+            to_schema: "fam.event.v2".into(),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"migration_id\""));
+        assert!(json.contains("\"from_schema\""));
+        assert!(json.contains("\"to_schema\""));
+    }
+
+    #[test]
+    fn enrichment_error_debug_format() {
+        let err = EvidenceIndexerError::DuplicateRunId("run-dbg".into());
+        let dbg = format!("{err:?}");
+        assert!(dbg.contains("DuplicateRunId"));
+        assert!(dbg.contains("run-dbg"));
+    }
+
+    #[test]
+    fn enrichment_resolve_migration_path_same_from_to() {
+        let result = resolve_migration_path("fam.event.v3", "fam.event.v3", &[]).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn enrichment_correlation_sorted_by_occurrence_count_desc() {
+        let mut builder = ParserEvidenceIndexBuilder::new();
+        for run_id in ["run-a", "run-b"] {
+            builder
+                .add_run(
+                    &manifest(run_id, "fam.run.v1", &format!("replay-{run_id}")),
+                    format!("{run_id}-m.json"),
+                    format!("{run_id}-e.jsonl"),
+                    format!("{run_id}-c.txt"),
+                )
+                .unwrap();
+        }
+
+        // gate/check fails in both runs once each -> occurrence_count=2
+        // gate/drift fails in both runs but run-a has 2 occurrences -> occurrence_count=3
+        for run_id in ["run-a", "run-b"] {
+            let ev_check = format!(
+                "{{\"schema_version\":\"fam.event.v1\",\"trace_id\":\"tc-{run_id}\",\"decision_id\":\"dc-{run_id}\",\"policy_id\":\"p\",\"component\":\"gate\",\"event\":\"check\",\"outcome\":\"fail\"}}"
+            );
+            builder.add_events_jsonl(run_id, &ev_check).unwrap();
+        }
+        for run_id in ["run-a", "run-b"] {
+            let ev_drift = format!(
+                "{{\"schema_version\":\"fam.event.v1\",\"trace_id\":\"td-{run_id}\",\"decision_id\":\"dd-{run_id}\",\"policy_id\":\"p\",\"component\":\"gate\",\"event\":\"drift\",\"outcome\":\"fail\"}}"
+            );
+            builder.add_events_jsonl(run_id, &ev_drift).unwrap();
+        }
+        // Extra drift for run-a
+        builder.add_events_jsonl(
+            "run-a",
+            r#"{"schema_version":"fam.event.v1","trace_id":"td-a-extra","decision_id":"dd-a-extra","policy_id":"p","component":"gate","event":"drift","outcome":"fail"}"#,
+        ).unwrap();
+
+        let index = builder.build();
+        let clusters = index.correlate_regressions();
+        assert_eq!(clusters.len(), 2);
+        // drift has 3 occurrences, check has 2 -- drift should come first
+        assert_eq!(clusters[0].key.event, "drift");
+        assert_eq!(clusters[0].occurrence_count, 3);
+        assert_eq!(clusters[1].key.event, "check");
+        assert_eq!(clusters[1].occurrence_count, 2);
+    }
+
+    #[test]
+    fn enrichment_correlate_regressions_collects_replay_commands() {
+        let mut builder = ParserEvidenceIndexBuilder::new();
+        for run_id in ["run-a", "run-b"] {
+            builder
+                .add_run(
+                    &manifest(run_id, "fam.run.v1", &format!("replay-{run_id}")),
+                    format!("{run_id}-m.json"),
+                    format!("{run_id}-e.jsonl"),
+                    format!("{run_id}-c.txt"),
+                )
+                .unwrap();
+            let ev = format!(
+                "{{\"schema_version\":\"fam.event.v1\",\"trace_id\":\"t-{run_id}\",\"decision_id\":\"d-{run_id}\",\"policy_id\":\"p\",\"component\":\"gate\",\"event\":\"fail_check\",\"outcome\":\"fail\",\"replay_command\":\"replay-cmd-{run_id}\"}}"
+            );
+            builder.add_events_jsonl(run_id, &ev).unwrap();
+        }
+        let index = builder.build();
+        let clusters = index.correlate_regressions();
+        assert_eq!(clusters.len(), 1);
+        assert_eq!(clusters[0].replay_commands.len(), 2);
+        assert!(
+            clusters[0]
+                .replay_commands
+                .contains(&"replay-cmd-run-a".to_string())
+        );
+        assert!(
+            clusters[0]
+                .replay_commands
+                .contains(&"replay-cmd-run-b".to_string())
+        );
+    }
+
+    #[test]
+    fn enrichment_correlate_includes_error_code_with_non_fail_outcome() {
+        // Events with error_code set but outcome != "fail" should still be correlated.
+        let mut builder = ParserEvidenceIndexBuilder::new();
+        for run_id in ["run-a", "run-b"] {
+            builder
+                .add_run(
+                    &manifest(run_id, "fam.run.v1", &format!("replay-{run_id}")),
+                    format!("{run_id}-m.json"),
+                    format!("{run_id}-e.jsonl"),
+                    format!("{run_id}-c.txt"),
+                )
+                .unwrap();
+            let ev = format!(
+                "{{\"schema_version\":\"fam.event.v1\",\"trace_id\":\"t-{run_id}\",\"decision_id\":\"d-{run_id}\",\"policy_id\":\"p\",\"component\":\"gate\",\"event\":\"warn_check\",\"outcome\":\"warn\",\"error_code\":\"E-WARN\"}}"
+            );
+            builder.add_events_jsonl(run_id, &ev).unwrap();
+        }
+        let index = builder.build();
+        let clusters = index.correlate_regressions();
+        assert_eq!(clusters.len(), 1);
+        assert_eq!(clusters[0].key.outcome, "warn");
+        assert_eq!(clusters[0].key.error_code.as_deref(), Some("E-WARN"));
+        assert_eq!(clusters[0].severity, "high");
+    }
+
+    #[test]
+    fn enrichment_optional_string_rejects_non_string_non_null() {
+        let val = serde_json::json!({ "field": 123 });
+        let err = optional_string(&val, "field").unwrap_err();
+        assert!(matches!(
+            err,
+            EvidenceIndexerError::InvalidFieldType {
+                field: "field",
+                expected: "string|null",
+            }
+        ));
+    }
+
+    #[test]
+    fn enrichment_manifest_with_invalid_schema_version_rejected() {
+        let val = serde_json::json!({
+            "schema_version": "bad-no-version-tag",
+            "run_id": "run-1",
+            "replay_command": "replay"
+        });
+        let err = ParserRunArtifactRef::from_manifest_value(&val, "m", "e", "c").unwrap_err();
+        assert!(matches!(err, EvidenceIndexerError::InvalidSchemaVersion(_)));
+    }
+
+    #[test]
+    fn enrichment_multiple_boundaries_within_single_run() {
+        let mut builder = ParserEvidenceIndexBuilder::new();
+        builder
+            .add_run(
+                &manifest("run-a", "fam.run.v1", "replay"),
+                "m.json",
+                "e.jsonl",
+                "c.txt",
+            )
+            .unwrap();
+        builder
+            .add_events_jsonl(
+                "run-a",
+                concat!(
+                    r#"{"schema_version":"fam.event.v1","trace_id":"t1","decision_id":"d1","policy_id":"p","component":"c","event":"e","outcome":"pass"}"#,
+                    "\n",
+                    r#"{"schema_version":"fam.event.v2","trace_id":"t2","decision_id":"d2","policy_id":"p","component":"c","event":"e","outcome":"pass"}"#,
+                    "\n",
+                    r#"{"schema_version":"fam.event.v3","trace_id":"t3","decision_id":"d3","policy_id":"p","component":"c","event":"e","outcome":"pass"}"#,
+                ),
+            )
+            .unwrap();
+        let index = builder.build();
+        assert_eq!(index.schema_migrations.len(), 2);
+        assert_eq!(index.schema_migrations[0].from_schema, "fam.event.v1");
+        assert_eq!(index.schema_migrations[0].to_schema, "fam.event.v2");
+        assert_eq!(index.schema_migrations[1].from_schema, "fam.event.v2");
+        assert_eq!(index.schema_migrations[1].to_schema, "fam.event.v3");
+    }
+
+    #[test]
+    fn enrichment_migrate_mixed_schemas_across_runs() {
+        let mut builder = ParserEvidenceIndexBuilder::new();
+        builder
+            .add_run(
+                &manifest("run-a", "fam.run.v1", "replay-a"),
+                "a-m.json",
+                "a-e.jsonl",
+                "a-c.txt",
+            )
+            .unwrap();
+        builder
+            .add_run(
+                &manifest("run-b", "fam.run.v1", "replay-b"),
+                "b-m.json",
+                "b-e.jsonl",
+                "b-c.txt",
+            )
+            .unwrap();
+
+        // run-a has v1 events, run-b has v2 events
+        builder
+            .add_events_jsonl(
+                "run-a",
+                r#"{"schema_version":"fam.event.v1","trace_id":"ta","decision_id":"da","policy_id":"p","component":"c","event":"e","outcome":"pass"}"#,
+            )
+            .unwrap();
+        builder
+            .add_events_jsonl(
+                "run-b",
+                r#"{"schema_version":"fam.event.v2","trace_id":"tb","decision_id":"db","policy_id":"p","component":"c","event":"e","outcome":"pass"}"#,
+            )
+            .unwrap();
+
+        let steps = vec![
+            SchemaMigrationStep {
+                migration_id: "mig-1-2".into(),
+                from_schema: "fam.event.v1".into(),
+                to_schema: "fam.event.v2".into(),
+            },
+            SchemaMigrationStep {
+                migration_id: "mig-2-3".into(),
+                from_schema: "fam.event.v2".into(),
+                to_schema: "fam.event.v3".into(),
+            },
+        ];
+        let mut index = builder.build();
+        let receipts = index.migrate_event_schemas("fam.event.v3", &steps).unwrap();
+
+        // Both migration steps should be applied
+        assert_eq!(receipts.len(), 2);
+        // All events should now be v3
+        assert!(
+            index
+                .events
+                .iter()
+                .all(|e| e.schema_version == "fam.event.v3")
+        );
+        // mig-1-2 affects run-a's 1 event; mig-2-3 affects both events (run-a after first hop + run-b)
+        let mig_1_2 = receipts
+            .iter()
+            .find(|r| r.migration_id == "mig-1-2")
+            .unwrap();
+        assert_eq!(mig_1_2.affected_records, 1);
+        let mig_2_3 = receipts
+            .iter()
+            .find(|r| r.migration_id == "mig-2-3")
+            .unwrap();
+        assert_eq!(mig_2_3.affected_records, 2);
+    }
 }

@@ -1879,4 +1879,242 @@ mod tests {
         let err = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap_err();
         assert!(err.to_string().contains("trace_id"));
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn enrichment_activation_mode_copy_semantics() {
+        let a = PlasActivationMode::Shadow;
+        let b = a; // Copy
+        let c = a; // still usable after move — proves Copy
+        assert_eq!(b, c);
+        assert_eq!(a, PlasActivationMode::Shadow);
+    }
+
+    #[test]
+    fn enrichment_activation_mode_in_btreeset() {
+        let mut set = BTreeSet::new();
+        set.insert(PlasActivationMode::Disabled);
+        set.insert(PlasActivationMode::Active);
+        set.insert(PlasActivationMode::Shadow);
+        set.insert(PlasActivationMode::AuditOnly);
+        set.insert(PlasActivationMode::Active); // duplicate
+        assert_eq!(set.len(), 4);
+        // Ord ordering: Active < Shadow < AuditOnly < Disabled
+        let ordered: Vec<_> = set.into_iter().collect();
+        assert_eq!(
+            ordered,
+            vec![
+                PlasActivationMode::Active,
+                PlasActivationMode::Shadow,
+                PlasActivationMode::AuditOnly,
+                PlasActivationMode::Disabled,
+            ]
+        );
+    }
+
+    #[test]
+    fn enrichment_failure_code_copy_semantics() {
+        let a = PlasReleaseGateFailureCode::EscrowReplayMismatch;
+        let b = a;
+        let c = a;
+        assert_eq!(b, c);
+        assert_eq!(a, PlasReleaseGateFailureCode::EscrowReplayMismatch);
+    }
+
+    #[test]
+    fn enrichment_failure_code_in_btreeset() {
+        let mut set = BTreeSet::new();
+        set.insert(PlasReleaseGateFailureCode::AmbientAuthorityDetected);
+        set.insert(PlasReleaseGateFailureCode::CohortPlasNotActive);
+        set.insert(PlasReleaseGateFailureCode::MissingCapabilityWitness);
+        set.insert(PlasReleaseGateFailureCode::CohortPlasNotActive); // dup
+        assert_eq!(set.len(), 3);
+        let first = *set.iter().next().unwrap();
+        assert_eq!(first, PlasReleaseGateFailureCode::CohortPlasNotActive);
+    }
+
+    #[test]
+    fn enrichment_activation_mode_debug_format() {
+        let dbg = format!("{:?}", PlasActivationMode::AuditOnly);
+        assert_eq!(dbg, "AuditOnly");
+        let dbg2 = format!("{:?}", PlasActivationMode::Active);
+        assert_eq!(dbg2, "Active");
+    }
+
+    #[test]
+    fn enrichment_failure_code_debug_format() {
+        let dbg = format!("{:?}", PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing);
+        assert_eq!(dbg, "EscrowReplayEvidenceMissing");
+        let dbg2 = format!("{:?}", PlasReleaseGateFailureCode::RevocationEscrowEventMissing);
+        assert_eq!(dbg2, "RevocationEscrowEventMissing");
+    }
+
+    #[test]
+    fn enrichment_error_clone_independence() {
+        let original = PlasReleaseGateError::InvalidInput {
+            detail: "original".to_string(),
+        };
+        let mut cloned = original.clone();
+        // Mutate clone
+        if let PlasReleaseGateError::InvalidInput { ref mut detail } = cloned {
+            *detail = "mutated".to_string();
+        }
+        // Original unchanged
+        assert_eq!(
+            format!("{original}"),
+            "invalid PLAS release gate input: original"
+        );
+        assert_eq!(format!("{cloned}"), "invalid PLAS release gate input: mutated");
+    }
+
+    #[test]
+    fn enrichment_decision_artifact_json_field_names() {
+        let input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        let artifact = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        let json = serde_json::to_string(&artifact).unwrap();
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"cohort_id\""));
+        assert!(json.contains("\"pass\""));
+        assert!(json.contains("\"checked_extensions\""));
+        assert!(json.contains("\"checked_grants\""));
+        assert!(json.contains("\"checked_revocations\""));
+        assert!(json.contains("\"findings\""));
+        assert!(json.contains("\"logs\""));
+        assert!(json.contains("\"decision_hash\""));
+    }
+
+    #[test]
+    fn enrichment_input_json_field_names() {
+        let input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        let json = serde_json::to_string(&input).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"cohort_id\""));
+        assert!(json.contains("\"extensions\""));
+    }
+
+    #[test]
+    fn enrichment_trust_anchors_json_field_names() {
+        let ta = trust_anchors();
+        let json = serde_json::to_string(&ta).unwrap();
+        assert!(json.contains("\"witness_verification_key\""));
+        assert!(json.contains("\"transparency_log_verification_key\""));
+    }
+
+    #[test]
+    fn enrichment_cohort_extension_default_fields_deserialize() {
+        // When manifest_capabilities, active_capabilities, grants, revocations are absent,
+        // serde(default) should fill them with empty collections.
+        let json = r#"{
+            "extension_id": [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+            "activation_mode": "active"
+        }"#;
+        let ext: PlasCohortExtension = serde_json::from_str(json).unwrap();
+        assert_eq!(ext.activation_mode, PlasActivationMode::Active);
+        assert!(ext.manifest_capabilities.is_empty());
+        assert!(ext.active_capabilities.is_empty());
+        assert!(ext.grants.is_empty());
+        assert!(ext.revocations.is_empty());
+    }
+
+    #[test]
+    fn enrichment_whitespace_only_decision_id_rejected() {
+        let mut input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        input.decision_id = "  \t  ".to_string();
+        let err = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap_err();
+        assert!(err.to_string().contains("decision_id"));
+    }
+
+    #[test]
+    fn enrichment_whitespace_only_policy_id_rejected() {
+        let mut input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        input.policy_id = " \n ".to_string();
+        let err = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap_err();
+        assert!(err.to_string().contains("policy_id"));
+    }
+
+    #[test]
+    fn enrichment_whitespace_only_cohort_id_rejected() {
+        let mut input = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        input.cohort_id = "   ".to_string();
+        let err = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap_err();
+        assert!(err.to_string().contains("cohort_id"));
+    }
+
+    #[test]
+    fn enrichment_findings_sort_stability_same_code_different_extension() {
+        // Two extensions both fail with CohortPlasNotActive; findings should be
+        // sorted by extension_id within the same code.
+        let input = make_input(vec![
+            minimal_extension(5, PlasActivationMode::Disabled),
+            minimal_extension(3, PlasActivationMode::Shadow),
+        ]);
+        let result = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        let not_active: Vec<&PlasReleaseGateFinding> = result
+            .findings
+            .iter()
+            .filter(|f| f.code == PlasReleaseGateFailureCode::CohortPlasNotActive)
+            .collect();
+        assert_eq!(not_active.len(), 2);
+        // Normalization sorts extensions by id string; ext_id(3) < ext_id(5)
+        assert!(not_active[0].extension_id < not_active[1].extension_id);
+    }
+
+    #[test]
+    fn enrichment_multiple_non_active_modes_all_reported() {
+        let input = make_input(vec![
+            minimal_extension(1, PlasActivationMode::Shadow),
+            minimal_extension(2, PlasActivationMode::AuditOnly),
+            minimal_extension(3, PlasActivationMode::Disabled),
+        ]);
+        let result = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        let not_active_count = result
+            .findings
+            .iter()
+            .filter(|f| f.code == PlasReleaseGateFailureCode::CohortPlasNotActive)
+            .count();
+        assert_eq!(not_active_count, 3);
+
+        // Each finding should mention the mode in detail
+        let details: Vec<&str> = result
+            .findings
+            .iter()
+            .filter(|f| f.code == PlasReleaseGateFailureCode::CohortPlasNotActive)
+            .map(|f| f.detail.as_str())
+            .collect();
+        assert!(details.iter().any(|d| d.contains("shadow")));
+        assert!(details.iter().any(|d| d.contains("audit_only")));
+        assert!(details.iter().any(|d| d.contains("disabled")));
+    }
+
+    #[test]
+    fn enrichment_decision_hash_sensitive_to_cohort_id() {
+        let mut input1 = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        input1.cohort_id = "cohort_alpha".to_string();
+        let mut input2 = make_input(vec![minimal_extension(1, PlasActivationMode::Active)]);
+        input2.cohort_id = "cohort_beta".to_string();
+        let r1 = evaluate_plas_release_gate(&input1, &trust_anchors()).unwrap();
+        let r2 = evaluate_plas_release_gate(&input2, &trust_anchors()).unwrap();
+        assert_ne!(r1.decision_hash, r2.decision_hash);
+        assert_eq!(r1.cohort_id, "cohort_alpha");
+        assert_eq!(r2.cohort_id, "cohort_beta");
+    }
+
+    #[test]
+    fn enrichment_log_events_trace_id_consistency() {
+        let input = make_input(vec![
+            minimal_extension(1, PlasActivationMode::Active),
+            minimal_extension(2, PlasActivationMode::Shadow),
+        ]);
+        let result = evaluate_plas_release_gate(&input, &trust_anchors()).unwrap();
+        assert!(result.logs.len() >= 2);
+        for log in &result.logs {
+            assert_eq!(log.trace_id, "t1");
+            assert_eq!(log.decision_id, "d1");
+            assert_eq!(log.policy_id, "p1");
+            assert_eq!(log.component, "plas_release_gate");
+        }
+    }
 }

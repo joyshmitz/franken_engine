@@ -1618,4 +1618,300 @@ mod tests {
             codes.iter().map(|c| c.to_string()).collect();
         assert_eq!(displays.len(), 12);
     }
+
+    // ── enrichment tests (PearlTower 2026-03-02) ─────────────────
+
+    #[test]
+    fn enrichment_gate_failure_code_copy_semantics() {
+        let a = GateFailureCode::MissingProofArtifact;
+        let b = a; // Copy
+        assert_eq!(a, b);
+        // Original still usable after copy
+        assert_eq!(format!("{a}"), "missing_proof_artifact");
+    }
+
+    #[test]
+    fn enrichment_gate_failure_code_btreeset_dedup() {
+        let mut set = BTreeSet::new();
+        set.insert(GateFailureCode::MissingProofArtifact);
+        set.insert(GateFailureCode::MissingProofArtifact);
+        set.insert(GateFailureCode::FallbackPathInvalid);
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&GateFailureCode::MissingProofArtifact));
+        assert!(set.contains(&GateFailureCode::FallbackPathInvalid));
+    }
+
+    #[test]
+    fn enrichment_gate_failure_code_ord_total_ordering() {
+        let mut codes = vec![
+            GateFailureCode::LoggingArtifactsUncorrelated,
+            GateFailureCode::MissingProofArtifact,
+            GateFailureCode::ArchiveNotContentAddressed,
+            GateFailureCode::FallbackPathInvalid,
+        ];
+        codes.sort();
+        // Verify sorted order matches derive(Ord) variant declaration order
+        assert!(codes[0] <= codes[1]);
+        assert!(codes[1] <= codes[2]);
+        assert!(codes[2] <= codes[3]);
+        assert_eq!(codes[0], GateFailureCode::MissingProofArtifact);
+    }
+
+    #[test]
+    fn enrichment_optimization_proof_artifact_clone_independence() {
+        let original = ok_artifact("inline");
+        let mut cloned = original.clone();
+        cloned.optimization_pass = "dce".to_string();
+        cloned.proof_verified = false;
+        // Original unchanged
+        assert_eq!(original.optimization_pass, "inline");
+        assert!(original.proof_verified);
+    }
+
+    #[test]
+    fn enrichment_proof_chain_bundle_clone_independence() {
+        let input = base_input();
+        let mut cloned = input.bundle.clone();
+        cloned.candidate_version = "candidate-modified".to_string();
+        cloned.artifacts.clear();
+        // Original unchanged
+        assert_eq!(input.bundle.candidate_version, "candidate-2026-02-20");
+        assert_eq!(input.bundle.artifacts.len(), 2);
+    }
+
+    #[test]
+    fn enrichment_promotion_decision_artifact_clone_independence() {
+        let input = base_input();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        let mut cloned = decision.clone();
+        cloned.pass = !decision.pass;
+        cloned.findings.push(GateFinding {
+            code: GateFailureCode::MissingTestEvidence,
+            optimization_pass: None,
+            detail: "injected".to_string(),
+        });
+        // Original unchanged
+        assert!(decision.pass);
+        assert!(decision.findings.is_empty());
+    }
+
+    #[test]
+    fn enrichment_gate_finding_json_field_names() {
+        let finding = GateFinding {
+            code: GateFailureCode::ReplayMultiplierExceeded,
+            optimization_pass: None,
+            detail: "exceeded".to_string(),
+        };
+        let json = serde_json::to_string(&finding).unwrap();
+        assert!(json.contains("\"code\""));
+        assert!(json.contains("\"optimization_pass\""));
+        assert!(json.contains("\"detail\""));
+    }
+
+    #[test]
+    fn enrichment_proof_gate_log_event_json_field_names() {
+        let input = base_input();
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        let json = serde_json::to_string(&decision.logs[0]).unwrap();
+        assert!(json.contains("\"trace_id\""));
+        assert!(json.contains("\"decision_id\""));
+        assert!(json.contains("\"policy_id\""));
+        assert!(json.contains("\"component\""));
+        assert!(json.contains("\"event\""));
+        assert!(json.contains("\"outcome\""));
+        assert!(json.contains("\"optimization_pass\""));
+        assert!(json.contains("\"proof_status\""));
+        assert!(json.contains("\"proof_hash\""));
+        assert!(json.contains("\"fallback_triggered\""));
+        assert!(json.contains("\"verification_time_ns\""));
+        assert!(json.contains("\"ir_diff_size_bytes\""));
+    }
+
+    #[test]
+    fn enrichment_release_gate_thresholds_json_field_names() {
+        let t = ReleaseGateThresholds::default();
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(json.contains("\"max_replay_multiplier_millionths\""));
+        assert!(json.contains("\"min_unit_coverage_millionths\""));
+        assert!(json.contains("\"min_mutation_score_millionths\""));
+        assert!(json.contains("\"max_logging_artifact_age_ns\""));
+        assert!(json.contains("\"require_trace_correlated_logging\""));
+    }
+
+    #[test]
+    fn enrichment_test_evidence_has_required_fields_zero_failure_tests() {
+        let mut input = base_input();
+        let evidence = input.test_evidence.as_mut().unwrap();
+        evidence.required_failure_mode_tests = 0;
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::TestEvidenceBelowThreshold
+                    && f.detail.contains("missing required obligations"))
+        );
+    }
+
+    #[test]
+    fn enrichment_test_evidence_has_required_fields_zero_e2e() {
+        let mut input = base_input();
+        let evidence = input.test_evidence.as_mut().unwrap();
+        evidence.required_e2e_scenarios = 0;
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::TestEvidenceBelowThreshold
+                    && f.detail.contains("missing required obligations"))
+        );
+    }
+
+    #[test]
+    fn enrichment_test_evidence_has_required_fields_zero_logging() {
+        let mut input = base_input();
+        let evidence = input.test_evidence.as_mut().unwrap();
+        evidence.logging_artifact_count = 0;
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        // Should trigger both TestEvidenceBelowThreshold (required fields)
+        // and LoggingArtifactsMissing
+        let codes: BTreeSet<GateFailureCode> =
+            decision.findings.iter().map(|f| f.code).collect();
+        assert!(codes.contains(&GateFailureCode::TestEvidenceBelowThreshold));
+        assert!(codes.contains(&GateFailureCode::LoggingArtifactsMissing));
+    }
+
+    #[test]
+    fn enrichment_mutation_score_below_threshold_fails() {
+        let mut input = base_input();
+        let evidence = input.test_evidence.as_mut().unwrap();
+        evidence.mutation_score_millionths = 100_000; // well below 850_000
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::TestEvidenceBelowThreshold
+                    && f.detail.contains("mutation score"))
+        );
+    }
+
+    #[test]
+    fn enrichment_failure_mode_tests_below_required_fails() {
+        let mut input = base_input();
+        let evidence = input.test_evidence.as_mut().unwrap();
+        evidence.executed_failure_mode_tests = 5; // below required 12
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::TestEvidenceBelowThreshold
+                    && f.detail.contains("failure-mode tests"))
+        );
+    }
+
+    #[test]
+    fn enrichment_e2e_scenarios_below_required_fails() {
+        let mut input = base_input();
+        let evidence = input.test_evidence.as_mut().unwrap();
+        evidence.executed_e2e_scenarios = 3; // below required 9
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        assert!(
+            decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::TestEvidenceBelowThreshold
+                    && f.detail.contains("e2e scenarios"))
+        );
+    }
+
+    #[test]
+    fn enrichment_decision_id_changes_with_policy_id() {
+        let input_a = base_input();
+        let mut input_b = base_input();
+        input_b.policy_id = "policy-different".to_string();
+        let a = evaluate_release_gate(&input_a, &ReleaseGateThresholds::default());
+        let b = evaluate_release_gate(&input_b, &ReleaseGateThresholds::default());
+        assert_ne!(a.decision_id, b.decision_id);
+    }
+
+    #[test]
+    fn enrichment_decision_id_changes_with_thresholds() {
+        let input = base_input();
+        let t_default = ReleaseGateThresholds::default();
+        let t_custom = ReleaseGateThresholds {
+            max_replay_multiplier_millionths: 99_000_000,
+            ..ReleaseGateThresholds::default()
+        };
+        let a = evaluate_release_gate(&input, &t_default);
+        let b = evaluate_release_gate(&input, &t_custom);
+        assert_ne!(a.decision_id, b.decision_id);
+    }
+
+    #[test]
+    fn enrichment_replay_multiplier_overflow_large_values() {
+        // Very large replay relative to compile should not panic
+        let result = compute_replay_multiplier_millionths(u64::MAX, 1);
+        assert_eq!(result, u64::MAX);
+    }
+
+    #[test]
+    fn enrichment_duplicate_artifact_pass_names_only_counted_once() {
+        let mut input = base_input();
+        // Two artifacts with same pass name "inline"
+        input.bundle.artifacts = vec![ok_artifact("inline"), ok_artifact("inline"), ok_artifact("dce")];
+        let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
+        // Both expected passes are covered, so no MissingProofArtifact
+        assert!(
+            !decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::MissingProofArtifact)
+        );
+        // Should have 4 logs: 3 artifacts + 1 summary
+        assert_eq!(decision.logs.len(), 4);
+    }
+
+    #[test]
+    fn enrichment_release_gate_input_without_evidence_serde() {
+        let mut input = base_input();
+        input.test_evidence = None;
+        let json = serde_json::to_string(&input).unwrap();
+        let back: ReleaseGateInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, input);
+        assert!(back.test_evidence.is_none());
+        assert!(json.contains("\"test_evidence\":null"));
+    }
+
+    #[test]
+    fn enrichment_fallback_is_valid_when_proof_verified() {
+        // When proof_verified is true, fallback_is_valid always returns true
+        // regardless of other fallback fields
+        let mut artifact = ok_artifact("inline");
+        artifact.proof_verified = true;
+        artifact.fallback_triggered = false;
+        artifact.fallback_receipt_id = None;
+        artifact.optimization_applied = true;
+        assert!(artifact.fallback_is_valid());
+    }
+
+    #[test]
+    fn enrichment_uncorrelated_logging_passes_when_not_required() {
+        let mut input = base_input();
+        let evidence = input.test_evidence.as_mut().unwrap();
+        evidence.trace_correlated_logging = false;
+        let thresholds = ReleaseGateThresholds {
+            require_trace_correlated_logging: false,
+            ..ReleaseGateThresholds::default()
+        };
+        let decision = evaluate_release_gate(&input, &thresholds);
+        assert!(
+            !decision
+                .findings
+                .iter()
+                .any(|f| f.code == GateFailureCode::LoggingArtifactsUncorrelated)
+        );
+    }
 }

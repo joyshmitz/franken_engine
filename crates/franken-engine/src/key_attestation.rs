@@ -1780,4 +1780,312 @@ mod tests {
         let unknown = PrincipalId::from_bytes([0xCC; 32]);
         assert_eq!(registry.high_water_for(&unknown), 0);
     }
+
+    // -------------------------------------------------------------------
+    // Enrichment: additional trait, serde, edge-case coverage
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_attestation_nonce_copy_semantics() {
+        let n = AttestationNonce::from_counter(42);
+        let n2 = n; // Copy
+        let n3 = n; // Still valid — Copy
+        assert_eq!(n, n2);
+        assert_eq!(n2, n3);
+        assert_eq!(n.as_u64(), 42);
+    }
+
+    #[test]
+    fn enrichment_attestation_nonce_hash_consistent() {
+        use std::hash::{Hash, Hasher};
+        let n1 = AttestationNonce::from_counter(99);
+        let n2 = AttestationNonce::from_counter(99);
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        n1.hash(&mut h1);
+        n2.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn enrichment_attestation_nonce_serde_roundtrip() {
+        let nonce = AttestationNonce::from_counter(1_000_000);
+        let json = serde_json::to_string(&nonce).expect("serialize");
+        let restored: AttestationNonce = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(nonce, restored);
+        assert_eq!(restored.as_u64(), 1_000_000);
+    }
+
+    #[test]
+    fn enrichment_attestation_nonce_clone_eq() {
+        let n = AttestationNonce::from_counter(7);
+        let cloned = n.clone();
+        assert_eq!(n, cloned);
+        assert_eq!(n.as_u64(), cloned.as_u64());
+    }
+
+    #[test]
+    fn enrichment_device_posture_ord_ordering() {
+        let dp_a = DevicePosture {
+            posture_type: "aaa".to_string(),
+            evidence: vec![0x01],
+        };
+        let dp_b = DevicePosture {
+            posture_type: "bbb".to_string(),
+            evidence: vec![0x01],
+        };
+        let dp_a2 = DevicePosture {
+            posture_type: "aaa".to_string(),
+            evidence: vec![0x02],
+        };
+        assert!(dp_a < dp_b, "posture_type 'aaa' < 'bbb'");
+        assert!(dp_a < dp_a2, "same type, evidence [0x01] < [0x02]");
+    }
+
+    #[test]
+    fn enrichment_device_posture_hash_consistent() {
+        use std::hash::{Hash, Hasher};
+        let dp1 = DevicePosture {
+            posture_type: "sgx".to_string(),
+            evidence: vec![0xCA, 0xFE],
+        };
+        let dp2 = dp1.clone();
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        dp1.hash(&mut h1);
+        dp2.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn enrichment_device_posture_json_fields() {
+        let dp = DevicePosture {
+            posture_type: "trustzone".to_string(),
+            evidence: vec![0xAB],
+        };
+        let json: serde_json::Value = serde_json::to_value(&dp).expect("to_value");
+        assert!(json.get("posture_type").is_some());
+        assert!(json.get("evidence").is_some());
+        assert_eq!(json["posture_type"], "trustzone");
+    }
+
+    #[test]
+    fn enrichment_key_attestation_clone_eq() {
+        let att = create_test_attestation(KeyRole::Signing, 1, 100, 200);
+        let cloned = att.clone();
+        assert_eq!(att, cloned);
+        assert_eq!(att.attestation_id, cloned.attestation_id);
+        assert_eq!(att.owner_signature, cloned.owner_signature);
+    }
+
+    #[test]
+    fn enrichment_key_attestation_json_field_names() {
+        let att = create_test_attestation(KeyRole::Encryption, 1, 100, 200);
+        let json: serde_json::Value = serde_json::to_value(&att).expect("to_value");
+        let expected_fields = [
+            "attestation_id",
+            "principal_id",
+            "attested_key",
+            "key_role",
+            "issued_at",
+            "expires_at",
+            "epoch",
+            "nonce",
+            "device_posture",
+            "owner_signature",
+            "zone",
+        ];
+        for field in &expected_fields {
+            assert!(json.get(field).is_some(), "missing JSON field: {field}");
+        }
+        assert_eq!(json["zone"], TEST_ZONE);
+    }
+
+    #[test]
+    fn enrichment_attestation_store_clone_preserves_state() {
+        // AttestationStore uses BTreeMap<EngineObjectId, _> which cannot
+        // JSON-serialize (key must be a string). Verify clone fidelity instead.
+        let mut store = AttestationStore::new(TEST_ZONE);
+        let att1 = create_test_attestation(KeyRole::Signing, 1, 100, 500);
+        let att2 = create_test_attestation(KeyRole::Encryption, 2, 100, 600);
+        let id1 = store
+            .register(att1, &owner_vk(), DeterministicTimestamp(150), "t-1")
+            .expect("reg1");
+        let id2 = store
+            .register(att2, &owner_vk(), DeterministicTimestamp(150), "t-2")
+            .expect("reg2");
+
+        let cloned = store.clone();
+        assert_eq!(cloned.total_count(), 2);
+        assert_eq!(cloned.principal_count(), 1);
+        assert!(cloned.get(&id1).is_some());
+        assert!(cloned.get(&id2).is_some());
+    }
+
+    #[test]
+    fn enrichment_nonce_registry_default_trait() {
+        let reg: NonceRegistry = Default::default();
+        assert_eq!(reg.principal_count(), 0);
+        assert_eq!(reg.high_water_for(&test_principal()), 0);
+    }
+
+    #[test]
+    fn enrichment_nonce_registry_clone_preserves_state() {
+        let mut reg = NonceRegistry::new();
+        reg.check_and_record(&test_principal(), AttestationNonce::from_counter(10))
+            .expect("record");
+        let cloned = reg.clone();
+        assert_eq!(cloned.high_water_for(&test_principal()), 10);
+        assert_eq!(cloned.principal_count(), 1);
+    }
+
+    #[test]
+    fn enrichment_attestation_error_clone_eq_all_variants() {
+        let variants: Vec<AttestationError> = vec![
+            AttestationError::SelfAttestationRejected,
+            AttestationError::Expired {
+                expires_at: DeterministicTimestamp(100),
+                current_time: DeterministicTimestamp(200),
+            },
+            AttestationError::NonceReplay {
+                principal: test_principal(),
+                nonce: AttestationNonce::from_counter(3),
+                high_water: 5,
+            },
+            AttestationError::InvalidNonce {
+                detail: "zero".to_string(),
+            },
+            AttestationError::SignatureInvalid {
+                detail: "bad sig".to_string(),
+            },
+            AttestationError::SignatureFailed {
+                detail: "cannot sign".to_string(),
+            },
+            AttestationError::IdDerivationFailed {
+                detail: "id err".to_string(),
+            },
+            AttestationError::InvalidExpiry {
+                issued_at: DeterministicTimestamp(200),
+                expires_at: DeterministicTimestamp(100),
+            },
+            AttestationError::ZoneMismatch {
+                expected: "z1".to_string(),
+                actual: "z2".to_string(),
+            },
+            AttestationError::DuplicateAttestation {
+                attestation_id: EngineObjectId([0xBB; 32]),
+            },
+            AttestationError::NotFound {
+                attestation_id: EngineObjectId([0xCC; 32]),
+            },
+            AttestationError::DevicePostureInvalid {
+                detail: "bad posture".to_string(),
+            },
+        ];
+        for variant in &variants {
+            let cloned = variant.clone();
+            assert_eq!(*variant, cloned, "clone/eq failed for: {variant}");
+        }
+    }
+
+    #[test]
+    fn enrichment_attestation_error_display_remaining_variants() {
+        // Cover variants not individually tested in error_display
+        let err = AttestationError::SignatureFailed {
+            detail: "failed to sign".to_string(),
+        };
+        assert!(err.to_string().contains("signature failed"));
+        assert!(err.to_string().contains("failed to sign"));
+
+        let err = AttestationError::IdDerivationFailed {
+            detail: "bad domain".to_string(),
+        };
+        assert!(err.to_string().contains("id derivation failed"));
+
+        let err = AttestationError::DuplicateAttestation {
+            attestation_id: EngineObjectId([0xDD; 32]),
+        };
+        assert!(err.to_string().contains("duplicate attestation"));
+
+        let err = AttestationError::DevicePostureInvalid {
+            detail: "tampered evidence".to_string(),
+        };
+        assert!(err.to_string().contains("device posture invalid"));
+        assert!(err.to_string().contains("tampered evidence"));
+
+        let err = AttestationError::InvalidExpiry {
+            issued_at: DeterministicTimestamp(500),
+            expires_at: DeterministicTimestamp(100),
+        };
+        assert!(err.to_string().contains("invalid expiry"));
+        assert!(err.to_string().contains("500"));
+    }
+
+    #[test]
+    fn enrichment_attestation_event_type_all_variants_serde() {
+        let variants: Vec<AttestationEventType> = vec![
+            AttestationEventType::Registered {
+                attestation_id: EngineObjectId([0x11; 32]),
+                principal: test_principal(),
+            },
+            AttestationEventType::Revoked {
+                attestation_id: EngineObjectId([0x22; 32]),
+                principal: test_principal(),
+            },
+            AttestationEventType::RegistrationRejected {
+                reason: "zone mismatch".to_string(),
+            },
+            AttestationEventType::ExpiredPurged { count: 42 },
+        ];
+        for variant in &variants {
+            let json = serde_json::to_string(variant).expect("serialize");
+            let restored: AttestationEventType = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(*variant, restored);
+        }
+    }
+
+    #[test]
+    fn enrichment_attestation_event_clone_eq() {
+        let event = AttestationEvent {
+            event_type: AttestationEventType::ExpiredPurged { count: 3 },
+            zone: "zone-x".to_string(),
+            trace_id: "trace-123".to_string(),
+        };
+        let cloned = event.clone();
+        assert_eq!(event, cloned);
+        assert_eq!(cloned.zone, "zone-x");
+        assert_eq!(cloned.trace_id, "trace-123");
+    }
+
+    #[test]
+    fn enrichment_key_attestation_display_contains_nonce_and_expires() {
+        let att = create_test_attestation(KeyRole::Encryption, 7, 100, 999);
+        let display = att.to_string();
+        assert!(display.contains("nonce:7"), "display should contain nonce");
+        assert!(display.contains("999"), "display should contain expires_at");
+        assert!(
+            display.contains("encryption"),
+            "display should contain role"
+        );
+    }
+
+    #[test]
+    fn enrichment_store_purge_clears_principal_index() {
+        let mut store = AttestationStore::new(TEST_ZONE);
+        let att = create_test_attestation(KeyRole::Signing, 1, 100, 200);
+        store
+            .register(att, &owner_vk(), DeterministicTimestamp(150), "t-1")
+            .expect("register");
+        assert_eq!(store.principal_count(), 1);
+
+        // Purge after expiry
+        let purged = store.purge_expired(DeterministicTimestamp(300), "t-purge");
+        assert_eq!(purged, 1);
+        assert_eq!(store.total_count(), 0);
+        assert_eq!(
+            store.principal_count(),
+            0,
+            "principal index should be cleaned up after purge"
+        );
+    }
 }

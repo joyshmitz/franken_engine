@@ -2621,4 +2621,230 @@ mod tests {
         );
         assert!(a < b);
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn provenance_error_display_exact_all_5() {
+        assert_eq!(
+            ProvenanceError::EmptyId {
+                record_type: "flow_event".to_string()
+            }
+            .to_string(),
+            "flow_event has empty ID"
+        );
+        assert_eq!(
+            ProvenanceError::EmptyExtensionId.to_string(),
+            "extension_id is empty"
+        );
+        assert_eq!(
+            ProvenanceError::DuplicateRecord {
+                key: "k1".to_string()
+            }
+            .to_string(),
+            "duplicate record: k1"
+        );
+        assert_eq!(
+            ProvenanceError::StorageError("disk full".to_string()).to_string(),
+            "storage: disk full"
+        );
+        assert_eq!(
+            ProvenanceError::SerializationError("bad json".to_string()).to_string(),
+            "serialization: bad json"
+        );
+    }
+
+    #[test]
+    fn provenance_error_source_returns_none_all() {
+        use std::error::Error;
+        let errors: Vec<ProvenanceError> = vec![
+            ProvenanceError::EmptyId {
+                record_type: "x".into(),
+            },
+            ProvenanceError::EmptyExtensionId,
+            ProvenanceError::DuplicateRecord { key: "k".into() },
+            ProvenanceError::StorageError("e".into()),
+            ProvenanceError::SerializationError("e".into()),
+        ];
+        for err in &errors {
+            assert!(err.source().is_none(), "source() should be None for {err}");
+        }
+    }
+
+    #[test]
+    fn flow_proof_record_ord_deterministic() {
+        let a = flow_proof("p-a", "ext-1", Label::Public, Label::Internal, 1);
+        let b = flow_proof("p-b", "ext-1", Label::Public, Label::Internal, 1);
+        assert!(a < b);
+    }
+
+    #[test]
+    fn declass_receipt_record_ord_deterministic() {
+        let a = declass_receipt(
+            "r-a",
+            "ext-1",
+            Label::Public,
+            Label::Internal,
+            DeclassificationDecision::Allow,
+        );
+        let b = declass_receipt(
+            "r-b",
+            "ext-1",
+            Label::Public,
+            Label::Internal,
+            DeclassificationDecision::Allow,
+        );
+        assert!(a < b);
+    }
+
+    #[test]
+    fn confinement_claim_record_ord_deterministic() {
+        let a = confinement_claim("c-a", "ext-1", ClaimStrength::Full, 1);
+        let b = confinement_claim("c-b", "ext-1", ClaimStrength::Full, 1);
+        assert!(a < b);
+    }
+
+    #[test]
+    fn confinement_status_selects_full_over_partial() {
+        let mut idx = make_index();
+        let ctx = test_ctx();
+        idx.insert_flow_event(
+            &flow_event(
+                "ev1",
+                "ext-a",
+                Label::Public,
+                Label::Internal,
+                FlowDecision::Allowed,
+            ),
+            &ctx,
+        )
+        .unwrap();
+        idx.insert_flow_proof(
+            &flow_proof("p1", "ext-a", Label::Public, Label::Internal, 1),
+            &ctx,
+        )
+        .unwrap();
+        idx.insert_confinement_claim(
+            &confinement_claim("c1", "ext-a", ClaimStrength::Partial, 1),
+            &ctx,
+        )
+        .unwrap();
+        idx.insert_confinement_claim(
+            &confinement_claim("c2", "ext-a", ClaimStrength::Full, 2),
+            &ctx,
+        )
+        .unwrap();
+
+        let status = idx.confinement_status("ext-a", &ctx).unwrap();
+        assert_eq!(
+            status.strongest_claim,
+            Some(ClaimStrength::Full),
+            "Full should be selected over Partial"
+        );
+    }
+
+    #[test]
+    fn reject_empty_extension_id_on_proof_insert() {
+        let mut idx = make_index();
+        let ctx = test_ctx();
+        let proof = flow_proof("p1", "", Label::Public, Label::Internal, 1);
+        let err = idx.insert_flow_proof(&proof, &ctx).unwrap_err();
+        assert_eq!(err, ProvenanceError::EmptyExtensionId);
+    }
+
+    #[test]
+    fn reject_empty_extension_id_on_receipt_insert() {
+        let mut idx = make_index();
+        let ctx = test_ctx();
+        let receipt = declass_receipt(
+            "r1",
+            "",
+            Label::Public,
+            Label::Internal,
+            DeclassificationDecision::Allow,
+        );
+        let err = idx.insert_declass_receipt(&receipt, &ctx).unwrap_err();
+        assert_eq!(err, ProvenanceError::EmptyExtensionId);
+    }
+
+    #[test]
+    fn reject_empty_extension_id_on_claim_insert() {
+        let mut idx = make_index();
+        let ctx = test_ctx();
+        let claim = confinement_claim("c1", "", ClaimStrength::Full, 1);
+        let err = idx.insert_confinement_claim(&claim, &ctx).unwrap_err();
+        assert_eq!(err, ProvenanceError::EmptyExtensionId);
+    }
+
+    #[test]
+    fn flow_event_serde_with_receipt_ref() {
+        let mut ev = flow_event(
+            "ev1",
+            "ext-a",
+            Label::Confidential,
+            Label::Public,
+            FlowDecision::Declassified,
+        );
+        ev.receipt_ref = Some("r1".to_string());
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: FlowEventRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, back);
+        assert_eq!(back.receipt_ref, Some("r1".to_string()));
+    }
+
+    #[test]
+    fn provenance_event_with_error_code_serde() {
+        let event = ProvenanceEvent {
+            trace_id: "t1".into(),
+            component: COMPONENT.into(),
+            event: "insert_failed".into(),
+            outcome: "error".into(),
+            error_code: Some("PROV_EMPTY_ID".into()),
+            extension_id: Some("ext-a".into()),
+            record_count: Some(0),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: ProvenanceEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+        assert_eq!(back.error_code.as_deref(), Some("PROV_EMPTY_ID"));
+    }
+
+    #[test]
+    fn confinement_status_latest_epoch_from_multiple_proofs() {
+        let mut idx = make_index();
+        let ctx = test_ctx();
+        idx.insert_flow_event(
+            &flow_event(
+                "ev1",
+                "ext-a",
+                Label::Public,
+                Label::Internal,
+                FlowDecision::Allowed,
+            ),
+            &ctx,
+        )
+        .unwrap();
+        idx.insert_flow_proof(
+            &flow_proof("p1", "ext-a", Label::Public, Label::Internal, 3),
+            &ctx,
+        )
+        .unwrap();
+        idx.insert_flow_proof(
+            &flow_proof("p2", "ext-a", Label::Public, Label::Internal, 7),
+            &ctx,
+        )
+        .unwrap();
+        idx.insert_flow_proof(
+            &flow_proof("p3", "ext-a", Label::Public, Label::Internal, 5),
+            &ctx,
+        )
+        .unwrap();
+
+        let status = idx.confinement_status("ext-a", &ctx).unwrap();
+        assert_eq!(
+            status.latest_proof_epoch,
+            Some(7),
+            "should select the maximum epoch"
+        );
+    }
 }

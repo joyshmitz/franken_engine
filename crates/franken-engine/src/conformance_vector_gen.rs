@@ -1831,4 +1831,357 @@ mod tests {
         let unique: std::collections::BTreeSet<_> = ids.iter().collect();
         assert_eq!(ids.len(), unique.len());
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn enrichment_vector_category_copy_semantics() {
+        let a = VectorCategory::Degraded;
+        let b = a; // Copy
+        let c = a; // still valid after copy
+        assert_eq!(b, c);
+        assert_eq!(a, VectorCategory::Degraded);
+    }
+
+    #[test]
+    fn enrichment_vector_category_clone_eq_all_variants() {
+        let variants = [
+            VectorCategory::Positive,
+            VectorCategory::Negative,
+            VectorCategory::Degraded,
+            VectorCategory::Fault,
+        ];
+        for v in &variants {
+            let cloned = v.clone();
+            assert_eq!(*v, cloned);
+        }
+    }
+
+    #[test]
+    fn enrichment_vector_category_json_quoted_strings() {
+        // Verify serde serialises as quoted strings (not integers).
+        let json = serde_json::to_string(&VectorCategory::Positive).unwrap();
+        assert!(
+            json.starts_with('"'),
+            "expected quoted string, got: {}",
+            json
+        );
+        let json = serde_json::to_string(&VectorCategory::Fault).unwrap();
+        assert!(json.starts_with('"'));
+    }
+
+    #[test]
+    fn enrichment_degraded_scenario_clone_preserves_inner() {
+        let orig = DegradedScenario::SchemaDrift {
+            local_version: SemanticVersion::new(2, 3, 4),
+            remote_version: SemanticVersion::new(2, 5, 0),
+        };
+        let cloned = orig.clone();
+        assert_eq!(orig, cloned);
+        // Verify inner fields survived.
+        if let DegradedScenario::SchemaDrift {
+            local_version,
+            remote_version,
+        } = &cloned
+        {
+            assert_eq!(local_version.major, 2);
+            assert_eq!(remote_version.minor, 5);
+        } else {
+            panic!("wrong variant after clone");
+        }
+    }
+
+    #[test]
+    fn enrichment_degraded_scenario_ord_consistent() {
+        let a = DegradedScenario::EmptyResponse;
+        let b = DegradedScenario::Timeout { timeout_ms: 100 };
+        // Ord is derived, so ordering follows variant declaration order.
+        // EmptyResponse is last in the enum, Timeout is third.
+        assert!(
+            b < a,
+            "Timeout should sort before EmptyResponse by derive Ord"
+        );
+    }
+
+    #[test]
+    fn enrichment_degraded_scenario_json_field_stale_revocation() {
+        let s = DegradedScenario::StaleRevocationHead { epochs_behind: 42 };
+        let json = serde_json::to_string(&s).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // Tagged enum: check the variant key exists.
+        assert!(
+            val.get("StaleRevocationHead").is_some(),
+            "expected StaleRevocationHead key in: {}",
+            json
+        );
+    }
+
+    #[test]
+    fn enrichment_fault_scenario_clone_encoding_mismatch() {
+        let orig = FaultScenario::EncodingMismatch {
+            expected: "utf-8".to_string(),
+            actual: "latin-1".to_string(),
+        };
+        let cloned = orig.clone();
+        assert_eq!(orig, cloned);
+        if let FaultScenario::EncodingMismatch { expected, actual } = &cloned {
+            assert_eq!(expected, "utf-8");
+            assert_eq!(actual, "latin-1");
+        } else {
+            panic!("wrong variant after clone");
+        }
+    }
+
+    #[test]
+    fn enrichment_fault_scenario_ord_consistent() {
+        let a = FaultScenario::MalformedJson;
+        let b = FaultScenario::CorruptedPayload {
+            corruption_offset: 0,
+        };
+        // CorruptedPayload declared first, MalformedJson later.
+        assert!(b < a, "CorruptedPayload should sort before MalformedJson");
+    }
+
+    #[test]
+    fn enrichment_fault_scenario_json_field_replay() {
+        let s = FaultScenario::ReplayAttack {
+            original_nonce: 9999,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(
+            val.get("ReplayAttack").is_some(),
+            "expected ReplayAttack key in: {}",
+            json
+        );
+        let inner = val.get("ReplayAttack").unwrap();
+        assert_eq!(inner.get("original_nonce").unwrap().as_u64().unwrap(), 9999);
+    }
+
+    #[test]
+    fn enrichment_generated_vector_clone_deep() {
+        let v = GeneratedVector {
+            vector_id: "clone-test/0".to_string(),
+            description: "clone deep test".to_string(),
+            category: VectorCategory::Negative,
+            source_entry_id: "src/entry".to_string(),
+            boundary: SiblingRepo::Frankensqlite,
+            surface_kind: SurfaceKind::PersistenceSemantics,
+            input_json: "{\"k\":1}".to_string(),
+            expected_pass: false,
+            expected_regression_class: Some(RegressionClass::Breaking),
+            degraded_scenario: None,
+            fault_scenario: Some(FaultScenario::MalformedJson),
+            seed: 777,
+            covered_fields: ["a", "b"].iter().map(|s| s.to_string()).collect(),
+        };
+        let cloned = v.clone();
+        assert_eq!(v, cloned);
+        assert_eq!(cloned.covered_fields.len(), 2);
+        assert!(cloned.fault_scenario.is_some());
+    }
+
+    #[test]
+    fn enrichment_generated_vector_json_field_presence() {
+        let v = GeneratedVector {
+            vector_id: "field-check/0".to_string(),
+            description: "field presence test".to_string(),
+            category: VectorCategory::Degraded,
+            source_entry_id: "src/e2".to_string(),
+            boundary: SiblingRepo::Asupersync,
+            surface_kind: SurfaceKind::ApiMessage,
+            input_json: "{}".to_string(),
+            expected_pass: false,
+            expected_regression_class: Some(RegressionClass::Behavioral),
+            degraded_scenario: Some(DegradedScenario::EmptyResponse),
+            fault_scenario: None,
+            seed: 0,
+            covered_fields: BTreeSet::new(),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(val.get("vector_id").is_some());
+        assert!(val.get("category").is_some());
+        assert!(val.get("seed").is_some());
+        assert!(val.get("expected_pass").is_some());
+        assert!(val.get("degraded_scenario").is_some());
+        assert_eq!(val["expected_pass"].as_bool().unwrap(), false);
+    }
+
+    #[test]
+    fn enrichment_generator_config_clone_eq() {
+        let a = GeneratorConfig {
+            seed: 99,
+            max_positive_per_entry: 10,
+            max_negative_per_entry: 5,
+            max_degraded_per_entry: 2,
+            max_fault_per_entry: 1,
+            sibling_filter: [SiblingRepo::Asupersync].into_iter().collect(),
+            surface_filter: BTreeSet::new(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+        assert_eq!(b.seed, 99);
+        assert_eq!(b.sibling_filter.len(), 1);
+    }
+
+    #[test]
+    fn enrichment_generator_config_json_fields() {
+        let config = default_config();
+        let json = serde_json::to_string(&config).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["seed"].as_u64().unwrap(), 42);
+        assert_eq!(val["max_positive_per_entry"].as_u64().unwrap(), 3);
+        assert!(val["sibling_filter"].is_array());
+        assert!(val["surface_filter"].is_array());
+    }
+
+    #[test]
+    fn enrichment_generation_result_empty_catalog() {
+        let catalog = ConformanceCatalog::new(SemanticVersion::new(0, 1, 0));
+        let result = generate_vectors(&catalog, &default_config());
+        assert!(result.vectors.is_empty());
+        assert!(result.category_counts.is_empty());
+        assert!(result.boundary_counts.is_empty());
+        assert!(result.warnings.is_empty());
+        assert_eq!(result.count_by_category(VectorCategory::Positive), 0);
+        assert_eq!(result.count_by_category(VectorCategory::Fault), 0);
+        assert!(result.vector_ids().is_empty());
+    }
+
+    #[test]
+    fn enrichment_generation_result_count_by_boundary_nonexistent() {
+        let catalog = test_catalog();
+        let result = generate_vectors(&catalog, &default_config());
+        // SqlmodelRust may or may not have entries; check a boundary that
+        // we explicitly did not filter for — the method should return 0 or a
+        // valid count without panicking.
+        let count = result.count_by_boundary(SiblingRepo::SqlmodelRust);
+        assert!(count <= result.vectors.len());
+    }
+
+    #[test]
+    fn enrichment_boundary_property_clone_eq() {
+        let props = canonical_boundary_properties();
+        for p in &props {
+            let cloned = p.clone();
+            assert_eq!(*p, cloned);
+        }
+    }
+
+    #[test]
+    fn enrichment_boundary_property_json_fields() {
+        let props = canonical_boundary_properties();
+        let p = &props[0]; // "serde-roundtrip"
+        let json = serde_json::to_string(p).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(val.get("property_id").is_some());
+        assert!(val.get("description").is_some());
+        assert!(val.get("requires_roundtrip").is_some());
+        assert!(val.get("violation_class").is_some());
+        assert!(val.get("applicable_surfaces").is_some());
+    }
+
+    #[test]
+    fn enrichment_property_check_result_clone_failed() {
+        let r = PropertyCheckResult {
+            property_id: "field-presence-invariant".to_string(),
+            vector_id: "test/gen/negative/0".to_string(),
+            passed: false,
+            detail: "missing required field `foo`".to_string(),
+        };
+        let cloned = r.clone();
+        assert_eq!(r, cloned);
+        assert!(!cloned.passed);
+        assert!(cloned.detail.contains("foo"));
+    }
+
+    #[test]
+    fn enrichment_property_check_result_json_fields() {
+        let r = PropertyCheckResult {
+            property_id: "ordering-determinism".to_string(),
+            vector_id: "test/gen/positive/1".to_string(),
+            passed: true,
+            detail: "ok".to_string(),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["property_id"].as_str().unwrap(), "ordering-determinism");
+        assert_eq!(val["passed"].as_bool().unwrap(), true);
+        assert_eq!(val["detail"].as_str().unwrap(), "ok");
+    }
+
+    #[test]
+    fn enrichment_validate_property_coverage_empty_properties() {
+        let catalog = test_catalog();
+        let result = generate_vectors(&catalog, &default_config());
+        let gaps = validate_property_coverage(&result, &[]);
+        assert!(gaps.is_empty(), "empty properties should produce no gaps");
+    }
+
+    #[test]
+    fn enrichment_validate_property_coverage_empty_result() {
+        let empty_result = GenerationResult {
+            seed: 0,
+            catalog_version: SemanticVersion::new(1, 0, 0),
+            vectors: vec![],
+            category_counts: BTreeMap::new(),
+            boundary_counts: BTreeMap::new(),
+            warnings: vec![],
+        };
+        let props = canonical_boundary_properties();
+        let gaps = validate_property_coverage(&empty_result, &props);
+        // All properties should report gaps since there are no vectors.
+        assert!(
+            !gaps.is_empty(),
+            "empty result should have gaps against canonical properties"
+        );
+    }
+
+    #[test]
+    fn enrichment_det_rng_next_range_zero_returns_zero() {
+        let mut rng = DetRng::new(42);
+        assert_eq!(rng.next_range(0), 0);
+        assert_eq!(rng.next_range(0), 0);
+    }
+
+    #[test]
+    fn enrichment_det_rng_large_seed() {
+        let mut rng = DetRng::new(u64::MAX);
+        // Should not panic and should produce nonzero values.
+        let v1 = rng.next_u64();
+        let v2 = rng.next_u64();
+        assert_ne!(v1, v2, "large seed should still produce distinct values");
+    }
+
+    #[test]
+    fn enrichment_generate_vectors_zero_max_per_entry() {
+        let catalog = test_catalog();
+        let mut config = default_config();
+        config.max_positive_per_entry = 0;
+        config.max_negative_per_entry = 0;
+        config.max_degraded_per_entry = 0;
+        config.max_fault_per_entry = 0;
+
+        let result = generate_vectors(&catalog, &config);
+        assert!(
+            result.vectors.is_empty(),
+            "zero max should produce no vectors"
+        );
+    }
+
+    #[test]
+    fn enrichment_properties_for_telemetry_surface() {
+        let props = properties_for_surface(SurfaceKind::TelemetrySchema);
+        // Should include "telemetry-field-completeness" plus universals.
+        let ids: BTreeSet<String> = props.iter().map(|p| p.property_id.clone()).collect();
+        assert!(
+            ids.contains("telemetry-field-completeness"),
+            "TelemetrySchema should have telemetry-field-completeness property"
+        );
+        assert!(
+            ids.contains("serde-roundtrip"),
+            "TelemetrySchema should have serde-roundtrip property"
+        );
+    }
 }

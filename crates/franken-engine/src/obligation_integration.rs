@@ -1928,4 +1928,346 @@ mod tests {
         assert!(matches!(op.phase, OperationPhase::Phase1Active));
         assert_eq!(op.category, TwoPhaseCategory::StateMutation);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment tests — PearlTower 2026-03-02
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_two_phase_category_clone_eq() {
+        let cat = TwoPhaseCategory::StateMutation;
+        let cloned = cat;
+        assert_eq!(cat, cloned);
+        let cat2 = TwoPhaseCategory::ResourceAlloc;
+        assert_ne!(cat, cat2);
+    }
+
+    #[test]
+    fn enrichment_two_phase_category_hash_consistency() {
+        use std::collections::BTreeSet;
+        use std::hash::{Hash, Hasher};
+        let mut hasher1 = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher2 = std::collections::hash_map::DefaultHasher::new();
+        TwoPhaseCategory::EvidenceCommit.hash(&mut hasher1);
+        TwoPhaseCategory::EvidenceCommit.hash(&mut hasher2);
+        assert_eq!(hasher1.finish(), hasher2.finish());
+
+        // All four variants produce distinct hashes (with high probability)
+        let hashes: BTreeSet<u64> = [
+            TwoPhaseCategory::ResourceAlloc,
+            TwoPhaseCategory::PermissionGrant,
+            TwoPhaseCategory::StateMutation,
+            TwoPhaseCategory::EvidenceCommit,
+        ]
+        .iter()
+        .map(|c| {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            c.hash(&mut h);
+            h.finish()
+        })
+        .collect();
+        assert_eq!(hashes.len(), 4);
+    }
+
+    #[test]
+    fn enrichment_operation_phase_copy_semantics() {
+        let phase = OperationPhase::Committed;
+        let copied = phase;
+        assert_eq!(phase, copied);
+        // Both are still usable after copy
+        assert_eq!(phase.to_string(), "committed");
+        assert_eq!(copied.to_string(), "committed");
+    }
+
+    #[test]
+    fn enrichment_operation_phase_ordering() {
+        assert!(OperationPhase::Phase1Active < OperationPhase::Committed);
+        assert!(OperationPhase::Committed < OperationPhase::Aborted);
+        assert!(OperationPhase::Aborted < OperationPhase::Leaked);
+    }
+
+    #[test]
+    fn enrichment_operation_phase_hash_consistency() {
+        use std::hash::{Hash, Hasher};
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        OperationPhase::Aborted.hash(&mut h1);
+        OperationPhase::Aborted.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn enrichment_two_phase_operation_clone_eq() {
+        let op = TwoPhaseOperation {
+            operation_id: "op-x".to_string(),
+            cell_id: "c-1".to_string(),
+            category: TwoPhaseCategory::EvidenceCommit,
+            description: "evidence pair".to_string(),
+            trace_id: "trace-99".to_string(),
+            phase: OperationPhase::Phase1Active,
+        };
+        let cloned = op.clone();
+        assert_eq!(op, cloned);
+    }
+
+    #[test]
+    fn enrichment_two_phase_operation_json_field_names() {
+        let op = TwoPhaseOperation {
+            operation_id: "op-json".to_string(),
+            cell_id: "cell-json".to_string(),
+            category: TwoPhaseCategory::PermissionGrant,
+            description: "desc".to_string(),
+            trace_id: "trace-json".to_string(),
+            phase: OperationPhase::Committed,
+        };
+        let json = serde_json::to_value(&op).unwrap();
+        assert_eq!(json["operation_id"], "op-json");
+        assert_eq!(json["cell_id"], "cell-json");
+        assert_eq!(json["category"], "PermissionGrant");
+        assert_eq!(json["description"], "desc");
+        assert_eq!(json["trace_id"], "trace-json");
+        assert_eq!(json["phase"], "Committed");
+    }
+
+    #[test]
+    fn enrichment_obligation_event_json_field_names() {
+        let event = ObligationEvent {
+            trace_id: "t-1".to_string(),
+            cell_id: "c-1".to_string(),
+            cell_kind: CellKind::Session,
+            operation_id: "op-1".to_string(),
+            category: TwoPhaseCategory::StateMutation,
+            event: "begin".to_string(),
+            outcome: "phase1_active".to_string(),
+            component: "obligation_integration".to_string(),
+            phase: OperationPhase::Phase1Active,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["trace_id"], "t-1");
+        assert_eq!(json["cell_id"], "c-1");
+        assert_eq!(json["cell_kind"], "Session");
+        assert_eq!(json["operation_id"], "op-1");
+        assert_eq!(json["category"], "StateMutation");
+        assert_eq!(json["event"], "begin");
+        assert_eq!(json["outcome"], "phase1_active");
+        assert_eq!(json["component"], "obligation_integration");
+        assert_eq!(json["phase"], "Phase1Active");
+    }
+
+    #[test]
+    fn enrichment_leak_record_json_field_names() {
+        let leak = LeakRecord {
+            operation_id: "op-leak".to_string(),
+            cell_id: "cell-leak".to_string(),
+            category: TwoPhaseCategory::ResourceAlloc,
+            trace_id: "trace-leak".to_string(),
+            description: "leaked resource".to_string(),
+        };
+        let json = serde_json::to_value(&leak).unwrap();
+        assert_eq!(json["operation_id"], "op-leak");
+        assert_eq!(json["cell_id"], "cell-leak");
+        assert_eq!(json["category"], "ResourceAlloc");
+        assert_eq!(json["trace_id"], "trace-leak");
+        assert_eq!(json["description"], "leaked resource");
+    }
+
+    #[test]
+    fn enrichment_leak_record_clone_eq() {
+        let leak = LeakRecord {
+            operation_id: "op-1".to_string(),
+            cell_id: "c-1".to_string(),
+            category: TwoPhaseCategory::StateMutation,
+            trace_id: "t-1".to_string(),
+            description: "test leak".to_string(),
+        };
+        let cloned = leak.clone();
+        assert_eq!(leak, cloned);
+    }
+
+    #[test]
+    fn enrichment_category_stats_default_all_zero() {
+        let stats = CategoryStats::default();
+        assert_eq!(stats.started, 0);
+        assert_eq!(stats.committed, 0);
+        assert_eq!(stats.aborted, 0);
+        assert_eq!(stats.leaked, 0);
+    }
+
+    #[test]
+    fn enrichment_category_stats_json_field_names() {
+        let stats = CategoryStats {
+            started: 42,
+            committed: 30,
+            aborted: 10,
+            leaked: 2,
+        };
+        let json = serde_json::to_value(&stats).unwrap();
+        assert_eq!(json["started"], 42);
+        assert_eq!(json["committed"], 30);
+        assert_eq!(json["aborted"], 10);
+        assert_eq!(json["leaked"], 2);
+    }
+
+    #[test]
+    fn enrichment_error_display_contains_context() {
+        let err = ObligationIntegrationError::CellNotRunning {
+            cell_id: "cell-42".to_string(),
+            current_state: RegionState::Draining,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("cell-42"), "should contain cell_id");
+        assert!(msg.contains("draining"), "should contain state display");
+
+        let err2 = ObligationIntegrationError::AlreadyResolved {
+            operation_id: "op-99".to_string(),
+            current_phase: OperationPhase::Aborted,
+        };
+        let msg2 = err2.to_string();
+        assert!(msg2.contains("op-99"), "should contain operation_id");
+        assert!(msg2.contains("aborted"), "should contain phase display");
+    }
+
+    #[test]
+    fn enrichment_error_serde_all_variants() {
+        let errors = [
+            ObligationIntegrationError::CellNotRunning {
+                cell_id: "c".to_string(),
+                current_state: RegionState::Running,
+            },
+            ObligationIntegrationError::OperationNotFound {
+                operation_id: "op".to_string(),
+            },
+            ObligationIntegrationError::AlreadyResolved {
+                operation_id: "op".to_string(),
+                current_phase: OperationPhase::Leaked,
+            },
+            ObligationIntegrationError::DuplicateOperation {
+                operation_id: "op".to_string(),
+            },
+            ObligationIntegrationError::CellError {
+                message: "msg".to_string(),
+            },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: ObligationIntegrationError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    #[test]
+    fn enrichment_error_is_std_error() {
+        let err = ObligationIntegrationError::OperationNotFound {
+            operation_id: "x".to_string(),
+        };
+        // Verify it implements std::error::Error by using the trait
+        let dyn_err: &dyn std::error::Error = &err;
+        assert!(!dyn_err.to_string().is_empty());
+    }
+
+    #[test]
+    fn enrichment_abort_nonexistent_fails() {
+        let mut cell = ExecutionCell::new("ext-1", CellKind::Extension, "t");
+        let mut tracker = ObligationTracker::default();
+        let err = tracker
+            .abort_operation(&mut cell, "nonexistent")
+            .unwrap_err();
+        assert_eq!(err.error_code(), "obligation_operation_not_found");
+    }
+
+    #[test]
+    fn enrichment_commit_after_abort_fails() {
+        let mut cell = ExecutionCell::new("ext-1", CellKind::Extension, "t");
+        let mut tracker = ObligationTracker::default();
+        tracker
+            .begin_operation(&mut cell, "op-1", TwoPhaseCategory::ResourceAlloc, "res")
+            .unwrap();
+        tracker.abort_operation(&mut cell, "op-1").unwrap();
+        let err = tracker.commit_operation(&mut cell, "op-1").unwrap_err();
+        assert_eq!(err.error_code(), "obligation_already_resolved");
+        match err {
+            ObligationIntegrationError::AlreadyResolved { current_phase, .. } => {
+                assert_eq!(current_phase, OperationPhase::Aborted);
+            }
+            other => panic!("expected AlreadyResolved, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn enrichment_abort_emits_events() {
+        let mut cell = ExecutionCell::new("ext-1", CellKind::Extension, "t");
+        let mut tracker = ObligationTracker::default();
+        tracker
+            .begin_operation(
+                &mut cell,
+                "op-abort-ev",
+                TwoPhaseCategory::PermissionGrant,
+                "perm",
+            )
+            .unwrap();
+        tracker.abort_operation(&mut cell, "op-abort-ev").unwrap();
+
+        let events = tracker.events();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].event, "begin");
+        assert_eq!(events[0].phase, OperationPhase::Phase1Active);
+        assert_eq!(events[1].event, "abort");
+        assert_eq!(events[1].phase, OperationPhase::Aborted);
+        assert_eq!(events[1].operation_id, "op-abort-ev");
+    }
+
+    #[test]
+    fn enrichment_leak_stats_increment() {
+        let mut cell = ExecutionCell::new("ext-leak-stats", CellKind::Extension, "t");
+        let mut cx = mock_cx(200);
+        let mut tracker = ObligationTracker::default();
+
+        tracker
+            .begin_operation(
+                &mut cell,
+                "leak-stat-1",
+                TwoPhaseCategory::EvidenceCommit,
+                "evidence",
+            )
+            .unwrap();
+
+        cell.close(
+            &mut cx,
+            CancelReason::OperatorShutdown,
+            DrainDeadline { max_ticks: 5 },
+        )
+        .unwrap();
+
+        tracker.detect_leaks(&cell);
+
+        let stats = tracker.category_stats();
+        let ev_stats = stats.get(&TwoPhaseCategory::EvidenceCommit).unwrap();
+        assert_eq!(ev_stats.started, 1);
+        assert_eq!(ev_stats.leaked, 1);
+        assert_eq!(ev_stats.committed, 0);
+        assert_eq!(ev_stats.aborted, 0);
+    }
+
+    #[test]
+    fn enrichment_detect_leaks_idempotent_on_running_cell() {
+        let mut cell = ExecutionCell::new("ext-1", CellKind::Extension, "t");
+        let mut tracker = ObligationTracker::default();
+
+        tracker
+            .begin_operation(
+                &mut cell,
+                "op-still-active",
+                TwoPhaseCategory::ResourceAlloc,
+                "alloc",
+            )
+            .unwrap();
+
+        // Call detect_leaks multiple times on running cell — no leaks each time
+        for _ in 0..3 {
+            let leaks = tracker.detect_leaks(&cell);
+            assert!(leaks.is_empty());
+        }
+        assert!(!tracker.has_leaks());
+        assert_eq!(tracker.active_count(), 1);
+    }
 }

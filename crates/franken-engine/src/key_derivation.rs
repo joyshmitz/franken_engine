@@ -1504,4 +1504,234 @@ mod tests {
         // BTreeMap ensures deterministic order regardless of insertion order
         assert_eq!(ctx_a.to_canonical_bytes(), ctx_b.to_canonical_bytes());
     }
+
+    // ── Enrichment batch 5: copy/clone, JSON fields, separators ───────
+
+    #[test]
+    fn key_domain_copy_semantics() {
+        let d = KeyDomain::Symbol;
+        let copied = d;
+        assert_eq!(d, copied);
+    }
+
+    #[test]
+    fn derivation_context_clone_eq() {
+        let mut ctx = DerivationContext::empty();
+        ctx.add("k", "v");
+        let cloned = ctx.clone();
+        assert_eq!(ctx, cloned);
+    }
+
+    #[test]
+    fn derivation_request_clone_eq() {
+        let req = DerivationRequest {
+            master_key: vec![1, 2, 3],
+            epoch: SecurityEpoch::from_raw(5),
+            domain: KeyDomain::Session,
+            context: DerivationContext::with("k", "v"),
+            output_len: 32,
+        };
+        let cloned = req.clone();
+        assert_eq!(req, cloned);
+    }
+
+    #[test]
+    fn derived_key_clone_eq() {
+        let key = DerivedKey {
+            key_bytes: vec![10, 20, 30],
+            domain: KeyDomain::Evidence,
+            epoch: SecurityEpoch::from_raw(2),
+            context_hash: vec![99],
+        };
+        let cloned = key.clone();
+        assert_eq!(key, cloned);
+    }
+
+    #[test]
+    fn derivation_event_clone_eq() {
+        let event = DerivationEvent {
+            domain: KeyDomain::Attestation,
+            epoch: SecurityEpoch::from_raw(4),
+            context_hash: vec![1, 2],
+            algorithm: "test".to_string(),
+            trace_id: "t-1".to_string(),
+        };
+        let cloned = event.clone();
+        assert_eq!(event, cloned);
+    }
+
+    #[test]
+    fn derivation_event_json_fields_present() {
+        let event = DerivationEvent {
+            domain: KeyDomain::Symbol,
+            epoch: SecurityEpoch::from_raw(1),
+            context_hash: vec![5],
+            algorithm: "DeterministicTestDeriver".to_string(),
+            trace_id: "trace-001".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"domain\""));
+        assert!(json.contains("\"epoch\""));
+        assert!(json.contains("\"context_hash\""));
+        assert!(json.contains("\"algorithm\""));
+        assert!(json.contains("\"trace_id\""));
+    }
+
+    #[test]
+    fn derived_key_json_fields_present() {
+        let key = DerivedKey {
+            key_bytes: vec![1],
+            domain: KeyDomain::Symbol,
+            epoch: SecurityEpoch::from_raw(1),
+            context_hash: vec![0],
+        };
+        let json = serde_json::to_string(&key).unwrap();
+        assert!(json.contains("\"key_bytes\""));
+        assert!(json.contains("\"domain\""));
+        assert!(json.contains("\"epoch\""));
+        assert!(json.contains("\"context_hash\""));
+    }
+
+    #[test]
+    fn all_separators_start_with_franken_prefix() {
+        for domain in KeyDomain::ALL {
+            let sep = domain.separator();
+            assert!(
+                sep.starts_with(b"franken::"),
+                "separator for {domain:?} must start with 'franken::'"
+            );
+        }
+    }
+
+    #[test]
+    fn all_separators_end_with_double_colon() {
+        for domain in KeyDomain::ALL {
+            let sep = domain.separator();
+            assert!(
+                sep.ends_with(b"::"),
+                "separator for {domain:?} must end with '::'"
+            );
+        }
+    }
+
+    #[test]
+    fn cache_all_five_domains_produce_unique_keys() {
+        let mut cache = EpochKeyCache::new(
+            DeterministicTestDeriver,
+            test_master_key(),
+            SecurityEpoch::from_raw(1),
+            32,
+        );
+        let ctx = DerivationContext::empty();
+        let mut key_bytes_set = std::collections::BTreeSet::new();
+        for domain in KeyDomain::ALL {
+            let key = cache.get_or_derive(*domain, &ctx, "t").unwrap().clone();
+            key_bytes_set.insert(key.key_bytes);
+        }
+        assert_eq!(key_bytes_set.len(), 5, "all 5 domains produce unique keys");
+    }
+
+    #[test]
+    fn context_many_entries_canonical_sorted() {
+        let mut ctx = DerivationContext::empty();
+        ctx.add("zebra", "z");
+        ctx.add("apple", "a");
+        ctx.add("mango", "m");
+        let bytes = ctx.to_canonical_bytes();
+        let s = String::from_utf8_lossy(&bytes);
+        // BTreeMap sorts keys alphabetically: apple, mango, zebra
+        assert!(s.starts_with("apple=a"));
+        assert!(s.contains("mango=m"));
+        assert!(s.ends_with("zebra=z"));
+    }
+
+    #[test]
+    fn derivation_request_json_field_output_len() {
+        let req = DerivationRequest {
+            master_key: vec![1],
+            epoch: SecurityEpoch::from_raw(1),
+            domain: KeyDomain::Symbol,
+            context: DerivationContext::empty(),
+            output_len: 64,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"output_len\""));
+        assert!(json.contains("64"));
+    }
+
+    #[test]
+    fn derived_key_display_contains_domain_epoch_bytes() {
+        let key = DerivedKey {
+            key_bytes: vec![0; 16],
+            domain: KeyDomain::Evidence,
+            epoch: SecurityEpoch::from_raw(3),
+            context_hash: vec![],
+        };
+        let display = key.to_string();
+        assert!(display.contains("evidence"));
+        assert!(display.contains("3"));
+        assert!(display.contains("16 bytes"));
+    }
+
+    #[test]
+    fn cache_events_contain_correct_epoch() {
+        let mut cache = EpochKeyCache::new(
+            DeterministicTestDeriver,
+            test_master_key(),
+            SecurityEpoch::from_raw(10),
+            32,
+        );
+        cache
+            .get_or_derive(KeyDomain::Symbol, &DerivationContext::empty(), "t1")
+            .unwrap();
+        assert_eq!(cache.events()[0].epoch, SecurityEpoch::from_raw(10));
+
+        cache.advance_epoch(SecurityEpoch::from_raw(11)).unwrap();
+        cache
+            .get_or_derive(KeyDomain::Symbol, &DerivationContext::empty(), "t2")
+            .unwrap();
+        assert_eq!(cache.events()[1].epoch, SecurityEpoch::from_raw(11));
+    }
+
+    #[test]
+    fn key_domain_hash_consistent() {
+        use std::hash::{Hash, Hasher};
+        let d = KeyDomain::Authentication;
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        d.hash(&mut h1);
+        d.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn derivation_context_hash_consistent() {
+        use std::hash::{Hash, Hasher};
+        let ctx = DerivationContext::with("k", "v");
+        let mut h1 = std::collections::hash_map::DefaultHasher::new();
+        let mut h2 = std::collections::hash_map::DefaultHasher::new();
+        ctx.hash(&mut h1);
+        ctx.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn key_derivation_error_debug_not_empty() {
+        let errors = [
+            KeyDerivationError::EmptyMasterKey,
+            KeyDerivationError::ZeroOutputLength,
+            KeyDerivationError::OutputTooLong {
+                requested: 1,
+                max: 0,
+            },
+            KeyDerivationError::EpochMismatch {
+                key_epoch: SecurityEpoch::from_raw(1),
+                current_epoch: SecurityEpoch::from_raw(2),
+            },
+            KeyDerivationError::DerivationFailed { reason: "r".into() },
+        ];
+        for e in &errors {
+            assert!(!format!("{e:?}").is_empty());
+        }
+    }
 }

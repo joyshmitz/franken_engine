@@ -1184,4 +1184,269 @@ mod tests {
         rt.advance_time(3);
         assert_eq!(rt.now(), 6);
     }
+
+    // ---- enrichment tests ----
+
+    #[test]
+    fn enrichment_virtual_clock_clone_eq() {
+        let mut clock = VirtualClock::new();
+        clock.advance(42);
+        let cloned = clock.clone();
+        assert_eq!(clock, cloned);
+    }
+
+    #[test]
+    fn enrichment_virtual_clock_ne_after_divergence() {
+        let mut a = VirtualClock::new();
+        let mut b = VirtualClock::new();
+        a.advance(10);
+        b.advance(20);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn enrichment_task_state_copy_semantics() {
+        let state = TaskState::Running;
+        let copied = state; // Copy
+        assert_eq!(state, copied);
+        // Both still usable after copy
+        assert_eq!(state.to_string(), "running");
+        assert_eq!(copied.to_string(), "running");
+    }
+
+    #[test]
+    fn enrichment_fault_kind_clone_eq() {
+        let faults = [
+            FaultKind::Panic,
+            FaultKind::ChannelDisconnect,
+            FaultKind::ObligationLeak,
+            FaultKind::DeadlineExpired,
+            FaultKind::RegionClose,
+        ];
+        for f in &faults {
+            let cloned = f.clone();
+            assert_eq!(*f, cloned);
+        }
+    }
+
+    #[test]
+    fn enrichment_verdict_clone_eq() {
+        let pass = Verdict::Pass;
+        assert_eq!(pass.clone(), pass);
+
+        let fail = Verdict::Fail {
+            reason: "oops".to_string(),
+        };
+        assert_eq!(fail.clone(), fail);
+    }
+
+    #[test]
+    fn enrichment_lab_event_clone_eq() {
+        let event = LabEvent {
+            virtual_time: 100,
+            step_index: 3,
+            action: "run_task".to_string(),
+            task_id: Some(1),
+            region_id: None,
+            outcome: "running".to_string(),
+        };
+        let cloned = event.clone();
+        assert_eq!(event, cloned);
+    }
+
+    #[test]
+    fn enrichment_schedule_transcript_clone_eq() {
+        let mut t = ScheduleTranscript::new(99);
+        t.push(ScheduleAction::RunTask { task_id: 1 });
+        t.push(ScheduleAction::AdvanceTime { ticks: 50 });
+        let cloned = t.clone();
+        assert_eq!(t, cloned);
+        assert_eq!(t.len(), cloned.len());
+        assert_eq!(t.seed, cloned.seed);
+    }
+
+    #[test]
+    fn enrichment_lab_run_result_json_field_names() {
+        let result = LabRunResult {
+            seed: 7,
+            transcript: ScheduleTranscript::new(7),
+            events: Vec::new(),
+            final_time: 42,
+            tasks_completed: 3,
+            tasks_faulted: 1,
+            tasks_cancelled: 2,
+            verdict: Verdict::Pass,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = val.as_object().unwrap();
+        assert!(obj.contains_key("seed"));
+        assert!(obj.contains_key("transcript"));
+        assert!(obj.contains_key("events"));
+        assert!(obj.contains_key("final_time"));
+        assert!(obj.contains_key("tasks_completed"));
+        assert!(obj.contains_key("tasks_faulted"));
+        assert!(obj.contains_key("tasks_cancelled"));
+        assert!(obj.contains_key("verdict"));
+        assert_eq!(obj["seed"], 7);
+        assert_eq!(obj["final_time"], 42);
+        assert_eq!(obj["tasks_completed"], 3);
+        assert_eq!(obj["tasks_faulted"], 1);
+        assert_eq!(obj["tasks_cancelled"], 2);
+    }
+
+    #[test]
+    fn enrichment_schedule_action_json_tag_runtask() {
+        let action = ScheduleAction::RunTask { task_id: 5 };
+        let json = serde_json::to_string(&action).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["RunTask"]["task_id"], 5);
+    }
+
+    #[test]
+    fn enrichment_schedule_action_json_tag_inject_fault() {
+        let action = ScheduleAction::InjectFault {
+            task_id: 3,
+            fault: FaultKind::DeadlineExpired,
+        };
+        let json = serde_json::to_string(&action).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(val["InjectFault"]["task_id"], 3);
+        assert_eq!(val["InjectFault"]["fault"], "DeadlineExpired");
+    }
+
+    #[test]
+    fn enrichment_lab_event_json_field_names() {
+        let event = LabEvent {
+            virtual_time: 500,
+            step_index: 10,
+            action: "inject_cancel".to_string(),
+            task_id: None,
+            region_id: Some("zone-alpha".to_string()),
+            outcome: "cancel_injected".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = val.as_object().unwrap();
+        assert!(obj.contains_key("virtual_time"));
+        assert!(obj.contains_key("step_index"));
+        assert!(obj.contains_key("action"));
+        assert!(obj.contains_key("task_id"));
+        assert!(obj.contains_key("region_id"));
+        assert!(obj.contains_key("outcome"));
+        assert_eq!(obj["virtual_time"], 500);
+        assert!(obj["task_id"].is_null());
+        assert_eq!(obj["region_id"], "zone-alpha");
+    }
+
+    #[test]
+    fn enrichment_refault_already_faulted_task() {
+        let mut rt = LabRuntime::new(42);
+        let id = rt.spawn_task();
+        rt.inject_fault(id, FaultKind::Panic);
+        assert_eq!(rt.task_state(id), Some(TaskState::Faulted));
+        // Injecting another fault on already-faulted task still returns true
+        assert!(rt.inject_fault(id, FaultKind::ChannelDisconnect));
+        assert_eq!(rt.task_state(id), Some(TaskState::Faulted));
+    }
+
+    #[test]
+    fn enrichment_many_tasks_stress() {
+        let mut rt = LabRuntime::new(42);
+        let mut ids = Vec::new();
+        for _ in 0..100 {
+            ids.push(rt.spawn_task());
+        }
+        assert_eq!(rt.task_count(), 100);
+        // IDs are sequential starting at 1
+        for (i, &id) in ids.iter().enumerate() {
+            assert_eq!(id, (i + 1) as u64);
+        }
+        // Run, complete half; fault the other half
+        for (i, &id) in ids.iter().enumerate() {
+            rt.run_task(id);
+            if i < 50 {
+                rt.complete_task(id);
+            } else {
+                rt.inject_fault(id, FaultKind::ObligationLeak);
+            }
+        }
+        let result = rt.finalize();
+        assert_eq!(result.tasks_completed, 50);
+        assert_eq!(result.tasks_faulted, 50);
+    }
+
+    #[test]
+    fn enrichment_transcript_push_increments_len() {
+        let mut t = ScheduleTranscript::new(0);
+        assert!(t.is_empty());
+        t.push(ScheduleAction::AdvanceTime { ticks: 1 });
+        assert_eq!(t.len(), 1);
+        assert!(!t.is_empty());
+        t.push(ScheduleAction::RunTask { task_id: 1 });
+        assert_eq!(t.len(), 2);
+        t.push(ScheduleAction::FireTimer { timer_id: 99 });
+        assert_eq!(t.len(), 3);
+    }
+
+    #[test]
+    fn enrichment_replay_advance_time_only() {
+        let mut transcript = ScheduleTranscript::new(55);
+        transcript.push(ScheduleAction::AdvanceTime { ticks: 10 });
+        transcript.push(ScheduleAction::AdvanceTime { ticks: 20 });
+        transcript.push(ScheduleAction::AdvanceTime { ticks: 30 });
+        let events = replay_transcript(&transcript);
+        assert_eq!(events.len(), 3);
+        // Virtual time increments: 10, 30, 60
+        assert_eq!(events[0].virtual_time, 10);
+        assert_eq!(events[1].virtual_time, 30);
+        assert_eq!(events[2].virtual_time, 60);
+        assert!(events.iter().all(|e| e.action == "advance_time"));
+    }
+
+    #[test]
+    fn enrichment_replay_inject_cancel_produces_event() {
+        let mut transcript = ScheduleTranscript::new(1);
+        transcript.push(ScheduleAction::InjectCancel {
+            region_id: "zone-42".to_string(),
+        });
+        let events = replay_transcript(&transcript);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].action, "inject_cancel");
+        assert_eq!(events[0].region_id, Some("zone-42".to_string()));
+        assert_eq!(events[0].outcome, "cancel_injected");
+    }
+
+    #[test]
+    fn enrichment_complete_nonexistent_task_returns_false() {
+        let mut rt = LabRuntime::new(42);
+        assert!(!rt.complete_task(999));
+    }
+
+    #[test]
+    fn enrichment_cancel_nonexistent_task_returns_false() {
+        let mut rt = LabRuntime::new(42);
+        assert!(!rt.cancel_task(999));
+    }
+
+    #[test]
+    fn enrichment_verdict_display_exact_format() {
+        assert_eq!(format!("{}", Verdict::Pass), "PASS");
+        let fail = Verdict::Fail {
+            reason: "3 tasks faulted".to_string(),
+        };
+        assert_eq!(format!("{}", fail), "FAIL: 3 tasks faulted");
+    }
+
+    #[test]
+    fn enrichment_virtual_clock_large_ticks() {
+        let mut clock = VirtualClock::new();
+        clock.advance(u64::MAX / 2);
+        assert_eq!(clock.now(), u64::MAX / 2);
+        // advance_to with same value is fine
+        assert!(clock.advance_to(u64::MAX / 2));
+        // advance_to with larger value
+        assert!(clock.advance_to(u64::MAX - 1));
+        assert_eq!(clock.now(), u64::MAX - 1);
+    }
 }

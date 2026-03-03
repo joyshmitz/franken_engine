@@ -2019,4 +2019,215 @@ mod tests {
         };
         assert_eq!(err.error_code(), FrankenErrorCode::EvidenceOrderingError);
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn error_severity_serde_exact_snake_case_strings() {
+        assert_eq!(
+            serde_json::to_string(&ErrorSeverity::Critical).unwrap(),
+            "\"critical\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ErrorSeverity::Error).unwrap(),
+            "\"error\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ErrorSeverity::Warning).unwrap(),
+            "\"warning\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ErrorSeverity::Info).unwrap(),
+            "\"info\""
+        );
+    }
+
+    #[test]
+    fn error_subsystem_serde_exact_snake_case_strings() {
+        let expected = [
+            (
+                ErrorSubsystem::SerializationEncoding,
+                "\"serialization_encoding\"",
+            ),
+            (
+                ErrorSubsystem::IdentityAuthentication,
+                "\"identity_authentication\"",
+            ),
+            (
+                ErrorSubsystem::CapabilityAuthorization,
+                "\"capability_authorization\"",
+            ),
+            (ErrorSubsystem::CheckpointPolicy, "\"checkpoint_policy\""),
+            (ErrorSubsystem::Revocation, "\"revocation\""),
+            (ErrorSubsystem::SessionChannel, "\"session_channel\""),
+            (ErrorSubsystem::ZoneScope, "\"zone_scope\""),
+            (
+                ErrorSubsystem::AuditObservability,
+                "\"audit_observability\"",
+            ),
+            (
+                ErrorSubsystem::LifecycleMigration,
+                "\"lifecycle_migration\"",
+            ),
+            (ErrorSubsystem::Reserved, "\"reserved\""),
+        ];
+        for (sub, json_str) in expected {
+            assert_eq!(
+                serde_json::to_string(&sub).unwrap(),
+                json_str,
+                "serde string mismatch for {sub:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn error_subsystem_range_exact_values_all_10() {
+        let expected: [(ErrorSubsystem, u16, u16); 10] = [
+            (ErrorSubsystem::SerializationEncoding, 1, 999),
+            (ErrorSubsystem::IdentityAuthentication, 1000, 1999),
+            (ErrorSubsystem::CapabilityAuthorization, 2000, 2999),
+            (ErrorSubsystem::CheckpointPolicy, 3000, 3999),
+            (ErrorSubsystem::Revocation, 4000, 4999),
+            (ErrorSubsystem::SessionChannel, 5000, 5999),
+            (ErrorSubsystem::ZoneScope, 6000, 6999),
+            (ErrorSubsystem::AuditObservability, 7000, 7999),
+            (ErrorSubsystem::LifecycleMigration, 8000, 8999),
+            (ErrorSubsystem::Reserved, 9000, 9999),
+        ];
+        for (sub, exp_start, exp_end) in expected {
+            let (start, end) = sub.range();
+            assert_eq!(start, exp_start, "{sub:?} start");
+            assert_eq!(end, exp_end, "{sub:?} end");
+        }
+    }
+
+    #[test]
+    fn all_error_codes_monotonically_sorted_by_numeric() {
+        for pair in ALL_ERROR_CODES.windows(2) {
+            assert!(
+                pair[0].numeric() < pair[1].numeric(),
+                "ALL_ERROR_CODES not monotonic: {} >= {}",
+                pair[0].numeric(),
+                pair[1].numeric()
+            );
+        }
+    }
+
+    #[test]
+    fn stable_code_exact_strings_representative() {
+        assert_eq!(
+            FrankenErrorCode::NonCanonicalEncodingError.stable_code(),
+            "FE-0001"
+        );
+        assert_eq!(
+            FrankenErrorCode::EngineObjectIdError.stable_code(),
+            "FE-1000"
+        );
+        assert_eq!(
+            FrankenErrorCode::CapabilityDeniedError.stable_code(),
+            "FE-2000"
+        );
+        assert_eq!(
+            FrankenErrorCode::PolicyCheckpointValidationError.stable_code(),
+            "FE-3000"
+        );
+        assert_eq!(
+            FrankenErrorCode::RevocationChainIntegrityError.stable_code(),
+            "FE-4000"
+        );
+        assert_eq!(
+            FrankenErrorCode::LeaseLifecycleError.stable_code(),
+            "FE-5000"
+        );
+        assert_eq!(
+            FrankenErrorCode::AllocationDomainBudgetError.stable_code(),
+            "FE-6000"
+        );
+        assert_eq!(
+            FrankenErrorCode::EvidenceContractError.stable_code(),
+            "FE-7000"
+        );
+        assert_eq!(
+            FrankenErrorCode::EpochMonotonicityViolation.stable_code(),
+            "FE-8000"
+        );
+    }
+
+    #[test]
+    fn description_exact_for_representative_codes() {
+        assert_eq!(
+            FrankenErrorCode::NonCanonicalEncodingError.description(),
+            "Canonical encoding guard rejected non-canonical input."
+        );
+        assert_eq!(
+            FrankenErrorCode::ForkDetectionError.description(),
+            "Fork detection pipeline identified divergence or safe-mode policy violation."
+        );
+        assert_eq!(
+            FrankenErrorCode::EpochMonotonicityViolation.description(),
+            "Security epoch monotonicity violation detected (attempted regression)."
+        );
+    }
+
+    #[test]
+    fn has_error_code_gc_error_domain_error_variant() {
+        let inner = AllocDomainError::BudgetOverflow;
+        let err = GcError::DomainError(inner);
+        assert_eq!(err.error_code(), FrankenErrorCode::GarbageCollectionError);
+    }
+
+    #[test]
+    fn franken_error_code_hash_consistent_for_equal_values() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let a = FrankenErrorCode::CapabilityDeniedError;
+        let b = FrankenErrorCode::CapabilityDeniedError;
+        let mut ha = DefaultHasher::new();
+        let mut hb = DefaultHasher::new();
+        a.hash(&mut ha);
+        b.hash(&mut hb);
+        assert_eq!(ha.finish(), hb.finish());
+
+        // Different codes produce different hashes (probabilistic but deterministic)
+        let c = FrankenErrorCode::EvalRuntimeError;
+        let mut hc = DefaultHasher::new();
+        c.hash(&mut hc);
+        assert_ne!(ha.finish(), hc.finish());
+    }
+
+    #[test]
+    fn error_code_entry_serde_json_keys_present() {
+        let entry = FrankenErrorCode::DeterministicSerdeError.to_registry_entry();
+        let json = serde_json::to_value(&entry).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(obj.contains_key("code"));
+        assert!(obj.contains_key("numeric"));
+        assert!(obj.contains_key("subsystem"));
+        assert!(obj.contains_key("severity"));
+        assert!(obj.contains_key("description"));
+        assert!(obj.contains_key("operator_action"));
+        assert!(obj.contains_key("deprecated"));
+    }
+
+    #[test]
+    fn registry_entries_count_matches_all_error_codes() {
+        let registry = error_code_registry();
+        assert_eq!(registry.entries.len(), ALL_ERROR_CODES.len());
+        for (entry, code) in registry.entries.iter().zip(ALL_ERROR_CODES.iter()) {
+            assert_eq!(entry.numeric, code.numeric());
+        }
+    }
+
+    #[test]
+    fn operator_action_exact_for_representative_codes() {
+        assert_eq!(
+            FrankenErrorCode::NonCanonicalEncodingError.operator_action(),
+            "Reject payload, log trace_id, and re-emit canonical bytes from trusted source."
+        );
+        assert_eq!(
+            FrankenErrorCode::ForkDetectionError.operator_action(),
+            "Keep safe mode active until incident is acknowledged and resolved with signed evidence."
+        );
+    }
 }

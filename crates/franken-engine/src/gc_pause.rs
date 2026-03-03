@@ -1337,10 +1337,7 @@ mod tests {
         let json = serde_json::to_string(&tracker).unwrap();
         let back: PauseTracker = serde_json::from_str(&json).unwrap();
         assert_eq!(tracker.count(), back.count());
-        assert_eq!(
-            tracker.global_percentiles(),
-            back.global_percentiles()
-        );
+        assert_eq!(tracker.global_percentiles(), back.global_percentiles());
     }
 
     #[test]

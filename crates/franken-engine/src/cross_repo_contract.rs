@@ -1997,4 +1997,331 @@ mod tests {
         b.sort();
         assert_eq!(a, b);
     }
+
+    // ── enrichment: Copy semantics ──────────────────────────────────────
+
+    #[test]
+    fn enrichment_regression_class_copy_semantics() {
+        let a = RegressionClass::Breaking;
+        let b = a; // Copy
+        let c = a; // still valid after copy
+        assert_eq!(b, c);
+        assert_eq!(a, RegressionClass::Breaking);
+    }
+
+    #[test]
+    fn enrichment_field_type_copy_semantics() {
+        let a = FieldType::Object;
+        let b = a; // Copy
+        let c = a; // still valid after copy
+        assert_eq!(b, c);
+        assert_eq!(a, FieldType::Object);
+    }
+
+    // ── enrichment: BTreeSet deduplication via Ord ──────────────────────
+
+    #[test]
+    fn enrichment_regression_class_btreeset_dedup() {
+        let mut set = BTreeSet::new();
+        set.insert(RegressionClass::Breaking);
+        set.insert(RegressionClass::Breaking);
+        set.insert(RegressionClass::Behavioral);
+        set.insert(RegressionClass::Behavioral);
+        set.insert(RegressionClass::Observability);
+        set.insert(RegressionClass::Performance);
+        assert_eq!(set.len(), 4, "BTreeSet should deduplicate identical variants");
+    }
+
+    #[test]
+    fn enrichment_field_type_btreeset_dedup() {
+        let mut set = BTreeSet::new();
+        set.insert(FieldType::String);
+        set.insert(FieldType::String);
+        set.insert(FieldType::Number);
+        set.insert(FieldType::Number);
+        set.insert(FieldType::Bool);
+        set.insert(FieldType::Array);
+        set.insert(FieldType::Object);
+        set.insert(FieldType::Null);
+        assert_eq!(set.len(), 6, "BTreeSet should deduplicate identical FieldType variants");
+    }
+
+    // ── enrichment: Display exact format ────────────────────────────────
+
+    #[test]
+    fn enrichment_contract_violation_display_exact_format() {
+        let v = ContractViolation {
+            boundary: "mybound".to_string(),
+            contract_name: "MyType".to_string(),
+            regression_class: RegressionClass::Performance,
+            detail: "latency 200ms > 100ms".to_string(),
+        };
+        assert_eq!(
+            v.to_string(),
+            "[PERFORMANCE] mybound/MyType: latency 200ms > 100ms"
+        );
+    }
+
+    #[test]
+    fn enrichment_contract_suite_result_display_exact_format() {
+        let r = ContractSuiteResult {
+            total_contracts: 15,
+            passed: 12,
+            failed: 3,
+            violations: Vec::new(),
+            boundaries_covered: {
+                let mut s = BTreeSet::new();
+                s.insert("a".to_string());
+                s.insert("b".to_string());
+                s
+            },
+        };
+        assert_eq!(
+            r.to_string(),
+            "contracts=15 passed=12 failed=3 boundaries=2"
+        );
+    }
+
+    // ── enrichment: SchemaContract JSON field presence ──────────────────
+
+    #[test]
+    fn enrichment_json_field_presence_schema_contract() {
+        let contract = SchemaContract {
+            boundary: "test".to_string(),
+            type_name: "TestType".to_string(),
+            required_fields: {
+                let mut s = BTreeSet::new();
+                s.insert("alpha".to_string());
+                s
+            },
+            field_types: {
+                let mut m = BTreeMap::new();
+                m.insert("alpha".to_string(), FieldType::String);
+                m
+            },
+        };
+        let json = serde_json::to_string(&contract).unwrap();
+        assert!(json.contains("\"boundary\""));
+        assert!(json.contains("\"type_name\""));
+        assert!(json.contains("\"required_fields\""));
+        assert!(json.contains("\"field_types\""));
+    }
+
+    // ── enrichment: verify edge cases ──────────────────────────────────
+
+    #[test]
+    fn enrichment_schema_contract_verify_null_field_skips_type_check() {
+        // When a field is present but null, the let-chain `!value.is_null()`
+        // should skip the type mismatch check.
+        let mut types = BTreeMap::new();
+        types.insert("optional_field".to_string(), FieldType::Number);
+        let contract = SchemaContract {
+            boundary: "test".to_string(),
+            type_name: "NullCheck".to_string(),
+            required_fields: BTreeSet::new(),
+            field_types: types,
+        };
+        let json = serde_json::json!({"optional_field": null});
+        let violations = contract.verify(&json);
+        assert!(violations.is_empty(), "null field should not trigger type mismatch");
+    }
+
+    #[test]
+    fn enrichment_schema_contract_verify_multiple_missing_fields() {
+        let contract = frankentui_envelope_contract();
+        // Empty object => all 6 required fields missing
+        let json = serde_json::json!({});
+        let violations = contract.verify(&json);
+        assert_eq!(violations.len(), 6, "should report all 6 missing required fields");
+        for v in &violations {
+            assert_eq!(v.regression_class, RegressionClass::Breaking);
+            assert!(v.detail.starts_with("missing required field"));
+        }
+    }
+
+    #[test]
+    fn enrichment_schema_contract_verify_extra_fields_no_violation() {
+        let contract = frankensqlite_store_record_contract();
+        let json = serde_json::json!({
+            "store": "ReplayIndex",
+            "key": "k1",
+            "value": [1],
+            "metadata": {},
+            "revision": 1,
+            "extra_field": "should not cause a violation"
+        });
+        let violations = contract.verify(&json);
+        assert!(violations.is_empty(), "extra fields should not cause violations");
+    }
+
+    // ── enrichment: verify_structured_log non-object ────────────────────
+
+    #[test]
+    fn enrichment_verify_structured_log_non_object_input() {
+        let violations = verify_structured_log(&serde_json::json!(42), "test_boundary");
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].regression_class, RegressionClass::Observability);
+        assert!(violations[0].detail.contains("must be a JSON object"));
+    }
+
+    // ── enrichment: ContractSuiteResult is_passing logic ────────────────
+
+    #[test]
+    fn enrichment_contract_suite_result_is_passing_with_violations() {
+        let result = ContractSuiteResult {
+            total_contracts: 5,
+            passed: 4,
+            failed: 1,
+            violations: vec![ContractViolation {
+                boundary: "b".to_string(),
+                contract_name: "T".to_string(),
+                regression_class: RegressionClass::Breaking,
+                detail: "d".to_string(),
+            }],
+            boundaries_covered: BTreeSet::new(),
+        };
+        assert!(!result.is_passing(), "should not be passing when violations exist");
+    }
+
+    // ── enrichment: FieldType negative matches ──────────────────────────
+
+    #[test]
+    fn enrichment_field_type_matches_negative_cross_checks() {
+        // Each FieldType should NOT match values of other types.
+        let pairs: Vec<(FieldType, Value)> = vec![
+            (FieldType::String, serde_json::json!(42)),
+            (FieldType::Number, serde_json::json!("text")),
+            (FieldType::Bool, serde_json::json!([])),
+            (FieldType::Array, serde_json::json!({})),
+            (FieldType::Object, serde_json::json!(true)),
+            (FieldType::Null, serde_json::json!("not null")),
+        ];
+        for (ft, val) in &pairs {
+            assert!(
+                !ft.matches(val),
+                "{ft} should not match {val}"
+            );
+        }
+    }
+
+    // ── enrichment: RegressionClass Ord sort stability ──────────────────
+
+    #[test]
+    fn enrichment_regression_class_ord_sort_stability() {
+        let mut a = vec![
+            RegressionClass::Performance,
+            RegressionClass::Breaking,
+            RegressionClass::Observability,
+            RegressionClass::Behavioral,
+        ];
+        let mut b = a.clone();
+        b.reverse();
+        a.sort();
+        b.sort();
+        assert_eq!(a, b, "sort must be deterministic regardless of initial order");
+        assert_eq!(a[0], RegressionClass::Breaking);
+        assert_eq!(a[3], RegressionClass::Performance);
+    }
+
+    // ── enrichment: VersionCompatibilityEntry inequality ────────────────
+
+    #[test]
+    fn enrichment_version_compatibility_entry_inequality() {
+        let a = VersionCompatibilityEntry {
+            boundary: "frankentui".to_string(),
+            current_version: 3,
+            minimum_compatible_version: 1,
+        };
+        let b = VersionCompatibilityEntry {
+            boundary: "frankentui".to_string(),
+            current_version: 4,
+            minimum_compatible_version: 2,
+        };
+        assert_ne!(a, b, "entries with different versions must not be equal");
+    }
+
+    // ── enrichment: serde variant names ─────────────────────────────────
+
+    #[test]
+    fn enrichment_regression_class_serde_variant_names_stable() {
+        let pairs = [
+            (RegressionClass::Breaking, "Breaking"),
+            (RegressionClass::Behavioral, "Behavioral"),
+            (RegressionClass::Observability, "Observability"),
+            (RegressionClass::Performance, "Performance"),
+        ];
+        for (variant, expected_name) in &pairs {
+            let json = serde_json::to_value(variant).unwrap();
+            assert_eq!(json.as_str().unwrap(), *expected_name);
+        }
+    }
+
+    // ── enrichment: contract builders boundary names ────────────────────
+
+    #[test]
+    fn enrichment_contract_builders_return_correct_boundary_names() {
+        assert_eq!(frankentui_envelope_contract().boundary, "frankentui");
+        assert_eq!(frankensqlite_store_record_contract().boundary, "frankensqlite");
+        assert_eq!(fastapi_endpoint_response_contract().boundary, "fastapi_rust");
+        assert_eq!(frankensqlite_storage_event_contract().boundary, "frankensqlite");
+        assert_eq!(frankensqlite_migration_receipt_contract().boundary, "frankensqlite");
+    }
+
+    // ── enrichment: integration point inventory uniqueness ──────────────
+
+    #[test]
+    fn enrichment_integration_point_inventory_types_unique_within_boundary() {
+        let inventory = integration_point_inventory();
+        for (boundary, types) in &inventory {
+            let unique: BTreeSet<&String> = types.iter().collect();
+            assert_eq!(
+                unique.len(),
+                types.len(),
+                "boundary {boundary} has duplicate type names"
+            );
+        }
+    }
+
+    // ── enrichment: verify_deterministic_serde contract ─────────────────
+
+    #[test]
+    fn enrichment_verify_deterministic_serde_all_core_types() {
+        // Verify every module-defined type round-trips deterministically.
+        verify_deterministic_serde(&RegressionClass::Observability).unwrap();
+        verify_deterministic_serde(&FieldType::Bool).unwrap();
+        verify_deterministic_serde(&ContractViolation {
+            boundary: "b".to_string(),
+            contract_name: "c".to_string(),
+            regression_class: RegressionClass::Performance,
+            detail: "d".to_string(),
+        })
+        .unwrap();
+        verify_deterministic_serde(&frankentui_envelope_contract()).unwrap();
+        verify_deterministic_serde(&VersionCompatibilityEntry {
+            boundary: "x".to_string(),
+            current_version: 1,
+            minimum_compatible_version: 1,
+        })
+        .unwrap();
+    }
+
+    // ── enrichment: verify_schema_compliance serialization failure ──────
+
+    #[test]
+    fn enrichment_schema_contract_verify_mixed_type_and_missing_violations() {
+        let contract = frankensqlite_store_record_contract();
+        // "revision" wrong type AND "metadata" missing
+        let json = serde_json::json!({
+            "store": "ReplayIndex",
+            "key": "k1",
+            "value": [1],
+            "revision": "bad_type"
+        });
+        let violations = contract.verify(&json);
+        assert!(violations.len() >= 2, "expect at least missing + type mismatch violations");
+        let has_missing = violations.iter().any(|v| v.detail.contains("missing required field"));
+        let has_type = violations.iter().any(|v| v.detail.contains("expected type"));
+        assert!(has_missing, "should report missing field");
+        assert!(has_type, "should report type mismatch");
+    }
 }

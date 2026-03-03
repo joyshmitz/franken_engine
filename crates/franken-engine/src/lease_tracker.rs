@@ -1625,4 +1625,307 @@ mod tests {
         };
         assert!(a3.to_string().contains("my-sess"));
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn enrichment_lease_id_ord_determinism_in_btreeset() {
+        use std::collections::BTreeSet;
+        let ids: BTreeSet<LeaseId> = (0..5).rev().map(LeaseId::from_raw).collect();
+        let ordered: Vec<u64> = ids.iter().map(|id| id.as_u64()).collect();
+        assert_eq!(ordered, vec![0, 1, 2, 3, 4], "LeaseId Ord must sort by raw u64");
+    }
+
+    #[test]
+    fn enrichment_lease_id_clone_independence() {
+        let original = LeaseId::from_raw(77);
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        // They are distinct allocations (struct identity, not ref equality).
+        assert_eq!(cloned.as_u64(), 77);
+    }
+
+    #[test]
+    fn enrichment_lease_id_hash_in_btreeset_dedup() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(LeaseId::from_raw(10));
+        set.insert(LeaseId::from_raw(10));
+        set.insert(LeaseId::from_raw(20));
+        assert_eq!(set.len(), 2, "duplicate LeaseId should be deduplicated");
+    }
+
+    #[test]
+    fn enrichment_lease_id_display_zero() {
+        assert_eq!(LeaseId::from_raw(0).to_string(), "lease:0");
+    }
+
+    #[test]
+    fn enrichment_lease_id_display_u64_max() {
+        let id = LeaseId::from_raw(u64::MAX);
+        let s = id.to_string();
+        assert_eq!(s, format!("lease:{}", u64::MAX));
+        assert_eq!(id.as_u64(), u64::MAX);
+    }
+
+    #[test]
+    fn enrichment_lease_type_copy_semantics() {
+        let t = LeaseType::Session;
+        let copy = t;
+        // Both are usable after copy — proves Copy semantics.
+        assert_eq!(t, copy);
+        assert_eq!(t.to_string(), copy.to_string());
+    }
+
+    #[test]
+    fn enrichment_lease_type_ord_determinism() {
+        // Derive order follows declaration: RemoteEndpoint < Operation < Session.
+        assert!(LeaseType::RemoteEndpoint < LeaseType::Operation);
+        assert!(LeaseType::Operation < LeaseType::Session);
+    }
+
+    #[test]
+    fn enrichment_lease_status_copy_semantics() {
+        let s = LeaseStatus::Expired;
+        let copy = s;
+        assert_eq!(s, copy);
+        assert_eq!(s.to_string(), "expired");
+    }
+
+    #[test]
+    fn enrichment_lease_status_ord_determinism() {
+        // Derive order follows declaration: Active < Expired < Released.
+        assert!(LeaseStatus::Active < LeaseStatus::Expired);
+        assert!(LeaseStatus::Expired < LeaseStatus::Released);
+    }
+
+    #[test]
+    fn enrichment_lease_json_field_names() {
+        let lease = Lease {
+            lease_id: LeaseId::from_raw(1),
+            holder: "h".to_string(),
+            lease_type: LeaseType::Operation,
+            granted_at: 10,
+            expires_at: 110,
+            ttl: 100,
+            epoch: test_epoch(),
+            renewal_count: 5,
+            status: LeaseStatus::Active,
+        };
+        let json = serde_json::to_string(&lease).unwrap();
+        for field in [
+            "lease_id", "holder", "lease_type", "granted_at",
+            "expires_at", "ttl", "epoch", "renewal_count", "status",
+        ] {
+            assert!(json.contains(field), "JSON must contain field '{field}'");
+        }
+    }
+
+    #[test]
+    fn enrichment_lease_event_json_field_names() {
+        let event = LeaseEvent {
+            lease_id: 1,
+            holder: "h".to_string(),
+            epoch_id: 2,
+            ttl: 100,
+            status: "active".to_string(),
+            escalation_action: "none".to_string(),
+            trace_id: "t".to_string(),
+            event: "grant".to_string(),
+            renewal_count: 0,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        for field in [
+            "lease_id", "holder", "epoch_id", "ttl", "status",
+            "escalation_action", "trace_id", "event", "renewal_count",
+        ] {
+            assert!(json.contains(field), "LeaseEvent JSON must contain field '{field}'");
+        }
+    }
+
+    #[test]
+    fn enrichment_lease_event_clone_eq() {
+        let event = LeaseEvent {
+            lease_id: 42,
+            holder: "node-x".to_string(),
+            epoch_id: 3,
+            ttl: 500,
+            status: "expired".to_string(),
+            escalation_action: "cancel_operation(node-x)".to_string(),
+            trace_id: "trace-99".to_string(),
+            event: "expiration".to_string(),
+            renewal_count: 7,
+        };
+        let cloned = event.clone();
+        assert_eq!(event, cloned);
+    }
+
+    #[test]
+    fn enrichment_escalation_action_clone_eq() {
+        let action = EscalationAction::CancelOperation {
+            holder: "op-42".to_string(),
+        };
+        let cloned = action.clone();
+        assert_eq!(action, cloned);
+        // Different holder -> not equal.
+        let other = EscalationAction::CancelOperation {
+            holder: "op-99".to_string(),
+        };
+        assert_ne!(action, other);
+    }
+
+    #[test]
+    fn enrichment_escalation_action_display_exact_format() {
+        assert_eq!(
+            EscalationAction::MarkEndpointUnreachable { holder: "n1".to_string() }.to_string(),
+            "mark_endpoint_unreachable(n1)"
+        );
+        assert_eq!(
+            EscalationAction::CancelOperation { holder: "op".to_string() }.to_string(),
+            "cancel_operation(op)"
+        );
+        assert_eq!(
+            EscalationAction::TerminateSession { holder: "s".to_string() }.to_string(),
+            "terminate_session(s)"
+        );
+    }
+
+    #[test]
+    fn enrichment_lease_error_display_exact_formats() {
+        assert_eq!(
+            LeaseError::LeaseNotFound { lease_id: 42 }.to_string(),
+            "lease 42 not found"
+        );
+        assert_eq!(
+            LeaseError::LeaseExpired { lease_id: 5, expired_at: 300 }.to_string(),
+            "lease 5 expired at tick 300"
+        );
+        assert_eq!(
+            LeaseError::LeaseReleased { lease_id: 9 }.to_string(),
+            "lease 9 already released"
+        );
+        assert_eq!(LeaseError::ZeroTtl.to_string(), "TTL must be non-zero");
+        assert_eq!(LeaseError::EmptyHolder.to_string(), "holder must be non-empty");
+    }
+
+    #[test]
+    fn enrichment_scan_expired_does_not_escalate_released_leases() {
+        let mut store = LeaseStore::new(test_epoch());
+        let id = store
+            .grant("node-1", LeaseType::RemoteEndpoint, 100, 0, "t")
+            .unwrap();
+        // Release before expiration.
+        store.release(&id, "t-rel").unwrap();
+        store.drain_events();
+        // Scan well past the original expiration.
+        let actions = store.scan_expired(500, "trace-scan");
+        assert!(actions.is_empty(), "released leases must not trigger escalation");
+    }
+
+    #[test]
+    fn enrichment_advance_epoch_preserves_leases_granted_in_new_epoch() {
+        let mut store = LeaseStore::new(test_epoch());
+        // Grant in epoch 1, then advance to epoch 2.
+        store
+            .grant("old", LeaseType::RemoteEndpoint, 1000, 0, "t1")
+            .unwrap();
+        store.advance_epoch(SecurityEpoch::from_raw(2), "t-adv");
+        // Now grant in epoch 2.
+        let new_id = store
+            .grant("new", LeaseType::Operation, 500, 100, "t2")
+            .unwrap();
+        // Advance to epoch 3 — only the new-epoch lease should survive if it
+        // were in epoch 2. Actually it should be invalidated because epoch changed to 3.
+        let actions = store.advance_epoch(SecurityEpoch::from_raw(3), "t-adv2");
+        // The "new" lease was granted in epoch 2, so it gets invalidated.
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(
+            &actions[0],
+            EscalationAction::CancelOperation { holder } if holder == "new"
+        ));
+        // "old" was already expired from the first advance.
+        let old_lease = store.get(&LeaseId::from_raw(1)).unwrap();
+        assert_eq!(old_lease.status, LeaseStatus::Expired);
+        let new_lease = store.get(&new_id).unwrap();
+        assert_eq!(new_lease.status, LeaseStatus::Expired);
+    }
+
+    #[test]
+    fn enrichment_renewal_due_at_large_ttl() {
+        let lease = Lease {
+            lease_id: LeaseId::from_raw(1),
+            holder: "h".to_string(),
+            lease_type: LeaseType::RemoteEndpoint,
+            granted_at: 0,
+            expires_at: u64::MAX,
+            ttl: u64::MAX,
+            epoch: test_epoch(),
+            renewal_count: 0,
+            status: LeaseStatus::Active,
+        };
+        // renewal_due_at = expires_at.saturating_sub(ttl) + ttl/3
+        //                = 0 + u64::MAX/3
+        let expected = u64::MAX / 3;
+        assert_eq!(lease.renewal_due_at(), expected);
+    }
+
+    #[test]
+    fn enrichment_grant_at_nonzero_tick_sets_correct_window() {
+        let mut store = LeaseStore::new(test_epoch());
+        let id = store
+            .grant("node-1", LeaseType::Session, 200, 1000, "t")
+            .unwrap();
+        let lease = store.get(&id).unwrap();
+        assert_eq!(lease.granted_at, 1000);
+        assert_eq!(lease.expires_at, 1200);
+        assert!(lease.is_active_at(1199));
+        assert!(!lease.is_active_at(1200));
+    }
+
+    #[test]
+    fn enrichment_renew_at_exact_boundary_before_expiry() {
+        let mut store = LeaseStore::new(test_epoch());
+        let id = store
+            .grant("node-1", LeaseType::RemoteEndpoint, 100, 0, "t")
+            .unwrap();
+        // Renew at tick 99, the last valid tick (expires_at=100, so 99 < 100).
+        store.renew(&id, 99, "t-renew").unwrap();
+        let lease = store.get(&id).unwrap();
+        assert_eq!(lease.expires_at, 199); // 99 + 100
+        assert_eq!(lease.renewal_count, 1);
+    }
+
+    #[test]
+    fn enrichment_renew_at_exact_expiry_tick_fails() {
+        let mut store = LeaseStore::new(test_epoch());
+        let id = store
+            .grant("node-1", LeaseType::RemoteEndpoint, 100, 0, "t")
+            .unwrap();
+        // Renew at exactly expires_at (100) should fail — the lease is expired.
+        let err = store.renew(&id, 100, "t-renew").unwrap_err();
+        assert!(matches!(err, LeaseError::LeaseExpired { lease_id: 1, expired_at: 100 }));
+        // Status should now be Expired.
+        let lease = store.get(&id).unwrap();
+        assert_eq!(lease.status, LeaseStatus::Expired);
+    }
+
+    #[test]
+    fn enrichment_epoch_invalidation_event_counts() {
+        let mut store = LeaseStore::new(test_epoch());
+        store
+            .grant("a", LeaseType::RemoteEndpoint, 1000, 0, "t")
+            .unwrap();
+        store
+            .grant("b", LeaseType::Operation, 1000, 0, "t")
+            .unwrap();
+        store
+            .grant("c", LeaseType::Session, 1000, 0, "t")
+            .unwrap();
+        store.advance_epoch(SecurityEpoch::from_raw(2), "t-adv");
+        assert_eq!(
+            store.event_counts().get("epoch_invalidation"),
+            Some(&3),
+            "all 3 leases should produce epoch_invalidation events"
+        );
+    }
 }

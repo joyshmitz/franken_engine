@@ -1591,4 +1591,398 @@ mod tests {
         let set: std::collections::BTreeSet<&str> = all.iter().map(|o| o.as_str()).collect();
         assert_eq!(set.len(), all.len());
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn enrichment_auth_failure_type_copy_semantics() {
+        let a = AuthFailureType::KeyRevoked;
+        let b = a;
+        let c = a;
+        assert_eq!(b, c);
+        assert_eq!(a, AuthFailureType::KeyRevoked);
+    }
+
+    #[test]
+    fn enrichment_auth_failure_type_ord_ordering() {
+        // Enum variants derive Ord in declaration order
+        assert!(AuthFailureType::SignatureInvalid < AuthFailureType::KeyExpired);
+        assert!(AuthFailureType::KeyExpired < AuthFailureType::KeyRevoked);
+        assert!(AuthFailureType::KeyRevoked < AuthFailureType::AttestationInvalid);
+    }
+
+    #[test]
+    fn enrichment_capability_denial_reason_ord_ordering() {
+        assert!(
+            CapabilityDenialReason::InsufficientAuthority < CapabilityDenialReason::CeilingExceeded
+        );
+        assert!(CapabilityDenialReason::Expired < CapabilityDenialReason::NotYetValid);
+    }
+
+    #[test]
+    fn enrichment_auth_failure_type_hash_in_btreeset() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        for t in AuthFailureType::ALL {
+            assert!(set.insert(t));
+        }
+        // Inserting duplicates should fail
+        for t in AuthFailureType::ALL {
+            assert!(!set.insert(t));
+        }
+        assert_eq!(set.len(), 4);
+    }
+
+    #[test]
+    fn enrichment_security_event_context_clone() {
+        let ctx = test_context();
+        let cloned = ctx.clone();
+        assert_eq!(ctx, cloned);
+        assert_eq!(cloned.timestamp_ns, 1_000_000);
+        assert_eq!(cloned.trace_id, "trace-001");
+    }
+
+    #[test]
+    fn enrichment_security_event_context_serde_roundtrip() {
+        let ctx = test_context();
+        let json = serde_json::to_string(&ctx).unwrap();
+        let back: SecurityEventContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ctx);
+    }
+
+    #[test]
+    fn enrichment_security_event_context_json_field_names() {
+        let ctx = test_context();
+        let val: serde_json::Value = serde_json::to_value(&ctx).unwrap();
+        let obj = val.as_object().unwrap();
+        assert!(obj.contains_key("timestamp_ns"));
+        assert!(obj.contains_key("trace_id"));
+        assert!(obj.contains_key("principal_id"));
+        assert!(obj.contains_key("decision_id"));
+        assert!(obj.contains_key("policy_id"));
+        assert!(obj.contains_key("zone_id"));
+        assert!(obj.contains_key("component"));
+        assert_eq!(obj.len(), 7);
+    }
+
+    #[test]
+    fn enrichment_structured_log_event_serde_with_metadata() {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("key1".to_string(), "val1".to_string());
+        metadata.insert("key2".to_string(), "val2".to_string());
+        let event = StructuredSecurityLogEvent {
+            timestamp_ns: 42,
+            trace_id: "t".to_string(),
+            component: "c".to_string(),
+            event_type: "auth_failure".to_string(),
+            outcome: "denied".to_string(),
+            error_code: Some("E1001".to_string()),
+            principal_id: "p".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "pol".to_string(),
+            zone_id: "z".to_string(),
+            metadata,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: StructuredSecurityLogEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, event);
+        assert_eq!(back.metadata.len(), 2);
+        assert_eq!(back.metadata.get("key1").unwrap(), "val1");
+    }
+
+    #[test]
+    fn enrichment_required_fields_false_missing_component() {
+        let event = StructuredSecurityLogEvent {
+            timestamp_ns: 1,
+            trace_id: "t".to_string(),
+            component: "".to_string(),
+            event_type: "e".to_string(),
+            outcome: "o".to_string(),
+            error_code: None,
+            principal_id: "p".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "pol".to_string(),
+            zone_id: "z".to_string(),
+            metadata: BTreeMap::new(),
+        };
+        assert!(!event.required_fields_present());
+    }
+
+    #[test]
+    fn enrichment_required_fields_false_missing_zone_id() {
+        let event = StructuredSecurityLogEvent {
+            timestamp_ns: 1,
+            trace_id: "t".to_string(),
+            component: "c".to_string(),
+            event_type: "e".to_string(),
+            outcome: "o".to_string(),
+            error_code: None,
+            principal_id: "p".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "pol".to_string(),
+            zone_id: "".to_string(),
+            metadata: BTreeMap::new(),
+        };
+        assert!(!event.required_fields_present());
+    }
+
+    #[test]
+    fn enrichment_prometheus_with_nonzero_values() {
+        let mut obs = RuntimeSecurityObservability::new();
+        obs.record_auth_failure(test_context(), AuthFailureType::KeyExpired, None, None);
+        obs.record_auth_failure(test_context(), AuthFailureType::KeyExpired, None, None);
+        obs.record_replay_drop(test_context(), ReplayDropReason::StaleSeq, 1, 5, "sess");
+        let prom = obs.export_prometheus_metrics();
+        assert!(prom.contains("auth_failure_total{type=\"key_expired\"} 2"));
+        assert!(prom.contains("replay_drop_total{reason=\"stale_seq\"} 1"));
+        // Other counters remain zero
+        assert!(prom.contains("auth_failure_total{type=\"signature_invalid\"} 0"));
+    }
+
+    #[test]
+    fn enrichment_multiple_event_types_accumulate_independently() {
+        let mut obs = RuntimeSecurityObservability::new();
+        obs.record_auth_failure(
+            test_context(),
+            AuthFailureType::AttestationInvalid,
+            None,
+            None,
+        );
+        obs.record_capability_denial(
+            test_context(),
+            CapabilityDenialReason::CeilingExceeded,
+            "network",
+        );
+        obs.record_checkpoint_violation(
+            test_context(),
+            CheckpointViolationType::QuorumInsufficient,
+            1,
+            2,
+        );
+        assert_eq!(obs.logs().len(), 3);
+        assert_eq!(
+            *obs.metrics()
+                .auth_failure_total
+                .get(&AuthFailureType::AttestationInvalid)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            *obs.metrics()
+                .capability_denial_total
+                .get(&CapabilityDenialReason::CeilingExceeded)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            *obs.metrics()
+                .checkpoint_violation_total
+                .get(&CheckpointViolationType::QuorumInsufficient)
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn enrichment_capability_denial_empty_capability_sanitized() {
+        let mut obs = RuntimeSecurityObservability::new();
+        let event = obs.record_capability_denial(
+            test_context(),
+            CapabilityDenialReason::AttenuationViolation,
+            "",
+        );
+        assert_eq!(
+            event.metadata.get("requested_capability").unwrap(),
+            "unspecified"
+        );
+    }
+
+    #[test]
+    fn enrichment_cross_zone_empty_zones_sanitized() {
+        let mut obs = RuntimeSecurityObservability::new();
+        let event = obs.record_cross_zone_reference(
+            test_context(),
+            CrossZoneReferenceType::ProvenanceAllowed,
+            "",
+            "  ",
+        );
+        assert_eq!(
+            event.metadata.get("source_zone").unwrap(),
+            "source-zone-missing"
+        );
+        assert_eq!(
+            event.metadata.get("target_zone").unwrap(),
+            "target-zone-missing"
+        );
+    }
+
+    #[test]
+    fn enrichment_revocation_check_revoked_outcome() {
+        let mut obs = RuntimeSecurityObservability::new();
+        let event = obs.record_revocation_check(
+            test_context(),
+            RevocationCheckOutcome::Revoked,
+            50,
+            100,
+            25,
+            None,
+        );
+        assert_eq!(event.outcome, "denied");
+        assert!(event.error_code.is_some());
+        assert_eq!(event.metadata.get("staleness_gap").unwrap(), "50");
+        assert_eq!(
+            *obs.metrics()
+                .revocation_check_total
+                .get(&RevocationCheckOutcome::Revoked)
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn enrichment_revocation_check_staleness_gap_saturating() {
+        let mut obs = RuntimeSecurityObservability::new();
+        // local_head > expected_head: saturating_sub yields 0
+        let event = obs.record_revocation_check(
+            test_context(),
+            RevocationCheckOutcome::Pass,
+            200,
+            100,
+            50,
+            None,
+        );
+        assert_eq!(event.metadata.get("staleness_gap").unwrap(), "0");
+    }
+
+    #[test]
+    fn enrichment_replay_drop_all_reasons() {
+        let mut obs = RuntimeSecurityObservability::new();
+        for reason in ReplayDropReason::ALL {
+            obs.record_replay_drop(test_context(), reason, 1, 2, "s");
+        }
+        for reason in ReplayDropReason::ALL {
+            assert_eq!(*obs.metrics().replay_drop_total.get(&reason).unwrap(), 1);
+        }
+        assert_eq!(obs.logs().len(), 3);
+    }
+
+    #[test]
+    fn enrichment_checkpoint_violation_all_types() {
+        let mut obs = RuntimeSecurityObservability::new();
+        for viol in CheckpointViolationType::ALL {
+            obs.record_checkpoint_violation(test_context(), viol, 10, 20);
+        }
+        for viol in CheckpointViolationType::ALL {
+            assert_eq!(
+                *obs.metrics().checkpoint_violation_total.get(&viol).unwrap(),
+                1
+            );
+        }
+        assert_eq!(obs.logs().len(), 3);
+    }
+
+    #[test]
+    fn enrichment_metrics_serde_with_nonzero_values() {
+        let mut obs = RuntimeSecurityObservability::new();
+        obs.record_auth_failure(
+            test_context(),
+            AuthFailureType::SignatureInvalid,
+            None,
+            None,
+        );
+        obs.record_revocation_check(
+            test_context(),
+            RevocationCheckOutcome::Stale,
+            10,
+            100,
+            50,
+            Some(42),
+        );
+        let json = serde_json::to_string(&obs.metrics).unwrap();
+        let back: RuntimeSecurityMetrics = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            *back
+                .auth_failure_total
+                .get(&AuthFailureType::SignatureInvalid)
+                .unwrap(),
+            1
+        );
+        assert_eq!(back.revocation_freshness_degraded_seconds, 42);
+    }
+
+    #[test]
+    fn enrichment_constants_match_expected_values() {
+        assert_eq!(AUTH_FAILURE_TOTAL, "auth_failure_total");
+        assert_eq!(CAPABILITY_DENIAL_TOTAL, "capability_denial_total");
+        assert_eq!(REPLAY_DROP_TOTAL, "replay_drop_total");
+        assert_eq!(CHECKPOINT_VIOLATION_TOTAL, "checkpoint_violation_total");
+        assert_eq!(
+            REVOCATION_FRESHNESS_DEGRADED_SECONDS,
+            "revocation_freshness_degraded_seconds"
+        );
+        assert_eq!(REVOCATION_CHECK_TOTAL, "revocation_check_total");
+        assert_eq!(CROSS_ZONE_REFERENCE_TOTAL, "cross_zone_reference_total");
+    }
+
+    #[test]
+    fn enrichment_jsonl_export_multiline() {
+        let mut obs = RuntimeSecurityObservability::new();
+        obs.record_auth_failure(
+            test_context(),
+            AuthFailureType::SignatureInvalid,
+            None,
+            None,
+        );
+        obs.record_replay_drop(
+            test_context(),
+            ReplayDropReason::CrossSession,
+            3,
+            4,
+            "sess-x",
+        );
+        obs.record_cross_zone_reference(
+            test_context(),
+            CrossZoneReferenceType::AuthorityDenied,
+            "z1",
+            "z2",
+        );
+        let jsonl = obs.export_logs_jsonl();
+        let lines: Vec<&str> = jsonl.lines().collect();
+        assert_eq!(lines.len(), 3);
+        // Each line is valid JSON
+        for line in &lines {
+            let val: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert!(val.is_object());
+        }
+        // Roundtrip through parse
+        let parsed = parse_security_logs_jsonl(&jsonl).unwrap();
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0].event_type, "auth_failure");
+        assert_eq!(parsed[1].event_type, "replay_drop");
+        assert_eq!(parsed[2].event_type, "cross_zone_reference");
+    }
+
+    #[test]
+    fn enrichment_redact_empty_string() {
+        let hash = redact_sensitive_value("");
+        assert!(hash.starts_with("sha256:"));
+        // SHA-256 of empty string is well-known
+        assert_eq!(hash.len(), "sha256:".len() + 64);
+    }
+
+    #[test]
+    fn enrichment_observability_clone_independence() {
+        let mut obs = RuntimeSecurityObservability::new();
+        obs.record_auth_failure(
+            test_context(),
+            AuthFailureType::SignatureInvalid,
+            None,
+            None,
+        );
+        let cloned = obs.clone();
+        // Mutate original; clone unaffected
+        obs.record_auth_failure(test_context(), AuthFailureType::KeyExpired, None, None);
+        assert_eq!(obs.logs().len(), 2);
+        assert_eq!(cloned.logs().len(), 1);
+    }
 }

@@ -1621,4 +1621,256 @@ mod tests {
         });
         assert!(err.source().is_none());
     }
+
+    // -- Enrichment batch 2: Hash, Copy, Ord, edge cases, serde variants --
+
+    #[test]
+    fn enrichment_cell_lifecycle_copy_semantics() {
+        let a = CellLifecycle::Running;
+        let b = a; // Copy
+        let c = a; // still usable after copy
+        assert_eq!(b, c);
+        assert_eq!(a, CellLifecycle::Running);
+    }
+
+    #[test]
+    fn enrichment_cell_lifecycle_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        CellLifecycle::Running.hash(&mut h1);
+        CellLifecycle::Running.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+    }
+
+    #[test]
+    fn enrichment_cell_lifecycle_ord_ordering() {
+        // Ord is derived, so variant declaration order determines ordering.
+        assert!(CellLifecycle::Created < CellLifecycle::Starting);
+        assert!(CellLifecycle::Starting < CellLifecycle::Running);
+        assert!(CellLifecycle::Running < CellLifecycle::Suspended);
+        assert!(CellLifecycle::Suspended < CellLifecycle::Stopping);
+        assert!(CellLifecycle::Stopping < CellLifecycle::Terminated);
+        assert!(CellLifecycle::Terminated < CellLifecycle::Quarantined);
+    }
+
+    #[test]
+    fn enrichment_cell_lifecycle_can_invoke_only_running() {
+        for state in [
+            CellLifecycle::Created,
+            CellLifecycle::Starting,
+            CellLifecycle::Suspended,
+            CellLifecycle::Stopping,
+            CellLifecycle::Terminated,
+            CellLifecycle::Quarantined,
+        ] {
+            assert!(!state.can_invoke(), "{state} should not allow invocation");
+        }
+        assert!(CellLifecycle::Running.can_invoke());
+    }
+
+    #[test]
+    fn enrichment_suspended_can_resume_or_stop_or_quarantine() {
+        let state = CellLifecycle::Suspended;
+        assert!(state.can_transition_to(CellLifecycle::Running));
+        assert!(state.can_transition_to(CellLifecycle::Stopping));
+        assert!(state.can_transition_to(CellLifecycle::Quarantined));
+        assert!(!state.can_transition_to(CellLifecycle::Created));
+        assert!(!state.can_transition_to(CellLifecycle::Starting));
+        assert!(!state.can_transition_to(CellLifecycle::Suspended));
+    }
+
+    #[test]
+    fn enrichment_stopping_can_only_terminate() {
+        let state = CellLifecycle::Stopping;
+        assert_eq!(state.valid_transitions(), &[CellLifecycle::Terminated]);
+        assert!(!state.is_terminal());
+        assert!(!state.can_invoke());
+    }
+
+    #[test]
+    fn enrichment_resource_violation_serde_all_variants() {
+        let violations = vec![
+            ResourceViolation::HeapExceeded {
+                used: 2_000_000,
+                limit: 1_000_000,
+            },
+            ResourceViolation::ExecutionTimeExceeded {
+                used_ns: 500,
+                limit_ns: 100,
+            },
+            ResourceViolation::HostcallLimitExceeded {
+                count: 300,
+                limit: 100,
+            },
+            ResourceViolation::NetworkEgressDenied { bytes: 4096 },
+            ResourceViolation::FilesystemAccessDenied { bytes: 8192 },
+        ];
+        for v in &violations {
+            let json = serde_json::to_string(v).unwrap();
+            let decoded: ResourceViolation = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, decoded);
+        }
+    }
+
+    #[test]
+    fn enrichment_resource_violation_display_contains_numbers() {
+        let v = ResourceViolation::ExecutionTimeExceeded {
+            used_ns: 999,
+            limit_ns: 100,
+        };
+        let s = v.to_string();
+        assert!(s.contains("999"));
+        assert!(s.contains("100"));
+
+        let v2 = ResourceViolation::HostcallLimitExceeded {
+            count: 55,
+            limit: 10,
+        };
+        let s2 = v2.to_string();
+        assert!(s2.contains("55"));
+        assert!(s2.contains("10"));
+
+        let v3 = ResourceViolation::NetworkEgressDenied { bytes: 777 };
+        assert!(v3.to_string().contains("777"));
+
+        let v4 = ResourceViolation::FilesystemAccessDenied { bytes: 333 };
+        assert!(v4.to_string().contains("333"));
+    }
+
+    #[test]
+    fn enrichment_invocation_outcome_display_error_variant() {
+        let outcome = InvocationOutcome::Error {
+            code: 42,
+            message: "test error".into(),
+        };
+        let s = outcome.to_string();
+        assert!(s.contains("42"));
+        assert!(s.contains("test error"));
+    }
+
+    #[test]
+    fn enrichment_invocation_outcome_display_resource_violation() {
+        let outcome = InvocationOutcome::ResourceViolation(ResourceViolation::HeapExceeded {
+            used: 200,
+            limit: 100,
+        });
+        let s = outcome.to_string();
+        assert!(s.contains("resource_violation"));
+        assert!(s.contains("200"));
+    }
+
+    #[test]
+    fn enrichment_invocation_outcome_display_capability_denied() {
+        let outcome = InvocationOutcome::CapabilityDenied {
+            capability: SlotCapability::HeapAlloc,
+        };
+        let s = outcome.to_string();
+        assert!(s.contains("capability_denied"));
+    }
+
+    #[test]
+    fn enrichment_error_display_not_running() {
+        let err = DelegateCellError::NotRunning {
+            state: CellLifecycle::Created,
+        };
+        let s = err.to_string();
+        assert!(s.contains("not running"));
+        assert!(s.contains("created"));
+    }
+
+    #[test]
+    fn enrichment_error_display_capability_denied() {
+        let err = DelegateCellError::CapabilityDenied {
+            capability: SlotCapability::TriggerGc,
+        };
+        let s = err.to_string();
+        assert!(s.contains("capability denied"));
+    }
+
+    #[test]
+    fn enrichment_error_display_resource_limit_exceeded() {
+        let err =
+            DelegateCellError::ResourceLimitExceeded(ResourceViolation::NetworkEgressDenied {
+                bytes: 42,
+            });
+        let s = err.to_string();
+        assert!(s.contains("resource limit exceeded"));
+        assert!(s.contains("42"));
+    }
+
+    #[test]
+    fn enrichment_harness_event_type_display_invocation_started() {
+        assert_eq!(
+            HarnessEventType::InvocationStarted.to_string(),
+            "invocation_started"
+        );
+    }
+
+    #[test]
+    fn enrichment_harness_serde_roundtrip_with_invocations() {
+        let mut harness = running_harness();
+        harness
+            .record_invocation(b"input1", b"output1", 42, ok_usage(), 5_000, 10_000)
+            .unwrap();
+        harness
+            .record_invocation(b"input2", b"output2", 43, ok_usage(), 6_000, 20_000)
+            .unwrap();
+
+        let json = serde_json::to_string(&harness).unwrap();
+        let decoded: DelegateCellHarness = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.invocation_log().len(), 2);
+        assert_eq!(decoded.invocation_count(), 2);
+        assert_eq!(decoded.metrics.total_invocations, 2);
+        assert_eq!(decoded.metrics.successful_invocations, 2);
+        assert_eq!(decoded.lifecycle, CellLifecycle::Running);
+    }
+
+    #[test]
+    fn enrichment_replay_mismatch_contains_hashes() {
+        let mut harness = running_harness();
+        let record = harness
+            .record_invocation(b"in", b"out", 1, ok_usage(), 100, 10_000)
+            .unwrap();
+
+        let result = harness.verify_replay(&record, b"wrong", 20_000);
+        match result {
+            ReplayVerification::Mismatch {
+                sequence,
+                expected_hash,
+                actual_hash,
+            } => {
+                assert_eq!(sequence, 1);
+                assert_eq!(expected_hash, ContentHash::compute(b"out"));
+                assert_eq!(actual_hash, ContentHash::compute(b"wrong"));
+                assert_ne!(expected_hash, actual_hash);
+            }
+            _ => panic!("expected Mismatch"),
+        }
+    }
+
+    #[test]
+    fn enrichment_metrics_heap_and_hostcall_accumulation() {
+        let mut harness = running_harness();
+        let usage1 = ResourceUsage {
+            heap_bytes_used: 100_000,
+            hostcall_count: 5,
+            ..Default::default()
+        };
+        let usage2 = ResourceUsage {
+            heap_bytes_used: 200_000,
+            hostcall_count: 15,
+            ..Default::default()
+        };
+        harness
+            .record_invocation(b"a", b"b", 1, usage1, 100, 10_000)
+            .unwrap();
+        harness
+            .record_invocation(b"c", b"d", 2, usage2, 200, 20_000)
+            .unwrap();
+
+        assert_eq!(harness.metrics.total_heap_bytes, 300_000);
+        assert_eq!(harness.metrics.total_hostcalls, 20);
+    }
 }

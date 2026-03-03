@@ -1722,4 +1722,333 @@ mod tests {
         assert_eq!(h.index(), 42);
         assert_eq!(h.generation(), 7);
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn enrichment_node_handle_copy_semantics() {
+        let a = NodeHandle::from_parts(3, 1);
+        let b = a; // Copy
+        let c = a; // still valid — not moved
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+
+    #[test]
+    fn enrichment_node_handle_hash_in_btreeset() {
+        let mut set = std::collections::BTreeSet::new();
+        set.insert(NodeHandle::from_parts(0, 1));
+        set.insert(NodeHandle::from_parts(1, 1));
+        set.insert(NodeHandle::from_parts(0, 1)); // duplicate
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn enrichment_node_handle_ord_generation_tiebreak() {
+        // Ord should compare index first, then generation
+        let a = NodeHandle::from_parts(0, 2);
+        let b = NodeHandle::from_parts(1, 1);
+        assert!(a < b, "lower index should sort before higher index regardless of generation");
+    }
+
+    #[test]
+    fn enrichment_expression_handle_copy_semantics() {
+        let a = ExpressionHandle::from_parts(5, 1);
+        let b = a;
+        let c = a;
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+
+    #[test]
+    fn enrichment_expression_handle_hash_in_btreeset() {
+        let mut set = std::collections::BTreeSet::new();
+        set.insert(ExpressionHandle::from_parts(0, 1));
+        set.insert(ExpressionHandle::from_parts(0, 2));
+        set.insert(ExpressionHandle::from_parts(0, 1)); // duplicate
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn enrichment_span_handle_copy_semantics() {
+        let a = SpanHandle::from_parts(9, 1);
+        let b = a;
+        let c = a;
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+
+    #[test]
+    fn enrichment_span_handle_ord_deterministic() {
+        let handles: Vec<SpanHandle> = (0..5).map(|i| SpanHandle::from_parts(i, 1)).collect();
+        for window in handles.windows(2) {
+            assert!(window[0] < window[1]);
+        }
+    }
+
+    #[test]
+    fn enrichment_arena_budget_kind_json_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&ArenaBudgetKind::Nodes).unwrap(),
+            "\"nodes\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ArenaBudgetKind::Expressions).unwrap(),
+            "\"expressions\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ArenaBudgetKind::Spans).unwrap(),
+            "\"spans\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ArenaBudgetKind::Bytes).unwrap(),
+            "\"bytes\""
+        );
+    }
+
+    #[test]
+    fn enrichment_arena_budget_kind_copy_clone_eq() {
+        let a = ArenaBudgetKind::Spans;
+        let b = a; // Copy
+        let c = a.clone();
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+
+    #[test]
+    fn enrichment_arena_budget_json_field_names() {
+        let budget = ArenaBudget::default();
+        let json: serde_json::Value = serde_json::to_value(&budget).unwrap();
+        assert!(json.get("max_nodes").is_some());
+        assert!(json.get("max_expressions").is_some());
+        assert!(json.get("max_spans").is_some());
+        assert!(json.get("max_bytes").is_some());
+    }
+
+    #[test]
+    fn enrichment_arena_budget_custom_values_serde() {
+        let budget = ArenaBudget {
+            max_nodes: 1,
+            max_expressions: 2,
+            max_spans: 3,
+            max_bytes: 4,
+        };
+        let json = serde_json::to_string(&budget).unwrap();
+        let back: ArenaBudget = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.max_nodes, 1);
+        assert_eq!(back.max_expressions, 2);
+        assert_eq!(back.max_spans, 3);
+        assert_eq!(back.max_bytes, 4);
+    }
+
+    #[test]
+    fn enrichment_arena_error_display_unsupported_statement_exact() {
+        let err = ArenaError::UnsupportedStatement { kind: "block" };
+        assert_eq!(
+            err.to_string(),
+            "parser arena does not support statement kind 'block'"
+        );
+    }
+
+    #[test]
+    fn enrichment_arena_error_display_unsupported_expression_exact() {
+        let err = ArenaError::UnsupportedExpression { kind: "binary" };
+        assert_eq!(
+            err.to_string(),
+            "parser arena does not support expression kind 'binary'"
+        );
+    }
+
+    #[test]
+    fn enrichment_arena_error_display_budget_exceeded_exact_format() {
+        let err = ArenaError::BudgetExceeded {
+            kind: ArenaBudgetKind::Bytes,
+            limit: 1024,
+            attempted: 2048,
+        };
+        assert_eq!(
+            err.to_string(),
+            "arena budget exceeded for Bytes: limit=1024, attempted=2048"
+        );
+    }
+
+    #[test]
+    fn enrichment_arena_error_display_invalid_generation_exact_format() {
+        let err = ArenaError::InvalidGeneration {
+            handle_kind: "span",
+            expected: 1,
+            actual: 99,
+            index: 7,
+        };
+        assert_eq!(
+            err.to_string(),
+            "invalid span handle generation at index 7: expected 1, got 99"
+        );
+    }
+
+    #[test]
+    fn enrichment_handle_audit_entry_json_field_names() {
+        let entry = HandleAuditEntry {
+            handle_kind: HandleAuditKind::Expression,
+            index: 5,
+            generation: 1,
+            descriptor: "identifier x".to_string(),
+        };
+        let json: serde_json::Value = serde_json::to_value(&entry).unwrap();
+        assert!(json.get("handle_kind").is_some());
+        assert!(json.get("index").is_some());
+        assert!(json.get("generation").is_some());
+        assert!(json.get("descriptor").is_some());
+        assert_eq!(json["handle_kind"], "expression");
+        assert_eq!(json["index"], 5);
+    }
+
+    #[test]
+    fn enrichment_handle_audit_kind_json_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&HandleAuditKind::Node).unwrap(),
+            "\"node\""
+        );
+        assert_eq!(
+            serde_json::to_string(&HandleAuditKind::Expression).unwrap(),
+            "\"expression\""
+        );
+        assert_eq!(
+            serde_json::to_string(&HandleAuditKind::Span).unwrap(),
+            "\"span\""
+        );
+    }
+
+    #[test]
+    fn enrichment_parser_arena_bytes_used_increases_with_content() {
+        let small_tree = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![Statement::Expression(ExpressionStatement {
+                expression: Expression::NumericLiteral(1),
+                span: test_span(),
+            })],
+            span: test_span(),
+        };
+        let big_tree = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![
+                Statement::Expression(ExpressionStatement {
+                    expression: Expression::StringLiteral("a".repeat(1000)),
+                    span: test_span(),
+                }),
+                Statement::Expression(ExpressionStatement {
+                    expression: Expression::StringLiteral("b".repeat(1000)),
+                    span: test_span(),
+                }),
+            ],
+            span: test_span(),
+        };
+        let small = ParserArena::from_syntax_tree(&small_tree, ArenaBudget::default()).unwrap();
+        let big = ParserArena::from_syntax_tree(&big_tree, ArenaBudget::default()).unwrap();
+        assert!(big.bytes_used() > small.bytes_used());
+    }
+
+    #[test]
+    fn enrichment_parser_arena_clone_eq() {
+        let tree = simple_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let cloned = arena.clone();
+        assert_eq!(arena, cloned);
+    }
+
+    #[test]
+    fn enrichment_empty_arena_handle_audit_has_only_span() {
+        let tree = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![],
+            span: test_span(),
+        };
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let entries = arena.handle_audit_entries();
+        // Empty body means only the tree_span is allocated
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].handle_kind, HandleAuditKind::Span);
+    }
+
+    #[test]
+    fn enrichment_budget_exactly_one_node_succeeds() {
+        let budget = ArenaBudget {
+            max_nodes: 1,
+            max_expressions: 1,
+            max_spans: 2, // tree span + statement span
+            max_bytes: 1024,
+        };
+        let tree = simple_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, budget).unwrap();
+        assert_eq!(arena.statement_handles().len(), 1);
+    }
+
+    #[test]
+    fn enrichment_unsupported_block_statement_error() {
+        let tree = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![Statement::Block(crate::ast::BlockStatement {
+                body: vec![],
+                span: test_span(),
+            })],
+            span: test_span(),
+        };
+        let err = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap_err();
+        match err {
+            ArenaError::UnsupportedStatement { kind } => assert_eq!(kind, "block"),
+            other => panic!("expected UnsupportedStatement, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn enrichment_unsupported_binary_expression_error() {
+        let tree = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![Statement::Expression(ExpressionStatement {
+                expression: Expression::Binary {
+                    operator: "+".to_string(),
+                    left: Box::new(Expression::NumericLiteral(1)),
+                    right: Box::new(Expression::NumericLiteral(2)),
+                },
+                span: test_span(),
+            })],
+            span: test_span(),
+        };
+        let err = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap_err();
+        match err {
+            ArenaError::UnsupportedExpression { kind } => assert_eq!(kind, "binary"),
+            other => panic!("expected UnsupportedExpression, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn enrichment_roundtrip_preserves_variable_declaration_kind_let() {
+        let tree = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![Statement::VariableDeclaration(VariableDeclaration {
+                kind: VariableDeclarationKind::Let,
+                declarations: vec![VariableDeclarator {
+                    pattern: BindingPattern::Identifier("x".to_string()),
+                    initializer: Some(Expression::BooleanLiteral(false)),
+                    span: test_span(),
+                }],
+                span: test_span(),
+            })],
+            span: test_span(),
+        };
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let recovered = arena.to_syntax_tree().unwrap();
+        assert_eq!(recovered, tree);
+    }
+
+    #[test]
+    fn enrichment_canonical_hash_stable_across_clones() {
+        let tree = import_tree();
+        let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).unwrap();
+        let cloned = arena.clone();
+        assert_eq!(
+            arena.canonical_hash().unwrap(),
+            cloned.canonical_hash().unwrap()
+        );
+    }
 }

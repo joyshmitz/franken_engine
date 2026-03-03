@@ -1677,4 +1677,350 @@ mod tests {
         assert_eq!(outcomes[0].cell_id, "ext-1");
         assert_eq!(outcomes[1].cell_id, "ext-2");
     }
+
+    // -- Enrichment batch 4 --
+
+    #[test]
+    fn error_display_cell_not_found_contains_cell_id() {
+        let err = CancellationError::CellNotFound {
+            cell_id: "ext-42".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("ext-42"), "Display should include cell_id");
+        assert!(msg.contains("not found"), "Display should say 'not found'");
+    }
+
+    #[test]
+    fn error_display_budget_exhausted_contains_event() {
+        let err = CancellationError::BudgetExhausted {
+            cell_id: "ext-7".into(),
+            event: LifecycleEvent::Quarantine,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("ext-7"));
+        assert!(msg.contains("budget exhausted"));
+        assert!(msg.contains("quarantine"));
+    }
+
+    #[test]
+    fn error_display_cell_error_contains_error_code_and_message() {
+        let err = CancellationError::CellError {
+            cell_id: "ext-9".into(),
+            error_code: "cell_invalid_state".into(),
+            message: "cannot close running cell".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("ext-9"));
+        assert!(msg.contains("cell_invalid_state"));
+        assert!(msg.contains("cannot close running cell"));
+    }
+
+    #[test]
+    fn cancel_delegate_cell_kind() {
+        let mut cell = ExecutionCell::new("del-1", CellKind::Delegate, "t");
+        let mut cx = mock_cx(100);
+        let mut mgr = CancellationManager::new();
+
+        let outcome = mgr
+            .cancel_cell(&mut cell, &mut cx, LifecycleEvent::Unload)
+            .expect("cancel delegate");
+
+        assert!(outcome.success);
+        assert_eq!(cell.state(), RegionState::Closed);
+
+        // Events should record Delegate cell kind
+        let events = mgr.events();
+        for e in events {
+            assert_eq!(e.cell_kind, CellKind::Delegate);
+        }
+    }
+
+    #[test]
+    fn cancel_all_on_empty_manager() {
+        let mut cell_mgr = CellManager::new();
+        let mut cx = mock_cx(100);
+        let mut cancel_mgr = CancellationManager::new();
+
+        let results = cancel_mgr.cancel_all(&mut cell_mgr, &mut cx, LifecycleEvent::Terminate);
+        assert!(results.is_empty());
+        assert_eq!(cancel_mgr.outcome_count(), 0);
+    }
+
+    #[test]
+    fn drain_events_is_idempotent() {
+        let mut cell = ExecutionCell::new("ext-1", CellKind::Extension, "t");
+        let mut cx = mock_cx(100);
+        let mut mgr = CancellationManager::new();
+
+        mgr.cancel_cell(&mut cell, &mut cx, LifecycleEvent::Unload)
+            .unwrap();
+
+        let first = mgr.drain_events();
+        assert!(!first.is_empty());
+        let second = mgr.drain_events();
+        assert!(second.is_empty(), "second drain should be empty");
+    }
+
+    #[test]
+    fn cancel_managed_cell_archives_from_active() {
+        let mut cell_mgr = CellManager::new();
+        cell_mgr.create_extension_cell("ext-1", "t1");
+        cell_mgr.create_extension_cell("ext-2", "t2");
+        let mut cx = mock_cx(200);
+        let mut cancel_mgr = CancellationManager::new();
+
+        cancel_mgr
+            .cancel_managed_cell(&mut cell_mgr, "ext-1", &mut cx, LifecycleEvent::Unload)
+            .unwrap();
+
+        // ext-1 should be archived (no longer gettable as active)
+        assert!(cell_mgr.get("ext-1").is_none());
+        // ext-2 should still be active
+        assert!(cell_mgr.get("ext-2").is_some());
+    }
+
+    #[test]
+    fn cell_error_conversion_invalid_state() {
+        let cell_err = CellError::InvalidState {
+            cell_id: "cell-99".to_string(),
+            current: RegionState::Closed,
+            attempted: "execute".to_string(),
+        };
+        let cancel_err: CancellationError = cell_err.into();
+        match &cancel_err {
+            CancellationError::CellError {
+                cell_id, message, ..
+            } => {
+                assert_eq!(cell_id, "cell-99");
+                assert!(!message.is_empty());
+            }
+            other => panic!("expected CellError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cell_error_conversion_cx_threading() {
+        let cell_err = CellError::CxThreading {
+            cell_id: "cell-77".to_string(),
+            error_code: "cell_cx_threading".to_string(),
+            message: "thread limit".to_string(),
+        };
+        let cancel_err: CancellationError = cell_err.into();
+        match &cancel_err {
+            CancellationError::CellError { cell_id, .. } => {
+                assert_eq!(cell_id, "cell-77");
+            }
+            other => panic!("expected CellError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cell_error_conversion_session_rejected() {
+        let cell_err = CellError::SessionRejected {
+            parent_cell_id: "cell-parent".to_string(),
+            reason: "over limit".to_string(),
+        };
+        let cancel_err: CancellationError = cell_err.into();
+        match &cancel_err {
+            CancellationError::CellError { cell_id, .. } => {
+                assert_eq!(cell_id, "cell-parent");
+            }
+            other => panic!("expected CellError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cell_error_conversion_obligation_not_found() {
+        let cell_err = CellError::ObligationNotFound {
+            cell_id: "cell-ob".to_string(),
+            obligation_id: "ob-missing".to_string(),
+        };
+        let cancel_err: CancellationError = cell_err.into();
+        match &cancel_err {
+            CancellationError::CellError { cell_id, .. } => {
+                assert_eq!(cell_id, "cell-ob");
+            }
+            other => panic!("expected CellError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mode_override_replaced_by_second_set() {
+        let mut mgr = CancellationManager::new();
+        let mode1 = CancellationMode {
+            drain_budget_ticks: 100,
+            force_abort_on_timeout: false,
+            propagate_to_children: false,
+            evidence_event_name: "first".into(),
+        };
+        let mode2 = CancellationMode {
+            drain_budget_ticks: 200,
+            force_abort_on_timeout: true,
+            propagate_to_children: true,
+            evidence_event_name: "second".into(),
+        };
+        mgr.set_mode_override(LifecycleEvent::Unload, mode1);
+        mgr.set_mode_override(LifecycleEvent::Unload, mode2.clone());
+        assert_eq!(mgr.effective_mode(LifecycleEvent::Unload), mode2);
+    }
+
+    #[test]
+    fn is_cancelled_false_after_failed_cancel() {
+        let mut cell = ExecutionCell::new("ext-1", CellKind::Extension, "t");
+        let mut cx = mock_cx(0); // zero budget → will fail
+        let mut mgr = CancellationManager::new();
+
+        let result = mgr.cancel_cell(&mut cell, &mut cx, LifecycleEvent::Unload);
+        assert!(result.is_err());
+        // Cell should NOT be marked as cancelled on failure
+        assert!(!mgr.is_cancelled("ext-1"));
+    }
+
+    #[test]
+    fn cancel_two_cells_independently_tracked() {
+        let mut cell1 = ExecutionCell::new("ext-1", CellKind::Extension, "t");
+        let mut cell2 = ExecutionCell::new("ext-2", CellKind::Extension, "t");
+        let mut cx = mock_cx(300);
+        let mut mgr = CancellationManager::new();
+
+        mgr.cancel_cell(&mut cell1, &mut cx, LifecycleEvent::Unload)
+            .unwrap();
+        assert!(mgr.is_cancelled("ext-1"));
+        assert!(!mgr.is_cancelled("ext-2"));
+
+        mgr.cancel_cell(&mut cell2, &mut cx, LifecycleEvent::Quarantine)
+            .unwrap();
+        assert!(mgr.is_cancelled("ext-1"));
+        assert!(mgr.is_cancelled("ext-2"));
+    }
+
+    #[test]
+    fn idempotent_cancel_does_not_add_events() {
+        let mut cell = ExecutionCell::new("ext-1", CellKind::Extension, "t");
+        let mut cx = mock_cx(200);
+        let mut mgr = CancellationManager::new();
+
+        mgr.cancel_cell(&mut cell, &mut cx, LifecycleEvent::Unload)
+            .unwrap();
+        let events_after_first = mgr.events().len();
+
+        // Second (idempotent) cancel should not add more events
+        mgr.cancel_cell(&mut cell, &mut cx, LifecycleEvent::Unload)
+            .unwrap();
+        assert_eq!(
+            mgr.events().len(),
+            events_after_first,
+            "idempotent cancel should not emit events"
+        );
+    }
+
+    #[test]
+    fn cancellation_mode_evidence_event_name_contains_event() {
+        for event in [
+            LifecycleEvent::Unload,
+            LifecycleEvent::Quarantine,
+            LifecycleEvent::Suspend,
+            LifecycleEvent::Terminate,
+            LifecycleEvent::Revocation,
+        ] {
+            let mode = CancellationMode::for_event(event);
+            let event_str = event.to_string();
+            assert!(
+                mode.evidence_event_name.contains(&event_str),
+                "evidence_event_name '{}' should contain '{event_str}'",
+                mode.evidence_event_name,
+            );
+        }
+    }
+
+    #[test]
+    fn cancel_with_multiple_committed_obligations() {
+        let mut cell = ExecutionCell::new("ext-1", CellKind::Extension, "t");
+        let mut cx = mock_cx(100);
+        let mut mgr = CancellationManager::new();
+
+        cell.register_obligation("ob-1", "flush");
+        cell.register_obligation("ob-2", "cleanup");
+        cell.register_obligation("ob-3", "notify");
+        cell.commit_obligation("ob-1").unwrap();
+        cell.commit_obligation("ob-2").unwrap();
+        cell.commit_obligation("ob-3").unwrap();
+
+        let outcome = mgr
+            .cancel_cell(&mut cell, &mut cx, LifecycleEvent::Unload)
+            .unwrap();
+
+        assert!(outcome.success);
+        assert!(!outcome.timeout_escalated);
+        assert_eq!(outcome.finalize_result.obligations_committed, 3);
+        assert_eq!(outcome.finalize_result.obligations_aborted, 0);
+    }
+
+    #[test]
+    fn cancel_with_mixed_committed_and_pending() {
+        let mut cell = ExecutionCell::new("ext-1", CellKind::Extension, "t");
+        let mut cx = mock_cx(100);
+        let mut mgr = CancellationManager::new();
+
+        cell.register_obligation("ob-1", "committed");
+        cell.register_obligation("ob-2", "will timeout");
+        cell.commit_obligation("ob-1").unwrap();
+        // ob-2 remains pending
+
+        let outcome = mgr
+            .cancel_cell(&mut cell, &mut cx, LifecycleEvent::Quarantine)
+            .unwrap();
+
+        // ob-2 should timeout and be aborted
+        assert!(outcome.timeout_escalated);
+        assert_eq!(outcome.finalize_result.obligations_committed, 1);
+        assert_eq!(outcome.finalize_result.obligations_aborted, 1);
+    }
+
+    #[test]
+    fn cancel_all_preserves_order() {
+        let mut cell_mgr = CellManager::new();
+        cell_mgr.create_extension_cell("a-ext", "t1");
+        cell_mgr.create_extension_cell("b-ext", "t2");
+        cell_mgr.create_delegate_cell("c-del", "t3");
+        let mut cx = mock_cx(500);
+        let mut cancel_mgr = CancellationManager::new();
+
+        let results = cancel_mgr.cancel_all(&mut cell_mgr, &mut cx, LifecycleEvent::Terminate);
+        assert_eq!(results.len(), 3);
+
+        // All should succeed
+        let cell_ids: Vec<String> = results
+            .iter()
+            .map(|r| r.as_ref().unwrap().cell_id.clone())
+            .collect();
+        // All three cells should be present (order may vary based on BTreeMap)
+        assert!(cell_ids.contains(&"a-ext".to_string()));
+        assert!(cell_ids.contains(&"b-ext".to_string()));
+        assert!(cell_ids.contains(&"c-del".to_string()));
+    }
+
+    #[test]
+    fn finalize_result_serde_in_outcome() {
+        let outcome = CancellationOutcome {
+            cell_id: "ext-1".into(),
+            event: LifecycleEvent::Terminate,
+            success: false,
+            finalize_result: FinalizeResult {
+                region_id: "ext-1".into(),
+                success: false,
+                obligations_committed: 0,
+                obligations_aborted: 3,
+                drain_timeout_escalated: true,
+            },
+            timeout_escalated: true,
+            children_cancelled: 0,
+            was_idempotent: false,
+        };
+        let json = serde_json::to_string(&outcome).unwrap();
+        let back: CancellationOutcome = serde_json::from_str(&json).unwrap();
+        assert_eq!(outcome, back);
+        assert!(json.contains("obligations_aborted"));
+        assert!(json.contains("drain_timeout_escalated"));
+    }
 }

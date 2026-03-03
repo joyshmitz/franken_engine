@@ -1468,4 +1468,140 @@ mod tests {
         set.insert(sig_a.clone()); // duplicate
         assert_eq!(set.len(), 2);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 6: sentinel, constants, build_preimage, Display
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enrichment_signature_sentinel_is_all_zeros() {
+        assert!(SIGNATURE_SENTINEL.iter().all(|&b| b == 0));
+        assert_eq!(SIGNATURE_SENTINEL.len(), SIGNATURE_LEN);
+    }
+
+    #[test]
+    fn enrichment_signature_is_sentinel_true_for_zeros() {
+        let sig = Signature::from_bytes([0u8; SIGNATURE_LEN]);
+        assert!(sig.is_sentinel());
+    }
+
+    #[test]
+    fn enrichment_signature_is_sentinel_false_for_nonzero() {
+        let mut bytes = [0u8; SIGNATURE_LEN];
+        bytes[0] = 1;
+        let sig = Signature::from_bytes(bytes);
+        assert!(!sig.is_sentinel());
+    }
+
+    #[test]
+    fn enrichment_constants_expected_values() {
+        assert_eq!(SIGNING_KEY_LEN, 32);
+        assert_eq!(VERIFICATION_KEY_LEN, 32);
+        assert_eq!(SIGNATURE_LEN, 64);
+    }
+
+    #[test]
+    fn enrichment_build_preimage_matches_trait_method() {
+        let obj = test_object();
+        let trait_preimage = obj.preimage_bytes();
+        let manual_preimage = build_preimage(
+            obj.signature_domain(),
+            obj.signature_schema(),
+            &obj.unsigned_view(),
+        );
+        assert_eq!(trait_preimage, manual_preimage);
+    }
+
+    #[test]
+    fn enrichment_preimage_hash_deterministic() {
+        let obj = test_object();
+        let preimage = obj.preimage_bytes();
+        let h1 = preimage_hash(&preimage);
+        let h2 = preimage_hash(&preimage);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn enrichment_signature_display_format() {
+        let sig = Signature::from_bytes([0xAB; SIGNATURE_LEN]);
+        let display = sig.to_string();
+        // Display shows first 8 bytes of lower + "..." + last 8 bytes of upper
+        assert!(display.contains("..."));
+        assert!(display.starts_with("abababab"));
+    }
+
+    #[test]
+    fn enrichment_verification_key_hex_is_lowercase() {
+        let vk = VerificationKey::from_bytes([0xAB; VERIFICATION_KEY_LEN]);
+        let hex = vk.to_hex();
+        assert!(
+            hex.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        );
+    }
+
+    #[test]
+    fn enrichment_signing_key_serde_roundtrip() {
+        let sk = test_signing_key();
+        let json = serde_json::to_string(&sk).unwrap();
+        let restored: SigningKey = serde_json::from_str(&json).unwrap();
+        assert_eq!(sk, restored);
+    }
+
+    #[test]
+    fn enrichment_sign_verify_roundtrip_via_context() {
+        let mut ctx = SignatureContext::new();
+        let sk = test_signing_key();
+        let vk = sk.verification_key();
+        let obj = test_object();
+        let sig = ctx.sign(&obj, &sk, "t-rv").unwrap();
+        ctx.verify(&obj, &vk, &sig, "t-rv2").unwrap();
+        assert_eq!(ctx.sign_count(), 1);
+        assert_eq!(ctx.verify_count(), 1);
+        assert_eq!(ctx.failure_count(), 0);
+    }
+
+    #[test]
+    fn enrichment_drain_events_clears_and_returns() {
+        let mut ctx = SignatureContext::new();
+        ctx.sign(&test_object(), &test_signing_key(), "t-drain")
+            .unwrap();
+        let events = ctx.drain_events();
+        assert_eq!(events.len(), 1);
+        // After drain, events list is empty.
+        assert!(ctx.drain_events().is_empty());
+    }
+
+    #[test]
+    fn enrichment_wrong_key_verification_fails() {
+        let mut ctx = SignatureContext::new();
+        let sk = test_signing_key();
+        let obj = test_object();
+        let sig = ctx.sign(&obj, &sk, "t-wrong").unwrap();
+        let wrong_vk = VerificationKey::from_bytes([0xBB; VERIFICATION_KEY_LEN]);
+        let err = ctx.verify(&obj, &wrong_vk, &sig, "t-wrong2").unwrap_err();
+        assert!(matches!(err, SignatureError::VerificationFailed { .. }));
+        assert_eq!(ctx.failure_count(), 1);
+    }
+
+    #[test]
+    fn enrichment_sign_rejects_zero_signing_key() {
+        let zero_sk = SigningKey::from_bytes([0u8; SIGNING_KEY_LEN]);
+        let err = sign_preimage(&zero_sk, b"data").unwrap_err();
+        assert_eq!(err, SignatureError::InvalidSigningKey);
+    }
+
+    #[test]
+    fn enrichment_verify_rejects_zero_verification_key() {
+        let zero_vk = VerificationKey::from_bytes([0u8; VERIFICATION_KEY_LEN]);
+        let sig = Signature::from_bytes([1u8; SIGNATURE_LEN]);
+        let err = verify_signature(&zero_vk, b"data", &sig).unwrap_err();
+        assert_eq!(err, SignatureError::InvalidVerificationKey);
+    }
+
+    #[test]
+    fn enrichment_check_canonical_for_signing_accepts_u64() {
+        let val = CanonicalValue::U64(42);
+        assert!(check_canonical_for_signing(&val).is_ok());
+    }
 }

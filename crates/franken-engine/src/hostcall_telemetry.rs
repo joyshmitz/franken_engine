@@ -1603,4 +1603,321 @@ mod tests {
         let back: ResourceDelta = serde_json::from_str(&json).unwrap();
         assert_eq!(rd, back);
     }
+
+    // ── Enrichment: HostcallType Copy and Hash ──────────────────
+
+    #[test]
+    fn enrichment_hostcall_type_copy_semantics() {
+        let a = HostcallType::CryptoOp;
+        let b = a; // Copy
+        assert_eq!(a, b);
+        // a is still usable after copy
+        assert_eq!(a.to_string(), "crypto-op");
+    }
+
+    #[test]
+    fn enrichment_hostcall_type_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h1 = DefaultHasher::new();
+        let mut h2 = DefaultHasher::new();
+        HostcallType::IpcSend.hash(&mut h1);
+        HostcallType::IpcSend.hash(&mut h2);
+        assert_eq!(h1.finish(), h2.finish());
+        // Different variants produce different hashes (overwhelmingly likely).
+        let mut h3 = DefaultHasher::new();
+        HostcallType::IpcRecv.hash(&mut h3);
+        assert_ne!(h1.finish(), h3.finish());
+    }
+
+    // ── Enrichment: HostcallResult clone equality edge cases ────
+
+    #[test]
+    fn enrichment_hostcall_result_clone_eq() {
+        let denied = HostcallResult::Denied {
+            reason: "sandbox violation".to_string(),
+        };
+        let cloned = denied.clone();
+        assert_eq!(denied, cloned);
+        // Ensure deep clone — different allocation.
+        if let HostcallResult::Denied { reason } = &cloned {
+            assert_eq!(reason, "sandbox violation");
+        } else {
+            panic!("expected Denied variant");
+        }
+    }
+
+    #[test]
+    fn enrichment_hostcall_result_error_code_zero() {
+        let err = HostcallResult::Error { code: 0 };
+        assert_eq!(err.to_string(), "error: 0");
+        let json = serde_json::to_string(&err).unwrap();
+        let back: HostcallResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    // ── Enrichment: FlowLabel Ord ──────────────────────────────
+
+    #[test]
+    fn enrichment_flow_label_ord() {
+        let public = FlowLabel::new("public", "public");
+        let secret = FlowLabel::new("secret", "secret");
+        // "public" < "secret" lexicographically
+        assert!(public < secret);
+        let a = FlowLabel::new("alpha", "beta");
+        let b = FlowLabel::new("alpha", "gamma");
+        // Same label_class, clearance_class compared
+        assert!(a < b);
+    }
+
+    // ── Enrichment: ResourceDelta Copy ──────────────────────────
+
+    #[test]
+    fn enrichment_resource_delta_copy_semantics() {
+        let rd = ResourceDelta {
+            memory_bytes: 1024,
+            fd_count: 3,
+            network_bytes: 512,
+        };
+        let rd2 = rd; // Copy
+        assert_eq!(rd, rd2);
+        assert_eq!(rd.memory_bytes, 1024);
+    }
+
+    // ── Enrichment: ResourceDelta JSON field check ──────────────
+
+    #[test]
+    fn enrichment_resource_delta_json_fields() {
+        let rd = ResourceDelta {
+            memory_bytes: 8192,
+            fd_count: -2,
+            network_bytes: 0,
+        };
+        let json = serde_json::to_string(&rd).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["memory_bytes"], 8192);
+        assert_eq!(v["fd_count"], -2);
+        assert_eq!(v["network_bytes"], 0);
+    }
+
+    // ── Enrichment: TelemetrySnapshot clone ─────────────────────
+
+    #[test]
+    fn enrichment_snapshot_clone_eq() {
+        let mut recorder = test_recorder();
+        recorder
+            .record(1000, test_input("ext-001", HostcallType::FsRead))
+            .unwrap();
+        let snap = recorder.snapshot();
+        let cloned = snap.clone();
+        assert_eq!(snap, cloned);
+        assert_eq!(snap.record_count, cloned.record_count);
+        assert_eq!(snap.rolling_hash, cloned.rolling_hash);
+    }
+
+    // ── Enrichment: snapshot on empty recorder ──────────────────
+
+    #[test]
+    fn enrichment_snapshot_empty_recorder() {
+        let mut recorder = test_recorder();
+        let snap = recorder.snapshot();
+        assert_eq!(snap.record_count, 0);
+        assert_eq!(snap.record_id_at_snapshot, None);
+        assert_eq!(snap.epoch, SecurityEpoch::GENESIS);
+    }
+
+    // ── Enrichment: recorder serde with rolling hash disabled ───
+
+    #[test]
+    fn enrichment_recorder_serde_rolling_hash_disabled() {
+        let mut recorder = TelemetryRecorder::new(RecorderConfig {
+            channel_capacity: 100,
+            epoch: SecurityEpoch::from_raw(7),
+            enable_rolling_hash: false,
+        });
+        recorder
+            .record(500, test_input("ext-x", HostcallType::EnvRead))
+            .unwrap();
+        recorder
+            .record(600, test_input("ext-x", HostcallType::MemAlloc))
+            .unwrap();
+        let json = serde_json::to_string(&recorder).unwrap();
+        let restored: TelemetryRecorder = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.len(), 2);
+        assert_eq!(restored.rolling_hash(), recorder.rolling_hash());
+    }
+
+    // ── Enrichment: query with empty records ────────────────────
+
+    #[test]
+    fn enrichment_query_empty_records() {
+        let recorder = test_recorder();
+        let query = TelemetryQuery::new(recorder.records());
+        assert!(query.recent_by_extension("ext-001", 0, u64::MAX).is_empty());
+        assert!(
+            query
+                .recent_by_type(HostcallType::FsRead, 0, u64::MAX)
+                .is_empty()
+        );
+        assert!(query.anomaly_candidates(0, u64::MAX).is_empty());
+        assert!(query.slow_calls(0, 0, u64::MAX).is_empty());
+        let dist = query.type_distribution(0, u64::MAX);
+        assert!(dist.is_empty());
+    }
+
+    // ── Enrichment: query boundary — exact timestamp match ──────
+
+    #[test]
+    fn enrichment_query_exact_timestamp_boundary() {
+        let mut recorder = test_recorder();
+        recorder
+            .record(1000, test_input("ext-a", HostcallType::FsRead))
+            .unwrap();
+        recorder
+            .record(2000, test_input("ext-a", HostcallType::FsWrite))
+            .unwrap();
+        recorder
+            .record(3000, test_input("ext-a", HostcallType::NetworkSend))
+            .unwrap();
+        let query = TelemetryQuery::new(recorder.records());
+        // Exact window [2000, 2000] should return only the single record at ts=2000.
+        let results = query.recent_by_extension("ext-a", 2000, 2000);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].hostcall_type, HostcallType::FsWrite);
+    }
+
+    // ── Enrichment: extension summary type_counts ───────────────
+
+    #[test]
+    fn enrichment_extension_summary_type_counts() {
+        let recorder = populate_recorder();
+        let query = TelemetryQuery::new(recorder.records());
+        let summary = query.extension_summary("ext-001", 0, 10_000);
+        assert_eq!(summary.type_counts.get(&HostcallType::FsRead), Some(&3));
+        assert_eq!(
+            summary.type_counts.get(&HostcallType::NetworkSend),
+            Some(&1)
+        );
+        assert_eq!(summary.type_counts.get(&HostcallType::FsWrite), None);
+    }
+
+    // ── Enrichment: extension summary with timeout ──────────────
+
+    #[test]
+    fn enrichment_extension_summary_timeout_counted() {
+        let mut recorder = test_recorder();
+        let mut input = test_input("ext-t", HostcallType::TimerCreate);
+        input.result_status = HostcallResult::Timeout;
+        recorder.record(100, input).unwrap();
+        recorder
+            .record(200, test_input("ext-t", HostcallType::FsRead))
+            .unwrap();
+        let query = TelemetryQuery::new(recorder.records());
+        let summary = query.extension_summary("ext-t", 0, 1000);
+        assert_eq!(summary.total_calls, 2);
+        assert_eq!(summary.timeout_count, 1);
+        assert_eq!(summary.success_count, 1);
+    }
+
+    // ── Enrichment: content_hash empty recorder ─────────────────
+
+    #[test]
+    fn enrichment_content_hash_empty_recorder_deterministic() {
+        let r1 = test_recorder();
+        let r2 = test_recorder();
+        assert_eq!(r1.content_hash(), r2.content_hash());
+    }
+
+    // ── Enrichment: decision_id affects content hash ────────────
+
+    #[test]
+    fn enrichment_decision_id_affects_content_hash() {
+        let mut r1 = test_recorder();
+        let mut r2 = test_recorder();
+        let input1 = test_input("ext-001", HostcallType::FsRead);
+        let mut input2 = test_input("ext-001", HostcallType::FsRead);
+        input2.decision_id = Some("dec-999".to_string());
+        r1.record(1000, input1).unwrap();
+        r2.record(1000, input2).unwrap();
+        // Different decision_id => different content hash
+        assert_ne!(r1.records()[0].content_hash, r2.records()[0].content_hash);
+    }
+
+    // ── Enrichment: slow_calls boundary threshold ───────────────
+
+    #[test]
+    fn enrichment_slow_calls_boundary_threshold() {
+        let mut recorder = test_recorder();
+        let mut input_exact = test_input("ext-001", HostcallType::FsRead);
+        input_exact.duration_ns = 5000; // Exactly at threshold
+        recorder.record(100, input_exact).unwrap();
+        let mut input_over = test_input("ext-001", HostcallType::FsWrite);
+        input_over.duration_ns = 5001; // Over threshold
+        recorder.record(200, input_over).unwrap();
+        let query = TelemetryQuery::new(recorder.records());
+        // slow_calls uses > threshold (not >=)
+        let slow = query.slow_calls(5000, 0, 1000);
+        assert_eq!(slow.len(), 1);
+        assert_eq!(slow[0].hostcall_type, HostcallType::FsWrite);
+    }
+
+    // ── Enrichment: anomaly_candidates includes timeout ─────────
+
+    #[test]
+    fn enrichment_anomaly_candidates_includes_timeout() {
+        let mut recorder = test_recorder();
+        recorder
+            .record(100, test_input("ext-001", HostcallType::FsRead))
+            .unwrap(); // Success
+        let mut timeout_input = test_input("ext-001", HostcallType::NetworkRecv);
+        timeout_input.result_status = HostcallResult::Timeout;
+        recorder.record(200, timeout_input).unwrap();
+        let query = TelemetryQuery::new(recorder.records());
+        let anomalies = query.anomaly_candidates(0, 1000);
+        assert_eq!(anomalies.len(), 1);
+        assert_eq!(anomalies[0].result_status, HostcallResult::Timeout);
+    }
+
+    // ── Enrichment: record JSON field check ─────────────────────
+
+    #[test]
+    fn enrichment_record_json_fields() {
+        let mut recorder = test_recorder();
+        recorder
+            .record(42_000, test_input("ext-json", HostcallType::CryptoOp))
+            .unwrap();
+        let record = &recorder.records()[0];
+        let json = serde_json::to_string(record).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["record_id"], 0);
+        assert_eq!(v["timestamp_ns"], 42_000);
+        assert_eq!(v["extension_id"], "ext-json");
+        assert_eq!(v["hostcall_type"], "CryptoOp");
+        assert_eq!(v["duration_ns"], 1_000);
+        assert_eq!(v["decision_id"], serde_json::Value::Null);
+    }
+
+    // ── Enrichment: multiple epochs in single recorder ──────────
+
+    #[test]
+    fn enrichment_multiple_epochs_across_records() {
+        let mut recorder = test_recorder();
+        recorder
+            .record(100, test_input("ext-001", HostcallType::FsRead))
+            .unwrap();
+        recorder.set_epoch(SecurityEpoch::from_raw(10));
+        recorder
+            .record(200, test_input("ext-001", HostcallType::FsWrite))
+            .unwrap();
+        recorder.set_epoch(SecurityEpoch::from_raw(20));
+        recorder
+            .record(300, test_input("ext-001", HostcallType::NetworkSend))
+            .unwrap();
+        assert_eq!(recorder.records()[0].epoch, SecurityEpoch::GENESIS);
+        assert_eq!(recorder.records()[1].epoch, SecurityEpoch::from_raw(10));
+        assert_eq!(recorder.records()[2].epoch, SecurityEpoch::from_raw(20));
+        // Snapshot captures latest epoch
+        let snap = recorder.snapshot();
+        assert_eq!(snap.epoch, SecurityEpoch::from_raw(20));
+    }
 }

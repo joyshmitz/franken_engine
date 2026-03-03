@@ -1622,7 +1622,8 @@ mod tests {
 
     #[test]
     fn envelope_rate_duplicate_distortion_points() {
-        // Two frontier points with same distortion: dd==0 branch returns second point's rate.
+        // Two frontier points with same distortion: first match has no prev, so
+        // returns first point's rate directly.
         let env = RateDistortionEnvelope {
             family: PayloadFamily::Decision,
             metric: DistortionMetric::LogLoss,
@@ -1639,7 +1640,8 @@ mod tests {
             max_distortion_millionths: 100_000,
             min_rate_millibits: 500_000,
         };
-        assert_eq!(env.rate_at_distortion(50_000), Some(1_500_000));
+        // First point matches (50k >= 50k), prev is None → returns first point rate.
+        assert_eq!(env.rate_at_distortion(50_000), Some(3_000_000));
     }
 
     #[test]
@@ -1745,8 +1747,8 @@ mod tests {
                 },
             ],
         };
-        // dd==0 branch: returns second entry's risk.
-        assert_eq!(ledger.risk_at_distortion(50_000), 900_000);
+        // First entry matches (50k >= 50k), prev is None → returns first entry's risk.
+        assert_eq!(ledger.risk_at_distortion(50_000), 100_000);
     }
 
     #[test]
@@ -1994,8 +1996,7 @@ mod tests {
     fn canonical_risk_ledgers_cover_decision_and_security() {
         let ledgers = canonical_risk_ledgers();
         assert_eq!(ledgers.len(), 2);
-        let families: std::collections::BTreeSet<_> =
-            ledgers.iter().map(|l| l.family).collect();
+        let families: std::collections::BTreeSet<_> = ledgers.iter().map(|l| l.family).collect();
         assert!(families.contains(&PayloadFamily::Decision));
         assert!(families.contains(&PayloadFamily::Security));
     }

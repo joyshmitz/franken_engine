@@ -1888,4 +1888,293 @@ mod tests {
         assert!(IncentiveProperty::TruthfulReporting < IncentiveProperty::TimelyRemediation);
         assert!(IncentiveProperty::BudgetBalance > IncentiveProperty::HonestOperatorDominance);
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn governance_role_display_exact_all_5() {
+        assert_eq!(GovernanceRole::Publisher.to_string(), "publisher");
+        assert_eq!(GovernanceRole::Operator.to_string(), "operator");
+        assert_eq!(GovernanceRole::Challenger.to_string(), "challenger");
+        assert_eq!(GovernanceRole::Arbitrator.to_string(), "arbitrator");
+        assert_eq!(GovernanceRole::ControlPlane.to_string(), "control_plane");
+    }
+
+    #[test]
+    fn governance_action_display_exact_all_8() {
+        assert_eq!(GovernanceAction::Report.to_string(), "report");
+        assert_eq!(GovernanceAction::Challenge.to_string(), "challenge");
+        assert_eq!(GovernanceAction::Quarantine.to_string(), "quarantine");
+        assert_eq!(GovernanceAction::Reinstate.to_string(), "reinstate");
+        assert_eq!(GovernanceAction::Slash.to_string(), "slash");
+        assert_eq!(GovernanceAction::Reward.to_string(), "reward");
+        assert_eq!(GovernanceAction::Escalate.to_string(), "escalate");
+        assert_eq!(GovernanceAction::Appeal.to_string(), "appeal");
+    }
+
+    #[test]
+    fn incentive_property_display_exact_all_5() {
+        assert_eq!(
+            IncentiveProperty::TruthfulReporting.to_string(),
+            "truthful_reporting"
+        );
+        assert_eq!(
+            IncentiveProperty::TimelyRemediation.to_string(),
+            "timely_remediation"
+        );
+        assert_eq!(
+            IncentiveProperty::FalseChallengeUnprofitable.to_string(),
+            "false_challenge_unprofitable"
+        );
+        assert_eq!(
+            IncentiveProperty::HonestOperatorDominance.to_string(),
+            "honest_operator_dominance"
+        );
+        assert_eq!(
+            IncentiveProperty::BudgetBalance.to_string(),
+            "budget_balance"
+        );
+    }
+
+    #[test]
+    fn strategic_behavior_display_exact_all_8() {
+        assert_eq!(
+            StrategicBehavior::TruthfulReport.to_string(),
+            "truthful_report"
+        );
+        assert_eq!(StrategicBehavior::FalseReport.to_string(), "false_report");
+        assert_eq!(
+            StrategicBehavior::DelayedRemediation.to_string(),
+            "delayed_remediation"
+        );
+        assert_eq!(
+            StrategicBehavior::ImmediateRemediation.to_string(),
+            "immediate_remediation"
+        );
+        assert_eq!(
+            StrategicBehavior::FrivolousChallenge.to_string(),
+            "frivolous_challenge"
+        );
+        assert_eq!(
+            StrategicBehavior::LegitimateChallenge.to_string(),
+            "legitimate_challenge"
+        );
+        assert_eq!(
+            StrategicBehavior::CollaborativeAttack.to_string(),
+            "collaborative_attack"
+        );
+        assert_eq!(StrategicBehavior::SybilAttack.to_string(), "sybil_attack");
+    }
+
+    #[test]
+    fn enforcement_policy_serde_roundtrip() {
+        let policy = EnforcementPolicy {
+            policy_id: "ep-test".into(),
+            rules: vec![
+                EnforcementRule {
+                    rule_id: "r1".into(),
+                    trigger_action: GovernanceAction::Report,
+                    trigger_role: GovernanceRole::Publisher,
+                    condition: "c".into(),
+                    enforcement_action: GovernanceAction::Quarantine,
+                    penalty_millionths: 100_000,
+                    reward_millionths: 50_000,
+                    cooldown_epochs: 5,
+                },
+                EnforcementRule {
+                    rule_id: "r2".into(),
+                    trigger_action: GovernanceAction::Challenge,
+                    trigger_role: GovernanceRole::Challenger,
+                    condition: "d".into(),
+                    enforcement_action: GovernanceAction::Slash,
+                    penalty_millionths: 200_000,
+                    reward_millionths: 0,
+                    cooldown_epochs: 3,
+                },
+            ],
+            challenge_window_epochs: 15,
+            publisher_bond_millionths: 250_000,
+            epoch: test_epoch(),
+        };
+        let json = serde_json::to_string(&policy).unwrap();
+        let back: EnforcementPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, back);
+    }
+
+    #[test]
+    fn payoff_table_serde_roundtrip() {
+        let table = PayoffTable {
+            table_id: "pt-test".into(),
+            entries: vec![
+                PayoffEntry {
+                    role: GovernanceRole::Publisher,
+                    action: GovernanceAction::Reward,
+                    condition: "good".into(),
+                    payoff_millionths: 50_000,
+                    rationale: "r".into(),
+                },
+                PayoffEntry {
+                    role: GovernanceRole::Challenger,
+                    action: GovernanceAction::Slash,
+                    condition: "bad".into(),
+                    payoff_millionths: -100_000,
+                    rationale: "r".into(),
+                },
+            ],
+            epoch: test_epoch(),
+        };
+        let json = serde_json::to_string(&table).unwrap();
+        let back: PayoffTable = serde_json::from_str(&json).unwrap();
+        assert_eq!(table, back);
+    }
+
+    #[test]
+    fn strategic_stress_test_serde_roundtrip() {
+        let sst = StrategicStressTest {
+            test_id: "sst-test".into(),
+            scenarios: vec![StrategicScenario {
+                scenario_id: "s1".into(),
+                name: "test".into(),
+                behavior: StrategicBehavior::FalseReport,
+                role: GovernanceRole::Publisher,
+                description: "d".into(),
+                expected_payoff_millionths: -100_000,
+                honest_alternative_payoff_millionths: 50_000,
+            }],
+            epoch: test_epoch(),
+        };
+        let json = serde_json::to_string(&sst).unwrap();
+        let back: StrategicStressTest = serde_json::from_str(&json).unwrap();
+        assert_eq!(sst, back);
+    }
+
+    #[test]
+    fn mechanism_spec_compute_id_changes_with_name() {
+        let mk = |name| {
+            MechanismBuilder::new(name)
+                .payoff(
+                    GovernanceRole::Publisher,
+                    GovernanceAction::Slash,
+                    "c",
+                    -100_000,
+                    "r",
+                )
+                .build(test_epoch())
+        };
+        assert_ne!(mk("alpha").spec_id, mk("beta").spec_id);
+    }
+
+    #[test]
+    fn payoff_table_compute_id_changes_with_entries() {
+        let mk = |payoff| {
+            PayoffTable {
+                table_id: String::new(),
+                entries: vec![PayoffEntry {
+                    role: GovernanceRole::Publisher,
+                    action: GovernanceAction::Report,
+                    condition: "c".into(),
+                    payoff_millionths: payoff,
+                    rationale: "r".into(),
+                }],
+                epoch: test_epoch(),
+            }
+            .compute_id()
+        };
+        assert_ne!(mk(10_000), mk(20_000));
+    }
+
+    #[test]
+    fn is_sound_false_with_inconclusive_property() {
+        let spec = MechanismBuilder::new("inconclusive-test")
+            .payoff(
+                GovernanceRole::Publisher,
+                GovernanceAction::Slash,
+                "bad",
+                -100_000,
+                "r",
+            )
+            .verify_property(PropertyVerification {
+                property: IncentiveProperty::TruthfulReporting,
+                status: VerificationStatus::Inconclusive,
+                assumptions: vec![],
+                evidence: "not enough data".into(),
+                counterexample: None,
+            })
+            .scenario(StrategicScenario {
+                scenario_id: "s1".into(),
+                name: "a".into(),
+                behavior: StrategicBehavior::FalseReport,
+                role: GovernanceRole::Publisher,
+                description: "d".into(),
+                expected_payoff_millionths: -100_000,
+                honest_alternative_payoff_millionths: 50_000,
+            })
+            .build(test_epoch());
+        assert!(!spec.is_sound(), "Inconclusive property prevents soundness");
+    }
+
+    #[test]
+    fn enforcement_policy_max_total_penalty_empty_rules() {
+        let policy = EnforcementPolicy {
+            policy_id: "empty".into(),
+            rules: vec![],
+            challenge_window_epochs: 10,
+            publisher_bond_millionths: 100_000,
+            epoch: test_epoch(),
+        };
+        assert_eq!(policy.max_total_penalty(), 0);
+    }
+
+    #[test]
+    fn builder_defaults_match_constants() {
+        let spec = MechanismBuilder::new("defaults")
+            .payoff(
+                GovernanceRole::Publisher,
+                GovernanceAction::Slash,
+                "c",
+                -100_000,
+                "r",
+            )
+            .build(test_epoch());
+        assert_eq!(
+            spec.enforcement_policy.publisher_bond_millionths,
+            DEFAULT_PUBLISHER_BOND
+        );
+        assert_eq!(
+            spec.enforcement_policy.challenge_window_epochs,
+            DEFAULT_CHALLENGE_WINDOW_EPOCHS
+        );
+    }
+
+    #[test]
+    fn report_total_properties_and_dominance_rate_propagation() {
+        let spec = MechanismBuilder::new("propagation")
+            .payoff(
+                GovernanceRole::Publisher,
+                GovernanceAction::Slash,
+                "c",
+                -100_000,
+                "r",
+            )
+            .verify_property(PropertyVerification {
+                property: IncentiveProperty::TruthfulReporting,
+                status: VerificationStatus::Verified,
+                assumptions: vec![],
+                evidence: "ok".into(),
+                counterexample: None,
+            })
+            .verify_property(PropertyVerification {
+                property: IncentiveProperty::BudgetBalance,
+                status: VerificationStatus::Falsified,
+                assumptions: vec![],
+                evidence: "fail".into(),
+                counterexample: Some("cx".into()),
+            })
+            .build(test_epoch());
+        let report = generate_report(&spec);
+        assert_eq!(report.verified_properties, 1);
+        assert_eq!(report.total_properties, 2);
+        assert_eq!(report.honest_dominance_rate_millionths, MILLION);
+        assert!(report.budget_balanced);
+    }
 }

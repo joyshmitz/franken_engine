@@ -1783,4 +1783,276 @@ mod tests {
         assert_eq!(cpu.scenario_name, "cpu-budget-escalation");
         assert_eq!(cpu.security_events, 0);
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn enrichment_attack_category_debug_format_contains_variant_name() {
+        // Verify Debug output includes the variant name for diagnostics
+        let dbg = format!("{:?}", AttackCategory::CapabilityEscalation);
+        assert!(
+            dbg.contains("CapabilityEscalation"),
+            "Debug should contain variant name, got: {dbg}"
+        );
+        let dbg2 = format!("{:?}", AttackCategory::EvidenceIntegrity);
+        assert!(dbg2.contains("EvidenceIntegrity"));
+    }
+
+    #[test]
+    fn enrichment_attack_category_all_matches_individual_variants() {
+        // Verify that all() returns every variant in the expected order
+        let all = AttackCategory::all();
+        assert_eq!(all[0], AttackCategory::CapabilityEscalation);
+        assert_eq!(all[1], AttackCategory::ResourceExhaustion);
+        assert_eq!(all[2], AttackCategory::QuarantineCascade);
+        assert_eq!(all[3], AttackCategory::SafeModeFallback);
+        assert_eq!(all[4], AttackCategory::BayesianPosterior);
+        assert_eq!(all[5], AttackCategory::ForkDetection);
+        assert_eq!(all[6], AttackCategory::EpochRegression);
+        assert_eq!(all[7], AttackCategory::EvidenceIntegrity);
+    }
+
+    #[test]
+    fn enrichment_attack_category_as_str_roundtrip_all_lowercase_hyphenated() {
+        // Every as_str result should be all-lowercase with hyphens only (no underscores)
+        for cat in AttackCategory::all() {
+            let s = cat.as_str();
+            assert_eq!(
+                s,
+                s.to_lowercase(),
+                "as_str should be lowercase: {s}"
+            );
+            assert!(
+                !s.contains('_'),
+                "as_str should use hyphens not underscores: {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn enrichment_attack_scenario_result_debug_format_includes_scenario_name() {
+        let r = AttackScenarioResult::new(AttackCategory::ForkDetection, "debug-test");
+        let dbg = format!("{r:?}");
+        assert!(dbg.contains("debug-test"), "Debug should include scenario_name");
+        assert!(dbg.contains("ForkDetection"), "Debug should include category");
+    }
+
+    #[test]
+    fn enrichment_attack_scenario_result_details_overwrite_key() {
+        // Inserting the same key should overwrite the value (BTreeMap semantics)
+        let mut r = AttackScenarioResult::new(AttackCategory::EpochRegression, "overwrite");
+        r.details.insert("key".to_string(), "v1".to_string());
+        r.details.insert("key".to_string(), "v2".to_string());
+        assert_eq!(r.details.len(), 1);
+        assert_eq!(r.details["key"], "v2");
+    }
+
+    #[test]
+    fn enrichment_security_suite_event_error_code_some_variant() {
+        let evt = SecuritySuiteEvent {
+            trace_id: "tr".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "c".to_string(),
+            event: "e".to_string(),
+            outcome: "fail".to_string(),
+            error_code: Some("FE-TEST-ERR".to_string()),
+            category: "test".to_string(),
+            scenario: "test".to_string(),
+        };
+        assert_eq!(evt.error_code.as_deref(), Some("FE-TEST-ERR"));
+        let dbg = format!("{evt:?}");
+        assert!(dbg.contains("FE-TEST-ERR"), "Debug should include error code");
+    }
+
+    #[test]
+    fn enrichment_security_suite_config_debug_format() {
+        let cfg = SecuritySuiteConfig::default();
+        let dbg = format!("{cfg:?}");
+        assert!(dbg.contains("42"), "Debug should show seed");
+        assert!(dbg.contains("10"), "Debug should show n_extensions");
+        assert!(dbg.contains("20"), "Debug should show n_evidence_updates");
+    }
+
+    #[test]
+    fn enrichment_security_suite_result_debug_format() {
+        let config = SecuritySuiteConfig {
+            seed: 42,
+            n_extensions: 1,
+            n_evidence_updates: 5,
+            run_id: "dbg-test".to_string(),
+        };
+        let result = run_security_suite(&config);
+        let dbg = format!("{result:?}");
+        assert!(dbg.contains("scenarios"), "Debug should contain 'scenarios'");
+        assert!(dbg.contains("blocked"), "Debug should contain 'blocked'");
+    }
+
+    #[test]
+    fn enrichment_xorshift64_next_u64_never_zero_for_many_iterations() {
+        // xorshift64 with nonzero seed should never produce 0
+        let mut rng = Xorshift64::new(42);
+        for i in 0..10_000 {
+            let val = rng.next_u64();
+            assert_ne!(val, 0, "xorshift64 produced zero at iteration {i}");
+        }
+    }
+
+    #[test]
+    fn enrichment_xorshift64_next_usize_distribution_coverage() {
+        // With bound=4, after enough iterations all 4 buckets should be hit
+        let mut rng = Xorshift64::new(7);
+        let mut buckets = [false; 4];
+        for _ in 0..200 {
+            buckets[rng.next_usize(4)] = true;
+        }
+        for (i, &hit) in buckets.iter().enumerate() {
+            assert!(hit, "bucket {i} was never hit in 200 iterations");
+        }
+    }
+
+    #[test]
+    fn enrichment_resource_exhaustion_zero_extensions() {
+        // Running with 0 extensions should still produce one result
+        let results = run_resource_exhaustion(0, 42);
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert!(r.attack_blocked);
+        // No extensions means enforcement is vacuously empty
+        assert_eq!(r.security_events, 0);
+    }
+
+    #[test]
+    fn enrichment_quarantine_cascade_invariant_violations_zero_for_valid_inputs() {
+        // Multiple sizes, all should have zero invariant violations
+        for n in [2, 5, 8, 15] {
+            let half = n / 2;
+            let results = run_quarantine_cascade(n, half, 42);
+            assert_eq!(
+                results[0].invariant_violations, 0,
+                "invariant violations should be 0 for n_total={n}, n_quarantine={half}"
+            );
+        }
+    }
+
+    #[test]
+    fn enrichment_safe_mode_fallback_each_scenario_has_action_detail() {
+        // Every safe mode scenario should have an "action" key in details
+        let results = run_safe_mode_fallback(42);
+        for r in &results {
+            assert!(
+                r.details.contains_key("action"),
+                "scenario {} missing 'action' detail",
+                r.scenario_name
+            );
+            assert!(
+                !r.details["action"].is_empty(),
+                "scenario {} has empty 'action' detail",
+                r.scenario_name
+            );
+        }
+    }
+
+    #[test]
+    fn enrichment_bayesian_posterior_malicious_detects_risk() {
+        // With enough evidence, at least one malicious extension should be flagged
+        let results = run_bayesian_posterior_convergence(5, 30, 42);
+        let malicious = &results[1];
+        assert_eq!(malicious.scenario_name, "malicious-convergence");
+        assert!(malicious.attack_blocked, "should detect malicious behavior");
+        assert!(malicious.security_events > 0, "should flag risky extensions");
+    }
+
+    #[test]
+    fn enrichment_epoch_regression_evidence_produced_all_scenarios() {
+        let results = run_epoch_regression(42);
+        for r in &results {
+            assert!(
+                r.evidence_produced,
+                "scenario {} should produce evidence",
+                r.scenario_name
+            );
+        }
+    }
+
+    #[test]
+    fn enrichment_containment_verification_security_events_proportional() {
+        // More extensions should produce more or equal security events
+        let r_small = run_containment_verification(2, 42);
+        let r_large = run_containment_verification(8, 42);
+        let events_small = r_small[0].security_events;
+        let events_large = r_large[0].security_events;
+        assert!(
+            events_large >= events_small,
+            "more extensions ({events_large}) should produce >= events than fewer ({events_small})"
+        );
+    }
+
+    #[test]
+    fn enrichment_suite_events_trace_id_matches_run_id() {
+        let config = SecuritySuiteConfig {
+            seed: 42,
+            n_extensions: 2,
+            n_evidence_updates: 5,
+            run_id: "trace-check-42".to_string(),
+        };
+        let result = run_security_suite(&config);
+        for evt in &result.events {
+            assert_eq!(
+                evt.trace_id, "trace-check-42",
+                "event trace_id should match config run_id"
+            );
+        }
+    }
+
+    #[test]
+    fn enrichment_suite_events_decision_id_prefixed_with_sec() {
+        let config = SecuritySuiteConfig {
+            seed: 42,
+            n_extensions: 2,
+            n_evidence_updates: 5,
+            run_id: "prefix-test".to_string(),
+        };
+        let result = run_security_suite(&config);
+        for evt in &result.events {
+            assert!(
+                evt.decision_id.starts_with("sec-"),
+                "decision_id should start with 'sec-', got: {}",
+                evt.decision_id
+            );
+        }
+    }
+
+    #[test]
+    fn enrichment_write_security_evidence_manifest_field_names() {
+        // Verify the JSON manifest has the expected top-level field names
+        let config = SecuritySuiteConfig {
+            seed: 42,
+            n_extensions: 1,
+            n_evidence_updates: 3,
+            run_id: "field-check".to_string(),
+        };
+        let result = run_security_suite(&config);
+        let dir = std::env::temp_dir().join("franken_sec_e2e_enrichment_fields");
+        let _ = fs::remove_dir_all(&dir);
+        let artifacts = write_security_evidence(&result, &dir).unwrap();
+
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&artifacts.run_manifest_path).unwrap())
+                .unwrap();
+        // Check all expected fields are present
+        assert!(manifest.get("schema_version").is_some());
+        assert!(manifest.get("scenario_count").is_some());
+        assert!(manifest.get("total_security_events").is_some());
+        assert!(manifest.get("total_invariant_violations").is_some());
+        assert!(manifest.get("blocked").is_some());
+
+        // scenario_count matches actual count
+        assert_eq!(
+            manifest["scenario_count"].as_u64().unwrap(),
+            result.scenarios.len() as u64
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

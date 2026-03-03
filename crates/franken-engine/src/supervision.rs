@@ -1472,4 +1472,352 @@ mod tests {
         // Both Running -> Healthy
         assert_eq!(sup.health(), HealthStatus::Healthy);
     }
+
+    // -- Enrichment batch 4 --
+
+    #[test]
+    fn enrichment_severity_copy_semantics() {
+        let a = Severity::SubtreeTerminate;
+        let b = a; // Copy
+        let c = a; // Still usable after copy
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+
+    #[test]
+    fn enrichment_severity_hash_in_btreeset() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(Severity::Restart);
+        set.insert(Severity::Isolate);
+        set.insert(Severity::Restart); // duplicate
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&Severity::Restart));
+        assert!(set.contains(&Severity::Isolate));
+        assert!(!set.contains(&Severity::RootEscalation));
+    }
+
+    #[test]
+    fn enrichment_severity_ord_deterministic_sort() {
+        let mut v = vec![
+            Severity::RootEscalation,
+            Severity::Restart,
+            Severity::SubtreeTerminate,
+            Severity::Isolate,
+            Severity::SubtreeRestart,
+        ];
+        v.sort();
+        assert_eq!(
+            v,
+            vec![
+                Severity::Restart,
+                Severity::Isolate,
+                Severity::SubtreeRestart,
+                Severity::SubtreeTerminate,
+                Severity::RootEscalation,
+            ]
+        );
+        // Stable across re-sorts
+        let mut v2 = v.clone();
+        v2.sort();
+        assert_eq!(v, v2);
+    }
+
+    #[test]
+    fn enrichment_severity_json_string_representation() {
+        let json = serde_json::to_string(&Severity::SubtreeRestart).unwrap();
+        // Enum variants serialize as quoted strings
+        assert!(json.contains("SubtreeRestart"));
+    }
+
+    #[test]
+    fn enrichment_restart_policy_copy_semantics() {
+        let a = RestartPolicy::Transient;
+        let b = a;
+        let c = a; // still usable
+        assert_eq!(b, c);
+        assert_eq!(a, RestartPolicy::Transient);
+    }
+
+    #[test]
+    fn enrichment_service_state_copy_semantics() {
+        let a = ServiceState::Isolated;
+        let b = a;
+        let c = a;
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+
+    #[test]
+    fn enrichment_health_status_copy_semantics() {
+        let a = HealthStatus::Critical;
+        let b = a;
+        let c = a;
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+
+    #[test]
+    fn enrichment_health_status_in_btreeset() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(HealthStatus::Healthy);
+        set.insert(HealthStatus::Critical);
+        set.insert(HealthStatus::Degraded);
+        set.insert(HealthStatus::Healthy); // duplicate
+        assert_eq!(set.len(), 3);
+        // Iteration order respects Ord
+        let ordered: Vec<_> = set.into_iter().collect();
+        assert_eq!(
+            ordered,
+            vec![
+                HealthStatus::Healthy,
+                HealthStatus::Degraded,
+                HealthStatus::Critical,
+            ]
+        );
+    }
+
+    #[test]
+    fn enrichment_health_status_ord_deterministic_sort() {
+        let mut v = vec![
+            HealthStatus::Critical,
+            HealthStatus::Healthy,
+            HealthStatus::Degraded,
+        ];
+        v.sort();
+        assert_eq!(
+            v,
+            vec![
+                HealthStatus::Healthy,
+                HealthStatus::Degraded,
+                HealthStatus::Critical,
+            ]
+        );
+    }
+
+    #[test]
+    fn enrichment_supervisor_action_copy_semantics() {
+        let a = SupervisorAction::Escalate;
+        let b = a;
+        let c = a;
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+
+    #[test]
+    fn enrichment_restart_budget_json_field_names() {
+        let b = RestartBudget {
+            max_restarts: 7,
+            window_ticks: 500,
+        };
+        let json = serde_json::to_string(&b).unwrap();
+        assert!(json.contains("max_restarts"));
+        assert!(json.contains("window_ticks"));
+        assert!(json.contains("7"));
+        assert!(json.contains("500"));
+    }
+
+    #[test]
+    fn enrichment_service_config_json_field_names() {
+        let cfg = ServiceConfig {
+            service_id: "test-svc".to_string(),
+            restart_policy: RestartPolicy::Permanent,
+            restart_budget: RestartBudget::default(),
+            shutdown_order: 99,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("service_id"));
+        assert!(json.contains("restart_policy"));
+        assert!(json.contains("restart_budget"));
+        assert!(json.contains("shutdown_order"));
+        assert!(json.contains("test-svc"));
+        assert!(json.contains("99"));
+    }
+
+    #[test]
+    fn enrichment_supervisor_event_json_field_names() {
+        let event = SupervisorEvent {
+            trace_id: "tr-99".to_string(),
+            service_id: "svc-99".to_string(),
+            action: SupervisorAction::Isolate,
+            reason: "overloaded".to_string(),
+            restart_count: 5,
+            budget_remaining: 0,
+            severity: Severity::Isolate,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("trace_id"));
+        assert!(json.contains("service_id"));
+        assert!(json.contains("action"));
+        assert!(json.contains("reason"));
+        assert!(json.contains("restart_count"));
+        assert!(json.contains("budget_remaining"));
+        assert!(json.contains("severity"));
+        assert!(json.contains("tr-99"));
+        assert!(json.contains("svc-99"));
+        assert!(json.contains("overloaded"));
+    }
+
+    #[test]
+    fn enrichment_supervisor_event_clone_independence() {
+        let original = SupervisorEvent {
+            trace_id: "t1".to_string(),
+            service_id: "svc".to_string(),
+            action: SupervisorAction::Restart,
+            reason: "crash".to_string(),
+            restart_count: 3,
+            budget_remaining: 1,
+            severity: Severity::Restart,
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        // Mutating cloned fields (by creating new) doesn't affect original
+        let modified = SupervisorEvent {
+            reason: "different_reason".to_string(),
+            ..cloned
+        };
+        assert_ne!(original.reason, modified.reason);
+        assert_eq!(original.reason, "crash");
+    }
+
+    #[test]
+    fn enrichment_service_config_clone_independence() {
+        let original = ServiceConfig {
+            service_id: "svc-orig".to_string(),
+            restart_policy: RestartPolicy::Permanent,
+            restart_budget: RestartBudget {
+                max_restarts: 10,
+                window_ticks: 200,
+            },
+            shutdown_order: 3,
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        let modified = ServiceConfig {
+            service_id: "svc-modified".to_string(),
+            ..cloned
+        };
+        assert_eq!(original.service_id, "svc-orig");
+        assert_eq!(modified.service_id, "svc-modified");
+    }
+
+    #[test]
+    fn enrichment_multiple_failures_same_tick() {
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(ServiceConfig {
+            service_id: "svc".to_string(),
+            restart_policy: RestartPolicy::Permanent,
+            restart_budget: RestartBudget {
+                max_restarts: 3,
+                window_ticks: 100,
+            },
+            shutdown_order: 0,
+        });
+        sup.start_service("svc");
+
+        // Three failures all at the same tick
+        let a1 = sup.report_failure("svc", "crash-1", 50).unwrap();
+        let a2 = sup.report_failure("svc", "crash-2", 50).unwrap();
+        let a3 = sup.report_failure("svc", "crash-3", 50).unwrap();
+        assert_eq!(a1, SupervisorAction::Restart);
+        assert_eq!(a2, SupervisorAction::Restart);
+        assert_eq!(a3, SupervisorAction::Restart);
+        assert_eq!(sup.restart_count("svc"), Some(3));
+
+        // 4th at same tick exhausts budget
+        let a4 = sup.report_failure("svc", "crash-4", 50).unwrap();
+        assert!(a4 == SupervisorAction::Escalate || a4 == SupervisorAction::Isolate);
+    }
+
+    #[test]
+    fn enrichment_service_severity_none_for_unknown() {
+        let sup = Supervisor::new("sup", "t");
+        assert_eq!(sup.service_severity("nonexistent"), None);
+    }
+
+    #[test]
+    fn enrichment_restart_budget_zero_window_ticks() {
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(ServiceConfig {
+            service_id: "svc".to_string(),
+            restart_policy: RestartPolicy::Permanent,
+            restart_budget: RestartBudget {
+                max_restarts: 2,
+                window_ticks: 0, // zero-length window
+            },
+            shutdown_order: 0,
+        });
+        sup.start_service("svc");
+
+        // With window_ticks=0, window_start = now - 0 = now
+        // Restarts at ts == now satisfy ts >= window_start, so they count
+        let a1 = sup.report_failure("svc", "crash-1", 100).unwrap();
+        assert_eq!(a1, SupervisorAction::Restart);
+        let a2 = sup.report_failure("svc", "crash-2", 200).unwrap();
+        assert_eq!(a2, SupervisorAction::Restart);
+        // At a new tick, old timestamps fall outside the zero-width window
+        assert_eq!(sup.restart_count("svc"), Some(2));
+    }
+
+    #[test]
+    fn enrichment_empty_string_service_id() {
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(ServiceConfig {
+            service_id: String::new(),
+            restart_policy: RestartPolicy::Permanent,
+            restart_budget: RestartBudget::default(),
+            shutdown_order: 0,
+        });
+        assert_eq!(sup.service_count(), 1);
+        assert!(sup.start_service(""));
+        assert_eq!(sup.service_state(""), Some(ServiceState::Running));
+        let action = sup.report_failure("", "crash", 10).unwrap();
+        assert_eq!(action, SupervisorAction::Restart);
+    }
+
+    #[test]
+    fn enrichment_restart_budget_max_restarts_one_boundary() {
+        // Budget of exactly 1: first failure restarts, second exhausts
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(ServiceConfig {
+            service_id: "svc".to_string(),
+            restart_policy: RestartPolicy::Permanent,
+            restart_budget: RestartBudget {
+                max_restarts: 1,
+                window_ticks: 1000,
+            },
+            shutdown_order: 0,
+        });
+        sup.start_service("svc");
+
+        let a1 = sup.report_failure("svc", "crash-1", 10).unwrap();
+        assert_eq!(a1, SupervisorAction::Restart);
+        assert_eq!(sup.restart_count("svc"), Some(1));
+        assert_eq!(sup.service_state("svc"), Some(ServiceState::Running));
+
+        let a2 = sup.report_failure("svc", "crash-2", 20).unwrap();
+        assert!(a2 == SupervisorAction::Escalate || a2 == SupervisorAction::Isolate);
+        assert_eq!(sup.service_state("svc"), Some(ServiceState::Isolated));
+    }
+
+    #[test]
+    fn enrichment_event_count_matches_actions() {
+        let mut sup = Supervisor::new("sup", "t");
+        sup.add_service(ServiceConfig {
+            service_id: "svc".to_string(),
+            restart_policy: RestartPolicy::Temporary,
+            restart_budget: RestartBudget::default(),
+            shutdown_order: 0,
+        });
+        sup.start_service("svc");
+        sup.report_failure("svc", "crash", 10);
+
+        let events = sup.drain_events();
+        // Should have: Start + Terminate (Temporary never restarts)
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].action, SupervisorAction::Start);
+        assert_eq!(events[1].action, SupervisorAction::Terminate);
+        assert_eq!(events[1].reason, "crash");
+    }
 }
