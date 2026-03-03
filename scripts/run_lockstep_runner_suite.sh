@@ -14,6 +14,9 @@ fixture_id="${LOCKSTEP_RUNNER_FIXTURE_ID:-}"
 runtime_specs="${LOCKSTEP_RUNNER_RUNTIME_SPECS:-}"
 seed="${LOCKSTEP_RUNNER_SEED:-7}"
 fail_on_divergence="${LOCKSTEP_RUNNER_FAIL_ON_DIVERGENCE:-0}"
+allow_critical_drift="${LOCKSTEP_RUNNER_ALLOW_CRITICAL_DRIFT:-0}"
+max_retries="${LOCKSTEP_RUNNER_MAX_RETRIES:-0}"
+quarantine_flaky="${LOCKSTEP_RUNNER_QUARANTINE_FLAKY:-0}"
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_dir="${artifact_root}/${timestamp}"
@@ -22,6 +25,7 @@ events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
 report_path="${run_dir}/report.json"
 evidence_path="${run_dir}/lockstep_evidence.jsonl"
+governance_actions_path="${run_dir}/governance_actions.json"
 repro_packs_dir="${run_dir}/repro_packs"
 
 trace_id="trace-lockstep-runner-${timestamp}"
@@ -129,7 +133,9 @@ run_report_step() {
       --locale C \
       --timezone UTC \
       --out "$report_path" \
-      --evidence-jsonl "$evidence_path"
+      --evidence-jsonl "$evidence_path" \
+      --governance-actions-out "$governance_actions_path" \
+      --max-retries "$max_retries"
   )
 
   if [[ -n "$fixture_id" ]]; then
@@ -140,6 +146,12 @@ run_report_step() {
   fi
   if [[ "$fail_on_divergence" == "1" ]]; then
     command+=(--fail-on-divergence)
+  fi
+  if [[ "$allow_critical_drift" == "1" ]]; then
+    command+=(--allow-critical-drift)
+  fi
+  if [[ "$quarantine_flaky" == "1" ]]; then
+    command+=(--quarantine-flaky)
   fi
 
   local command_text
@@ -277,6 +289,9 @@ write_manifest() {
     echo "  \"runtime_specs\": \"${runtime_specs}\","
     echo "  \"seed\": ${seed},"
     echo "  \"fail_on_divergence\": ${fail_on_divergence},"
+    echo "  \"allow_critical_drift\": ${allow_critical_drift},"
+    echo "  \"max_retries\": ${max_retries},"
+    echo "  \"quarantine_flaky\": ${quarantine_flaky},"
     echo "  \"generated_at_utc\": \"${timestamp}\","
     echo "  \"git_commit\": \"${git_commit}\","
     echo "  \"dirty_worktree\": ${dirty_worktree},"
@@ -302,6 +317,7 @@ write_manifest() {
     echo "    \"commands\": \"${commands_path}\","
     echo "    \"report\": \"${report_path}\","
     echo "    \"evidence\": \"${evidence_path}\","
+    echo "    \"governance_actions\": \"${governance_actions_path}\","
     echo "    \"repro_packs_dir\": \"${repro_packs_dir}\""
     echo "  },"
     echo '  "operator_verification": ['
@@ -309,6 +325,7 @@ write_manifest() {
     echo "    \"cat ${events_path}\","
     echo "    \"cat ${report_path}\","
     echo "    \"cat ${evidence_path}\","
+    echo "    \"cat ${governance_actions_path}\","
     echo "    \"ls ${repro_packs_dir}\","
     echo "    \"${0} report\""
     echo "  ]"
