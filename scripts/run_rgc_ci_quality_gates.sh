@@ -11,6 +11,8 @@ mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
 artifact_root="${RGC_CI_QUALITY_GATES_ARTIFACT_ROOT:-artifacts/rgc_ci_quality_gates}"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
+rch_build_timeout_sec="${RCH_BUILD_TIMEOUT_SEC:-${RCH_BUILD_TIMEOUT_SECONDS:-900}}"
+cargo_build_jobs="${CARGO_BUILD_JOBS:-2}"
 require_regression_verdict="${RGC_CI_QUALITY_REQUIRE_REGRESSION_VERDICT:-false}"
 regression_verdict_path="${RGC_PERF_REGRESSION_VERDICT_PATH:-}"
 if [[ -z "$regression_verdict_path" ]]; then
@@ -25,6 +27,7 @@ manifest_path="${run_dir}/run_manifest.json"
 events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
 failure_summary_path="${run_dir}/failure_summary.json"
+step_logs_dir="${run_dir}/step_logs"
 
 trace_id="trace-rgc-ci-quality-gates-${timestamp}"
 decision_id="decision-rgc-ci-quality-gates-${timestamp}"
@@ -34,6 +37,7 @@ scenario_id="rgc-055"
 replay_command="./scripts/e2e/rgc_ci_quality_gates_replay.sh ${mode}"
 
 mkdir -p "$run_dir"
+mkdir -p "$step_logs_dir"
 
 if ! command -v rch >/dev/null 2>&1; then
   echo "rch is required for RGC CI quality gate heavy commands" >&2
@@ -46,10 +50,12 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 run_rch() {
-  timeout "${rch_timeout_seconds}" \
+  RCH_BUILD_TIMEOUT_SEC="${rch_build_timeout_sec}" \
+    timeout --kill-after=30 "${rch_timeout_seconds}" \
     rch exec -- env \
     "RUSTUP_TOOLCHAIN=${toolchain}" \
     "CARGO_TARGET_DIR=${target_dir}" \
+    "CARGO_BUILD_JOBS=${cargo_build_jobs}" \
     "$@"
 }
 
@@ -90,6 +96,7 @@ failed_command=""
 failure_owner=""
 failure_lane=""
 manifest_written=false
+step_counter=0
 
 default_owner_for_lane() {
   case "$1" in
@@ -132,30 +139,46 @@ record_event() {
 run_step_rch() {
   local lane="$1"
   local command_text="$2"
-  local log_path remote_exit_code
+  local log_path remote_exit_code run_rch_exit command_slug
   shift 2
 
   commands_run+=("$command_text")
   echo "==> $command_text"
-  log_path="$(mktemp)"
+  step_counter=$((step_counter + 1))
+  command_slug="$(printf '%s' "$command_text" | tr '[:space:]/:' '_' | tr -cd '[:alnum:]_.-' | cut -c1-64)"
+  if [[ -z "$command_slug" ]]; then
+    command_slug="${lane}_step_${step_counter}"
+  fi
+  log_path="${step_logs_dir}/$(printf '%02d' "$step_counter")_${command_slug}.log"
 
-  if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
-    if rch_strip_ansi "$log_path" | rg -q "Remote command finished: exit=0"; then
+  set +e
+  run_rch "$@" > >(tee "$log_path") 2>&1
+  run_rch_exit=$?
+  set -e
+
+  if [[ "$run_rch_exit" -ne 0 ]]; then
+    remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
+    if [[ "$remote_exit_code" == "0" ]]; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
-    else
-      rm -f "$log_path"
-      failed_command="$command_text"
+    elif [[ -n "$remote_exit_code" ]]; then
+      failed_command="${command_text} (remote-exit=${remote_exit_code}; rch-exit=${run_rch_exit}; log=${log_path})"
       failure_lane="$lane"
       failure_owner="$(default_owner_for_lane "$lane")"
       failed_lanes+=("$lane")
-      record_event "lane_failed" "fail" "FE-RGC-CI-QUALITY-GATE-0001" "$lane" "$command_text"
+      record_event "lane_failed" "fail" "FE-RGC-CI-QUALITY-GATE-0003" "$lane" "$failed_command"
+      return 1
+    else
+      failed_command="${command_text} (rch-exit=${run_rch_exit}; missing-remote-exit-marker; log=${log_path})"
+      failure_lane="$lane"
+      failure_owner="$(default_owner_for_lane "$lane")"
+      failed_lanes+=("$lane")
+      record_event "lane_failed" "fail" "FE-RGC-CI-QUALITY-GATE-0008" "$lane" "$failed_command"
       return 1
     fi
   fi
 
   if ! rch_reject_local_fallback "$log_path"; then
-    rm -f "$log_path"
-    failed_command="${command_text} (rch-local-fallback-detected)"
+    failed_command="${command_text} (rch-local-fallback-detected; log=${log_path})"
     failure_lane="$lane"
     failure_owner="$(default_owner_for_lane "$lane")"
     failed_lanes+=("$lane")
@@ -165,8 +188,7 @@ run_step_rch() {
 
   remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
   if [[ -z "$remote_exit_code" ]]; then
-    rm -f "$log_path"
-    failed_command="${command_text} (missing-remote-exit-marker)"
+    failed_command="${command_text} (missing-remote-exit-marker; rch-exit=${run_rch_exit}; log=${log_path})"
     failure_lane="$lane"
     failure_owner="$(default_owner_for_lane "$lane")"
     failed_lanes+=("$lane")
@@ -175,8 +197,7 @@ run_step_rch() {
   fi
 
   if [[ -n "$remote_exit_code" && "$remote_exit_code" != "0" ]]; then
-    rm -f "$log_path"
-    failed_command="${command_text} (remote-exit=${remote_exit_code})"
+    failed_command="${command_text} (remote-exit=${remote_exit_code}; rch-exit=${run_rch_exit}; log=${log_path})"
     failure_lane="$lane"
     failure_owner="$(default_owner_for_lane "$lane")"
     failed_lanes+=("$lane")
@@ -184,7 +205,6 @@ run_step_rch() {
     return 1
   fi
 
-  rm -f "$log_path"
   record_event "lane_completed" "pass" "" "$lane" "$command_text"
 }
 
@@ -395,6 +415,8 @@ write_manifest() {
     echo "  \"toolchain\": \"${toolchain}\"," 
     echo "  \"cargo_target_dir\": \"${target_dir}\"," 
     echo "  \"rch_exec_timeout_seconds\": ${rch_timeout_seconds},"
+    echo "  \"rch_build_timeout_sec\": ${rch_build_timeout_sec},"
+    echo "  \"cargo_build_jobs\": ${cargo_build_jobs},"
     echo "  \"trace_id\": \"${trace_id}\"," 
     echo "  \"decision_id\": \"${decision_id}\"," 
     echo "  \"policy_id\": \"${policy_id}\"," 
@@ -429,6 +451,7 @@ write_manifest() {
     echo "    \"events\": \"${events_path}\"," 
     echo "    \"commands\": \"${commands_path}\"," 
     echo "    \"failure_summary\": \"${failure_summary_path}\"," 
+    echo "    \"step_logs_dir\": \"${step_logs_dir}\"," 
     echo '    "contract_doc": "docs/RGC_CI_QUALITY_GATES.md",'
     echo '    "gate_fixture": "crates/franken-engine/tests/fixtures/rgc_ci_quality_gates_v1.json",'
     echo '    "gate_tests": "crates/franken-engine/tests/rgc_ci_quality_gates.rs",'

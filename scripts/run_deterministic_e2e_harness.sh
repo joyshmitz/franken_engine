@@ -19,16 +19,19 @@ run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
 events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
+step_logs_dir="${run_dir}/step_logs"
 trace_id="trace-deterministic-e2e-harness-${timestamp}"
 decision_id="decision-deterministic-e2e-harness-${timestamp}"
 policy_id="policy-deterministic-e2e-harness-v1"
 component="deterministic_e2e_harness_lane"
 
-mkdir -p "${run_dir}"
+mkdir -p "${run_dir}" "${step_logs_dir}"
 
 declare -a commands_run=()
+declare -a step_logs=()
 failed_command=""
 manifest_written=false
+step_log_index=0
 
 run_rch() {
   if ! command -v rch >/dev/null 2>&1; then
@@ -64,38 +67,60 @@ rch_reject_local_fallback() {
   fi
 }
 
+rch_recovered_success() {
+  local log_path="$1"
+  if rg -q 'Remote command finished: exit=0|Finished `dev` profile|Finished `test` profile|test result: ok\.' "$log_path" \
+    && ! rg -qi 'error(\[[[:alnum:]]+\])?:' "$log_path"; then
+    return 0
+  fi
+  return 1
+}
+
 run_step() {
   local command_text="$1"
-  local log_path remote_exit_code
+  local log_path status remote_exit_code
   shift
   commands_run+=("${command_text}")
+  log_path="${step_logs_dir}/step_$(printf '%03d' "${step_log_index}").log"
+  step_log_index=$((step_log_index + 1))
+  step_logs+=("${log_path}")
   echo "==> ${command_text}"
-  log_path="$(mktemp "${run_dir}/rch-log.XXXXXX")"
 
-  if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
-    if rg -q 'Remote command finished: exit=0' "$log_path"; then
+  set +e
+  run_rch "$@" > >(tee "$log_path") 2>&1
+  status=$?
+  set -e
+
+  if [[ "${status}" -ne 0 ]]; then
+    if [[ "${status}" -eq 124 ]]; then
+      echo "==> failure: rch command timed out after ${rch_timeout_seconds}s" | tee -a "$log_path"
+      failed_command="${command_text} (timeout-${rch_timeout_seconds}s)"
+      return 1
+    fi
+
+    if rch_recovered_success "$log_path"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
     else
-      rm -f "$log_path"
-      failed_command="${command_text}"
+      remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
+      if [[ -n "${remote_exit_code}" ]]; then
+        failed_command="${command_text} (rch-exit=${status}; remote-exit=${remote_exit_code})"
+      else
+        failed_command="${command_text} (rch-exit=${status}; missing-remote-exit-marker)"
+      fi
       return 1
     fi
   fi
 
   if ! rch_reject_local_fallback "$log_path"; then
-    rm -f "$log_path"
     failed_command="${command_text} (rch-local-fallback-detected)"
     return 1
   fi
 
   remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
   if [[ -n "$remote_exit_code" && "$remote_exit_code" != "0" ]]; then
-    rm -f "$log_path"
-    failed_command="${command_text} (remote-exit=${remote_exit_code})"
+    failed_command="${command_text} (rch-exit=${status}; remote-exit=${remote_exit_code})"
     return 1
   fi
-
-  rm -f "$log_path"
 }
 
 run_mode() {
@@ -116,8 +141,10 @@ run_mode() {
         cargo test -p frankenengine-engine --test e2e_harness_integration -- --exact public_advanced_scenario_selector_can_filter_fault_injection
       ;;
     clippy)
-      run_step "cargo clippy -p frankenengine-engine --test e2e_harness --test e2e_harness_integration -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test e2e_harness --test e2e_harness_integration -- -D warnings
+      run_step "cargo clippy -p frankenengine-engine --test e2e_harness -- -D warnings" \
+        cargo clippy -p frankenengine-engine --test e2e_harness -- -D warnings
+      run_step "cargo clippy -p frankenengine-engine --test e2e_harness_integration -- -D warnings" \
+        cargo clippy -p frankenengine-engine --test e2e_harness_integration -- -D warnings
       ;;
     ci)
       run_mode check
@@ -218,15 +245,26 @@ write_manifest() {
       echo "    \"$(parser_frontier_json_escape "${commands_run[$idx]}")\"${comma}"
     done
     echo "  ],"
+    echo '  "step_logs": ['
+    for idx in "${!step_logs[@]}"; do
+      comma=","
+      if [[ "${idx}" == "$(( ${#step_logs[@]} - 1 ))" ]]; then
+        comma=""
+      fi
+      echo "    \"$(parser_frontier_json_escape "${step_logs[$idx]}")\"${comma}"
+    done
+    echo "  ],"
     echo '  "artifacts": {'
     echo "    \"manifest\": \"$(parser_frontier_json_escape "${manifest_path}")\","
     echo "    \"events\": \"$(parser_frontier_json_escape "${events_path}")\","
-    echo "    \"commands\": \"$(parser_frontier_json_escape "${commands_path}")\""
+    echo "    \"commands\": \"$(parser_frontier_json_escape "${commands_path}")\","
+    echo "    \"step_logs_dir\": \"$(parser_frontier_json_escape "${step_logs_dir}")\""
     echo "  },"
     echo '  "operator_verification": ['
     echo "    \"cat $(parser_frontier_json_escape "${manifest_path}")\","
     echo "    \"cat $(parser_frontier_json_escape "${events_path}")\","
     echo "    \"cat $(parser_frontier_json_escape "${commands_path}")\","
+    echo "    \"ls -1 $(parser_frontier_json_escape "${step_logs_dir}")\","
     echo "    \"$(parser_frontier_json_escape "${replay_command}")\""
     echo "  ]"
     echo "}"

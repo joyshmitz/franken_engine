@@ -11,6 +11,8 @@ mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
 artifact_root="${RGC_STRUCTURED_LOGGING_CONTRACT_ARTIFACT_ROOT:-artifacts/rgc_structured_logging_contract}"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
+rch_build_timeout_sec="${RCH_BUILD_TIMEOUT_SEC:-${RCH_BUILD_TIMEOUT_SECONDS:-900}}"
+cargo_build_jobs="${CARGO_BUILD_JOBS:-2}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 default_target_dir="/tmp/rch_target_franken_engine_rgc_structured_logging_contract_${timestamp}_$$"
 target_dir="${CARGO_TARGET_DIR:-${default_target_dir}}"
@@ -18,6 +20,7 @@ run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
 events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
+step_logs_dir="${run_dir}/step_logs"
 
 trace_id="trace-rgc-structured-logging-contract-${timestamp}"
 decision_id="decision-rgc-structured-logging-contract-${timestamp}"
@@ -27,6 +30,7 @@ scenario_id="rgc-054a"
 replay_command="${0} ${mode}"
 
 mkdir -p "$run_dir"
+mkdir -p "$step_logs_dir"
 
 if ! command -v rch >/dev/null 2>&1; then
   echo "rch is required for RGC structured logging contract heavy commands" >&2
@@ -34,7 +38,12 @@ if ! command -v rch >/dev/null 2>&1; then
 fi
 
 run_rch() {
-  timeout "${rch_timeout_seconds}" rch exec -q -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
+  RCH_BUILD_TIMEOUT_SEC="${rch_build_timeout_sec}" \
+    timeout --kill-after=30 "${rch_timeout_seconds}" rch exec -- env \
+    "RUSTUP_TOOLCHAIN=${toolchain}" \
+    "CARGO_TARGET_DIR=${target_dir}" \
+    "CARGO_BUILD_JOBS=${cargo_build_jobs}" \
+    "$@"
 }
 
 rch_strip_ansi() {
@@ -70,43 +79,53 @@ rch_reject_local_fallback() {
 declare -a commands_run=()
 failed_command=""
 manifest_written=false
+step_counter=0
 
 run_step() {
   local command_text="$1"
-  local log_path remote_exit_code
+  local log_path remote_exit_code run_rch_exit command_slug
   shift
   commands_run+=("$command_text")
   echo "==> $command_text"
-  log_path="$(mktemp)"
-  if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
-    if rch_strip_ansi "$log_path" | rg -q "Remote command finished: exit=0"; then
+  step_counter=$((step_counter + 1))
+  command_slug="$(printf '%s' "$command_text" | tr '[:space:]/:' '_' | tr -cd '[:alnum:]_.-' | cut -c1-64)"
+  if [[ -z "$command_slug" ]]; then
+    command_slug="step_${step_counter}"
+  fi
+  log_path="${step_logs_dir}/$(printf '%02d' "$step_counter")_${command_slug}.log"
+
+  set +e
+  run_rch "$@" > >(tee "$log_path") 2>&1
+  run_rch_exit=$?
+  set -e
+
+  if [[ "$run_rch_exit" -ne 0 ]]; then
+    remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
+    if [[ "$remote_exit_code" == "0" ]]; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
+    elif [[ -n "$remote_exit_code" ]]; then
+      failed_command="${command_text} (remote-exit=${remote_exit_code}; rch-exit=${run_rch_exit}; log=${log_path})"
+      return 1
     else
-      rm -f "$log_path"
-      failed_command="$command_text"
+      failed_command="${command_text} (rch-exit=${run_rch_exit}; missing-remote-exit-marker; log=${log_path})"
       return 1
     fi
   fi
   if ! rch_reject_local_fallback "$log_path"; then
-    rm -f "$log_path"
-    failed_command="${command_text} (rch-local-fallback-detected)"
+    failed_command="${command_text} (rch-local-fallback-detected; log=${log_path})"
     return 1
   fi
 
   remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
   if [[ -z "$remote_exit_code" ]]; then
-    rm -f "$log_path"
-    failed_command="${command_text} (missing-remote-exit-marker)"
+    failed_command="${command_text} (missing-remote-exit-marker; rch-exit=${run_rch_exit}; log=${log_path})"
     return 1
   fi
 
   if [[ "$remote_exit_code" != "0" ]]; then
-    rm -f "$log_path"
-    failed_command="${command_text} (remote-exit=${remote_exit_code})"
+    failed_command="${command_text} (remote-exit=${remote_exit_code}; rch-exit=${run_rch_exit}; log=${log_path})"
     return 1
   fi
-
-  rm -f "$log_path"
 }
 
 run_mode() {
@@ -120,16 +139,18 @@ run_mode() {
         cargo test -p frankenengine-engine --test test_logging_schema_integration
       ;;
     clippy)
-      run_step "cargo clippy -p frankenengine-engine --test test_logging_schema_integration -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test test_logging_schema_integration -- -D warnings
+      run_step "cargo check -p frankenengine-engine --test test_logging_schema_integration (warmup-for-clippy)" \
+        cargo check -p frankenengine-engine --test test_logging_schema_integration
+      run_step "cargo clippy -p frankenengine-engine --test test_logging_schema_integration --no-deps -- -D warnings" \
+        cargo clippy -p frankenengine-engine --test test_logging_schema_integration --no-deps -- -D warnings
       ;;
     ci)
       run_step "cargo check -p frankenengine-engine --test test_logging_schema_integration" \
         cargo check -p frankenengine-engine --test test_logging_schema_integration
       run_step "cargo test -p frankenengine-engine --test test_logging_schema_integration" \
         cargo test -p frankenengine-engine --test test_logging_schema_integration
-      run_step "cargo clippy -p frankenengine-engine --test test_logging_schema_integration -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test test_logging_schema_integration -- -D warnings
+      run_step "cargo clippy -p frankenengine-engine --test test_logging_schema_integration --no-deps -- -D warnings" \
+        cargo clippy -p frankenengine-engine --test test_logging_schema_integration --no-deps -- -D warnings
       ;;
     *)
       echo "usage: $0 [check|test|clippy|ci]" >&2
@@ -178,6 +199,8 @@ write_manifest() {
     echo "  \"toolchain\": \"${toolchain}\"," 
     echo "  \"cargo_target_dir\": \"${target_dir}\"," 
     echo "  \"rch_exec_timeout_seconds\": ${rch_timeout_seconds},"
+    echo "  \"rch_build_timeout_sec\": ${rch_build_timeout_sec},"
+    echo "  \"cargo_build_jobs\": ${cargo_build_jobs},"
     echo "  \"trace_id\": \"${trace_id}\"," 
     echo "  \"decision_id\": \"${decision_id}\"," 
     echo "  \"policy_id\": \"${policy_id}\"," 
@@ -202,6 +225,7 @@ write_manifest() {
     echo "    \"manifest\": \"${manifest_path}\"," 
     echo "    \"events\": \"${events_path}\"," 
     echo "    \"commands\": \"${commands_path}\"," 
+    echo "    \"step_logs_dir\": \"${step_logs_dir}\"," 
     echo '    "contract_doc": "docs/RGC_STRUCTURED_LOGGING_CONTRACT.md",'
     echo '    "contract_json": "docs/rgc_structured_logging_contract_v1.json",'
     echo '    "gate_tests": "crates/franken-engine/tests/test_logging_schema_integration.rs",'

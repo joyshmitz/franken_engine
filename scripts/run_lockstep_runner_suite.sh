@@ -275,7 +275,7 @@ write_manifest() {
   {
     echo "{"
     echo '  "schema_version": "franken-engine.lockstep-runner-suite.run-manifest.v1",'
-    echo '  "bead_id": "bd-2vu",'
+    echo '  "bead_id": "bd-1lsy.9.2",'
     echo "  \"component\": \"${component}\","
     echo "  \"mode\": \"${mode}\","
     echo "  \"toolchain\": \"${toolchain}\","
