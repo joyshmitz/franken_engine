@@ -19,6 +19,8 @@ run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
 events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
+step_logs_dir="${run_dir}/step_logs"
+step_logs_index_path="${run_dir}/step_logs.txt"
 
 trace_id="trace-runtime-hotspot-optimization-campaign-${timestamp}"
 decision_id="decision-runtime-hotspot-optimization-campaign-${timestamp}"
@@ -27,6 +29,7 @@ component="runtime_hotspot_optimization_campaign_gate"
 replay_command="${0} ${mode}"
 
 mkdir -p "$run_dir"
+mkdir -p "$step_logs_dir"
 
 if ! command -v rch >/dev/null 2>&1; then
   echo "rch is required for runtime hotspot optimization campaign heavy commands" >&2
@@ -75,17 +78,27 @@ rch_failure_is_retryable() {
 }
 
 declare -a commands_run=()
+declare -a step_logs=()
 failed_command=""
 manifest_written=false
 
 run_step_once() {
   local command_text="$1"
-  local log_path
+  local log_path safe_command_text
   local run_status=0
   shift
   commands_run+=("$command_text")
   echo "==> $command_text"
-  log_path="$(mktemp)"
+  safe_command_text="$(
+    echo "$command_text" \
+      | tr ' /:' '___' \
+      | tr -cd '[:alnum:]_.-'
+  )"
+  if [[ -z "$safe_command_text" ]]; then
+    safe_command_text="step"
+  fi
+  log_path="$(mktemp "${step_logs_dir}/${safe_command_text}.XXXXXX.log")"
+  step_logs+=("$log_path")
 
   if run_rch "$@" > >(tee "$log_path") 2>&1; then
     run_status=0
@@ -94,14 +107,12 @@ run_step_once() {
   fi
 
   if ! rch_reject_local_fallback "$log_path"; then
-    rm -f "$log_path"
-    failed_command="${command_text} (rch-local-fallback-detected)"
+    failed_command="${command_text} (rch-local-fallback-detected; log=${log_path})"
     return 1
   fi
 
   if ! rch_reject_artifact_retrieval_failure "$log_path"; then
-    rm -f "$log_path"
-    failed_command="${command_text} (rch-artifact-retrieval-failed)"
+    failed_command="${command_text} (rch-artifact-retrieval-failed; log=${log_path})"
     return 1
   fi
 
@@ -111,13 +122,10 @@ run_step_once() {
     if [[ "$remote_exit_code" == "0" ]] && rch_has_recoverable_artifact_timeout "$log_path"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
     else
-      rm -f "$log_path"
-      failed_command="$command_text"
+      failed_command="${command_text} (log=${log_path})"
       return 1
     fi
   fi
-
-  rm -f "$log_path"
 }
 
 run_step() {
@@ -215,6 +223,7 @@ write_manifest() {
   fi
 
   printf '%s\n' "${commands_run[@]}" >"$commands_path"
+  printf '%s\n' "${step_logs[@]}" >"$step_logs_index_path"
 
   {
     echo "{\"schema_version\":\"franken-engine.runtime-log-event.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"${component}\",\"event\":\"gate_completed\",\"replay_command\":\"${replay_command}\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
@@ -253,6 +262,8 @@ write_manifest() {
     echo "    \"manifest\": \"${manifest_path}\","
     echo "    \"events\": \"${events_path}\","
     echo "    \"commands\": \"${commands_path}\","
+    echo "    \"step_logs_index\": \"${step_logs_index_path}\","
+    echo "    \"step_logs_dir\": \"${step_logs_dir}\","
     echo '    "campaign_doc": "docs/RUNTIME_HOTSPOT_OPTIMIZATION_CAMPAIGN.md",'
     echo '    "campaign_fixture": "crates/franken-engine/tests/fixtures/runtime_hotspot_optimization_campaign_v1.json",'
     echo '    "campaign_tests": "crates/franken-engine/tests/runtime_hotspot_optimization_campaign.rs"'
@@ -261,6 +272,7 @@ write_manifest() {
     echo "    \"cat ${manifest_path}\","
     echo "    \"cat ${events_path}\","
     echo "    \"cat ${commands_path}\","
+    echo "    \"cat ${step_logs_index_path}\","
     echo "    \"${replay_command}\""
     echo "  ]"
     echo "}"

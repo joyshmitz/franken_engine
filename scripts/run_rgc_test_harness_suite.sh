@@ -12,7 +12,9 @@ toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
 artifact_root="${RGC_TEST_HARNESS_ARTIFACT_ROOT:-artifacts/rgc_test_harness}"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-default_target_dir="/tmp/rch_target_franken_engine_rgc_test_harness_${timestamp}_$$"
+# Use a stable gate target dir by default so rch workers can reuse incremental
+# artifacts across runs instead of recompiling from a cold directory each time.
+default_target_dir="/data/projects/franken_engine/target_rch_rgc_test_harness"
 target_dir="${CARGO_TARGET_DIR:-${default_target_dir}}"
 run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
@@ -77,7 +79,7 @@ run_step() {
 
   commands_run+=("$command_text")
   echo "==> $command_text"
-  log_path="$(mktemp)"
+  log_path="$(mktemp "${run_dir}/rch-log.XXXXXX")"
 
   if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
     if rg -q "Remote command finished: exit=0" "$log_path"; then
@@ -225,7 +227,21 @@ write_manifest() {
 }
 
 main_exit=0
-run_mode || main_exit=$?
-write_manifest "$main_exit"
 
+emit_manifest_on_exit() {
+  local trap_exit="$?"
+  local exit_code
+
+  # Keep the original script exit code while still emitting triage artifacts.
+  set +e
+  exit_code="${main_exit}"
+  if [[ "$exit_code" -eq 0 && "$trap_exit" -ne 0 ]]; then
+    exit_code="$trap_exit"
+  fi
+  write_manifest "$exit_code" || true
+}
+
+trap emit_manifest_on_exit EXIT
+
+run_mode || main_exit=$?
 exit "$main_exit"

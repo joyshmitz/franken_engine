@@ -47,10 +47,13 @@ Delta classes are deterministic and explicit:
 - `digest_delta_unexplained` (`critical`): outcomes/error-codes match but
   witness digest differs without a toolchain-fingerprint explanation.
 - `upstream_lane_regression` (`critical`): outcome or error-code diverges.
-- `missing_input` (`critical`): required architecture-lane manifest is absent.
+- `missing_input` (`critical` in strict matrix mode): required architecture-lane
+  manifest is absent.
 
 `digest_delta_unexplained`, `upstream_lane_regression`, and `missing_input`
-must fail-closed in `matrix` mode.
+must fail-closed in strict `matrix` mode. In non-matrix modes (`check`,
+`test`, `clippy`, `ci`), missing inputs are recorded as informational metadata
+so compiler/test gate runs can execute without architecture-manifest inputs.
 
 ## Structured Logging Contract
 

@@ -129,6 +129,8 @@ Each run emits:
 - `artifacts/runtime_hotspot_optimization_campaign/<timestamp>/run_manifest.json`
 - `artifacts/runtime_hotspot_optimization_campaign/<timestamp>/events.jsonl`
 - `artifacts/runtime_hotspot_optimization_campaign/<timestamp>/commands.txt`
+- `artifacts/runtime_hotspot_optimization_campaign/<timestamp>/step_logs.txt`
+- `artifacts/runtime_hotspot_optimization_campaign/<timestamp>/step_logs/*.log`
 
 The manifest must include replay command, deterministic run metadata, command
 transcript, and pass/fail outcome.
@@ -140,5 +142,6 @@ transcript, and pass/fail outcome.
 cat artifacts/runtime_hotspot_optimization_campaign/<timestamp>/run_manifest.json
 cat artifacts/runtime_hotspot_optimization_campaign/<timestamp>/events.jsonl
 cat artifacts/runtime_hotspot_optimization_campaign/<timestamp>/commands.txt
+cat artifacts/runtime_hotspot_optimization_campaign/<timestamp>/step_logs.txt
 ./scripts/e2e/runtime_hotspot_optimization_campaign_replay.sh
 ```

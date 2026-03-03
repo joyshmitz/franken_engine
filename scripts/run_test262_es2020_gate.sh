@@ -25,7 +25,7 @@ rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
 pins_path="crates/franken-engine/tests/test262_conformance_pins.toml"
 profile_path="crates/franken-engine/tests/test262_es2020_profile.toml"
 waivers_path="crates/franken-engine/tests/test262_conformance_waivers.toml"
-observed_results_path="crates/franken-engine/tests/test262_observed_results.jsonl"
+case_vectors_path="crates/franken-engine/tests/test262_case_vectors.jsonl"
 runner_output_root="${run_dir}/test262_runner"
 canonical_hwm_path="${run_dir}/test262_hwm.json"
 
@@ -87,12 +87,12 @@ run_test() {
     run_rch cargo test -p frankenengine-engine --test test262_release_gate
   run_step "cargo test -p frankenengine-engine --bin franken_test262_runner" \
     run_rch cargo test -p frankenengine-engine --bin franken_test262_runner
-  run_step "cargo run -p frankenengine-engine --bin franken_test262_runner -- --pins ${pins_path} --profile ${profile_path} --waivers ${waivers_path} --observed-results ${observed_results_path} --output-root ${runner_output_root} --high-water-mark ${canonical_hwm_path} --run-date ${run_date}" \
+  run_step "cargo run -p frankenengine-engine --bin franken_test262_runner -- --pins ${pins_path} --profile ${profile_path} --waivers ${waivers_path} --case-vectors ${case_vectors_path} --output-root ${runner_output_root} --high-water-mark ${canonical_hwm_path} --run-date ${run_date}" \
     run_rch cargo run -p frankenengine-engine --bin franken_test262_runner -- \
       --pins "${pins_path}" \
       --profile "${profile_path}" \
       --waivers "${waivers_path}" \
-      --observed-results "${observed_results_path}" \
+      --case-vectors "${case_vectors_path}" \
       --output-root "${runner_output_root}" \
       --high-water-mark "${canonical_hwm_path}" \
       --run-date "${run_date}"
@@ -210,7 +210,7 @@ JSONL
     echo "    \"pins\": \"$(json_escape "$pins_path")\",";
     echo "    \"profile\": \"$(json_escape "$profile_path")\",";
     echo "    \"waivers\": \"$(json_escape "$waivers_path")\",";
-    echo "    \"observed_results\": \"$(json_escape "$observed_results_path")\"";
+    echo "    \"case_vectors\": \"$(json_escape "$case_vectors_path")\"";
     echo '  },';
     echo '  "runner_artifacts": {';
     echo "    \"runner_manifest\": ${runner_manifest_json},";

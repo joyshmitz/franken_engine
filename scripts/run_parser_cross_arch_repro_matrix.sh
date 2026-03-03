@@ -42,6 +42,7 @@ if ! command -v rch >/dev/null 2>&1; then
 fi
 
 run_rch() {
+  RCH_EXEC_TIMEOUT_SECONDS="${rch_timeout_seconds}" \
   timeout "${rch_timeout_seconds}" \
     rch exec -- env \
     "RUSTUP_TOOLCHAIN=${toolchain}" \
@@ -70,12 +71,12 @@ rch_last_remote_exit_code() {
 
 rch_has_recoverable_artifact_timeout() {
   local log_path="$1"
-  grep -Eiq 'artifact retrieval timed out|artifact transfer timed out|timed out waiting for artifacts|failed to retrieve artifacts|failed to download artifacts' "$log_path"
+  grep -Eiq 'artifact retrieval timed out|artifact transfer timed out|timed out waiting for artifacts' "$log_path"
 }
 
 rch_reject_artifact_retrieval_failure() {
   local log_path="$1"
-  if grep -Eiq 'Artifact retrieval failed|Failed to retrieve artifacts:|rsync artifact retrieval failed|rsync error: .*code 23' "$log_path"; then
+  if grep -Eiq 'Artifact retrieval failed|Failed to retrieve artifacts:|rsync artifact retrieval failed|artifact retrieval .*rsync error' "$log_path"; then
     echo "rch artifact retrieval failed; refusing to mark heavy command as successful" >&2
     return 1
   fi
@@ -235,6 +236,13 @@ append_missing_delta() {
   local x86_manifest="$2"
   local arm64_manifest="$3"
   local reason="$4"
+  local severity="critical"
+  local classified_reason="$reason"
+
+  if [[ "$matrix_mode_strict" != true ]]; then
+    severity="info"
+    classified_reason="optional manifest input missing outside strict matrix mode: ${reason}"
+  fi
 
   append_delta_row \
     "$lane_id" \
@@ -253,8 +261,8 @@ append_missing_delta() {
     "./scripts/e2e/parser_cross_arch_repro_matrix_replay.sh" \
     "./scripts/e2e/parser_cross_arch_repro_matrix_replay.sh" \
     "missing_input" \
-    "critical" \
-    "$reason"
+    "$severity" \
+    "$classified_reason"
 }
 
 manifest_value_or_unknown() {

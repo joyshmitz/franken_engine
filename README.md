@@ -1270,11 +1270,17 @@ parser, and security verification lanes.
 ./scripts/e2e/rgc_test_harness_replay.sh ci
 ```
 
+`run_rgc_test_harness_suite.sh` defaults `CARGO_TARGET_DIR` to
+`/data/projects/franken_engine/target_rch_rgc_test_harness` so rch workers can
+reuse incremental artifacts across runs. Override with `CARGO_TARGET_DIR=...`
+if you need lane-specific isolation.
+
 Artifacts are written under:
 
 - `artifacts/rgc_test_harness/<timestamp>/run_manifest.json`
 - `artifacts/rgc_test_harness/<timestamp>/events.jsonl`
 - `artifacts/rgc_test_harness/<timestamp>/commands.txt`
+- `artifacts/rgc_test_harness/<timestamp>/rch-log.*` (per-step rch execution logs)
 
 ## Troubleshooting
 
