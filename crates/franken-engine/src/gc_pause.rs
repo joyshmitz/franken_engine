@@ -1193,4 +1193,247 @@ mod tests {
         tracker.set_budget(PauseBudget::new(100, 200, 300));
         assert!(!tracker.within_budget());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch: serde, Display, edge cases, clone/eq
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pause_budget_serde_roundtrip() {
+        let budget = PauseBudget::new(100, 200, 300);
+        let json = serde_json::to_string(&budget).unwrap();
+        let back: PauseBudget = serde_json::from_str(&json).unwrap();
+        assert_eq!(budget, back);
+    }
+
+    #[test]
+    fn pause_budget_json_field_names() {
+        let budget = PauseBudget::default();
+        let json = serde_json::to_string(&budget).unwrap();
+        assert!(json.contains("\"p50_ns\""));
+        assert!(json.contains("\"p95_ns\""));
+        assert!(json.contains("\"p99_ns\""));
+    }
+
+    #[test]
+    fn pause_record_serde_roundtrip() {
+        let record = PauseRecord {
+            sequence: 42,
+            extension_id: "ext-test".to_string(),
+            pause_ns: 1_500_000,
+            objects_scanned: 100,
+            objects_collected: 25,
+            bytes_reclaimed: 4096,
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let back: PauseRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(record, back);
+    }
+
+    #[test]
+    fn pause_record_json_field_names() {
+        let record = PauseRecord {
+            sequence: 1,
+            extension_id: "ext".to_string(),
+            pause_ns: 100,
+            objects_scanned: 10,
+            objects_collected: 5,
+            bytes_reclaimed: 1024,
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        assert!(json.contains("\"sequence\""));
+        assert!(json.contains("\"extension_id\""));
+        assert!(json.contains("\"pause_ns\""));
+        assert!(json.contains("\"objects_scanned\""));
+        assert!(json.contains("\"objects_collected\""));
+        assert!(json.contains("\"bytes_reclaimed\""));
+    }
+
+    #[test]
+    fn percentile_display_all_variants() {
+        assert_eq!(Percentile::P50.to_string(), "p50");
+        assert_eq!(Percentile::P95.to_string(), "p95");
+        assert_eq!(Percentile::P99.to_string(), "p99");
+    }
+
+    #[test]
+    fn percentile_serde_roundtrip() {
+        for p in [Percentile::P50, Percentile::P95, Percentile::P99] {
+            let json = serde_json::to_string(&p).unwrap();
+            let back: Percentile = serde_json::from_str(&json).unwrap();
+            assert_eq!(p, back);
+        }
+    }
+
+    #[test]
+    fn budget_violation_display_format() {
+        let v = BudgetViolation {
+            percentile: Percentile::P99,
+            observed_ns: 15_000_000,
+            budget_ns: 10_000_000,
+            scope: "global".to_string(),
+        };
+        let display = v.to_string();
+        assert!(display.contains("p99"));
+        assert!(display.contains("global"));
+        assert!(display.contains("15000000"));
+        assert!(display.contains("10000000"));
+    }
+
+    #[test]
+    fn budget_violation_serde_roundtrip() {
+        let v = BudgetViolation {
+            percentile: Percentile::P50,
+            observed_ns: 600_000,
+            budget_ns: 500_000,
+            scope: "ext-test".to_string(),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: BudgetViolation = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn percentile_snapshot_serde_roundtrip() {
+        let snap = PercentileSnapshot {
+            count: 100,
+            min_ns: 50,
+            max_ns: 5_000_000,
+            p50_ns: 200_000,
+            p95_ns: 1_500_000,
+            p99_ns: 4_000_000,
+        };
+        let json = serde_json::to_string(&snap).unwrap();
+        let back: PercentileSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(snap, back);
+    }
+
+    #[test]
+    fn percentile_snapshot_copy_semantics() {
+        let snap = PercentileSnapshot {
+            count: 10,
+            min_ns: 100,
+            max_ns: 1000,
+            p50_ns: 500,
+            p95_ns: 900,
+            p99_ns: 990,
+        };
+        let copied = snap;
+        assert_eq!(snap, copied);
+    }
+
+    #[test]
+    fn pause_budget_copy_semantics() {
+        let budget = PauseBudget::new(100, 200, 300);
+        let copied = budget;
+        assert_eq!(budget, copied);
+    }
+
+    #[test]
+    fn tracker_serde_roundtrip() {
+        let mut tracker = PauseTracker::new(PauseBudget::default());
+        tracker.record(&make_event(1, "ext-a", 100_000, 5, 512));
+        tracker.record(&make_event(2, "ext-b", 200_000, 10, 1024));
+        let json = serde_json::to_string(&tracker).unwrap();
+        let back: PauseTracker = serde_json::from_str(&json).unwrap();
+        assert_eq!(tracker.count(), back.count());
+        assert_eq!(
+            tracker.global_percentiles(),
+            back.global_percentiles()
+        );
+    }
+
+    #[test]
+    fn tracker_default_is_empty_within_budget() {
+        let tracker = PauseTracker::default();
+        assert_eq!(tracker.count(), 0);
+        assert!(tracker.within_budget());
+        assert!(tracker.extensions().is_empty());
+        assert_eq!(tracker.total_bytes_reclaimed(), 0);
+        assert_eq!(tracker.total_objects_collected(), 0);
+    }
+
+    #[test]
+    fn budget_violation_clone_eq() {
+        let v = BudgetViolation {
+            percentile: Percentile::P95,
+            observed_ns: 3_000_000,
+            budget_ns: 2_000_000,
+            scope: "ext-test".to_string(),
+        };
+        let cloned = v.clone();
+        assert_eq!(v, cloned);
+    }
+
+    #[test]
+    fn pause_record_clone_eq() {
+        let record = PauseRecord {
+            sequence: 99,
+            extension_id: "ext-x".to_string(),
+            pause_ns: 777,
+            objects_scanned: 50,
+            objects_collected: 20,
+            bytes_reclaimed: 8192,
+        };
+        let cloned = record.clone();
+        assert_eq!(record, cloned);
+    }
+
+    #[test]
+    fn percentile_snapshot_single_value() {
+        let snap = PercentileSnapshot::from_sorted(&[42_000]);
+        assert_eq!(snap.count, 1);
+        assert_eq!(snap.min_ns, 42_000);
+        assert_eq!(snap.max_ns, 42_000);
+        assert_eq!(snap.p50_ns, 42_000);
+        assert_eq!(snap.p95_ns, 42_000);
+        assert_eq!(snap.p99_ns, 42_000);
+    }
+
+    #[test]
+    fn check_budget_empty_snapshot_no_violations() {
+        let snap = PercentileSnapshot::from_sorted(&[]);
+        let violations = snap.check_budget(&PauseBudget::new(0, 0, 0), "global");
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn check_budget_at_exact_threshold_no_violation() {
+        let snap = PercentileSnapshot {
+            count: 1,
+            min_ns: 500_000,
+            max_ns: 500_000,
+            p50_ns: 500_000,
+            p95_ns: 500_000,
+            p99_ns: 500_000,
+        };
+        let budget = PauseBudget::new(500_000, 500_000, 500_000);
+        let violations = snap.check_budget(&budget, "global");
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn check_budget_one_ns_over_triggers_violation() {
+        let snap = PercentileSnapshot {
+            count: 1,
+            min_ns: 500_001,
+            max_ns: 500_001,
+            p50_ns: 500_001,
+            p95_ns: 500_001,
+            p99_ns: 500_001,
+        };
+        let budget = PauseBudget::new(500_000, 500_000, 500_000);
+        let violations = snap.check_budget(&budget, "global");
+        assert_eq!(violations.len(), 3);
+    }
+
+    #[test]
+    fn tracker_extensions_deterministic_order() {
+        let mut tracker = PauseTracker::new(PauseBudget::default());
+        tracker.record(&make_event(1, "ext-zebra", 100, 0, 0));
+        tracker.record(&make_event(2, "ext-alpha", 100, 0, 0));
+        tracker.record(&make_event(3, "ext-middle", 100, 0, 0));
+        let exts = tracker.extensions();
+        assert_eq!(exts, vec!["ext-alpha", "ext-middle", "ext-zebra"]);
+    }
 }

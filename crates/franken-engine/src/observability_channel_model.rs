@@ -1592,4 +1592,531 @@ mod tests {
         let cloned = env.clone();
         assert_eq!(env, cloned);
     }
+
+    // -- Enrichment batch --
+
+    #[test]
+    fn envelope_rate_past_last_frontier_point() {
+        // Query distortion between last frontier point and max_distortion should
+        // return last frontier point's rate.
+        let env = RateDistortionEnvelope {
+            family: PayloadFamily::Optimization,
+            metric: DistortionMetric::SquaredError,
+            frontier: vec![
+                RateDistortionPoint {
+                    distortion_millionths: 0,
+                    rate_millibits: 4_000_000,
+                },
+                RateDistortionPoint {
+                    distortion_millionths: 50_000,
+                    rate_millibits: 2_000_000,
+                },
+            ],
+            max_distortion_millionths: 200_000,
+            min_rate_millibits: 500_000,
+        };
+        // 100_000 > 50_000 (last point) but <= 200_000 (max), returns last rate.
+        assert_eq!(env.rate_at_distortion(100_000), Some(2_000_000));
+        assert_eq!(env.rate_at_distortion(200_000), Some(2_000_000));
+    }
+
+    #[test]
+    fn envelope_rate_duplicate_distortion_points() {
+        // Two frontier points with same distortion: dd==0 branch returns second point's rate.
+        let env = RateDistortionEnvelope {
+            family: PayloadFamily::Decision,
+            metric: DistortionMetric::LogLoss,
+            frontier: vec![
+                RateDistortionPoint {
+                    distortion_millionths: 50_000,
+                    rate_millibits: 3_000_000,
+                },
+                RateDistortionPoint {
+                    distortion_millionths: 50_000,
+                    rate_millibits: 1_500_000,
+                },
+            ],
+            max_distortion_millionths: 100_000,
+            min_rate_millibits: 500_000,
+        };
+        assert_eq!(env.rate_at_distortion(50_000), Some(1_500_000));
+    }
+
+    #[test]
+    fn envelope_single_point_frontier_query_below() {
+        // Single frontier point at distortion=50k, query at 0 → before first point,
+        // first point distortion (50k) >= 0 so returns first point rate with no prev.
+        let env = RateDistortionEnvelope {
+            family: PayloadFamily::Decision,
+            metric: DistortionMetric::LogLoss,
+            frontier: vec![RateDistortionPoint {
+                distortion_millionths: 50_000,
+                rate_millibits: 1_000_000,
+            }],
+            max_distortion_millionths: 100_000,
+            min_rate_millibits: 500_000,
+        };
+        assert_eq!(env.rate_at_distortion(0), Some(1_000_000));
+    }
+
+    #[test]
+    fn is_achievable_empty_frontier() {
+        let env = RateDistortionEnvelope {
+            family: PayloadFamily::Decision,
+            metric: DistortionMetric::LogLoss,
+            frontier: vec![],
+            max_distortion_millionths: 100_000,
+            min_rate_millibits: 500_000,
+        };
+        assert!(!env.is_achievable(2_000_000, 0));
+    }
+
+    #[test]
+    fn is_achievable_exact_boundary_rate() {
+        let env = RateDistortionEnvelope {
+            family: PayloadFamily::Decision,
+            metric: DistortionMetric::LogLoss,
+            frontier: vec![RateDistortionPoint {
+                distortion_millionths: 0,
+                rate_millibits: 1_000_000,
+            }],
+            max_distortion_millionths: 0,
+            min_rate_millibits: 1_000_000,
+        };
+        // Exactly at frontier: achievable (rate >= min_rate).
+        assert!(env.is_achievable(1_000_000, 0));
+        // One below: not achievable.
+        assert!(!env.is_achievable(999_999, 0));
+    }
+
+    #[test]
+    fn risk_at_distortion_past_last_entry() {
+        let ledger = DistortionRiskLedger {
+            family: PayloadFamily::Decision,
+            entries: vec![
+                DistortionRiskEntry {
+                    distortion_millionths: 0,
+                    risk_millionths: 0,
+                    consequence: "none".into(),
+                },
+                DistortionRiskEntry {
+                    distortion_millionths: 100_000,
+                    risk_millionths: 500_000,
+                    consequence: "half".into(),
+                },
+            ],
+        };
+        // Beyond last entry: returns last entry's risk.
+        assert_eq!(ledger.risk_at_distortion(200_000), 500_000);
+    }
+
+    #[test]
+    fn risk_at_distortion_single_entry() {
+        let ledger = DistortionRiskLedger {
+            family: PayloadFamily::Security,
+            entries: vec![DistortionRiskEntry {
+                distortion_millionths: 50_000,
+                risk_millionths: 800_000,
+                consequence: "high".into(),
+            }],
+        };
+        // Query below single entry: returns that entry's risk (no prev, first point matches).
+        assert_eq!(ledger.risk_at_distortion(0), 800_000);
+        // Query at the entry: returns that entry's risk.
+        assert_eq!(ledger.risk_at_distortion(50_000), 800_000);
+        // Query past: returns last entry's risk.
+        assert_eq!(ledger.risk_at_distortion(100_000), 800_000);
+    }
+
+    #[test]
+    fn risk_at_distortion_duplicate_distortion_entries() {
+        let ledger = DistortionRiskLedger {
+            family: PayloadFamily::Decision,
+            entries: vec![
+                DistortionRiskEntry {
+                    distortion_millionths: 50_000,
+                    risk_millionths: 100_000,
+                    consequence: "first".into(),
+                },
+                DistortionRiskEntry {
+                    distortion_millionths: 50_000,
+                    risk_millionths: 900_000,
+                    consequence: "second".into(),
+                },
+            ],
+        };
+        // dd==0 branch: returns second entry's risk.
+        assert_eq!(ledger.risk_at_distortion(50_000), 900_000);
+    }
+
+    #[test]
+    fn distortion_risk_ledger_serde_roundtrip() {
+        let ledger = DistortionRiskLedger {
+            family: PayloadFamily::Decision,
+            entries: vec![
+                DistortionRiskEntry {
+                    distortion_millionths: 0,
+                    risk_millionths: 0,
+                    consequence: "none".into(),
+                },
+                DistortionRiskEntry {
+                    distortion_millionths: 100_000,
+                    risk_millionths: MILLION,
+                    consequence: "max".into(),
+                },
+            ],
+        };
+        let json = serde_json::to_string(&ledger).unwrap();
+        let back: DistortionRiskLedger = serde_json::from_str(&json).unwrap();
+        assert_eq!(ledger, back);
+    }
+
+    #[test]
+    fn distortion_risk_entry_serde_roundtrip() {
+        let entry = DistortionRiskEntry {
+            distortion_millionths: 42_000,
+            risk_millionths: 750_000,
+            consequence: "moderate risk".into(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: DistortionRiskEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn failure_budget_serde_roundtrip() {
+        let fb = FailureBudget {
+            max_drops_per_epoch: 5,
+            max_degraded_per_epoch: 20,
+            degradation_threshold_millionths: 200_000,
+            fail_closed: false,
+        };
+        let json = serde_json::to_string(&fb).unwrap();
+        let back: FailureBudget = serde_json::from_str(&json).unwrap();
+        assert_eq!(fb, back);
+    }
+
+    #[test]
+    fn drain_one_on_empty_buffer_stays_zero() {
+        let mut state = ChannelState::new("ch-test".into(), epoch(1));
+        assert_eq!(state.buffer_used, 0);
+        state.drain_one();
+        assert_eq!(state.buffer_used, 0);
+        // Double drain stays at zero.
+        state.drain_one();
+        assert_eq!(state.buffer_used, 0);
+    }
+
+    #[test]
+    fn emit_drain_emit_cycle_relieves_backpressure() {
+        let mut spec = canonical_channel_specs()[0].clone();
+        spec.buffer_capacity = 2;
+        let mut state = ChannelState::new(spec.channel_id.clone(), epoch(1));
+        // Fill buffer.
+        state.emit(&spec, 0).unwrap();
+        state.emit(&spec, 0).unwrap();
+        // Buffer full: next emit fails.
+        assert!(state.emit(&spec, 0).is_err());
+        // Drain one: relieves backpressure.
+        state.drain_one();
+        assert_eq!(state.buffer_used, 1);
+        // Now emit succeeds.
+        assert!(state.emit(&spec, 0).is_ok());
+        assert_eq!(state.buffer_used, 2);
+    }
+
+    #[test]
+    fn degradation_at_exact_threshold_not_degraded() {
+        // degradation check uses `>` not `>=`, so exactly at threshold is not degraded.
+        let spec = &canonical_channel_specs()[0]; // degradation threshold 50_000
+        let mut state = ChannelState::new(spec.channel_id.clone(), epoch(1));
+        state.emit(spec, 50_000).unwrap();
+        assert_eq!(state.items_degraded, 0);
+    }
+
+    #[test]
+    fn degradation_budget_exceeded_fail_open() {
+        // Optimization channel: fail_closed=false, max_degraded=50, threshold=100_000
+        let spec = &canonical_channel_specs()[2];
+        let mut state = ChannelState::new(spec.channel_id.clone(), epoch(1));
+        // Exceed degradation budget: distortion above 100_000 threshold.
+        for _ in 0..51 {
+            state.emit(spec, 150_000).unwrap();
+        }
+        // 51 items degraded, budget is 50, but fail_closed=false so all Ok.
+        assert_eq!(state.items_degraded, 51);
+        // But a violation was recorded.
+        assert!(!state.violations.is_empty());
+        assert_eq!(
+            state.violations.last().unwrap().violation_kind,
+            ViolationKind::DegradationBudgetExceeded
+        );
+    }
+
+    #[test]
+    fn degradation_budget_exceeded_fail_closed() {
+        // Decision channel: fail_closed=true, max_degraded=5, threshold=50_000
+        let spec = &canonical_channel_specs()[0];
+        let mut state = ChannelState::new(spec.channel_id.clone(), epoch(1));
+        // 5 degraded items within budget.
+        for _ in 0..5 {
+            state.emit(spec, 60_000).unwrap();
+        }
+        assert_eq!(state.items_degraded, 5);
+        // 6th exceeds budget and fail_closed=true → error.
+        let result = state.emit(spec, 60_000);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().violation_kind,
+            ViolationKind::DegradationBudgetExceeded
+        );
+    }
+
+    #[test]
+    fn multiple_violations_accumulate() {
+        let mut spec = canonical_channel_specs()[0].clone();
+        spec.buffer_capacity = 1;
+        spec.max_items_per_epoch = 100;
+        let mut state = ChannelState::new(spec.channel_id.clone(), epoch(1));
+        // First violation: backpressure (emit fills buffer, second triggers overflow).
+        state.emit(&spec, 0).unwrap();
+        let _ = state.emit(&spec, 0); // BackpressureOverflow
+        assert_eq!(state.violations.len(), 1);
+        // Drain so we can try another violation.
+        state.drain_one();
+        state.drain_one();
+        // Record a drop: DropBudgetExceeded (max_drops=0).
+        let _ = state.record_drop(&spec);
+        assert_eq!(state.violations.len(), 2);
+        assert_eq!(
+            state.violations[0].violation_kind,
+            ViolationKind::BackpressureOverflow
+        );
+        assert_eq!(
+            state.violations[1].violation_kind,
+            ViolationKind::DropBudgetExceeded
+        );
+    }
+
+    #[test]
+    fn epoch_reset_clears_violations() {
+        let spec = &canonical_channel_specs()[0];
+        let mut state = ChannelState::new(spec.channel_id.clone(), epoch(1));
+        let _ = state.record_drop(spec); // triggers violation
+        assert!(!state.violations.is_empty());
+        state.epoch_reset(epoch(2));
+        assert!(state.violations.is_empty());
+        assert_eq!(state.items_dropped, 0);
+    }
+
+    #[test]
+    fn emit_violation_detail_contains_rate_cap() {
+        let mut spec = canonical_channel_specs()[0].clone();
+        spec.max_items_per_epoch = 1;
+        let mut state = ChannelState::new(spec.channel_id.clone(), epoch(1));
+        state.emit(&spec, 0).unwrap();
+        let err = state.emit(&spec, 0).unwrap_err();
+        assert!(err.detail.contains("rate cap"));
+        assert!(err.detail.contains("1")); // the cap value
+    }
+
+    #[test]
+    fn record_drop_violation_detail_contains_budget() {
+        let spec = &canonical_channel_specs()[0]; // max_drops=0
+        let mut state = ChannelState::new(spec.channel_id.clone(), epoch(1));
+        let err = state.record_drop(spec).unwrap_err();
+        assert!(err.detail.contains("drops"));
+        assert!(err.detail.contains("exceed budget"));
+    }
+
+    #[test]
+    fn lossy_emission_violation_detail_contains_distortion() {
+        let spec = &canonical_channel_specs()[1]; // lossless replay channel
+        let mut state = ChannelState::new(spec.channel_id.clone(), epoch(1));
+        let err = state.emit(spec, 42_000).unwrap_err();
+        assert!(err.detail.contains("42000"));
+        assert!(err.detail.contains("lossless-only"));
+    }
+
+    #[test]
+    fn report_empty_specs_passes() {
+        let report = generate_report(&[], &BTreeMap::new(), epoch(1));
+        assert!(report.gate_pass);
+        assert_eq!(report.total_violations, 0);
+        assert!(report.channels.is_empty());
+        assert!(report.summary.contains("PASS"));
+    }
+
+    #[test]
+    fn report_summary_contains_fail_on_unhealthy() {
+        let specs = canonical_channel_specs();
+        let mut states = BTreeMap::new();
+        let mut state = ChannelState::new(specs[0].channel_id.clone(), epoch(1));
+        let _ = state.record_drop(&specs[0]);
+        states.insert(specs[0].channel_id.clone(), state);
+        let report = generate_report(&specs, &states, epoch(1));
+        assert!(!report.gate_pass);
+        assert!(report.summary.contains("FAIL"));
+    }
+
+    #[test]
+    fn report_utilization_zero_for_zero_capacity_spec() {
+        let mut specs = canonical_channel_specs();
+        specs[0].max_items_per_epoch = 0;
+        let report = generate_report(&specs, &BTreeMap::new(), epoch(1));
+        let entry = report
+            .channels
+            .iter()
+            .find(|e| e.channel_id == specs[0].channel_id)
+            .unwrap();
+        assert_eq!(entry.utilization_millionths, 0);
+    }
+
+    #[test]
+    fn channel_health_entry_serde_roundtrip() {
+        let entry = ChannelHealthEntry {
+            channel_id: "ch-test".into(),
+            family: PayloadFamily::Security,
+            path: ChannelPath::ControlPlaneToAudit,
+            items_emitted: 100,
+            items_dropped: 2,
+            items_degraded: 5,
+            utilization_millionths: 10_000,
+            healthy: true,
+            violation_count: 0,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: ChannelHealthEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn canonical_risk_ledgers_cover_decision_and_security() {
+        let ledgers = canonical_risk_ledgers();
+        assert_eq!(ledgers.len(), 2);
+        let families: std::collections::BTreeSet<_> =
+            ledgers.iter().map(|l| l.family).collect();
+        assert!(families.contains(&PayloadFamily::Decision));
+        assert!(families.contains(&PayloadFamily::Security));
+    }
+
+    #[test]
+    fn canonical_risk_ledgers_decision_has_three_entries() {
+        let ledgers = canonical_risk_ledgers();
+        let dec = ledgers
+            .iter()
+            .find(|l| l.family == PayloadFamily::Decision)
+            .unwrap();
+        assert_eq!(dec.entries.len(), 3);
+    }
+
+    #[test]
+    fn payload_family_ordering_is_deterministic() {
+        // Ord is derived, so variant order matches declaration order.
+        assert!(PayloadFamily::Decision < PayloadFamily::Replay);
+        assert!(PayloadFamily::Replay < PayloadFamily::Optimization);
+        assert!(PayloadFamily::Optimization < PayloadFamily::Security);
+        assert!(PayloadFamily::Security < PayloadFamily::LegalProvenance);
+    }
+
+    #[test]
+    fn channel_path_ordering_is_deterministic() {
+        assert!(ChannelPath::CompilerToLedger < ChannelPath::RuntimeToLedger);
+        assert!(ChannelPath::RuntimeToLedger < ChannelPath::ControlPlaneToAudit);
+        assert!(ChannelPath::ControlPlaneToAudit < ChannelPath::ReplayToVerifier);
+        assert!(ChannelPath::ReplayToVerifier < ChannelPath::ToComplianceArchive);
+    }
+
+    #[test]
+    fn is_healthy_false_when_drops_exceed_budget() {
+        let spec = &canonical_channel_specs()[2]; // optimization: max_drops=10, fail_closed=false
+        let mut state = ChannelState::new(spec.channel_id.clone(), epoch(1));
+        // 11 drops exceeds budget.
+        for _ in 0..11 {
+            let _ = state.record_drop(spec);
+        }
+        // Violations accumulated; is_healthy checks violations vec.
+        assert!(!state.is_healthy(spec));
+    }
+
+    #[test]
+    fn report_epoch_propagated() {
+        let specs = canonical_channel_specs();
+        let report = generate_report(&specs, &BTreeMap::new(), epoch(42));
+        assert_eq!(report.epoch, epoch(42));
+    }
+
+    #[test]
+    fn policy_violation_serde_roundtrip() {
+        let v = PolicyViolation {
+            channel_id: "ch-x".into(),
+            epoch: epoch(5),
+            violation_kind: ViolationKind::BackpressureOverflow,
+            detail: "buffer full".into(),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: PolicyViolation = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn distortion_risk_entry_clone_equality() {
+        let entry = DistortionRiskEntry {
+            distortion_millionths: 50_000,
+            risk_millionths: 300_000,
+            consequence: "moderate".into(),
+        };
+        let cloned = entry.clone();
+        assert_eq!(entry, cloned);
+    }
+
+    #[test]
+    fn channel_health_entry_clone_equality() {
+        let entry = ChannelHealthEntry {
+            channel_id: "ch-test".into(),
+            family: PayloadFamily::Replay,
+            path: ChannelPath::ReplayToVerifier,
+            items_emitted: 0,
+            items_dropped: 0,
+            items_degraded: 0,
+            utilization_millionths: 0,
+            healthy: true,
+            violation_count: 0,
+        };
+        let cloned = entry.clone();
+        assert_eq!(entry, cloned);
+    }
+
+    #[test]
+    fn canonical_specs_optimization_is_lossy_permitted() {
+        let specs = canonical_channel_specs();
+        let opt = specs
+            .iter()
+            .find(|s| s.family == PayloadFamily::Optimization)
+            .unwrap();
+        assert!(opt.lossy_permitted);
+    }
+
+    #[test]
+    fn canonical_specs_all_have_nonempty_tags() {
+        let specs = canonical_channel_specs();
+        for spec in &specs {
+            assert!(
+                !spec.tags.is_empty(),
+                "{} should have tags",
+                spec.channel_id
+            );
+        }
+    }
+
+    #[test]
+    fn backpressure_violation_detail_contains_buffer_info() {
+        let mut spec = canonical_channel_specs()[0].clone();
+        spec.buffer_capacity = 1;
+        let mut state = ChannelState::new(spec.channel_id.clone(), epoch(1));
+        state.emit(&spec, 0).unwrap();
+        let err = state.emit(&spec, 0).unwrap_err();
+        assert!(err.detail.contains("buffer full"));
+        assert!(err.detail.contains("1")); // capacity
+    }
 }
