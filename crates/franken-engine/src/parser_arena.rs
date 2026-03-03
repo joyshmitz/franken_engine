@@ -2006,7 +2006,7 @@ mod tests {
             goal: ParseGoal::Script,
             body: vec![Statement::Expression(ExpressionStatement {
                 expression: Expression::Binary {
-                    operator: "+".to_string(),
+                    operator: crate::ast::BinaryOperator::Add,
                     left: Box::new(Expression::NumericLiteral(1)),
                     right: Box::new(Expression::NumericLiteral(2)),
                 },

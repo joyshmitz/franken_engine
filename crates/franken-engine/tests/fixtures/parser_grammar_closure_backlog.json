@@ -346,7 +346,8 @@
     {
       "family_id": "statement.variable_declaration",
       "es2020_clause": "ECMA-262 \u00a714.3",
-      "current_status": "partial",
+      "current_status": "supported",
+      "notes": "PearlTower: BindingPattern support added — object/array destructuring, rest, defaults.",
       "implementation_slice": "phase2-statement-lowering",
       "owner": "parser-frontier",
       "fixture_ids": [
@@ -374,7 +375,8 @@
     {
       "family_id": "statement.function_declaration",
       "es2020_clause": "ECMA-262 \u00a714.1",
-      "current_status": "partial",
+      "current_status": "supported",
+      "notes": "PearlTower: function params now use BindingPattern — destructuring params supported.",
       "implementation_slice": "phase2-statement-lowering",
       "owner": "parser-frontier",
       "fixture_ids": [
@@ -518,7 +520,8 @@
     {
       "family_id": "expression.arrow_function",
       "es2020_clause": "ECMA-262 \u00a714.2",
-      "current_status": "partial",
+      "current_status": "supported",
+      "notes": "PearlTower: arrow params now use BindingPattern — destructuring params supported.",
       "implementation_slice": "phase2-function-expression",
       "owner": "parser-frontier",
       "fixture_ids": [

@@ -2875,17 +2875,16 @@ fn parse_object_binding_pattern(
             Some(span.clone()),
         ));
     }
-    if rest_count == 1 {
-        if let Some(last) = properties.last() {
-            if !matches!(&last.value, BindingPattern::Rest(_)) {
-                return Err(ParseError::new(
-                    ParseErrorCode::UnsupportedSyntax,
-                    "rest element must be the last property in object pattern",
-                    context.source_label.to_string(),
-                    Some(span.clone()),
-                ));
-            }
-        }
+    if rest_count == 1
+        && let Some(last) = properties.last()
+        && !matches!(&last.value, BindingPattern::Rest(_))
+    {
+        return Err(ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "rest element must be the last property in object pattern",
+            context.source_label.to_string(),
+            Some(span.clone()),
+        ));
     }
 
     Ok(BindingPattern::ObjectPattern(properties))
@@ -2963,15 +2962,13 @@ fn parse_array_binding_pattern(
     if let Some(&pos) = rest_positions.first() {
         // Rest must be the last non-hole element
         let last_non_hole = elements.iter().rposition(|e| e.is_some());
-        if let Some(last) = last_non_hole {
-            if pos != last {
-                return Err(ParseError::new(
-                    ParseErrorCode::UnsupportedSyntax,
-                    "rest element must be the last element in array pattern",
-                    context.source_label.to_string(),
-                    Some(span.clone()),
-                ));
-            }
+        if let Some(last) = last_non_hole && pos != last {
+            return Err(ParseError::new(
+                ParseErrorCode::UnsupportedSyntax,
+                "rest element must be the last element in array pattern",
+                context.source_label.to_string(),
+                Some(span.clone()),
+            ));
         }
     }
 
@@ -7110,7 +7107,7 @@ mod tests {
             .parse("let {x, y} = source", ParseGoal::Script)
             .expect("let destructuring should succeed");
         if let Statement::VariableDeclaration(decl) = &tree.body[0] {
-            assert_eq!(decl.kind, VariableKind::Let);
+            assert_eq!(decl.kind, VariableDeclarationKind::Let);
             assert!(matches!(
                 &decl.declarations[0].pattern,
                 BindingPattern::ObjectPattern(_)
@@ -7127,7 +7124,7 @@ mod tests {
             .parse("const [a, b] = source", ParseGoal::Script)
             .expect("const destructuring should succeed");
         if let Statement::VariableDeclaration(decl) = &tree.body[0] {
-            assert_eq!(decl.kind, VariableKind::Const);
+            assert_eq!(decl.kind, VariableDeclarationKind::Const);
             assert!(matches!(
                 &decl.declarations[0].pattern,
                 BindingPattern::ArrayPattern(_)
@@ -7178,7 +7175,7 @@ mod tests {
         if let Statement::VariableDeclaration(decl) = &tree.body[0] {
             if let BindingPattern::ObjectPattern(props) = &decl.declarations[0].pattern {
                 assert_eq!(props.len(), 2);
-                assert_eq!(props[0].key, "a");
+                assert_eq!(props[0].key, Expression::Identifier("a".to_string()));
                 assert!(
                     matches!(&props[0].value, BindingPattern::Identifier(name) if name == "x"),
                     "first value should be identifier x"

@@ -2311,6 +2311,6 @@ mod tests {
         .unwrap();
         let cloned = reg.clone();
         assert_eq!(reg.cell_count(), cloned.cell_count());
-        assert_eq!(reg.event_count(), cloned.event_count());
+        assert_eq!(reg.events().len(), cloned.events().len());
     }
 }
