@@ -78,3 +78,6 @@ replay entry suitable for PSRP-07.2 and PSRP-08.2 consumption.
 `rch` execution is fail-closed for this gate: if daemon/toolchain errors trigger
 local fallback signatures, the run is marked failed with
 `rch-local-fallback-detected` command attribution.
+Timeout paths preserve failure provenance: when remote compiler diagnostics are
+present before timeout, the manifest marks the failed command as
+`rch-timeout-after-remote-compile-failure` instead of a generic timeout.

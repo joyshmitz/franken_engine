@@ -65,6 +65,12 @@ rch_has_recoverable_artifact_timeout() {
   grep -Eiq 'artifact retrieval timed out|artifact transfer timed out|timed out waiting for artifacts|failed to retrieve artifacts|failed to download artifacts' "$log_path"
 }
 
+rch_has_remote_compile_failure() {
+  local log_path="$1"
+  sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' "$log_path" \
+    | grep -Eiq '(^|[^[:alnum:]_])error(\[[A-Z0-9]+\])?([^[:alnum:]_]|$)|could not compile `|aborting due to [0-9]+ previous errors?'
+}
+
 rch_reject_artifact_retrieval_failure() {
   local log_path="$1"
   if grep -Eiq 'Artifact retrieval failed|Failed to retrieve artifacts:|rsync artifact retrieval failed|rsync error: .*code 23' "$log_path"; then
@@ -100,7 +106,14 @@ run_step() {
     if [[ "$remote_exit_code" == "0" ]] && rch_has_recoverable_artifact_timeout "$log_path"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
     elif [[ "$run_rch_status" -eq 124 ]]; then
-      failed_command="${command_text} (rch-timeout)"
+      if rch_has_remote_compile_failure "$log_path"; then
+        failed_command="${command_text} (rch-timeout-after-remote-compile-failure)"
+      else
+        failed_command="${command_text} (rch-timeout)"
+      fi
+      return 1
+    elif [[ -n "$remote_exit_code" ]]; then
+      failed_command="${command_text} (remote-exit-${remote_exit_code})"
       return 1
     else
       failed_command="$command_text"

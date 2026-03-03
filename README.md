@@ -1282,6 +1282,31 @@ Artifacts are written under:
 - `artifacts/rgc_test_harness/<timestamp>/commands.txt`
 - `artifacts/rgc_test_harness/<timestamp>/rch-log.*` (per-step rch execution logs)
 
+## RGC CLI and Operator Workflow Verification Pack
+
+`bd-1lsy.11.11` adds deterministic verification for operator CLI workflows
+covering both golden-path and failure-path onboarding/triage scenarios.
+
+```bash
+# RGC CLI/operator workflow verification pack gate (rch-backed check + test + clippy)
+./scripts/run_rgc_cli_operator_workflow_verification_pack.sh ci
+
+# deterministic replay wrapper
+./scripts/e2e/rgc_cli_operator_workflow_verification_pack_replay.sh ci
+```
+
+Contract and vectors:
+
+- [`docs/RGC_CLI_OPERATOR_WORKFLOW_VERIFICATION_PACK_V1.md`](./docs/RGC_CLI_OPERATOR_WORKFLOW_VERIFICATION_PACK_V1.md)
+- `docs/rgc_cli_operator_workflow_verification_pack_v1.json`
+- `crates/franken-engine/tests/rgc_cli_operator_workflow_verification_pack.rs`
+
+Artifacts are written under:
+
+- `artifacts/rgc_cli_operator_workflow_verification_pack/<timestamp>/run_manifest.json`
+- `artifacts/rgc_cli_operator_workflow_verification_pack/<timestamp>/events.jsonl`
+- `artifacts/rgc_cli_operator_workflow_verification_pack/<timestamp>/commands.txt`
+
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |
