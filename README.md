@@ -361,7 +361,7 @@ Run harness checks/tests through `rch` (CPU-intensive commands are offloaded):
 # strict lint pass for harness test target
 ./scripts/run_deterministic_e2e_harness.sh clippy
 
-# CI shortcut (check + test)
+# CI shortcut (check + test + clippy)
 ./scripts/run_deterministic_e2e_harness.sh ci
 ```
 
@@ -370,6 +370,7 @@ Each invocation emits deterministic lane artifacts under
 - `run_manifest.json` (trace/decision/policy IDs + deterministic environment + replay command)
 - `events.jsonl` (structured lane completion event)
 - `commands.txt` (exact executed command transcript)
+- `step_logs/step_*.log` (per-step `rch` logs with timeout and remote-exit diagnostics)
 
 Create a signed golden-update artifact when intentionally accepting an output digest change:
 
@@ -1281,6 +1282,89 @@ Artifacts are written under:
 - `artifacts/rgc_test_harness/<timestamp>/events.jsonl`
 - `artifacts/rgc_test_harness/<timestamp>/commands.txt`
 - `artifacts/rgc_test_harness/<timestamp>/rch-log.*` (per-step rch execution logs)
+
+## RGC Fault-Injection and Chaos Verification Pack
+
+`bd-1lsy.11.6` adds deterministic fault-injection/chaos verification for
+containment triggers, degraded-mode behavior, and recovery correctness.
+
+```bash
+# RGC fault-injection/chaos verification pack gate (rch-backed check + test + clippy)
+./scripts/run_rgc_fault_injection_chaos_verification_pack.sh ci
+
+# deterministic replay wrapper
+./scripts/e2e/rgc_fault_injection_chaos_verification_pack_replay.sh ci
+```
+
+Contract and vectors:
+
+- [`docs/RGC_FAULT_INJECTION_CHAOS_VERIFICATION_PACK_V1.md`](./docs/RGC_FAULT_INJECTION_CHAOS_VERIFICATION_PACK_V1.md)
+- `docs/rgc_fault_injection_chaos_verification_pack_v1.json`
+- `docs/rgc_fault_injection_chaos_verification_vectors_v1.json`
+- `crates/franken-engine/tests/rgc_fault_injection_chaos_verification_pack.rs`
+
+Artifacts are written under:
+
+- `artifacts/rgc_fault_injection_chaos_verification_pack/<timestamp>/run_manifest.json`
+- `artifacts/rgc_fault_injection_chaos_verification_pack/<timestamp>/events.jsonl`
+- `artifacts/rgc_fault_injection_chaos_verification_pack/<timestamp>/commands.txt`
+- `artifacts/rgc_fault_injection_chaos_verification_pack/<timestamp>/chaos_verification_report.json`
+- `artifacts/rgc_fault_injection_chaos_verification_pack/<timestamp>/step_logs/step_*.log`
+
+## RGC Runtime Semantics Verification Pack
+
+`bd-1lsy.11.7` adds deterministic runtime-semantics verification coverage for
+arithmetic/control-flow behavior, object+closure interactions, and async
+error-path replay stability.
+
+```bash
+# RGC runtime-semantics verification pack gate (rch-backed check + test + clippy)
+./scripts/run_rgc_runtime_semantics_verification_pack.sh ci
+
+# deterministic replay wrapper
+./scripts/e2e/rgc_runtime_semantics_verification_pack_replay.sh ci
+```
+
+Contract and vectors:
+
+- [`docs/RGC_RUNTIME_SEMANTICS_VERIFICATION_PACK_V1.md`](./docs/RGC_RUNTIME_SEMANTICS_VERIFICATION_PACK_V1.md)
+- `docs/rgc_runtime_semantics_verification_pack_v1.json`
+- `docs/rgc_runtime_semantics_verification_vectors_v1.json`
+- `crates/franken-engine/tests/rgc_runtime_semantics_verification_pack.rs`
+
+Artifacts are written under:
+
+- `artifacts/rgc_runtime_semantics_verification_pack/<timestamp>/run_manifest.json`
+- `artifacts/rgc_runtime_semantics_verification_pack/<timestamp>/events.jsonl`
+- `artifacts/rgc_runtime_semantics_verification_pack/<timestamp>/commands.txt`
+- `artifacts/rgc_runtime_semantics_verification_pack/<timestamp>/runtime_semantics_verification_report.json`
+- `artifacts/rgc_runtime_semantics_verification_pack/<timestamp>/step_logs/step_*.log`
+
+## RGC Performance and Regression Verification Pack
+
+`bd-1lsy.11.10` adds deterministic performance/regression verification for
+benchmark integrity + profiler correctness, with fail-closed publication gating
+when baseline/significance/receipt integrity checks fail.
+
+```bash
+# RGC performance/regression verification pack gate (rch-backed check + test + clippy)
+./scripts/run_rgc_performance_regression_verification_pack.sh ci
+
+# deterministic replay wrapper
+./scripts/e2e/rgc_performance_regression_verification_pack_replay.sh ci
+```
+
+Contract and vectors:
+
+- [`docs/RGC_PERFORMANCE_REGRESSION_VERIFICATION_PACK_V1.md`](./docs/RGC_PERFORMANCE_REGRESSION_VERIFICATION_PACK_V1.md)
+- `docs/rgc_performance_regression_verification_pack_v1.json`
+- `crates/franken-engine/tests/rgc_performance_regression_verification_pack.rs`
+
+Artifacts are written under:
+
+- `artifacts/rgc_performance_regression_verification_pack/<timestamp>/run_manifest.json`
+- `artifacts/rgc_performance_regression_verification_pack/<timestamp>/events.jsonl`
+- `artifacts/rgc_performance_regression_verification_pack/<timestamp>/commands.txt`
 
 ## RGC CLI and Operator Workflow Verification Pack
 
