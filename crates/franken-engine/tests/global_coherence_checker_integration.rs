@@ -21,7 +21,7 @@
 //! - Deterministic result hashing
 //! - Multi-pass scenarios combining multiple violation types
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use frankenengine_engine::global_coherence_checker::{
     CoherenceCheckInput, CoherenceCheckResult, CoherenceError, CoherenceOutcome,

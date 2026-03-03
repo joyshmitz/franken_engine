@@ -7,9 +7,8 @@
 
 use frankenengine_engine::slot_registry::{
     AuthorityEnvelope, GaReleaseGuardConfig, GaReleaseGuardError, GaReleaseGuardVerdict,
-    PromotionStatus, PromotionTransition, ReleaseSlotClass, ReplacementProgressError,
-    SlotCapability, SlotEntry, SlotId, SlotKind, SlotRegistry, SlotRegistryError,
-    SlotReplacementSignal,
+    PromotionStatus, ReleaseSlotClass, ReplacementProgressError, SlotCapability, SlotId, SlotKind,
+    SlotRegistry, SlotRegistryError, SlotReplacementSignal,
 };
 use std::collections::BTreeSet;
 

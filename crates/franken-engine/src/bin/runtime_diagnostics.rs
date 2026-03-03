@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use frankenengine_engine::runtime_diagnostics_cli::{
     EvidenceExportFilter, OnboardingScorecardInput, OnboardingScorecardSignal,
@@ -630,10 +630,7 @@ fn run_onboarding_scorecard(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn write_support_bundle_files(
-    output: &SupportBundleOutput,
-    out_dir: &PathBuf,
-) -> Result<(), String> {
+fn write_support_bundle_files(output: &SupportBundleOutput, out_dir: &Path) -> Result<(), String> {
     for file in &output.files {
         let destination = out_dir.join(&file.path);
         if let Some(parent) = destination.parent() {

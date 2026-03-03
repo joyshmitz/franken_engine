@@ -57,7 +57,8 @@ fn repo_root() -> PathBuf {
 }
 
 fn read_to_string(path: &Path) -> String {
-    fs::read_to_string(path).unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()))
+    fs::read_to_string(path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()))
 }
 
 fn parse_contract() -> Rgc061Contract {
@@ -189,11 +190,22 @@ fn rgc_061_contract_is_versioned_and_actionable() {
         "policy-rgc-cli-operator-workflow-verification-pack-v1"
     );
 
-    let stage_set: BTreeSet<_> = contract.workflow_stages.iter().map(String::as_str).collect();
-    let expected_stage_set: BTreeSet<_> =
-        ["init", "compile", "run", "verify", "benchmark", "replay", "triage"]
-            .into_iter()
-            .collect();
+    let stage_set: BTreeSet<_> = contract
+        .workflow_stages
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let expected_stage_set: BTreeSet<_> = [
+        "init",
+        "compile",
+        "run",
+        "verify",
+        "benchmark",
+        "replay",
+        "triage",
+    ]
+    .into_iter()
+    .collect();
     assert_eq!(stage_set, expected_stage_set);
 
     let required_log_keys: BTreeSet<_> = contract
@@ -244,7 +256,10 @@ fn rgc_061_contract_is_versioned_and_actionable() {
         contract.gate_runner.replay_wrapper,
         "scripts/e2e/rgc_cli_operator_workflow_verification_pack_replay.sh"
     );
-    assert_eq!(contract.gate_runner.strict_mode, "rch_only_no_local_fallback");
+    assert_eq!(
+        contract.gate_runner.strict_mode,
+        "rch_only_no_local_fallback"
+    );
     assert_eq!(
         contract.gate_runner.manifest_schema_version,
         "franken-engine.rgc-cli-operator-workflow-verification-pack.run-manifest.v1"
@@ -306,7 +321,10 @@ fn rgc_061_onboarding_scorecard_golden_path_is_ready_and_writes_artifacts() {
     assert!(output.status.success());
 
     let summary = String::from_utf8(output.stdout).expect("summary stdout should be utf8");
-    assert!(summary.contains("schema_version: franken-engine.runtime-diagnostics.onboarding-scorecard.v1"));
+    assert!(
+        summary
+            .contains("schema_version: franken-engine.runtime-diagnostics.onboarding-scorecard.v1")
+    );
     assert!(summary.contains("readiness: ready"));
     assert!(summary.contains("reproducible_commands:"));
 
@@ -350,9 +368,7 @@ fn rgc_061_onboarding_scorecard_failure_path_surfaces_blocked_with_actionable_st
             "--input",
             input_path.to_str().expect("input path should be utf8"),
             "--signals",
-            signals_path
-                .to_str()
-                .expect("signals path should be utf8"),
+            signals_path.to_str().expect("signals path should be utf8"),
         ])
         .output()
         .expect("onboarding-scorecard command should execute");
@@ -385,9 +401,7 @@ fn rgc_061_missing_input_reports_actionable_error() {
         .args([
             "onboarding-scorecard",
             "--input",
-            missing_path
-                .to_str()
-                .expect("missing path should be utf8"),
+            missing_path.to_str().expect("missing path should be utf8"),
         ])
         .output()
         .expect("onboarding-scorecard command should execute");
@@ -408,9 +422,7 @@ fn rgc_061_invalid_signals_json_reports_actionable_error() {
             "--input",
             input_path.to_str().expect("input path should be utf8"),
             "--signals",
-            signals_path
-                .to_str()
-                .expect("signals path should be utf8"),
+            signals_path.to_str().expect("signals path should be utf8"),
         ])
         .output()
         .expect("onboarding-scorecard command should execute");

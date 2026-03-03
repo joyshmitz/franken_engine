@@ -170,20 +170,19 @@ fn run() -> Result<i32, Box<dyn Error>> {
     } else {
         Vec::new()
     };
-    let governance_action_count = if let Some(governance_actions_out_path) =
-        args.governance_actions_out_path.as_ref()
-    {
-        write_lockstep_governance_report(
-            governance_actions_out_path,
-            &report,
-            harness.retry_attempts,
-            args.max_retries,
-            harness.observed_flaky_fixture_ids.as_slice(),
-            quarantined_fixture_ids.as_slice(),
-        )?
-    } else {
-        build_drift_governance_action_report(&report).actions.len() as u64
-    };
+    let governance_action_count =
+        if let Some(governance_actions_out_path) = args.governance_actions_out_path.as_ref() {
+            write_lockstep_governance_report(
+                governance_actions_out_path,
+                &report,
+                harness.retry_attempts,
+                args.max_retries,
+                harness.observed_flaky_fixture_ids.as_slice(),
+                quarantined_fixture_ids.as_slice(),
+            )?
+        } else {
+            build_drift_governance_action_report(&report).actions.len() as u64
+        };
 
     rewrite_replay_commands_for_lockstep_runner(&mut report);
     if let Some(evidence_jsonl_path) = &args.evidence_jsonl_path {
@@ -274,7 +273,10 @@ fn effective_gate_summary_counts(
         .filter(|result| result.nondeterministic_engine_count > 0)
         .count() as u64;
     (
-        report.summary.divergent_fixtures.saturating_sub(quarantined),
+        report
+            .summary
+            .divergent_fixtures
+            .saturating_sub(quarantined),
         0,
     )
 }

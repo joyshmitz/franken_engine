@@ -899,11 +899,15 @@ fn lockstep_runner_allows_critical_drift_with_explicit_override() {
         serde_json::from_slice(&fs::read(&report_path).expect("report should exist"))
             .expect("report should parse");
     assert_eq!(report["summary"]["divergent_fixtures"].as_u64(), Some(1));
-    assert_eq!(report["summary"]["drift_critical_fixtures"].as_u64(), Some(1));
+    assert_eq!(
+        report["summary"]["drift_critical_fixtures"].as_u64(),
+        Some(1)
+    );
 
-    let governance: serde_json::Value =
-        serde_json::from_slice(&fs::read(&governance_path).expect("governance report should exist"))
-            .expect("governance report should parse");
+    let governance: serde_json::Value = serde_json::from_slice(
+        &fs::read(&governance_path).expect("governance report should exist"),
+    )
+    .expect("governance report should parse");
     let actions = governance["actions"]
         .as_array()
         .expect("governance actions should be an array");
@@ -966,7 +970,10 @@ fn lockstep_runner_retries_flaky_runtime_and_records_retry_metadata() {
     let report: serde_json::Value =
         serde_json::from_slice(&fs::read(&report_path).expect("report should exist"))
             .expect("report should parse");
-    assert_eq!(report["summary"]["fixtures_with_nondeterminism"].as_u64(), Some(0));
+    assert_eq!(
+        report["summary"]["fixtures_with_nondeterminism"].as_u64(),
+        Some(0)
+    );
     assert_eq!(report["summary"]["equivalent_fixtures"].as_u64(), Some(1));
 
     let evidence_records = read_jsonl(&evidence_path);
@@ -1032,7 +1039,10 @@ fn lockstep_runner_quarantines_flaky_fixtures_for_divergence_gate() {
     let report: serde_json::Value =
         serde_json::from_slice(&fs::read(&report_path).expect("report should exist"))
             .expect("report should parse");
-    assert_eq!(report["summary"]["fixtures_with_nondeterminism"].as_u64(), Some(1));
+    assert_eq!(
+        report["summary"]["fixtures_with_nondeterminism"].as_u64(),
+        Some(1)
+    );
     assert_eq!(report["summary"]["divergent_fixtures"].as_u64(), Some(1));
 
     let _ = fs::remove_file(catalog_path);

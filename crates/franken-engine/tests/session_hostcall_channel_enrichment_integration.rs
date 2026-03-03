@@ -9,9 +9,8 @@ use std::collections::BTreeSet;
 
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::session_hostcall_channel::{
-    AeadAlgorithm, BackpressureSignal, ChannelPayload, DataPlaneDirection, ReplayDropReason,
-    SequencePolicy, SessionChannelEvent, SessionConfig, SessionHandshake, SessionState,
-    SharedPayloadDescriptor,
+    AeadAlgorithm, BackpressureSignal, DataPlaneDirection, ReplayDropReason, SequencePolicy,
+    SessionConfig, SessionHandshake, SessionState, SharedPayloadDescriptor,
 };
 
 // ===========================================================================
