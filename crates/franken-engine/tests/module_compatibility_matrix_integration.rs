@@ -6,10 +6,10 @@
 use std::collections::BTreeSet;
 
 use frankenengine_engine::module_compatibility_matrix::{
-    CompatibilityContext, CompatibilityMatrixEntry, CompatibilityMatrixError,
-    CompatibilityMatrixErrorCode, CompatibilityMode, CompatibilityObservation,
-    CompatibilityRuntime, DEFAULT_MATRIX_JSON, DivergencePolicy, ExplicitShim,
-    ModuleCompatibilityMatrix, ModuleFeature, ReferenceRuntime,
+    COMPATIBILITY_SCENARIO_REPORT_SCHEMA_VERSION, CompatibilityContext, CompatibilityMatrixEntry,
+    CompatibilityMatrixError, CompatibilityMatrixErrorCode, CompatibilityMode,
+    CompatibilityObservation, CompatibilityRuntime, DEFAULT_MATRIX_JSON, DivergencePolicy,
+    ExplicitShim, ModuleCompatibilityMatrix, ModuleFeature, ReferenceRuntime,
 };
 
 // ---------------------------------------------------------------------------
@@ -1156,4 +1156,69 @@ fn default_matrix_all_entries_have_case_ids_and_scenarios() {
         assert!(!entry.case_id.is_empty());
         assert!(!entry.scenario.is_empty());
     }
+}
+
+#[test]
+fn default_matrix_includes_cyclic_import_edge_case() {
+    let m = ModuleCompatibilityMatrix::from_default_json().unwrap();
+    let entry = m
+        .entry("esm-cjs-cycle-live-binding")
+        .expect("default matrix should include cyclic interop edge");
+    assert_eq!(entry.feature, ModuleFeature::DualMode);
+    assert!(entry.scenario.to_ascii_lowercase().contains("cyclic"));
+}
+
+#[test]
+fn scenario_report_summarizes_divergence_categories_and_guidance() {
+    let mut m = ModuleCompatibilityMatrix::from_default_json().unwrap();
+    let required = m.required_waiver_ids();
+    m.validate_with_waivers(&required, &ctx()).unwrap();
+
+    let report = m
+        .evaluate_scenario(
+            "pkg-esm-cjs-edge-matrix",
+            &[
+                CompatibilityObservation::new(
+                    "cjs-require-esm",
+                    CompatibilityRuntime::FrankenEngine,
+                    CompatibilityMode::Native,
+                    "throw_err_require_esm",
+                ),
+                CompatibilityObservation::new(
+                    "conditional-exports-condition-order",
+                    CompatibilityRuntime::FrankenEngine,
+                    CompatibilityMode::Native,
+                    "resolve_condition_import_require_default",
+                ),
+                CompatibilityObservation::new(
+                    "esm-cjs-cycle-live-binding",
+                    CompatibilityRuntime::FrankenEngine,
+                    CompatibilityMode::Native,
+                    "preserve_live_bindings_through_cycle",
+                ),
+            ],
+            &ctx(),
+            1_726_000_000_001,
+        )
+        .expect("scenario report generation should succeed");
+
+    assert_eq!(
+        report.schema_version,
+        COMPATIBILITY_SCENARIO_REPORT_SCHEMA_VERSION
+    );
+    assert_eq!(report.scenario_id, "pkg-esm-cjs-edge-matrix");
+    assert_eq!(report.total_observations, 3);
+    assert_eq!(report.matched_observations, 3);
+    assert_eq!(
+        report
+            .divergence_category_counts
+            .get("intentional_improvement")
+            .copied(),
+        Some(1)
+    );
+    assert!(
+        report
+            .actionable_guidance
+            .contains_key("intentional_improvement")
+    );
 }

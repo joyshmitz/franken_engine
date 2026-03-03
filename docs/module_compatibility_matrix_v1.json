@@ -90,6 +90,24 @@
       "divergence": null
     },
     {
+      "case_id": "esm-cjs-cycle-live-binding",
+      "feature": "dual_mode",
+      "scenario": "An ESM <-> CJS mixed cyclic graph preserves live binding semantics without snapshotting stale exports.",
+      "node_behavior": "preserve_live_bindings_through_cycle",
+      "bun_behavior": "preserve_live_bindings_through_cycle",
+      "franken_native_behavior": "preserve_live_bindings_through_cycle",
+      "franken_node_compat_behavior": "preserve_live_bindings_through_cycle",
+      "franken_bun_compat_behavior": "preserve_live_bindings_through_cycle",
+      "explicit_shims": [],
+      "lockstep_case_refs": [
+        "lockstep/module/esm-cjs-cycle-live-binding"
+      ],
+      "test262_refs": [
+        "language/module-code/instn-named-iee-cycle.js"
+      ],
+      "divergence": null
+    },
+    {
       "case_id": "package-type-module-extensionless-relative",
       "feature": "package_json_fields",
       "scenario": "A package with type=module attempts extensionless relative import resolution.",

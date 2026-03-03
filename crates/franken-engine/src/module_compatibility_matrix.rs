@@ -94,6 +94,28 @@ impl ReferenceRuntime {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DivergenceCategory {
+    EngineBug,
+    IntentionalImprovement,
+    CompatibilityDebt,
+    EcosystemAmbiguity,
+    ReferenceRuntimeBug,
+}
+
+impl DivergenceCategory {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::EngineBug => "engine_bug",
+            Self::IntentionalImprovement => "intentional_improvement",
+            Self::CompatibilityDebt => "compatibility_debt",
+            Self::EcosystemAmbiguity => "ecosystem_ambiguity",
+            Self::ReferenceRuntimeBug => "reference_runtime_bug",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExplicitShim {
     pub shim_id: String,
@@ -457,7 +479,27 @@ pub struct CompatibilityObservationOutcome {
     pub expected_behavior: String,
     pub matched: bool,
     pub divergence: Option<DivergencePolicy>,
+    pub divergence_category: Option<DivergenceCategory>,
+    pub actionable_guidance: Option<String>,
     pub event: CompatibilityEvent,
+}
+
+pub const COMPATIBILITY_SCENARIO_REPORT_SCHEMA_VERSION: &str =
+    "franken-engine.module-interop-scenario-report.v1";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompatibilityScenarioReport {
+    pub schema_version: String,
+    pub scenario_id: String,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub generated_at_unix_ms: u64,
+    pub total_observations: usize,
+    pub matched_observations: usize,
+    pub divergence_category_counts: BTreeMap<String, u64>,
+    pub actionable_guidance: BTreeMap<String, String>,
+    pub outcomes: Vec<CompatibilityObservationOutcome>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -691,6 +733,14 @@ impl ModuleCompatibilityMatrix {
             ),
         );
 
+        let divergence_category = entry
+            .divergence
+            .as_ref()
+            .map(|divergence| classify_divergence(divergence));
+        let actionable_guidance = divergence_category
+            .map(guidance_for_divergence_category)
+            .map(std::string::ToString::to_string);
+
         Ok(CompatibilityObservationOutcome {
             case_id: entry.case_id,
             runtime: observation.runtime,
@@ -699,7 +749,73 @@ impl ModuleCompatibilityMatrix {
             expected_behavior,
             matched: true,
             divergence: entry.divergence,
+            divergence_category,
+            actionable_guidance,
             event,
+        })
+    }
+
+    pub fn evaluate_scenario(
+        &mut self,
+        scenario_id: impl Into<String>,
+        observations: &[CompatibilityObservation],
+        context: &CompatibilityContext,
+        generated_at_unix_ms: u64,
+    ) -> CompatibilityResult<CompatibilityScenarioReport> {
+        let scenario_id = scenario_id.into().trim().to_string();
+        if scenario_id.is_empty() {
+            return Err(simple_error(
+                CompatibilityMatrixErrorCode::InvalidMatrix,
+                "scenario_id must not be empty",
+            ));
+        }
+
+        let mut outcomes = Vec::with_capacity(observations.len());
+        let mut divergence_category_counts = BTreeMap::<String, u64>::new();
+        let mut actionable_guidance = BTreeMap::<String, String>::new();
+
+        for observation in observations {
+            let outcome = self.evaluate_observation(observation, context)?;
+            if let Some(category) = outcome.divergence_category {
+                let key = category.as_str().to_string();
+                let guidance = outcome
+                    .actionable_guidance
+                    .clone()
+                    .unwrap_or_else(|| guidance_for_divergence_category(category).to_string());
+                *divergence_category_counts.entry(key.clone()).or_insert(0) += 1;
+                actionable_guidance.insert(key, guidance);
+            }
+            outcomes.push(outcome);
+        }
+
+        let matched_observations = outcomes.iter().filter(|outcome| outcome.matched).count();
+
+        self.push_event(
+            context,
+            EventDraft::allow(
+                "compatibility_scenario_report",
+                scenario_id.clone(),
+                CompatibilityRuntime::FrankenEngine,
+                CompatibilityMode::Native,
+                format!(
+                    "generated scenario report with {} observations",
+                    observations.len()
+                ),
+            ),
+        );
+
+        Ok(CompatibilityScenarioReport {
+            schema_version: COMPATIBILITY_SCENARIO_REPORT_SCHEMA_VERSION.to_string(),
+            scenario_id,
+            trace_id: context.trace_id.clone(),
+            decision_id: context.decision_id.clone(),
+            policy_id: context.policy_id.clone(),
+            generated_at_unix_ms,
+            total_observations: observations.len(),
+            matched_observations,
+            divergence_category_counts,
+            actionable_guidance,
+            outcomes,
         })
     }
 
@@ -1037,6 +1153,54 @@ fn simple_error(
         message: message.into(),
         event: None,
     })
+}
+
+fn classify_divergence(divergence: &DivergencePolicy) -> DivergenceCategory {
+    let reason = divergence.reason.to_ascii_lowercase();
+    let impact = divergence.impact.to_ascii_lowercase();
+
+    if reason.contains("reference runtime bug") || reason.contains("upstream runtime bug") {
+        return DivergenceCategory::ReferenceRuntimeBug;
+    }
+    if reason.contains("engine bug")
+        || impact.contains("incorrect")
+        || impact.contains("regression")
+        || impact.contains("broken")
+    {
+        return DivergenceCategory::EngineBug;
+    }
+    if reason.contains("strict")
+        || reason.contains("security")
+        || reason.contains("safety")
+        || reason.contains("intentional")
+        || impact.contains("compat mode")
+    {
+        return DivergenceCategory::IntentionalImprovement;
+    }
+    if divergence.diverges_from.len() == 2 {
+        return DivergenceCategory::EcosystemAmbiguity;
+    }
+    DivergenceCategory::CompatibilityDebt
+}
+
+fn guidance_for_divergence_category(category: DivergenceCategory) -> &'static str {
+    match category {
+        DivergenceCategory::EngineBug => {
+            "treat as release blocker; capture minimized reproduction and patch FrankenEngine behavior"
+        }
+        DivergenceCategory::IntentionalImprovement => {
+            "document security/strictness intent and provide migration path or compat-mode fallback"
+        }
+        DivergenceCategory::CompatibilityDebt => {
+            "track compatibility gap, add focused parity tests, and schedule resolver/loader remediation"
+        }
+        DivergenceCategory::EcosystemAmbiguity => {
+            "escalate ambiguity with lockstep evidence and pin deterministic project policy for this edge"
+        }
+        DivergenceCategory::ReferenceRuntimeBug => {
+            "record upstream bug linkage and preserve deterministic local workaround with replay evidence"
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2058,6 +2222,131 @@ mod tests {
         assert!(
             display.contains("schema version is empty"),
             "display: {display}"
+        );
+    }
+
+    #[test]
+    fn evaluate_observation_assigns_divergence_category_and_guidance() {
+        let mut entry = valid_entry("case-category");
+        entry.franken_native_behavior = "native-strict".to_string();
+        entry.node_behavior = "node-lenient".to_string();
+        entry.bun_behavior = "native-strict".to_string();
+        entry.divergence = Some(DivergencePolicy {
+            diverges_from: vec![ReferenceRuntime::Node],
+            reason: "Strict security posture for native mode".to_string(),
+            impact: "requires compat mode for legacy package".to_string(),
+            waiver_id: "waiver-category".to_string(),
+            migration_guidance: "switch to node_compat while migrating".to_string(),
+        });
+
+        let mut matrix = ModuleCompatibilityMatrix::from_entries("1.0.0", vec![entry]).unwrap();
+        matrix
+            .validate_with_waivers(&BTreeSet::from(["waiver-category".to_string()]), &context())
+            .expect("entry should validate");
+
+        let obs = CompatibilityObservation::new(
+            "case-category",
+            CompatibilityRuntime::FrankenEngine,
+            CompatibilityMode::Native,
+            "native-strict",
+        );
+        let outcome = matrix.evaluate_observation(&obs, &context()).unwrap();
+        assert_eq!(
+            outcome.divergence_category,
+            Some(DivergenceCategory::IntentionalImprovement)
+        );
+        assert!(
+            outcome
+                .actionable_guidance
+                .as_deref()
+                .expect("guidance should exist")
+                .contains("compat-mode")
+        );
+    }
+
+    #[test]
+    fn evaluate_scenario_produces_deterministic_report() {
+        let mut strict_entry = valid_entry("case-strict");
+        strict_entry.franken_native_behavior = "native-strict".to_string();
+        strict_entry.node_behavior = "node-lenient".to_string();
+        strict_entry.bun_behavior = "native-strict".to_string();
+        strict_entry.divergence = Some(DivergencePolicy {
+            diverges_from: vec![ReferenceRuntime::Node],
+            reason: "strict security behavior".to_string(),
+            impact: "requires compat mode".to_string(),
+            waiver_id: "waiver-strict".to_string(),
+            migration_guidance: "use node_compat".to_string(),
+        });
+
+        let mut clean_entry = valid_entry("case-clean");
+        clean_entry.scenario = "no divergence case".to_string();
+
+        let mut matrix =
+            ModuleCompatibilityMatrix::from_entries("1.0.0", vec![strict_entry, clean_entry])
+                .unwrap();
+        matrix
+            .validate_with_waivers(&BTreeSet::from(["waiver-strict".to_string()]), &context())
+            .expect("entries should validate");
+
+        let report = matrix
+            .evaluate_scenario(
+                "interop-package-scenario",
+                &[
+                    CompatibilityObservation::new(
+                        "case-strict",
+                        CompatibilityRuntime::FrankenEngine,
+                        CompatibilityMode::Native,
+                        "native-strict",
+                    ),
+                    CompatibilityObservation::new(
+                        "case-clean",
+                        CompatibilityRuntime::FrankenEngine,
+                        CompatibilityMode::Native,
+                        "ok",
+                    ),
+                ],
+                &context(),
+                1_726_000_000_000,
+            )
+            .expect("scenario should evaluate");
+
+        assert_eq!(
+            report.schema_version,
+            COMPATIBILITY_SCENARIO_REPORT_SCHEMA_VERSION
+        );
+        assert_eq!(report.scenario_id, "interop-package-scenario");
+        assert_eq!(report.total_observations, 2);
+        assert_eq!(report.matched_observations, 2);
+        assert_eq!(
+            report
+                .divergence_category_counts
+                .get("intentional_improvement")
+                .copied(),
+            Some(1)
+        );
+        assert!(
+            report
+                .actionable_guidance
+                .contains_key("intentional_improvement")
+        );
+        assert_eq!(report.trace_id, "trace-modcompat");
+        assert_eq!(report.decision_id, "decision-modcompat");
+        assert_eq!(report.policy_id, "policy-modcompat");
+        assert_eq!(report.generated_at_unix_ms, 1_726_000_000_000);
+    }
+
+    #[test]
+    fn classify_divergence_detects_reference_runtime_bug() {
+        let divergence = DivergencePolicy {
+            diverges_from: vec![ReferenceRuntime::Node],
+            reason: "Known reference runtime bug in Node resolver".to_string(),
+            impact: "temporary shim".to_string(),
+            waiver_id: "waiver-ref-bug".to_string(),
+            migration_guidance: "keep shim until upstream fix lands".to_string(),
+        };
+        assert_eq!(
+            classify_divergence(&divergence),
+            DivergenceCategory::ReferenceRuntimeBug
         );
     }
 }
