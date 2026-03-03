@@ -1311,12 +1311,12 @@ pub fn build_onboarding_scorecard(input: &OnboardingScorecardInput) -> Onboardin
         PreflightVerdict::Red => 700_000_u64,
     };
     let signal_risk_millionths = critical_signals
-        .saturating_mul(120_000)
-        .saturating_add(warning_signals.saturating_mul(50_000))
-        .saturating_add(info_signals.saturating_mul(10_000));
+        .saturating_mul(120_000_u64)
+        .saturating_add(warning_signals.saturating_mul(50_000_u64))
+        .saturating_add(info_signals.saturating_mul(10_000_u64));
     let total_risk_millionths = baseline_risk_millionths
         .saturating_add(signal_risk_millionths)
-        .min(1_000_000);
+        .min(1_000_000_u64);
 
     let readiness = if critical_signals > 0 || total_risk_millionths >= 750_000 {
         OnboardingReadinessClass::Blocked
