@@ -733,10 +733,7 @@ impl ModuleCompatibilityMatrix {
             ),
         );
 
-        let divergence_category = entry
-            .divergence
-            .as_ref()
-            .map(|divergence| classify_divergence(divergence));
+        let divergence_category = entry.divergence.as_ref().map(classify_divergence);
         let actionable_guidance = divergence_category
             .map(guidance_for_divergence_category)
             .map(std::string::ToString::to_string);
