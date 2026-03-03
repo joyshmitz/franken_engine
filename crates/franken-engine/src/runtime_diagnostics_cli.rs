@@ -22,6 +22,8 @@ const COMPONENT: &str = "runtime_diagnostics_cli";
 const SUPPORT_BUNDLE_SCHEMA_VERSION: &str = "franken-engine.runtime-diagnostics.support-bundle.v1";
 const DEFAULT_SUPPORT_BUNDLE_REDACTION_MARKER: &str = "sha256:REDACTED";
 const PREFLIGHT_DOCTOR_FAILURE_CODE: &str = "FE-RUNTIME-DIAGNOSTICS-DOCTOR-0001";
+const ONBOARDING_SCORECARD_SCHEMA_VERSION: &str =
+    "franken-engine.runtime-diagnostics.onboarding-scorecard.v1";
 
 /// Stable log envelope required by plan acceptance criteria.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -572,6 +574,107 @@ pub struct PreflightDoctorOutput {
     pub diagnostics: RuntimeDiagnosticsOutput,
     pub evidence_summary: EvidenceExportSummary,
     pub support_bundle: SupportBundleOutput,
+    pub logs: Vec<StructuredLogEvent>,
+}
+
+/// Rollout readiness class for onboarding scorecards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnboardingReadinessClass {
+    Ready,
+    Conditional,
+    Blocked,
+}
+
+impl fmt::Display for OnboardingReadinessClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ready => f.write_str("ready"),
+            Self::Conditional => f.write_str("conditional"),
+            Self::Blocked => f.write_str("blocked"),
+        }
+    }
+}
+
+/// Coarse remediation effort estimate for onboarding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnboardingRemediationEffort {
+    Low,
+    Medium,
+    High,
+}
+
+impl fmt::Display for OnboardingRemediationEffort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Low => f.write_str("low"),
+            Self::Medium => f.write_str("medium"),
+            Self::High => f.write_str("high"),
+        }
+    }
+}
+
+/// Deterministic external signal merged into onboarding scorecards.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OnboardingScorecardSignal {
+    pub signal_id: String,
+    pub source: String,
+    pub severity: EvidenceSeverity,
+    pub summary: String,
+    pub remediation: String,
+    pub reproducible_command: String,
+    pub evidence_links: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_hint: Option<String>,
+}
+
+/// Input surface for deterministic onboarding-scorecard generation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OnboardingScorecardInput {
+    pub workload_id: String,
+    pub package_name: String,
+    pub target_platforms: Vec<String>,
+    pub preflight: PreflightDoctorOutput,
+    pub external_signals: Vec<OnboardingScorecardSignal>,
+}
+
+/// Deterministic risk breakdown used by scorecards.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OnboardingScoreBreakdown {
+    pub baseline_risk_millionths: u64,
+    pub signal_risk_millionths: u64,
+    pub total_risk_millionths: u64,
+    pub critical_signals: u64,
+    pub warning_signals: u64,
+    pub info_signals: u64,
+}
+
+/// Ordered next-step remediation action for operators.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OnboardingRemediationStep {
+    pub step_id: String,
+    pub severity: EvidenceSeverity,
+    pub summary: String,
+    pub remediation: String,
+    pub owner: String,
+    pub reproducible_command: String,
+    pub evidence_links: Vec<String>,
+}
+
+/// Deterministic onboarding scorecard output for rollout decisions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OnboardingScorecardOutput {
+    pub schema_version: String,
+    pub workload_id: String,
+    pub package_name: String,
+    pub target_platforms: Vec<String>,
+    pub readiness: OnboardingReadinessClass,
+    pub remediation_effort: OnboardingRemediationEffort,
+    pub score: OnboardingScoreBreakdown,
+    pub unresolved_signals: Vec<OnboardingScorecardSignal>,
+    pub next_steps: Vec<OnboardingRemediationStep>,
+    pub reproducible_commands: Vec<String>,
     pub logs: Vec<StructuredLogEvent>,
 }
 
@@ -1129,6 +1232,249 @@ pub fn render_preflight_summary(output: &PreflightDoctorOutput) -> String {
         lines.push(format!("  - {command}"));
     }
     lines.join("\n")
+}
+
+/// Build a deterministic onboarding scorecard from preflight + external signals.
+pub fn build_onboarding_scorecard(input: &OnboardingScorecardInput) -> OnboardingScorecardOutput {
+    let mut unresolved_signals = input
+        .preflight
+        .blockers
+        .iter()
+        .map(|blocker| OnboardingScorecardSignal {
+            signal_id: format!("preflight:{}", blocker.blocker_id),
+            source: "preflight_doctor".to_string(),
+            severity: blocker.severity,
+            summary: blocker.rationale.clone(),
+            remediation: blocker.remediation.clone(),
+            reproducible_command: blocker.reproducible_command.clone(),
+            evidence_links: blocker.evidence_links.clone(),
+            owner_hint: Some(default_owner_for_source("preflight_doctor", blocker.severity)),
+        })
+        .collect::<Vec<_>>();
+    unresolved_signals.extend(input.external_signals.clone());
+
+    for signal in &mut unresolved_signals {
+        signal.signal_id = normalize_or_default(&signal.signal_id, "signal");
+        signal.source = normalize_or_default(&signal.source, "external");
+        signal.summary = normalize_or_default(&signal.summary, "unspecified signal");
+        signal.remediation = normalize_or_default(&signal.remediation, "investigate signal");
+        signal.reproducible_command = normalize_or_default(
+            &signal.reproducible_command,
+            "runtime_diagnostics doctor --input <path> --summary",
+        );
+        signal.evidence_links.sort();
+        signal.evidence_links.dedup();
+        signal.owner_hint = signal
+            .owner_hint
+            .as_deref()
+            .map(str::trim)
+            .filter(|owner| !owner.is_empty())
+            .map(std::string::ToString::to_string);
+    }
+
+    unresolved_signals.sort_by(|left, right| {
+        right
+            .severity
+            .cmp(&left.severity)
+            .then(left.signal_id.cmp(&right.signal_id))
+            .then(left.source.cmp(&right.source))
+    });
+
+    let critical_signals =
+        u64::try_from(
+            unresolved_signals
+                .iter()
+                .filter(|signal| signal.severity == EvidenceSeverity::Critical)
+                .count(),
+        )
+        .unwrap_or(u64::MAX);
+    let warning_signals =
+        u64::try_from(
+            unresolved_signals
+                .iter()
+                .filter(|signal| signal.severity == EvidenceSeverity::Warning)
+                .count(),
+        )
+        .unwrap_or(u64::MAX);
+    let info_signals =
+        u64::try_from(
+            unresolved_signals
+                .iter()
+                .filter(|signal| signal.severity == EvidenceSeverity::Info)
+                .count(),
+        )
+        .unwrap_or(u64::MAX);
+
+    let baseline_risk_millionths = match input.preflight.verdict {
+        PreflightVerdict::Green => 100_000,
+        PreflightVerdict::Yellow => 400_000,
+        PreflightVerdict::Red => 700_000,
+    };
+    let signal_risk_millionths = critical_signals
+        .saturating_mul(120_000)
+        .saturating_add(warning_signals.saturating_mul(50_000))
+        .saturating_add(info_signals.saturating_mul(10_000));
+    let total_risk_millionths = baseline_risk_millionths
+        .saturating_add(signal_risk_millionths)
+        .min(1_000_000);
+
+    let readiness = if critical_signals > 0 || total_risk_millionths >= 750_000 {
+        OnboardingReadinessClass::Blocked
+    } else if warning_signals > 0 || total_risk_millionths >= 350_000 {
+        OnboardingReadinessClass::Conditional
+    } else {
+        OnboardingReadinessClass::Ready
+    };
+
+    let total_signals = u64::try_from(unresolved_signals.len()).unwrap_or(u64::MAX);
+    let remediation_effort = if critical_signals >= 2 || total_signals >= 8 {
+        OnboardingRemediationEffort::High
+    } else if critical_signals >= 1 || warning_signals >= 3 || total_signals >= 4 {
+        OnboardingRemediationEffort::Medium
+    } else {
+        OnboardingRemediationEffort::Low
+    };
+
+    let mut reproducible_commands = unresolved_signals
+        .iter()
+        .map(|signal| signal.reproducible_command.clone())
+        .chain(
+            input
+                .preflight
+                .support_bundle
+                .index
+                .reproducible_commands
+                .iter()
+                .cloned(),
+        )
+        .collect::<Vec<_>>();
+    reproducible_commands.sort();
+    reproducible_commands.dedup();
+
+    let next_steps = unresolved_signals
+        .iter()
+        .take(5)
+        .map(|signal| OnboardingRemediationStep {
+            step_id: signal.signal_id.clone(),
+            severity: signal.severity,
+            summary: signal.summary.clone(),
+            remediation: signal.remediation.clone(),
+            owner: signal.owner_hint.clone().unwrap_or_else(|| {
+                default_owner_for_source(signal.source.as_str(), signal.severity)
+            }),
+            reproducible_command: signal.reproducible_command.clone(),
+            evidence_links: signal.evidence_links.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let mut target_platforms = input
+        .target_platforms
+        .iter()
+        .map(|platform| platform.trim())
+        .filter(|platform| !platform.is_empty())
+        .map(std::string::ToString::to_string)
+        .collect::<Vec<_>>();
+    target_platforms.sort();
+    target_platforms.dedup();
+
+    let logs = vec![StructuredLogEvent {
+        trace_id: input.preflight.trace_id.clone(),
+        decision_id: input.preflight.decision_id.clone(),
+        policy_id: input.preflight.policy_id.clone(),
+        component: COMPONENT.to_string(),
+        event: "onboarding_scorecard".to_string(),
+        outcome: if readiness == OnboardingReadinessClass::Blocked {
+            "fail".to_string()
+        } else {
+            "pass".to_string()
+        },
+        error_code: if readiness == OnboardingReadinessClass::Blocked {
+            Some(PREFLIGHT_DOCTOR_FAILURE_CODE.to_string())
+        } else {
+            None
+        },
+    }];
+
+    OnboardingScorecardOutput {
+        schema_version: ONBOARDING_SCORECARD_SCHEMA_VERSION.to_string(),
+        workload_id: normalize_or_default(&input.workload_id, "unknown-workload"),
+        package_name: normalize_or_default(&input.package_name, "unknown-package"),
+        target_platforms,
+        readiness,
+        remediation_effort,
+        score: OnboardingScoreBreakdown {
+            baseline_risk_millionths,
+            signal_risk_millionths,
+            total_risk_millionths,
+            critical_signals,
+            warning_signals,
+            info_signals,
+        },
+        unresolved_signals,
+        next_steps,
+        reproducible_commands,
+        logs,
+    }
+}
+
+/// Render onboarding scorecard output in deterministic human-readable form.
+pub fn render_onboarding_scorecard_summary(output: &OnboardingScorecardOutput) -> String {
+    let mut lines = vec![
+        format!("schema_version: {}", output.schema_version),
+        format!("workload_id: {}", output.workload_id),
+        format!("package_name: {}", output.package_name),
+        format!("readiness: {}", output.readiness),
+        format!("remediation_effort: {}", output.remediation_effort),
+        format!("risk_total_millionths: {}", output.score.total_risk_millionths),
+        format!(
+            "signals: critical={} warning={} info={}",
+            output.score.critical_signals, output.score.warning_signals, output.score.info_signals
+        ),
+    ];
+
+    if !output.target_platforms.is_empty() {
+        lines.push("target_platforms:".to_string());
+        for platform in &output.target_platforms {
+            lines.push(format!("  - {platform}"));
+        }
+    }
+
+    lines.push(format!("next_steps: {}", output.next_steps.len()));
+    for step in &output.next_steps {
+        lines.push(format!(
+            "  - [{}] {} owner={} cmd={}",
+            step.severity, step.step_id, step.owner, step.reproducible_command
+        ));
+    }
+
+    lines.push("reproducible_commands:".to_string());
+    for command in &output.reproducible_commands {
+        lines.push(format!("  - {command}"));
+    }
+
+    lines.join("\n")
+}
+
+fn normalize_or_default(value: &str, fallback: &str) -> String {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        fallback.to_string()
+    } else {
+        normalized.to_string()
+    }
+}
+
+fn default_owner_for_source(source: &str, severity: EvidenceSeverity) -> String {
+    match source {
+        "preflight_doctor" => match severity {
+            EvidenceSeverity::Critical => "runtime-security".to_string(),
+            EvidenceSeverity::Warning => "runtime-operations".to_string(),
+            EvidenceSeverity::Info => "runtime-observability".to_string(),
+        },
+        "compatibility_advisory" => "compatibility-lane".to_string(),
+        "platform_matrix" => "platform-matrix-lane".to_string(),
+        _ => "workload-onboarding".to_string(),
+    }
 }
 
 fn validate_preflight_mandatory_fields(
@@ -3003,5 +3349,99 @@ mod tests {
         assert!(rendered.contains("total_records:"));
         assert!(rendered.contains("reproducible_commands:"));
         assert!(rendered.contains("runtime_diagnostics support-bundle --input <path> --summary"));
+    }
+
+    #[test]
+    fn onboarding_scorecard_is_deterministic() {
+        let preflight = run_preflight_doctor(
+            &sample_input(),
+            EvidenceExportFilter::default(),
+            SupportBundleRedactionPolicy::default(),
+        );
+        let input = OnboardingScorecardInput {
+            workload_id: "pkg/weather-ext".to_string(),
+            package_name: "weather-ext".to_string(),
+            target_platforms: vec!["linux-x64".to_string(), "linux-x64".to_string()],
+            preflight: preflight.clone(),
+            external_signals: vec![OnboardingScorecardSignal {
+                signal_id: "compat:001".to_string(),
+                source: "compatibility_advisory".to_string(),
+                severity: EvidenceSeverity::Warning,
+                summary: "node parity drift in fs module".to_string(),
+                remediation: "apply deterministic shim for fs edge behavior".to_string(),
+                reproducible_command: "runtime_diagnostics doctor --input <path> --summary"
+                    .to_string(),
+                evidence_links: vec!["artifacts/lockstep/report.json".to_string()],
+                owner_hint: Some("compatibility-lane".to_string()),
+            }],
+        };
+
+        let left = build_onboarding_scorecard(&input);
+        let right = build_onboarding_scorecard(&input);
+        assert_eq!(left, right);
+        assert_eq!(left.readiness, OnboardingReadinessClass::Blocked);
+        assert_eq!(left.remediation_effort, OnboardingRemediationEffort::High);
+        assert_eq!(left.target_platforms, vec!["linux-x64".to_string()]);
+    }
+
+    #[test]
+    fn onboarding_scorecard_ready_for_clean_input() {
+        let mut input = sample_input();
+        input.evidence_entries.clear();
+        input.containment_receipts.clear();
+        input
+            .hostcall_records
+            .retain(|record| matches!(record.record.result_status, HostcallResult::Success));
+        for sample in &mut input.runtime_state.gc_pressure {
+            sample.used_bytes = sample.used_bytes.min(sample.budget_bytes);
+        }
+        for lane in &mut input.runtime_state.scheduler_lanes {
+            lane.tasks_timed_out = 0;
+            lane.queue_depth = 0;
+        }
+
+        let preflight = run_preflight_doctor(
+            &input,
+            EvidenceExportFilter::default(),
+            SupportBundleRedactionPolicy::default(),
+        );
+        assert_eq!(preflight.verdict, PreflightVerdict::Green);
+
+        let scorecard = build_onboarding_scorecard(&OnboardingScorecardInput {
+            workload_id: "pkg/clean-ext".to_string(),
+            package_name: "clean-ext".to_string(),
+            target_platforms: vec!["linux-x64".to_string(), "macos-arm64".to_string()],
+            preflight,
+            external_signals: Vec::new(),
+        });
+
+        assert_eq!(scorecard.readiness, OnboardingReadinessClass::Ready);
+        assert_eq!(scorecard.remediation_effort, OnboardingRemediationEffort::Low);
+        assert_eq!(scorecard.score.critical_signals, 0);
+        assert_eq!(scorecard.score.warning_signals, 0);
+        assert_eq!(scorecard.score.info_signals, 0);
+        assert!(scorecard.next_steps.is_empty());
+    }
+
+    #[test]
+    fn onboarding_scorecard_summary_includes_commands() {
+        let preflight = run_preflight_doctor(
+            &sample_input(),
+            EvidenceExportFilter::default(),
+            SupportBundleRedactionPolicy::default(),
+        );
+        let scorecard = build_onboarding_scorecard(&OnboardingScorecardInput {
+            workload_id: "pkg/example".to_string(),
+            package_name: "example".to_string(),
+            target_platforms: vec!["linux-x64".to_string()],
+            preflight,
+            external_signals: Vec::new(),
+        });
+
+        let rendered = render_onboarding_scorecard_summary(&scorecard);
+        assert!(rendered.contains("schema_version:"));
+        assert!(rendered.contains("readiness: blocked"));
+        assert!(rendered.contains("reproducible_commands:"));
+        assert!(rendered.contains("runtime_diagnostics doctor --input <path> --summary"));
     }
 }
