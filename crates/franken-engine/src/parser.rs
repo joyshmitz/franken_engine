@@ -2862,6 +2862,32 @@ fn parse_object_binding_pattern(
         }
     }
 
+    // ES2020 early error: rest element must be last property
+    let rest_count = properties
+        .iter()
+        .filter(|p| matches!(&p.value, BindingPattern::Rest(_)))
+        .count();
+    if rest_count > 1 {
+        return Err(ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "object pattern has more than one rest element",
+            context.source_label.to_string(),
+            Some(span.clone()),
+        ));
+    }
+    if rest_count == 1 {
+        if let Some(last) = properties.last() {
+            if !matches!(&last.value, BindingPattern::Rest(_)) {
+                return Err(ParseError::new(
+                    ParseErrorCode::UnsupportedSyntax,
+                    "rest element must be the last property in object pattern",
+                    context.source_label.to_string(),
+                    Some(span.clone()),
+                ));
+            }
+        }
+    }
+
     Ok(BindingPattern::ObjectPattern(properties))
 }
 
@@ -2916,6 +2942,36 @@ fn parse_array_binding_pattern(
             elements.push(None); // hole
         } else {
             elements.push(Some(parse_binding_pattern(seg, span, context)?));
+        }
+    }
+
+    // ES2020 early error: rest element must be last, at most one
+    let rest_positions: Vec<usize> = elements
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| matches!(e, Some(BindingPattern::Rest(_))))
+        .map(|(i, _)| i)
+        .collect();
+    if rest_positions.len() > 1 {
+        return Err(ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "array pattern has more than one rest element",
+            context.source_label.to_string(),
+            Some(span.clone()),
+        ));
+    }
+    if let Some(&pos) = rest_positions.first() {
+        // Rest must be the last non-hole element
+        let last_non_hole = elements.iter().rposition(|e| e.is_some());
+        if let Some(last) = last_non_hole {
+            if pos != last {
+                return Err(ParseError::new(
+                    ParseErrorCode::UnsupportedSyntax,
+                    "rest element must be the last element in array pattern",
+                    context.source_label.to_string(),
+                    Some(span.clone()),
+                ));
+            }
         }
     }
 
@@ -6847,6 +6903,320 @@ mod tests {
             assert!(
                 matches!(pat, BindingPattern::ObjectPattern(props) if props.len() == 1),
                 "expected object pattern, got {pat:?}"
+            );
+        } else {
+            panic!("expected variable declaration");
+        }
+    }
+
+    #[test]
+    fn var_declaration_array_destructuring_accepted() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("var [a, b] = source", ParseGoal::Script)
+            .expect("array destructuring binding should succeed");
+        assert_eq!(tree.body.len(), 1);
+        if let Statement::VariableDeclaration(decl) = &tree.body[0] {
+            let pat = &decl.declarations[0].pattern;
+            assert!(
+                matches!(pat, BindingPattern::ArrayPattern(elems) if elems.len() == 2),
+                "expected array pattern with 2 elements, got {pat:?}"
+            );
+        } else {
+            panic!("expected variable declaration");
+        }
+    }
+
+    #[test]
+    fn object_destructuring_with_rest_accepted() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("var {a, ...rest} = source", ParseGoal::Script)
+            .expect("object rest should succeed");
+        if let Statement::VariableDeclaration(decl) = &tree.body[0] {
+            if let BindingPattern::ObjectPattern(props) = &decl.declarations[0].pattern {
+                assert_eq!(props.len(), 2);
+                assert!(
+                    matches!(&props[1].value, BindingPattern::Rest(_)),
+                    "last property should be rest"
+                );
+            } else {
+                panic!("expected object pattern");
+            }
+        } else {
+            panic!("expected variable declaration");
+        }
+    }
+
+    #[test]
+    fn array_destructuring_with_rest_accepted() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("var [a, ...rest] = source", ParseGoal::Script)
+            .expect("array rest should succeed");
+        if let Statement::VariableDeclaration(decl) = &tree.body[0] {
+            if let BindingPattern::ArrayPattern(elems) = &decl.declarations[0].pattern {
+                assert_eq!(elems.len(), 2);
+                assert!(
+                    matches!(&elems[1], Some(BindingPattern::Rest(_))),
+                    "last element should be rest"
+                );
+            } else {
+                panic!("expected array pattern");
+            }
+        } else {
+            panic!("expected variable declaration");
+        }
+    }
+
+    #[test]
+    fn object_destructuring_multiple_rest_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("var {...a, ...b} = source", ParseGoal::Script)
+            .expect_err("multiple rest in object pattern must fail");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("more than one rest"),
+            "error should mention multiple rest: {msg}"
+        );
+    }
+
+    #[test]
+    fn object_destructuring_rest_not_last_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("var {...rest, b} = source", ParseGoal::Script)
+            .expect_err("rest not last in object pattern must fail");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("rest element must be the last"),
+            "error should mention rest position: {msg}"
+        );
+    }
+
+    #[test]
+    fn array_destructuring_multiple_rest_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("var [...a, ...b] = source", ParseGoal::Script)
+            .expect_err("multiple rest in array pattern must fail");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("more than one rest"),
+            "error should mention multiple rest: {msg}"
+        );
+    }
+
+    #[test]
+    fn array_destructuring_rest_not_last_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("var [...rest, b] = source", ParseGoal::Script)
+            .expect_err("rest not last in array pattern must fail");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("rest element must be the last"),
+            "error should mention rest position: {msg}"
+        );
+    }
+
+    #[test]
+    fn nested_destructuring_object_in_array_accepted() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("var [{a, b}, c] = source", ParseGoal::Script)
+            .expect("nested destructuring should succeed");
+        if let Statement::VariableDeclaration(decl) = &tree.body[0] {
+            if let BindingPattern::ArrayPattern(elems) = &decl.declarations[0].pattern {
+                assert_eq!(elems.len(), 2);
+                assert!(
+                    matches!(&elems[0], Some(BindingPattern::ObjectPattern(_))),
+                    "first element should be object pattern"
+                );
+            } else {
+                panic!("expected array pattern");
+            }
+        } else {
+            panic!("expected variable declaration");
+        }
+    }
+
+    #[test]
+    fn nested_destructuring_array_in_object_accepted() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("var {a: [x, y]} = source", ParseGoal::Script)
+            .expect("nested array in object should succeed");
+        if let Statement::VariableDeclaration(decl) = &tree.body[0] {
+            assert!(
+                matches!(
+                    &decl.declarations[0].pattern,
+                    BindingPattern::ObjectPattern(_)
+                ),
+                "expected object pattern"
+            );
+        } else {
+            panic!("expected variable declaration");
+        }
+    }
+
+    #[test]
+    fn destructuring_with_default_value_accepted() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("var {a = 1, b = 2} = source", ParseGoal::Script)
+            .expect("destructuring with defaults should succeed");
+        if let Statement::VariableDeclaration(decl) = &tree.body[0] {
+            if let BindingPattern::ObjectPattern(props) = &decl.declarations[0].pattern {
+                assert_eq!(props.len(), 2);
+                assert!(
+                    matches!(&props[0].value, BindingPattern::AssignmentPattern { .. }),
+                    "first prop should have default: {:?}",
+                    props[0].value
+                );
+            } else {
+                panic!("expected object pattern");
+            }
+        } else {
+            panic!("expected variable declaration");
+        }
+    }
+
+    #[test]
+    fn array_destructuring_with_holes_accepted() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("var [a, , b] = source", ParseGoal::Script)
+            .expect("array with holes should succeed");
+        if let Statement::VariableDeclaration(decl) = &tree.body[0] {
+            if let BindingPattern::ArrayPattern(elems) = &decl.declarations[0].pattern {
+                assert_eq!(elems.len(), 3);
+                assert!(elems[0].is_some(), "first element should be Some");
+                assert!(elems[1].is_none(), "second element (hole) should be None");
+                assert!(elems[2].is_some(), "third element should be Some");
+            } else {
+                panic!("expected array pattern");
+            }
+        } else {
+            panic!("expected variable declaration");
+        }
+    }
+
+    #[test]
+    fn let_declaration_with_destructuring_accepted() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("let {x, y} = source", ParseGoal::Script)
+            .expect("let destructuring should succeed");
+        if let Statement::VariableDeclaration(decl) = &tree.body[0] {
+            assert_eq!(decl.kind, VariableKind::Let);
+            assert!(matches!(
+                &decl.declarations[0].pattern,
+                BindingPattern::ObjectPattern(_)
+            ));
+        } else {
+            panic!("expected variable declaration");
+        }
+    }
+
+    #[test]
+    fn const_declaration_with_destructuring_accepted() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("const [a, b] = source", ParseGoal::Script)
+            .expect("const destructuring should succeed");
+        if let Statement::VariableDeclaration(decl) = &tree.body[0] {
+            assert_eq!(decl.kind, VariableKind::Const);
+            assert!(matches!(
+                &decl.declarations[0].pattern,
+                BindingPattern::ArrayPattern(_)
+            ));
+        } else {
+            panic!("expected variable declaration");
+        }
+    }
+
+    #[test]
+    fn for_in_with_destructuring_accepted() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("for (var {a, b} in source) {}", ParseGoal::Script)
+            .expect("for-in destructuring should succeed");
+        if let Statement::ForIn(stmt) = &tree.body[0] {
+            assert!(
+                matches!(&stmt.binding, BindingPattern::ObjectPattern(props) if props.len() == 2),
+                "expected object pattern binding"
+            );
+        } else {
+            panic!("expected for-in statement");
+        }
+    }
+
+    #[test]
+    fn for_of_with_destructuring_accepted() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("for (var [a, b] of source) {}", ParseGoal::Script)
+            .expect("for-of destructuring should succeed");
+        if let Statement::ForOf(stmt) = &tree.body[0] {
+            assert!(
+                matches!(&stmt.binding, BindingPattern::ArrayPattern(elems) if elems.len() == 2),
+                "expected array pattern binding"
+            );
+        } else {
+            panic!("expected for-of statement");
+        }
+    }
+
+    #[test]
+    fn object_destructuring_renamed_key_accepted() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("var {a: x, b: y} = source", ParseGoal::Script)
+            .expect("renamed keys should succeed");
+        if let Statement::VariableDeclaration(decl) = &tree.body[0] {
+            if let BindingPattern::ObjectPattern(props) = &decl.declarations[0].pattern {
+                assert_eq!(props.len(), 2);
+                assert_eq!(props[0].key, "a");
+                assert!(
+                    matches!(&props[0].value, BindingPattern::Identifier(name) if name == "x"),
+                    "first value should be identifier x"
+                );
+            } else {
+                panic!("expected object pattern");
+            }
+        } else {
+            panic!("expected variable declaration");
+        }
+    }
+
+    #[test]
+    fn empty_object_destructuring_accepted() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("var {} = source", ParseGoal::Script)
+            .expect("empty object destructuring should succeed");
+        if let Statement::VariableDeclaration(decl) = &tree.body[0] {
+            assert!(
+                matches!(&decl.declarations[0].pattern, BindingPattern::ObjectPattern(props) if props.is_empty()),
+                "expected empty object pattern"
+            );
+        } else {
+            panic!("expected variable declaration");
+        }
+    }
+
+    #[test]
+    fn empty_array_destructuring_accepted() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("var [] = source", ParseGoal::Script)
+            .expect("empty array destructuring should succeed");
+        if let Statement::VariableDeclaration(decl) = &tree.body[0] {
+            assert!(
+                matches!(&decl.declarations[0].pattern, BindingPattern::ArrayPattern(elems) if elems.is_empty()),
+                "expected empty array pattern"
             );
         } else {
             panic!("expected variable declaration");
