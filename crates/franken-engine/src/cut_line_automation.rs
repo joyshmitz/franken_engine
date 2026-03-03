@@ -4574,7 +4574,11 @@ mod tests {
         for cat in &categories {
             displays.insert(cat.to_string());
         }
-        assert_eq!(displays.len(), 10, "all GateCategory Display must be unique");
+        assert_eq!(
+            displays.len(),
+            10,
+            "all GateCategory Display must be unique"
+        );
     }
 
     #[test]
@@ -4675,9 +4679,7 @@ mod tests {
     #[test]
     fn metadata_key_present_rejects_empty() {
         let mut input = make_passing_input(GateCategory::CompilerCorrectness, 1000);
-        input
-            .metadata
-            .insert("some_key".to_string(), String::new());
+        input.metadata.insert("some_key".to_string(), String::new());
         assert!(!CutLineEvaluator::metadata_key_present(&input, "some_key"));
     }
 

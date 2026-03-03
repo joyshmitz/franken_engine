@@ -2392,4 +2392,226 @@ mod tests {
         }
         assert_eq!(set.len(), variants.len());
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn decision_core_error_display_exact_all_5() {
+        assert_eq!(
+            DecisionCoreError::NoLanesConfigured.to_string(),
+            "no lanes configured"
+        );
+        assert_eq!(
+            DecisionCoreError::EmptyActionSet.to_string(),
+            "empty action set"
+        );
+        assert_eq!(
+            DecisionCoreError::BudgetExhaustedNoFallback.to_string(),
+            "budget exhausted with no fallback lane"
+        );
+        assert_eq!(
+            DecisionCoreError::EpochRegression {
+                current: 10,
+                received: 3
+            }
+            .to_string(),
+            "epoch regression: current=10, received=3"
+        );
+        assert_eq!(
+            DecisionCoreError::InvalidConfig("bad param".into()).to_string(),
+            "invalid config: bad param"
+        );
+    }
+
+    #[test]
+    fn decision_core_error_source_returns_none_all() {
+        use std::error::Error;
+        let variants: Vec<DecisionCoreError> = vec![
+            DecisionCoreError::NoLanesConfigured,
+            DecisionCoreError::EmptyActionSet,
+            DecisionCoreError::BudgetExhaustedNoFallback,
+            DecisionCoreError::EpochRegression {
+                current: 5,
+                received: 3,
+            },
+            DecisionCoreError::InvalidConfig("x".into()),
+        ];
+        for err in &variants {
+            assert!(err.source().is_none(), "source() should be None for {err}");
+        }
+    }
+
+    #[test]
+    fn fallback_reason_serde_eprocess_and_consecutive() {
+        let variants = vec![
+            FallbackReason::EProcessTriggered {
+                guardrail_id: "ep-1".into(),
+            },
+            FallbackReason::ConsecutiveAdverse { count: 5 },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: FallbackReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn fallback_reason_display_exact_all_7() {
+        assert_eq!(
+            FallbackReason::RegimeChange("attack".into()).to_string(),
+            "regime_change:attack"
+        );
+        assert_eq!(
+            FallbackReason::CVaRViolation {
+                cvar_us: 5000,
+                max_us: 1000
+            }
+            .to_string(),
+            "cvar_violation:5000us>1000us"
+        );
+        assert_eq!(
+            FallbackReason::CalibrationUndercoverage {
+                coverage_millionths: 800_000
+            }
+            .to_string(),
+            "undercoverage:800000"
+        );
+        assert_eq!(
+            FallbackReason::BudgetExhausted {
+                compute_ms: 60,
+                memory_mb: 200
+            }
+            .to_string(),
+            "budget_exhausted:compute=60ms,mem=200mb"
+        );
+        assert_eq!(
+            FallbackReason::LowConfidence {
+                confidence_millionths: 100_000
+            }
+            .to_string(),
+            "low_confidence:100000"
+        );
+        assert_eq!(
+            FallbackReason::EProcessTriggered {
+                guardrail_id: "g1".into()
+            }
+            .to_string(),
+            "eprocess_triggered:g1"
+        );
+        assert_eq!(
+            FallbackReason::ConsecutiveAdverse { count: 3 }.to_string(),
+            "consecutive_adverse:3"
+        );
+    }
+
+    #[test]
+    fn routing_action_serde_all_variants() {
+        let variants = vec![
+            RoutingAction::SelectLane(LaneId::v8_native()),
+            RoutingAction::FallbackSafeMode,
+            RoutingAction::EscalateToOperator,
+            RoutingAction::Hold,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: RoutingAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn lane_routing_state_serde_roundtrip() {
+        let state = LaneRoutingState::initial(LaneId::quickjs_native(), epoch(1));
+        let json = serde_json::to_string(&state).unwrap();
+        let back: LaneRoutingState = serde_json::from_str(&json).unwrap();
+        assert_eq!(state, back);
+    }
+
+    #[test]
+    fn routing_decision_output_serde_roundtrip() {
+        let output = RoutingDecisionOutput {
+            action: RoutingAction::Hold,
+            expected_loss_millionths: 42_000,
+            fallback_triggered: false,
+            fallback_reason: None,
+            cvar_result: CVaRResult {
+                cvar_us: 0,
+                satisfied: true,
+                var_us: 0,
+                sample_count: 0,
+            },
+            decision_seq: 0,
+        };
+        let json = serde_json::to_string(&output).unwrap();
+        let back: RoutingDecisionOutput = serde_json::from_str(&json).unwrap();
+        assert_eq!(output, back);
+    }
+
+    #[test]
+    fn demotion_policy_serde_roundtrip() {
+        let policy = DemotionPolicy::new("test-demotion");
+        let json = serde_json::to_string(&policy).unwrap();
+        let back: DemotionPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, back);
+    }
+
+    #[test]
+    fn cvar_result_serde_roundtrip() {
+        let result = CVaRResult {
+            cvar_us: 5000,
+            satisfied: false,
+            var_us: 4000,
+            sample_count: 100,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: CVaRResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+    }
+
+    #[test]
+    fn regime_estimate_ordering() {
+        assert!(RegimeEstimate::Normal < RegimeEstimate::Elevated);
+        assert!(RegimeEstimate::Elevated < RegimeEstimate::Attack);
+        assert!(RegimeEstimate::Attack < RegimeEstimate::Degraded);
+        assert!(RegimeEstimate::Degraded < RegimeEstimate::Recovery);
+    }
+
+    #[test]
+    fn calibration_e_value_decays_on_miss() {
+        let mut cal = ConformalCalibrationLayer::new("test", 950_000);
+        let initial_e = cal.e_value_millionths;
+        assert_eq!(initial_e, MILLION);
+        cal.observe(100_000, false);
+        assert_eq!(
+            cal.e_value_millionths, 0,
+            "e-value should decay to 0 on miss"
+        );
+    }
+
+    #[test]
+    fn core_is_fallback_active_tracks_state() {
+        let mut core = make_core();
+        assert!(!core.is_fallback_active());
+        // Attack triggers fallback.
+        let input = make_input(1_000, RegimeEstimate::Attack, 800_000, false, 1);
+        core.decide(&input).unwrap();
+        assert!(core.is_fallback_active());
+        // Recovery returns to normal.
+        let input2 = make_input(1_000, RegimeEstimate::Recovery, 800_000, false, 2);
+        core.decide(&input2).unwrap();
+        assert!(!core.is_fallback_active());
+    }
+
+    #[test]
+    fn loss_policy_entry_serde_roundtrip() {
+        let entry = LossPolicyEntry {
+            action_label: "select:v8_inspired_native".into(),
+            dimension: "compatibility".into(),
+            loss_millionths: 400_000,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: LossPolicyEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
 }

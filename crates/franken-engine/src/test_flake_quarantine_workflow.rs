@@ -347,6 +347,138 @@ pub fn validate_quarantine_records(
 }
 
 #[must_use]
+pub fn validate_reproducer_replay_commands(classifications: &[FlakeClassification]) -> Vec<String> {
+    let mut violations = Vec::new();
+
+    for flake in classifications {
+        let case_id = case_key(&flake.suite_kind, &flake.scenario_id);
+        let bundle = &flake.reproducer_bundle;
+
+        let replay_ci = bundle.replay_command_ci.trim();
+        if replay_ci.is_empty() {
+            violations.push(format!("missing_ci_replay_command:{case_id}"));
+        } else if !is_valid_ci_replay_command(replay_ci) {
+            violations.push(format!("invalid_ci_replay_command:{case_id}"));
+        }
+
+        let replay_local = bundle.replay_command_local.trim();
+        if replay_local.is_empty() {
+            violations.push(format!("missing_local_replay_command:{case_id}"));
+        } else if !is_valid_local_replay_command(replay_local) {
+            violations.push(format!("invalid_local_replay_command:{case_id}"));
+        }
+
+        if bundle.run_ids.is_empty() {
+            violations.push(format!("missing_reproducer_run_ids:{case_id}"));
+        }
+        if bundle.artifact_bundle_ids.is_empty() {
+            violations.push(format!("missing_reproducer_artifact_ids:{case_id}"));
+        }
+    }
+
+    violations
+}
+
+#[must_use]
+pub fn validate_flake_linkage(classifications: &[FlakeClassification]) -> Vec<String> {
+    let mut violations = Vec::new();
+
+    for flake in classifications {
+        let case_id = case_key(&flake.suite_kind, &flake.scenario_id);
+
+        if flake.impacted_unit_suites.is_empty() {
+            violations.push(format!("missing_impacted_unit_suite_links:{case_id}"));
+        }
+        if flake.root_cause_hypothesis_artifacts.is_empty() {
+            violations.push(format!("missing_root_cause_hypothesis_artifacts:{case_id}"));
+        }
+
+        let impacted_unique = flake
+            .impacted_unit_suites
+            .iter()
+            .map(std::string::String::as_str)
+            .collect::<BTreeSet<_>>();
+        if impacted_unique.len() != flake.impacted_unit_suites.len() {
+            violations.push(format!("duplicate_impacted_unit_suite_links:{case_id}"));
+        }
+
+        let root_cause_unique = flake
+            .root_cause_hypothesis_artifacts
+            .iter()
+            .map(std::string::String::as_str)
+            .collect::<BTreeSet<_>>();
+        if root_cause_unique.len() != flake.root_cause_hypothesis_artifacts.len() {
+            violations.push(format!(
+                "duplicate_root_cause_hypothesis_artifacts:{case_id}"
+            ));
+        }
+    }
+
+    violations
+}
+
+#[must_use]
+pub fn validate_structured_event_contract(events: &[FlakeWorkflowEvent]) -> Vec<String> {
+    let mut violations = Vec::new();
+
+    for event in events {
+        let case_id = case_key(&event.suite_kind, &event.scenario_id);
+
+        if event.schema_version != FLAKE_WORKFLOW_EVENT_SCHEMA_VERSION {
+            violations.push(format!("invalid_event_schema_version:{case_id}"));
+        }
+        if event.trace_id.trim().is_empty() {
+            violations.push(format!("missing_trace_id:{case_id}"));
+        }
+        if event.decision_id.trim().is_empty() {
+            violations.push(format!("missing_decision_id:{case_id}"));
+        }
+        if event.policy_id.trim().is_empty() {
+            violations.push(format!("missing_policy_id:{case_id}"));
+        }
+        if event.component.trim().is_empty() {
+            violations.push(format!("missing_component:{case_id}"));
+        }
+        if event.event.trim().is_empty() {
+            violations.push(format!("missing_event_name:{case_id}"));
+        }
+        if event.outcome.trim().is_empty() {
+            violations.push(format!("missing_outcome:{case_id}"));
+        }
+
+        let replay_ci = event.replay_command_ci.trim();
+        let allow_script_ci = event.event == "gate_confidence_evaluated";
+        if replay_ci.is_empty() {
+            violations.push(format!("missing_event_replay_command_ci:{case_id}"));
+        } else if !(is_valid_ci_replay_command(replay_ci)
+            || (allow_script_ci && is_replay_test_command(replay_ci)))
+        {
+            violations.push(format!("invalid_event_replay_command_ci:{case_id}"));
+        }
+
+        let replay_local = event.replay_command_local.trim();
+        if replay_local.is_empty() {
+            violations.push(format!("missing_event_replay_command_local:{case_id}"));
+        } else if !is_valid_local_replay_command(replay_local) {
+            violations.push(format!("invalid_event_replay_command_local:{case_id}"));
+        }
+
+        if event.event == "flake_classified" {
+            if event.impacted_unit_suites.is_empty() {
+                violations.push(format!("missing_event_impacted_unit_suite_links:{case_id}"));
+            }
+            if event.root_cause_hypothesis_artifacts.is_empty() {
+                violations.push(format!(
+                    "missing_event_root_cause_hypothesis_artifacts:{case_id}"
+                ));
+            }
+        }
+    }
+
+    violations
+}
+
+#[must_use]
 pub fn evaluate_gate_confidence(
     runs: &[FlakeRunRecord],
     classifications: &[FlakeClassification],
@@ -634,6 +766,23 @@ fn case_key(suite_kind: &str, scenario_id: &str) -> String {
     format!("{suite_kind}::{scenario_id}")
 }
 
+fn is_replay_test_command(command: &str) -> bool {
+    command.contains("cargo test") || command.ends_with(".sh") || command.contains(".sh ")
+}
+
+fn is_valid_ci_replay_command(command: &str) -> bool {
+    (command.starts_with("rch exec")
+        || command.contains(" rch exec ")
+        || command.contains(";rch exec ")
+        || command.contains("&&rch exec ")
+        || command.contains("||rch exec "))
+        && is_replay_test_command(command)
+}
+
+fn is_valid_local_replay_command(command: &str) -> bool {
+    !command.contains("rch exec") && is_replay_test_command(command)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -641,7 +790,9 @@ mod tests {
         FlakeClassification, FlakePolicy, FlakeRunRecord, FlakeSeverity, FlakeWorkflowEvent,
         GateConfidenceReport, QuarantineAction, QuarantineRecord, QuarantineStatus,
         ReproducerBundle, TrendDirection, build_quarantine_records, classify_flakes,
-        evaluate_gate_confidence, validate_quarantine_records,
+        emit_structured_events, evaluate_gate_confidence, validate_flake_linkage,
+        validate_quarantine_records, validate_reproducer_replay_commands,
+        validate_structured_event_contract,
     };
     use std::collections::BTreeMap;
 
@@ -728,6 +879,193 @@ mod tests {
         );
         assert!(!flake.reproducer_bundle.replay_command_ci.is_empty());
         assert!(!flake.reproducer_bundle.replay_command_local.is_empty());
+    }
+
+    #[test]
+    fn reproducer_replay_commands_meet_ci_replay_contract() {
+        let policy = FlakePolicy {
+            warning_flake_threshold_millionths: 1,
+            high_flake_threshold_millionths: 100_000,
+            ..FlakePolicy::default()
+        };
+        let classifications = classify_flakes(&sample_runs(), &policy);
+        let violations = validate_reproducer_replay_commands(&classifications);
+        assert!(
+            violations.is_empty(),
+            "expected valid replay commands for CI/local deterministic replay: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn reproducer_replay_commands_detect_invalid_ci_and_local_shapes() {
+        let policy = FlakePolicy {
+            warning_flake_threshold_millionths: 1,
+            high_flake_threshold_millionths: 100_000,
+            ..FlakePolicy::default()
+        };
+        let mut classifications = classify_flakes(&sample_runs(), &policy);
+        let flake = classifications.first_mut().expect("flake classification");
+        flake.reproducer_bundle.replay_command_ci =
+            "cargo test --test frx_hydration -- hydration_case --exact".to_string();
+        flake.reproducer_bundle.replay_command_local =
+            "rch exec -- cargo test --test frx_hydration -- hydration_case --exact".to_string();
+        flake.reproducer_bundle.run_ids.clear();
+        flake.reproducer_bundle.artifact_bundle_ids.clear();
+
+        let violations = validate_reproducer_replay_commands(&classifications);
+        assert!(
+            violations
+                .iter()
+                .any(|value| value.starts_with("invalid_ci_replay_command:")),
+            "expected CI replay command violation: {violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|value| value.starts_with("invalid_local_replay_command:")),
+            "expected local replay command violation: {violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|value| value.starts_with("missing_reproducer_run_ids:")),
+            "expected missing run id violation: {violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|value| value.starts_with("missing_reproducer_artifact_ids:")),
+            "expected missing artifact id violation: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn flake_linkage_validator_accepts_non_empty_unique_links() {
+        let policy = FlakePolicy {
+            warning_flake_threshold_millionths: 1,
+            high_flake_threshold_millionths: 100_000,
+            ..FlakePolicy::default()
+        };
+        let classifications = classify_flakes(&sample_runs(), &policy);
+        let violations = validate_flake_linkage(&classifications);
+        assert!(
+            violations.is_empty(),
+            "expected valid linkage for impacted suites and root-cause artifacts: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn flake_linkage_validator_detects_missing_and_duplicate_links() {
+        let policy = FlakePolicy {
+            warning_flake_threshold_millionths: 1,
+            high_flake_threshold_millionths: 100_000,
+            ..FlakePolicy::default()
+        };
+        let mut classifications = classify_flakes(&sample_runs(), &policy);
+        let flake = classifications.first_mut().expect("flake classification");
+        flake.impacted_unit_suites =
+            vec!["unit-hydration".to_string(), "unit-hydration".to_string()];
+        flake.root_cause_hypothesis_artifacts.clear();
+
+        let violations = validate_flake_linkage(&classifications);
+        assert!(
+            violations
+                .iter()
+                .any(|value| value.starts_with("duplicate_impacted_unit_suite_links:")),
+            "expected duplicate impacted-suite violation: {violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|value| value.starts_with("missing_root_cause_hypothesis_artifacts:")),
+            "expected missing root-cause artifact violation: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn structured_event_contract_validator_accepts_well_formed_events() {
+        let policy = FlakePolicy {
+            warning_flake_threshold_millionths: 1,
+            high_flake_threshold_millionths: 100_000,
+            ..FlakePolicy::default()
+        };
+        let runs = sample_runs();
+        let classifications = classify_flakes(&runs, &policy);
+        let mut owners = BTreeMap::new();
+        owners.insert(
+            "e2e::scenario-hydration".to_string(),
+            "quality-oncall".to_string(),
+        );
+        let quarantines = build_quarantine_records(&classifications, &owners, 7, &policy);
+        let report = evaluate_gate_confidence(&runs, &classifications, &policy);
+        let events = emit_structured_events(
+            "trace-frx-20-5",
+            "decision-frx-20-5",
+            "policy-frx-20-5-v1",
+            &classifications,
+            &quarantines,
+            &report,
+        );
+        let violations = validate_structured_event_contract(&events);
+        assert!(
+            violations.is_empty(),
+            "expected valid structured-event contract: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn structured_event_contract_validator_detects_invalid_replay_and_linkage() {
+        let policy = FlakePolicy {
+            warning_flake_threshold_millionths: 1,
+            high_flake_threshold_millionths: 100_000,
+            ..FlakePolicy::default()
+        };
+        let runs = sample_runs();
+        let classifications = classify_flakes(&runs, &policy);
+        let report = evaluate_gate_confidence(&runs, &classifications, &policy);
+        let mut events = emit_structured_events(
+            "trace-frx-20-5",
+            "decision-frx-20-5",
+            "policy-frx-20-5-v1",
+            &classifications,
+            &[],
+            &report,
+        );
+        let flake_event = events
+            .iter_mut()
+            .find(|event| event.event == "flake_classified")
+            .expect("flake event");
+        flake_event.replay_command_ci = "cargo test --test frx_hydration".to_string();
+        flake_event.replay_command_local =
+            "rch exec -- cargo test --test frx_hydration".to_string();
+        flake_event.impacted_unit_suites.clear();
+        flake_event.root_cause_hypothesis_artifacts.clear();
+
+        let violations = validate_structured_event_contract(&events);
+        assert!(
+            violations
+                .iter()
+                .any(|value| value.starts_with("invalid_event_replay_command_ci:")),
+            "expected invalid CI replay violation: {violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|value| value.starts_with("invalid_event_replay_command_local:")),
+            "expected invalid local replay violation: {violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|value| value.starts_with("missing_event_impacted_unit_suite_links:")),
+            "expected missing impacted-suite linkage violation: {violations:?}"
+        );
+        assert!(
+            violations.iter().any(|value| {
+                value.starts_with("missing_event_root_cause_hypothesis_artifacts:")
+            }),
+            "expected missing root-cause linkage violation: {violations:?}"
+        );
     }
 
     #[test]

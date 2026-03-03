@@ -2503,8 +2503,7 @@ mod tests {
             message: "mismatch".to_string(),
         };
         let json = serde_json::to_string(&finding).expect("serialize");
-        let restored: ArtifactValidationFinding =
-            serde_json::from_str(&json).expect("deserialize");
+        let restored: ArtifactValidationFinding = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(finding, restored);
     }
 

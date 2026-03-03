@@ -2247,7 +2247,8 @@ mod tests {
 
     #[test]
     fn session_epoch_accessor() {
-        let session = ReconcileSession::new(SecurityEpoch::from_raw(42), ReconcileConfig::default());
+        let session =
+            ReconcileSession::new(SecurityEpoch::from_raw(42), ReconcileConfig::default());
         assert_eq!(session.epoch(), SecurityEpoch::from_raw(42));
     }
 

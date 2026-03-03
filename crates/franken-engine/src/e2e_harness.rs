@@ -3817,8 +3817,7 @@ mod tests {
 
     #[test]
     fn select_rgc_advanced_scenario_matrix_filters_by_class() {
-        let baseline_only =
-            select_rgc_advanced_scenario_matrix(&[ScenarioClass::Baseline], true);
+        let baseline_only = select_rgc_advanced_scenario_matrix(&[ScenarioClass::Baseline], true);
         assert!(!baseline_only.is_empty());
         for entry in &baseline_only {
             assert_eq!(entry.scenario_class, ScenarioClass::Baseline);
@@ -3827,13 +3826,11 @@ mod tests {
 
     #[test]
     fn select_rgc_advanced_scenario_matrix_excludes_fault_injection() {
-        let no_fault =
-            select_rgc_advanced_scenario_matrix(&[], false);
+        let no_fault = select_rgc_advanced_scenario_matrix(&[], false);
         for entry in &no_fault {
             assert_ne!(entry.scenario_class, ScenarioClass::FaultInjection);
         }
-        let with_fault =
-            select_rgc_advanced_scenario_matrix(&[], true);
+        let with_fault = select_rgc_advanced_scenario_matrix(&[], true);
         let has_fault = with_fault
             .iter()
             .any(|e| e.scenario_class == ScenarioClass::FaultInjection);
@@ -4184,7 +4181,10 @@ mod tests {
         let b = make_run_result("b", 1);
         let delta = compare_counterfactual(&a, &b);
         let sample = &delta.divergence_samples[0];
-        assert_eq!(sample.kind, CounterfactualDivergenceKind::MissingCounterfactualEvent);
+        assert_eq!(
+            sample.kind,
+            CounterfactualDivergenceKind::MissingCounterfactualEvent
+        );
         assert_eq!(sample.baseline_component.as_deref(), Some("scheduler"));
         assert!(sample.counterfactual_component.is_none());
         assert_eq!(sample.baseline_event.as_deref(), Some("dispatch"));
@@ -4208,7 +4208,10 @@ mod tests {
         });
         let delta = compare_counterfactual(&a, &b);
         let sample = &delta.divergence_samples[0];
-        assert_eq!(sample.kind, CounterfactualDivergenceKind::MissingBaselineEvent);
+        assert_eq!(
+            sample.kind,
+            CounterfactualDivergenceKind::MissingBaselineEvent
+        );
         assert!(sample.baseline_component.is_none());
         assert_eq!(sample.counterfactual_component.as_deref(), Some("runtime"));
         assert!(sample.baseline_event.is_none());

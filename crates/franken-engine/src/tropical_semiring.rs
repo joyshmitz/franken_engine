@@ -1886,7 +1886,10 @@ mod tests {
 
     #[test]
     fn tropical_schema_version_stable() {
-        assert_eq!(TROPICAL_SCHEMA_VERSION, "franken-engine.tropical-semiring.v1");
+        assert_eq!(
+            TROPICAL_SCHEMA_VERSION,
+            "franken-engine.tropical-semiring.v1"
+        );
     }
 
     #[test]
@@ -1964,7 +1967,9 @@ mod tests {
     #[test]
     fn dead_code_zero_total_nodes() {
         let apsp = TropicalMatrix::new_infinity(1).unwrap();
-        let elim = DeadCodeEliminator { output_nodes: vec![] };
+        let elim = DeadCodeEliminator {
+            output_nodes: vec![],
+        };
         let report = elim.find_dead_code(&apsp, 0);
         assert_eq!(report.elimination_ratio_millionths, 0);
         assert!(report.dead_indices.is_empty());
@@ -2036,11 +2041,16 @@ mod tests {
     #[test]
     fn tropical_error_display_all_variants_non_empty() {
         let variants: Vec<TropicalError> = vec![
-            TropicalError::DimensionExceeded { dim: 5000, max: 4096 },
+            TropicalError::DimensionExceeded {
+                dim: 5000,
+                max: 4096,
+            },
             TropicalError::DimensionMismatch { left: 3, right: 4 },
             TropicalError::NegativeCycle { node: 2 },
             TropicalError::EmptyGraph,
-            TropicalError::CycleInDag { nodes_in_cycle: vec![0, 1] },
+            TropicalError::CycleInDag {
+                nodes_in_cycle: vec![0, 1],
+            },
             TropicalError::NodeOutOfBounds { index: 10, size: 5 },
         ];
         let mut displays = std::collections::BTreeSet::new();

@@ -1473,4 +1473,421 @@ mod tests {
         let t2 = LossTensor::from_entries(Subsystem::Runtime, e2);
         assert_ne!(t1.content_hash, t2.content_hash);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: minimax edge cases, builder completeness, report
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn minimax_with_single_defender_returns_that_action() {
+        let entries = vec![
+            LossEntry {
+                attacker_action: atk("a1"),
+                defender_action: atk("d1"),
+                dimension: LossDimension::UserHarm,
+                loss_millionths: 800_000,
+            },
+            LossEntry {
+                attacker_action: atk("a2"),
+                defender_action: atk("d1"),
+                dimension: LossDimension::UserHarm,
+                loss_millionths: 200_000,
+            },
+        ];
+        let tensor = LossTensor::from_entries(Subsystem::Runtime, entries);
+        assert_eq!(tensor.minimax_defender(), Some(atk("d1")));
+    }
+
+    #[test]
+    fn minimax_with_symmetric_losses_picks_deterministically() {
+        // Both defenders have identical max-losses; minimax should still return one
+        let entries = vec![
+            LossEntry {
+                attacker_action: atk("a1"),
+                defender_action: atk("d1"),
+                dimension: LossDimension::UserHarm,
+                loss_millionths: 500_000,
+            },
+            LossEntry {
+                attacker_action: atk("a1"),
+                defender_action: atk("d2"),
+                dimension: LossDimension::UserHarm,
+                loss_millionths: 500_000,
+            },
+        ];
+        let tensor = LossTensor::from_entries(Subsystem::Runtime, entries);
+        let result = tensor.minimax_defender();
+        assert!(result.is_some());
+        // With identical losses, BTreeSet ordering gives d1 first
+        assert_eq!(result.unwrap(), atk("d1"));
+    }
+
+    #[test]
+    fn minimax_with_negative_losses() {
+        // Defender d2 produces net benefit (negative loss) against all attackers
+        let entries = vec![
+            LossEntry {
+                attacker_action: atk("a1"),
+                defender_action: atk("d1"),
+                dimension: LossDimension::UserHarm,
+                loss_millionths: 100_000,
+            },
+            LossEntry {
+                attacker_action: atk("a1"),
+                defender_action: atk("d2"),
+                dimension: LossDimension::UserHarm,
+                loss_millionths: -50_000,
+            },
+        ];
+        let tensor = LossTensor::from_entries(Subsystem::Runtime, entries);
+        assert_eq!(tensor.minimax_defender(), Some(atk("d2")));
+    }
+
+    #[test]
+    fn builder_empty_builds_valid_model() {
+        let model = GameModelBuilder::new(Subsystem::EvidencePipeline, test_epoch()).build();
+        assert_eq!(model.attacker_action_count(), 0);
+        assert_eq!(model.defender_action_count(), 0);
+        assert_eq!(model.admissible_count(), 0);
+        assert!(model.minimax_recommendation().is_none());
+        assert_eq!(model.schema_version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn builder_content_hash_stable_across_builds() {
+        let build = || {
+            GameModelBuilder::new(Subsystem::Runtime, test_epoch())
+                .attacker_action(make_attacker_action("a1", Subsystem::Runtime))
+                .defender_action(make_defender_action("d1", Subsystem::Runtime))
+                .loss(LossEntry {
+                    attacker_action: atk("a1"),
+                    defender_action: atk("d1"),
+                    dimension: LossDimension::UserHarm,
+                    loss_millionths: 100_000,
+                })
+                .build()
+        };
+        let m1 = build();
+        let m2 = build();
+        assert_eq!(m1.content_hash, m2.content_hash);
+        assert_eq!(m1.model_id, m2.model_id);
+    }
+
+    #[test]
+    fn builder_content_hash_differs_with_different_actions() {
+        let m1 = GameModelBuilder::new(Subsystem::Runtime, test_epoch())
+            .attacker_action(make_attacker_action("a1", Subsystem::Runtime))
+            .defender_action(make_defender_action("d1", Subsystem::Runtime))
+            .build();
+        let m2 = GameModelBuilder::new(Subsystem::Runtime, test_epoch())
+            .attacker_action(make_attacker_action("a1", Subsystem::Runtime))
+            .attacker_action(make_attacker_action("a2", Subsystem::Runtime))
+            .defender_action(make_defender_action("d1", Subsystem::Runtime))
+            .build();
+        assert_ne!(m1.content_hash, m2.content_hash);
+    }
+
+    #[test]
+    fn report_constraint_total_matches_sum() {
+        let m1 = GameModelBuilder::new(Subsystem::Runtime, test_epoch())
+            .defender_action(make_defender_action("d1", Subsystem::Runtime))
+            .constraint(HardConstraint {
+                constraint_id: "c1".to_string(),
+                description: "test".to_string(),
+                forbidden_actions: BTreeSet::new(),
+                active_conditions: vec![],
+            })
+            .constraint(HardConstraint {
+                constraint_id: "c2".to_string(),
+                description: "test2".to_string(),
+                forbidden_actions: BTreeSet::new(),
+                active_conditions: vec![],
+            })
+            .build();
+        let m2 = GameModelBuilder::new(Subsystem::Compiler, test_epoch())
+            .defender_action(make_defender_action("d2", Subsystem::Compiler))
+            .constraint(HardConstraint {
+                constraint_id: "c3".to_string(),
+                description: "test3".to_string(),
+                forbidden_actions: BTreeSet::new(),
+                active_conditions: vec![],
+            })
+            .build();
+        let report = generate_report(&[m1, m2], &test_epoch());
+        assert_eq!(report.total_constraints, 3);
+    }
+
+    #[test]
+    fn report_subsystem_summary_has_minimax_recommendation() {
+        let model = GameModelBuilder::new(Subsystem::Runtime, test_epoch())
+            .attacker_action(make_attacker_action("a1", Subsystem::Runtime))
+            .defender_action(make_defender_action("d1", Subsystem::Runtime))
+            .loss(LossEntry {
+                attacker_action: atk("a1"),
+                defender_action: atk("d1"),
+                dimension: LossDimension::UserHarm,
+                loss_millionths: 100_000,
+            })
+            .build();
+        let report = generate_report(&[model], &test_epoch());
+        let summary = report.subsystem_summaries.get("runtime").unwrap();
+        assert_eq!(summary.minimax_recommendation, Some("d1".to_string()));
+    }
+
+    #[test]
+    fn report_no_minimax_when_no_loss_entries() {
+        let model = GameModelBuilder::new(Subsystem::Compiler, test_epoch())
+            .attacker_action(make_attacker_action("a1", Subsystem::Compiler))
+            .defender_action(make_defender_action("d1", Subsystem::Compiler))
+            .build();
+        let report = generate_report(&[model], &test_epoch());
+        let summary = report.subsystem_summaries.get("compiler").unwrap();
+        assert_eq!(summary.minimax_recommendation, None);
+    }
+
+    #[test]
+    fn model_serde_preserves_schema_version() {
+        let model = GameModelBuilder::new(Subsystem::ControlPlane, test_epoch()).build();
+        let json = serde_json::to_string(&model).unwrap();
+        let back: GameModel = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.schema_version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn subsystem_serde_rename_all_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&Subsystem::ControlPlane).unwrap(),
+            "\"control_plane\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Subsystem::ExtensionHost).unwrap(),
+            "\"extension_host\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Subsystem::EvidencePipeline).unwrap(),
+            "\"evidence_pipeline\""
+        );
+    }
+
+    #[test]
+    fn loss_dimension_serde_rename_all_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&LossDimension::UserHarm).unwrap(),
+            "\"user_harm\""
+        );
+        assert_eq!(
+            serde_json::to_string(&LossDimension::FalsePositiveCost).unwrap(),
+            "\"false_positive_cost\""
+        );
+        assert_eq!(
+            serde_json::to_string(&LossDimension::EvidenceIntegrityCost).unwrap(),
+            "\"evidence_integrity_cost\""
+        );
+    }
+
+    #[test]
+    fn player_serde_rename_all_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&Player::Attacker).unwrap(),
+            "\"attacker\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Player::Defender).unwrap(),
+            "\"defender\""
+        );
+    }
+
+    #[test]
+    fn tensor_lookup_all_five_dimensions() {
+        let dims = [
+            LossDimension::UserHarm,
+            LossDimension::PerformanceCost,
+            LossDimension::FalsePositiveCost,
+            LossDimension::AvailabilityCost,
+            LossDimension::EvidenceIntegrityCost,
+        ];
+        let entries: Vec<LossEntry> = dims
+            .iter()
+            .enumerate()
+            .map(|(i, d)| LossEntry {
+                attacker_action: atk("a1"),
+                defender_action: atk("d1"),
+                dimension: *d,
+                loss_millionths: (i as i64 + 1) * 100_000,
+            })
+            .collect();
+        let tensor = LossTensor::from_entries(Subsystem::Runtime, entries);
+        for (i, d) in dims.iter().enumerate() {
+            assert_eq!(
+                tensor.lookup(&atk("a1"), &atk("d1"), *d),
+                Some((i as i64 + 1) * 100_000)
+            );
+        }
+        assert_eq!(tensor.total_loss(&atk("a1"), &atk("d1")), 1_500_000);
+    }
+
+    #[test]
+    fn automaton_overlapping_constraints_same_action() {
+        // Two constraints both forbid the same action — should still work
+        let automaton = AdmissibleActionAutomaton {
+            subsystem: Subsystem::Runtime,
+            constraints: vec![
+                HardConstraint {
+                    constraint_id: "c1".to_string(),
+                    description: "no kill 1".to_string(),
+                    forbidden_actions: BTreeSet::from([atk("kill")]),
+                    active_conditions: vec![],
+                },
+                HardConstraint {
+                    constraint_id: "c2".to_string(),
+                    description: "no kill 2".to_string(),
+                    forbidden_actions: BTreeSet::from([atk("kill")]),
+                    active_conditions: vec![],
+                },
+            ],
+            all_defender_actions: BTreeSet::from([atk("block"), atk("kill")]),
+        };
+        let admissible = automaton.admissible_actions();
+        assert_eq!(admissible.len(), 1);
+        assert!(admissible.contains(&atk("block")));
+    }
+
+    #[test]
+    fn tensor_zero_loss_entry() {
+        let entries = vec![LossEntry {
+            attacker_action: atk("a1"),
+            defender_action: atk("d1"),
+            dimension: LossDimension::UserHarm,
+            loss_millionths: 0,
+        }];
+        let tensor = LossTensor::from_entries(Subsystem::Runtime, entries);
+        assert_eq!(
+            tensor.lookup(&atk("a1"), &atk("d1"), LossDimension::UserHarm),
+            Some(0)
+        );
+        assert_eq!(tensor.total_loss(&atk("a1"), &atk("d1")), 0);
+    }
+
+    #[test]
+    fn model_minimax_recommendation_through_builder() {
+        let model = GameModelBuilder::new(Subsystem::Runtime, test_epoch())
+            .attacker_action(make_attacker_action("a1", Subsystem::Runtime))
+            .defender_action(make_defender_action("d1", Subsystem::Runtime))
+            .defender_action(make_defender_action("d2", Subsystem::Runtime))
+            .loss(LossEntry {
+                attacker_action: atk("a1"),
+                defender_action: atk("d1"),
+                dimension: LossDimension::UserHarm,
+                loss_millionths: 900_000,
+            })
+            .loss(LossEntry {
+                attacker_action: atk("a1"),
+                defender_action: atk("d2"),
+                dimension: LossDimension::UserHarm,
+                loss_millionths: 100_000,
+            })
+            .build();
+        assert_eq!(model.minimax_recommendation(), Some(atk("d2")));
+    }
+
+    #[test]
+    fn report_serde_roundtrip_with_models() {
+        let model = GameModelBuilder::new(Subsystem::Runtime, test_epoch())
+            .attacker_action(make_attacker_action("a1", Subsystem::Runtime))
+            .defender_action(make_defender_action("d1", Subsystem::Runtime))
+            .loss(LossEntry {
+                attacker_action: atk("a1"),
+                defender_action: atk("d1"),
+                dimension: LossDimension::UserHarm,
+                loss_millionths: 100_000,
+            })
+            .build();
+        let report = generate_report(&[model], &test_epoch());
+        let json = serde_json::to_string(&report).unwrap();
+        let back: GameModelReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(report, back);
+    }
+
+    #[test]
+    fn subsystem_display_matches_serde_key() {
+        // Display output should match serde rename_all = "snake_case"
+        for s in [
+            Subsystem::Compiler,
+            Subsystem::Runtime,
+            Subsystem::ControlPlane,
+            Subsystem::ExtensionHost,
+            Subsystem::EvidencePipeline,
+        ] {
+            let display = s.to_string();
+            let serde_str = serde_json::to_string(&s).unwrap();
+            assert_eq!(format!("\"{display}\""), serde_str);
+        }
+    }
+
+    #[test]
+    fn loss_dimension_display_matches_serde_key() {
+        for d in [
+            LossDimension::UserHarm,
+            LossDimension::PerformanceCost,
+            LossDimension::FalsePositiveCost,
+            LossDimension::AvailabilityCost,
+            LossDimension::EvidenceIntegrityCost,
+        ] {
+            let display = d.to_string();
+            let serde_str = serde_json::to_string(&d).unwrap();
+            assert_eq!(format!("\"{display}\""), serde_str);
+        }
+    }
+
+    #[test]
+    fn player_display_matches_serde_key() {
+        for p in [Player::Attacker, Player::Defender] {
+            let display = p.to_string();
+            let serde_str = serde_json::to_string(&p).unwrap();
+            assert_eq!(format!("\"{display}\""), serde_str);
+        }
+    }
+
+    #[test]
+    fn strategic_action_with_constraints() {
+        let action = StrategicAction {
+            action_id: atk("rate_limit"),
+            player: Player::Defender,
+            subsystem: Subsystem::Runtime,
+            description: "Apply rate limiting".to_string(),
+            admissible: true,
+            constraints: vec![
+                "max_latency_10ms".to_string(),
+                "no_false_positives".to_string(),
+            ],
+        };
+        let json = serde_json::to_string(&action).unwrap();
+        let back: StrategicAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(action, back);
+        assert_eq!(back.constraints.len(), 2);
+    }
+
+    #[test]
+    fn report_all_five_subsystems() {
+        let models: Vec<GameModel> = [
+            Subsystem::Compiler,
+            Subsystem::Runtime,
+            Subsystem::ControlPlane,
+            Subsystem::ExtensionHost,
+            Subsystem::EvidencePipeline,
+        ]
+        .iter()
+        .map(|s| {
+            GameModelBuilder::new(*s, test_epoch())
+                .attacker_action(make_attacker_action("a1", *s))
+                .defender_action(make_defender_action("d1", *s))
+                .build()
+        })
+        .collect();
+        let report = generate_report(&models, &test_epoch());
+        assert_eq!(report.total_models, 5);
+        assert_eq!(report.subsystem_summaries.len(), 5);
+        assert_eq!(report.total_attacker_actions, 5);
+        assert_eq!(report.total_defender_actions, 5);
+    }
 }

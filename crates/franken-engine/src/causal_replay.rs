@@ -2902,12 +2902,7 @@ mod tests {
         assert_eq!(recorder.entry_count(), 0);
         assert_eq!(recorder.nondeterminism_count(), 0);
 
-        recorder.record_nondeterminism(
-            NondeterminismSource::OsEntropy,
-            vec![42],
-            10,
-            None,
-        );
+        recorder.record_nondeterminism(NondeterminismSource::OsEntropy, vec![42], 10, None);
         assert_eq!(recorder.nondeterminism_count(), 1);
 
         recorder.record_decision(make_snapshot(0, "allow", 0));
@@ -2927,7 +2922,10 @@ mod tests {
         let mut trace = make_trace(&[("sandbox", 200_000)]);
         trace.entries[0].entry_index = 5; // not 0
         let err = trace.verify_chain_integrity().unwrap_err();
-        assert!(matches!(err, ReplayError::ChainIntegrity { entry_index: 5, .. }));
+        assert!(matches!(
+            err,
+            ReplayError::ChainIntegrity { entry_index: 5, .. }
+        ));
     }
 
     #[test]
@@ -2935,7 +2933,10 @@ mod tests {
         let mut trace = make_trace(&[("sandbox", 200_000)]);
         trace.entries[0].prev_entry_hash = ContentHash::compute(b"not-genesis");
         let err = trace.verify_chain_integrity().unwrap_err();
-        assert!(matches!(err, ReplayError::ChainIntegrity { entry_index: 0, .. }));
+        assert!(matches!(
+            err,
+            ReplayError::ChainIntegrity { entry_index: 0, .. }
+        ));
     }
 
     #[test]
@@ -3021,7 +3022,9 @@ mod tests {
 
     #[test]
     fn recording_mode_sampled_round_trip() {
-        let mode = RecordingMode::Sampled { rate_millionths: 250_000 };
+        let mode = RecordingMode::Sampled {
+            rate_millionths: 250_000,
+        };
         let json = serde_json::to_string(&mode).unwrap();
         let back: RecordingMode = serde_json::from_str(&json).unwrap();
         assert_eq!(mode, back);
@@ -3065,7 +3068,9 @@ mod tests {
 
     #[test]
     fn replay_verdict_tampered_is_not_identical() {
-        let v = ReplayVerdict::Tampered { detail: "bad".into() };
+        let v = ReplayVerdict::Tampered {
+            detail: "bad".into(),
+        };
         assert!(!v.is_identical());
         assert_eq!(v.divergence_count(), 0);
     }
@@ -3127,7 +3132,13 @@ mod tests {
             })
             .collect();
         let err = engine.multi_branch_comparison(&trace, configs).unwrap_err();
-        assert!(matches!(err, ReplayError::BranchDepthExceeded { requested: 17, max: 16 }));
+        assert!(matches!(
+            err,
+            ReplayError::BranchDepthExceeded {
+                requested: 17,
+                max: 16
+            }
+        ));
     }
 
     #[test]

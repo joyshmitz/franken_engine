@@ -1,20 +1,34 @@
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use chrono::Utc;
 use frankenengine_engine::test262_release_gate::{
     Test262EvidenceCollector, Test262GateRunner, Test262HighWaterMark, Test262ObservedResult,
     Test262PinSet, Test262Profile, Test262RunnerConfig, Test262WaiverSet, next_high_water_mark,
 };
+use frankenengine_engine::{
+    HybridRouter, JsEngine, QuickJsInspiredNativeEngine, V8InspiredNativeEngine,
+};
+use serde::{Deserialize, Serialize};
+
+const LIVE_HARNESS_VERSION: &str = "franken-engine.test262-live-harness.v1";
+const FE_T262_EXPECTED_VALUE_MISMATCH: &str = "FE-T262-1011";
+const FE_T262_UNEXPECTED_PASS: &str = "FE-T262-1012";
+const FE_T262_CASE_VECTOR_INVALID: &str = "FE-T262-1013";
 
 #[derive(Debug, Clone)]
 struct CliArgs {
     pins_path: PathBuf,
     profile_path: PathBuf,
     waivers_path: PathBuf,
-    observed_results_path: PathBuf,
+    case_vectors_path: PathBuf,
+    observed_results_path: Option<PathBuf>,
+    allow_precomputed_observed: bool,
+    single_test_id: Option<String>,
     output_root: PathBuf,
     high_water_mark_path: Option<PathBuf>,
     run_date: String,
@@ -36,6 +50,10 @@ fn default_waivers_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test262_conformance_waivers.toml")
 }
 
+fn default_case_vectors_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test262_case_vectors.jsonl")
+}
+
 fn default_observed_results_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test262_observed_results.jsonl")
 }
@@ -45,14 +63,17 @@ fn default_output_root() -> PathBuf {
 }
 
 fn usage() -> &'static str {
-    "usage: franken_test262_runner [--pins <path>] [--profile <path>] [--waivers <path>] [--observed-results <path>] [--output-root <path>] [--high-water-mark <path>] [--run-date <YYYY-MM-DD>] [--worker-count <n>] [--trace-prefix <prefix>] [--policy-id <id>] [--acknowledge-pass-regression]"
+    "usage: franken_test262_runner [--pins <path>] [--profile <path>] [--waivers <path>] [--case-vectors <path>] [--single-test-id <id>] [--observed-results <path> --allow-precomputed-observed] [--output-root <path>] [--high-water-mark <path>] [--run-date <YYYY-MM-DD>] [--worker-count <n>] [--trace-prefix <prefix>] [--policy-id <id>] [--acknowledge-pass-regression]"
 }
 
 fn parse_args() -> Result<CliArgs, String> {
     let mut pins_path = default_pins_path();
     let mut profile_path = default_profile_path();
     let mut waivers_path = default_waivers_path();
-    let mut observed_results_path = default_observed_results_path();
+    let mut case_vectors_path = default_case_vectors_path();
+    let mut observed_results_path = None;
+    let mut allow_precomputed_observed = false;
+    let mut single_test_id = None;
     let mut output_root = default_output_root();
     let mut high_water_mark_path = None;
     let mut run_date = Utc::now().format("%Y-%m-%d").to_string();
@@ -82,11 +103,26 @@ fn parse_args() -> Result<CliArgs, String> {
                     .ok_or_else(|| "--waivers requires a value".to_string())?;
                 waivers_path = PathBuf::from(value);
             }
+            "--case-vectors" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--case-vectors requires a value".to_string())?;
+                case_vectors_path = PathBuf::from(value);
+            }
+            "--single-test-id" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "--single-test-id requires a value".to_string())?;
+                single_test_id = Some(value);
+            }
             "--observed-results" => {
                 let value = args
                     .next()
                     .ok_or_else(|| "--observed-results requires a value".to_string())?;
-                observed_results_path = PathBuf::from(value);
+                observed_results_path = Some(PathBuf::from(value));
+            }
+            "--allow-precomputed-observed" => {
+                allow_precomputed_observed = true;
             }
             "--output-root" => {
                 let value = args
@@ -141,11 +177,31 @@ fn parse_args() -> Result<CliArgs, String> {
         }
     }
 
+    if !allow_precomputed_observed && observed_results_path.is_some() {
+        return Err(
+            "--observed-results requires --allow-precomputed-observed (live case-vectors are the default gate authority)"
+                .to_string(),
+        );
+    }
+
+    if allow_precomputed_observed && observed_results_path.is_none() {
+        observed_results_path = Some(default_observed_results_path());
+    }
+
+    if let Some(test_id) = single_test_id.as_ref()
+        && test_id.trim().is_empty()
+    {
+        return Err("--single-test-id must not be empty".to_string());
+    }
+
     Ok(CliArgs {
         pins_path,
         profile_path,
         waivers_path,
+        case_vectors_path,
         observed_results_path,
+        allow_precomputed_observed,
+        single_test_id,
         output_root,
         high_water_mark_path,
         run_date,
@@ -154,6 +210,53 @@ fn parse_args() -> Result<CliArgs, String> {
         policy_id,
         acknowledge_pass_regression,
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+enum RuntimeLane {
+    QuickJs,
+    V8,
+    #[default]
+    Hybrid,
+}
+
+impl RuntimeLane {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::QuickJs => "quickjs",
+            Self::V8 => "v8",
+            Self::Hybrid => "hybrid",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Test262CaseVector {
+    test_id: String,
+    es2020_clause: String,
+    source: String,
+    expected_value: String,
+    #[serde(default)]
+    runtime_lane: RuntimeLane,
+    #[serde(default)]
+    deterministic_seed: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Test262CaseExecutionArtifact {
+    test_id: String,
+    es2020_clause: String,
+    runtime_lane: String,
+    deterministic_seed: u64,
+    harness_version: String,
+    outcome: String,
+    duration_us: u64,
+    observed_value: Option<String>,
+    error_class: Option<String>,
+    error_code: Option<String>,
+    error_detail: Option<String>,
+    rerun_command: String,
 }
 
 fn parse_observed_results(content: &str) -> io::Result<Vec<Test262ObservedResult>> {
@@ -208,6 +311,292 @@ fn load_observed_results(path: &Path) -> io::Result<Vec<Test262ObservedResult>> 
     parse_observed_results(&bytes)
 }
 
+fn parse_case_vectors(content: &str) -> io::Result<Vec<Test262CaseVector>> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "case vectors are empty",
+        ));
+    }
+
+    if trimmed.starts_with('[') {
+        let vectors: Vec<Test262CaseVector> = serde_json::from_str(trimmed)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+        validate_case_vectors(vectors)
+    } else {
+        let mut vectors = Vec::new();
+        for (idx, raw_line) in content.lines().enumerate() {
+            let line_no = idx + 1;
+            let line = raw_line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let vector: Test262CaseVector = serde_json::from_str(line).map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("case vectors line {line_no} parse error: {err}"),
+                )
+            })?;
+            vectors.push(vector);
+        }
+        validate_case_vectors(vectors)
+    }
+}
+
+fn validate_case_vectors(vectors: Vec<Test262CaseVector>) -> io::Result<Vec<Test262CaseVector>> {
+    if vectors.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "case vectors must include at least one test",
+        ));
+    }
+
+    let mut seen = BTreeSet::new();
+    for vector in &vectors {
+        if vector.test_id.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{FE_T262_CASE_VECTOR_INVALID}: case vector missing test_id"),
+            ));
+        }
+        if vector.es2020_clause.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{FE_T262_CASE_VECTOR_INVALID}: case vector `{}` missing es2020_clause",
+                    vector.test_id
+                ),
+            ));
+        }
+        if vector.source.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{FE_T262_CASE_VECTOR_INVALID}: case vector `{}` missing source",
+                    vector.test_id
+                ),
+            ));
+        }
+        if vector.expected_value.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{FE_T262_CASE_VECTOR_INVALID}: case vector `{}` missing expected_value",
+                    vector.test_id
+                ),
+            ));
+        }
+        if !seen.insert(vector.test_id.clone()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{FE_T262_CASE_VECTOR_INVALID}: duplicate case vector test_id `{}`",
+                    vector.test_id
+                ),
+            ));
+        }
+    }
+    Ok(vectors)
+}
+
+fn load_case_vectors(path: &Path) -> io::Result<Vec<Test262CaseVector>> {
+    let bytes = fs::read_to_string(path)?;
+    parse_case_vectors(&bytes)
+}
+
+fn shell_quote(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-' | ':'))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
+    }
+}
+
+fn rerun_command_for_case(args: &CliArgs, test_id: &str) -> String {
+    format!(
+        "cargo run -p frankenengine-engine --bin franken_test262_runner -- --pins {} --profile {} --waivers {} --case-vectors {} --single-test-id {} --output-root {} --run-date {} --worker-count {} --trace-prefix {} --policy-id {}",
+        shell_quote(&args.pins_path.display().to_string()),
+        shell_quote(&args.profile_path.display().to_string()),
+        shell_quote(&args.waivers_path.display().to_string()),
+        shell_quote(&args.case_vectors_path.display().to_string()),
+        shell_quote(test_id),
+        shell_quote(&args.output_root.display().to_string()),
+        shell_quote(&args.run_date),
+        args.worker_count,
+        shell_quote(&args.trace_prefix),
+        shell_quote(&args.policy_id),
+    )
+}
+
+fn evaluate_case_vector(
+    case: &Test262CaseVector,
+) -> Result<String, frankenengine_engine::EvalError> {
+    match case.runtime_lane {
+        RuntimeLane::Hybrid => {
+            let mut router = HybridRouter::default();
+            router
+                .eval(case.source.as_str())
+                .map(|outcome| outcome.value)
+        }
+        RuntimeLane::QuickJs => {
+            let mut engine = QuickJsInspiredNativeEngine;
+            engine
+                .eval(case.source.as_str())
+                .map(|outcome| outcome.value)
+        }
+        RuntimeLane::V8 => {
+            let mut engine = V8InspiredNativeEngine;
+            engine
+                .eval(case.source.as_str())
+                .map(|outcome| outcome.value)
+        }
+    }
+}
+
+fn execute_case_vector(
+    case: &Test262CaseVector,
+    rerun_command: String,
+) -> (Test262ObservedResult, Test262CaseExecutionArtifact) {
+    let start = Instant::now();
+    let eval_result = evaluate_case_vector(case);
+    let elapsed_us = start.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+
+    let (outcome, observed_value, error_class, error_code, error_detail) = match eval_result {
+        Ok(value) => {
+            let trimmed_observed = value.trim().to_string();
+            let expected = case.expected_value.trim();
+            if trimmed_observed == expected {
+                (
+                    frankenengine_engine::test262_release_gate::Test262ObservedOutcome::Pass,
+                    Some(trimmed_observed),
+                    None,
+                    None,
+                    None,
+                )
+            } else {
+                (
+                    frankenengine_engine::test262_release_gate::Test262ObservedOutcome::Fail,
+                    Some(trimmed_observed.clone()),
+                    Some("assertion_mismatch".to_string()),
+                    Some(FE_T262_EXPECTED_VALUE_MISMATCH.to_string()),
+                    Some(format!(
+                        "{FE_T262_UNEXPECTED_PASS}: expected `{expected}`, observed `{trimmed_observed}`",
+                    )),
+                )
+            }
+        }
+        Err(err) => (
+            frankenengine_engine::test262_release_gate::Test262ObservedOutcome::Fail,
+            None,
+            Some(err.class().stable_label().to_string()),
+            Some(err.stable_namespace().to_string()),
+            Some(err.diagnostic_summary()),
+        ),
+    };
+
+    let observed = Test262ObservedResult {
+        test_id: case.test_id.clone(),
+        es2020_clause: case.es2020_clause.clone(),
+        outcome,
+        duration_us: elapsed_us,
+        error_code: error_code.clone(),
+        error_detail: error_detail.clone(),
+    };
+
+    let artifact = Test262CaseExecutionArtifact {
+        test_id: case.test_id.clone(),
+        es2020_clause: case.es2020_clause.clone(),
+        runtime_lane: case.runtime_lane.as_str().to_string(),
+        deterministic_seed: case.deterministic_seed,
+        harness_version: LIVE_HARNESS_VERSION.to_string(),
+        outcome: match observed.outcome {
+            frankenengine_engine::test262_release_gate::Test262ObservedOutcome::Pass => "pass",
+            frankenengine_engine::test262_release_gate::Test262ObservedOutcome::Fail => "fail",
+            frankenengine_engine::test262_release_gate::Test262ObservedOutcome::Timeout => {
+                "timeout"
+            }
+            frankenengine_engine::test262_release_gate::Test262ObservedOutcome::Crash => "crash",
+        }
+        .to_string(),
+        duration_us: elapsed_us,
+        observed_value,
+        error_class,
+        error_code,
+        error_detail,
+        rerun_command,
+    };
+
+    (observed, artifact)
+}
+
+fn execute_live_case_vectors(
+    args: &CliArgs,
+) -> io::Result<(
+    Vec<Test262ObservedResult>,
+    Vec<Test262CaseExecutionArtifact>,
+)> {
+    let all_vectors = load_case_vectors(&args.case_vectors_path)?;
+    let selected: Vec<Test262CaseVector> = match args.single_test_id.as_ref() {
+        Some(single) => all_vectors
+            .into_iter()
+            .filter(|vector| vector.test_id == *single)
+            .collect(),
+        None => all_vectors,
+    };
+
+    if selected.is_empty() {
+        let selection = args
+            .single_test_id
+            .as_deref()
+            .unwrap_or("<none>")
+            .to_string();
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("no live test262 case vectors selected (single_test_id={selection})"),
+        ));
+    }
+
+    let mut observed_results = Vec::with_capacity(selected.len());
+    let mut case_artifacts = Vec::with_capacity(selected.len());
+    for case in &selected {
+        let rerun_command = rerun_command_for_case(args, case.test_id.as_str());
+        let (observed, artifact) = execute_case_vector(case, rerun_command);
+        observed_results.push(observed);
+        case_artifacts.push(artifact);
+    }
+
+    Ok((observed_results, case_artifacts))
+}
+
+fn write_case_execution_artifacts(
+    run_manifest_path: &Path,
+    artifacts: &[Test262CaseExecutionArtifact],
+) -> io::Result<Option<PathBuf>> {
+    if artifacts.is_empty() {
+        return Ok(None);
+    }
+    let run_root = run_manifest_path.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "run_manifest_path has no parent directory",
+        )
+    })?;
+    let case_execution_path = run_root.join("test262_case_execution.jsonl");
+    let mut lines = String::new();
+    for artifact in artifacts {
+        let line = serde_json::to_string(artifact)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+        lines.push_str(&line);
+        lines.push('\n');
+    }
+    fs::write(&case_execution_path, lines.as_bytes())?;
+    Ok(Some(case_execution_path))
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let args =
         parse_args().map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err.to_string()))?;
@@ -215,7 +604,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     let pins = Test262PinSet::load_toml(&args.pins_path)?;
     let profile = Test262Profile::load_toml(&args.profile_path)?;
     let waivers = Test262WaiverSet::load_toml(&args.waivers_path)?;
-    let observed = load_observed_results(&args.observed_results_path)?;
+    let (observed, execution_mode, case_execution_artifacts) = if args.allow_precomputed_observed {
+        let observed_path = args
+            .observed_results_path
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing observed path"))?;
+        (
+            load_observed_results(observed_path)?,
+            "precomputed_observed_results",
+            Vec::new(),
+        )
+    } else {
+        let (observed, case_artifacts) = execute_live_case_vectors(&args)?;
+        (observed, "live_case_vectors", case_artifacts)
+    };
 
     let previous_hwm = match args.high_water_mark_path.as_ref() {
         Some(path) => Test262HighWaterMark::load_json(path)?,
@@ -240,6 +642,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let next_hwm = next_high_water_mark(&run, previous_hwm.as_ref());
     let collector = Test262EvidenceCollector::new(&args.output_root)?;
     let artifacts = collector.collect(&run, &next_hwm)?;
+    let case_execution_path =
+        write_case_execution_artifacts(&artifacts.run_manifest_path, &case_execution_artifacts)?;
 
     if let Some(path) = args.high_water_mark_path.as_ref() {
         next_hwm.write_json(path)?;
@@ -247,6 +651,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     println!("test262 run_id={}", run.run_id);
+    println!("test262 execution_mode={execution_mode}");
     println!(
         "test262 total_profile_tests={}",
         run.summary.total_profile_tests
@@ -271,6 +676,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         "test262 high_water_mark={}",
         artifacts.high_water_mark_path.display()
     );
+    if let Some(path) = case_execution_path.as_ref() {
+        println!("test262 case_execution={}", path.display());
+    }
 
     if run.blocked {
         return Err(io::Error::other(format!(
@@ -296,6 +704,18 @@ mod tests {
             "duration_us": 42,
             "error_code": null,
             "error_detail": null,
+        })
+        .to_string()
+    }
+
+    fn sample_case_line(test_id: &str, expected_value: &str) -> String {
+        serde_json::json!({
+            "test_id": test_id,
+            "es2020_clause": "13.3.1",
+            "source": "1 + 1;",
+            "expected_value": expected_value,
+            "runtime_lane": "hybrid",
+            "deterministic_seed": 7
         })
         .to_string()
     }
@@ -349,5 +769,66 @@ mod tests {
         );
         let err = parse_observed_results(&content).expect_err("invalid line must fail");
         assert!(err.to_string().contains("line 2"));
+    }
+
+    #[test]
+    fn parse_jsonl_case_vectors() {
+        let content = format!(
+            "# live vectors\n\n{}\n{}\n",
+            sample_case_line("language/a.js", "2"),
+            sample_case_line("built-ins/b.js", "2")
+        );
+        let vectors = parse_case_vectors(&content).expect("parse case vectors");
+        assert_eq!(vectors.len(), 2);
+        assert_eq!(vectors[0].test_id, "language/a.js");
+        assert_eq!(vectors[0].runtime_lane, RuntimeLane::Hybrid);
+    }
+
+    #[test]
+    fn parse_case_vectors_rejects_empty_input() {
+        let err = parse_case_vectors("\n \n").expect_err("empty must fail");
+        assert!(err.to_string().contains("case vectors are empty"));
+    }
+
+    #[test]
+    fn parse_case_vectors_reports_line_number() {
+        let content = format!("{}\nnot-json\n", sample_case_line("language/a.js", "2"));
+        let err = parse_case_vectors(&content).expect_err("invalid line must fail");
+        assert!(err.to_string().contains("line 2"));
+    }
+
+    #[test]
+    fn execute_case_vector_passes_when_expected_value_matches() {
+        let case = Test262CaseVector {
+            test_id: "language/pass.js".to_string(),
+            es2020_clause: "13.1".to_string(),
+            source: "1 + 1;".to_string(),
+            expected_value: "2".to_string(),
+            runtime_lane: RuntimeLane::Hybrid,
+            deterministic_seed: 7,
+        };
+        let (observed, artifact) = execute_case_vector(&case, "rerun-cmd".to_string());
+        assert_eq!(observed.outcome, Test262ObservedOutcome::Pass);
+        assert_eq!(artifact.outcome, "pass");
+        assert_eq!(artifact.rerun_command, "rerun-cmd");
+    }
+
+    #[test]
+    fn execute_case_vector_fails_on_expected_value_mismatch() {
+        let case = Test262CaseVector {
+            test_id: "language/fail.js".to_string(),
+            es2020_clause: "13.1".to_string(),
+            source: "1 + 1;".to_string(),
+            expected_value: "5".to_string(),
+            runtime_lane: RuntimeLane::Hybrid,
+            deterministic_seed: 7,
+        };
+        let (observed, artifact) = execute_case_vector(&case, "rerun-cmd".to_string());
+        assert_eq!(observed.outcome, Test262ObservedOutcome::Fail);
+        assert_eq!(
+            observed.error_code.as_deref(),
+            Some(FE_T262_EXPECTED_VALUE_MISMATCH)
+        );
+        assert_eq!(artifact.outcome, "fail");
     }
 }
