@@ -747,8 +747,26 @@ fn lockstep_runner_preflight_only_passes_for_valid_runtime_specs() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
-    assert!(stdout.contains("\"preflight_passed\": true"));
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should contain preflight JSON");
+    assert_eq!(
+        report["schema_version"].as_str(),
+        Some("franken-engine.lockstep-preflight.v1")
+    );
+    assert_eq!(report["preflight_passed"].as_bool(), Some(true));
+    assert_eq!(
+        report["checked_external_engines"].as_u64(),
+        Some(2),
+        "preflight should evaluate both external runtimes"
+    );
+    assert!(
+        report["checks"]
+            .as_array()
+            .expect("checks should be an array")
+            .iter()
+            .all(|entry| entry["outcome"] == "pass"),
+        "all checks should pass for valid runtime specs"
+    );
 
     let _ = fs::remove_file(catalog_path);
     let _ = fs::remove_file(runtime_specs_path);
@@ -780,8 +798,21 @@ fn lockstep_runner_preflight_only_rejects_missing_command() {
         .expect("lockstep runner should execute");
 
     assert!(!output.status.success());
-    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
-    assert!(stderr.contains("not found in PATH"));
+    assert_eq!(output.status.code(), Some(4));
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should contain preflight JSON");
+    assert_eq!(report["preflight_passed"].as_bool(), Some(false));
+    assert_eq!(
+        report["error_code"].as_str(),
+        Some("FE-LOCKSTEP-PREFLIGHT-0001")
+    );
+    assert!(
+        report["error_message"]
+            .as_str()
+            .expect("error message should be present")
+            .contains("not found in PATH")
+    );
 
     let _ = fs::remove_file(catalog_path);
     let _ = fs::remove_file(runtime_specs_path);
@@ -816,8 +847,21 @@ fn lockstep_runner_preflight_only_rejects_missing_script_path() {
         .expect("lockstep runner should execute");
 
     assert!(!output.status.success());
-    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
-    assert!(stderr.contains("expected script path"));
+    assert_eq!(output.status.code(), Some(4));
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should contain preflight JSON");
+    assert_eq!(report["preflight_passed"].as_bool(), Some(false));
+    assert_eq!(
+        report["error_code"].as_str(),
+        Some("FE-LOCKSTEP-PREFLIGHT-0002")
+    );
+    assert!(
+        report["error_message"]
+            .as_str()
+            .expect("error message should be present")
+            .contains("expected script path")
+    );
 
     let _ = fs::remove_file(catalog_path);
     let _ = fs::remove_file(runtime_specs_path);

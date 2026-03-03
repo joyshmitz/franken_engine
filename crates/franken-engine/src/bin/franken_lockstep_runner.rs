@@ -22,6 +22,7 @@ use frankenengine_engine::parser_multi_engine_harness::{
 use serde::{Deserialize, Serialize};
 
 const LOCKSTEP_RUNTIME_SPECS_SCHEMA_VERSION: &str = "franken-engine.lockstep-runtimes.v1";
+const LOCKSTEP_PREFLIGHT_SCHEMA_VERSION: &str = "franken-engine.lockstep-preflight.v1";
 const LOCKSTEP_EVIDENCE_SCHEMA_VERSION: &str = "franken-engine.lockstep-evidence.v1";
 const LOCKSTEP_GOVERNANCE_SCHEMA_VERSION: &str = "franken-engine.lockstep-governance.v1";
 const DEFAULT_LOCKSTEP_RUNTIME_SPECS_PATH: &str =
@@ -131,6 +132,36 @@ struct HarnessRunWithRetries {
     observed_flaky_fixture_ids: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PreflightCheckOutcome {
+    Pass,
+    Fail,
+}
+
+#[derive(Debug, Serialize)]
+struct PreflightCheck {
+    engine_id: String,
+    check: String,
+    outcome: PreflightCheckOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<String>,
+    detail: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PreflightReport {
+    schema_version: String,
+    preflight_passed: bool,
+    engine_count: usize,
+    checked_external_engines: usize,
+    checks: Vec<PreflightCheck>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_message: Option<String>,
+}
+
 fn default_runtime_enabled() -> bool {
     true
 }
@@ -151,15 +182,9 @@ fn run() -> Result<i32, Box<dyn Error>> {
         return Ok(0);
     }
     if args.preflight_only {
-        run_preflight(&args.config)?;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "preflight_passed": true,
-                "engine_count": args.config.engines.len(),
-            }))?
-        );
-        return Ok(0);
+        let report = run_preflight(&args.config);
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(if report.preflight_passed { 0 } else { 4 });
     }
 
     let harness = run_harness_with_retries(&args.config, args.max_retries)?;
@@ -482,22 +507,67 @@ fn parse_fixture_limit(value: &str) -> Result<Option<usize>, Box<dyn Error>> {
     }
 }
 
-fn run_preflight(config: &MultiEngineHarnessConfig) -> Result<(), Box<dyn Error>> {
+fn run_preflight(config: &MultiEngineHarnessConfig) -> PreflightReport {
+    let mut checks = Vec::<PreflightCheck>::new();
+    let mut first_error_code = None::<String>;
+    let mut first_error_message = None::<String>;
+    let current_dir = std::env::current_dir()
+        .ok()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<unknown>".to_string());
+    let mut checked_external_engines = 0usize;
+
     for engine in &config.engines {
         if !matches!(engine.kind, HarnessEngineKind::ExternalCommand) {
             continue;
         }
-        let command = engine
-            .command
-            .as_deref()
-            .ok_or_else(|| format!("external engine `{}` has no command", engine.engine_id))?;
+        checked_external_engines = checked_external_engines.saturating_add(1);
+
+        let Some(command) = engine.command.as_deref() else {
+            let detail = format!("external engine `{}` has no command", engine.engine_id);
+            checks.push(PreflightCheck {
+                engine_id: engine.engine_id.clone(),
+                check: "command_configured".to_string(),
+                outcome: PreflightCheckOutcome::Fail,
+                error_code: Some("FE-LOCKSTEP-PREFLIGHT-0003".to_string()),
+                detail: detail.clone(),
+            });
+            if first_error_code.is_none() {
+                first_error_code = Some("FE-LOCKSTEP-PREFLIGHT-0003".to_string());
+                first_error_message = Some(detail);
+            }
+            continue;
+        };
+
         if !command_exists(command) {
-            return Err(format!(
+            let detail = format!(
                 "external engine `{}` command `{}` not found in PATH",
                 engine.engine_id, command
-            )
-            .into());
+            );
+            checks.push(PreflightCheck {
+                engine_id: engine.engine_id.clone(),
+                check: "command_exists".to_string(),
+                outcome: PreflightCheckOutcome::Fail,
+                error_code: Some("FE-LOCKSTEP-PREFLIGHT-0001".to_string()),
+                detail: detail.clone(),
+            });
+            if first_error_code.is_none() {
+                first_error_code = Some("FE-LOCKSTEP-PREFLIGHT-0001".to_string());
+                first_error_message = Some(detail);
+            }
+            continue;
         }
+
+        checks.push(PreflightCheck {
+            engine_id: engine.engine_id.clone(),
+            check: "command_exists".to_string(),
+            outcome: PreflightCheckOutcome::Pass,
+            error_code: None,
+            detail: format!(
+                "external engine `{}` command `{}` is available",
+                engine.engine_id, command
+            ),
+        });
 
         for arg in &engine.args {
             if !looks_like_script_path(arg) {
@@ -505,17 +575,48 @@ fn run_preflight(config: &MultiEngineHarnessConfig) -> Result<(), Box<dyn Error>
             }
             let script_path = Path::new(arg);
             if !script_path.exists() {
-                return Err(format!(
+                let detail = format!(
                     "external engine `{}` expected script path `{}` to exist (cwd: {})",
                     engine.engine_id,
                     script_path.display(),
-                    std::env::current_dir()?.display()
-                )
-                .into());
+                    current_dir
+                );
+                checks.push(PreflightCheck {
+                    engine_id: engine.engine_id.clone(),
+                    check: "script_path_exists".to_string(),
+                    outcome: PreflightCheckOutcome::Fail,
+                    error_code: Some("FE-LOCKSTEP-PREFLIGHT-0002".to_string()),
+                    detail: detail.clone(),
+                });
+                if first_error_code.is_none() {
+                    first_error_code = Some("FE-LOCKSTEP-PREFLIGHT-0002".to_string());
+                    first_error_message = Some(detail);
+                }
+            } else {
+                checks.push(PreflightCheck {
+                    engine_id: engine.engine_id.clone(),
+                    check: "script_path_exists".to_string(),
+                    outcome: PreflightCheckOutcome::Pass,
+                    error_code: None,
+                    detail: format!(
+                        "external engine `{}` script path `{}` is available",
+                        engine.engine_id,
+                        script_path.display()
+                    ),
+                });
             }
         }
     }
-    Ok(())
+
+    PreflightReport {
+        schema_version: LOCKSTEP_PREFLIGHT_SCHEMA_VERSION.to_string(),
+        preflight_passed: first_error_code.is_none(),
+        engine_count: config.engines.len(),
+        checked_external_engines,
+        checks,
+        error_code: first_error_code,
+        error_message: first_error_message,
+    }
 }
 
 fn command_exists(command: &str) -> bool {

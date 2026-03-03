@@ -52,6 +52,29 @@ rch_reject_local_fallback() {
   fi
 }
 
+extract_json_object_from_stream() {
+  local input_path="$1"
+  local output_path="$2"
+
+  if jq -e '.' "$input_path" >/dev/null 2>&1; then
+    cp "$input_path" "$output_path"
+    return 0
+  fi
+
+  awk '
+    BEGIN { capture=0 }
+    /^\{/ { capture=1 }
+    capture { print }
+  ' "$input_path" >"$output_path"
+
+  if [[ -s "$output_path" ]] && jq -e '.' "$output_path" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  rm -f "$output_path"
+  return 1
+}
+
 declare -a commands_run=()
 failed_command=""
 manifest_written=false
@@ -59,6 +82,9 @@ divergent_fixtures=0
 nondeterministic_fixtures=0
 repro_pack_fixtures=0
 step_log_index=0
+preflight_state="not_run"
+preflight_error_code=""
+preflight_report_path="${run_dir}/report.preflight.json"
 
 run_step() {
   local command_text="$1"
@@ -113,10 +139,29 @@ run_report_step() {
   local preflight_rc=$?
   set -e
   if ! rch_reject_local_fallback "$preflight_stdout_path"; then
+    preflight_state="failed"
+    preflight_error_code="FE-LOCKSTEP-PREFLIGHT-LOCAL-FALLBACK"
     failed_command="${preflight_command_text} (rch-local-fallback-detected)"
     return 86
   fi
+
+  if extract_json_object_from_stream "$preflight_stdout_path" "$preflight_report_path"; then
+    if [[ "$(jq -r '.preflight_passed // false' "$preflight_report_path")" == "true" ]]; then
+      preflight_state="passed"
+      preflight_error_code=""
+    else
+      preflight_state="failed"
+      preflight_error_code="$(jq -r '.error_code // empty' "$preflight_report_path")"
+    fi
+  else
+    preflight_state="unknown"
+    preflight_error_code=""
+  fi
+
   if [[ "$preflight_rc" -ne 0 ]]; then
+    if [[ -z "$preflight_error_code" ]]; then
+      preflight_error_code="FE-LOCKSTEP-PREFLIGHT-COMMAND-FAILED"
+    fi
     failed_command="$preflight_command_text"
     return "$preflight_rc"
   fi
@@ -296,6 +341,10 @@ write_manifest() {
     echo "  \"git_commit\": \"${git_commit}\","
     echo "  \"dirty_worktree\": ${dirty_worktree},"
     echo "  \"outcome\": \"${outcome}\","
+    echo "  \"preflight_state\": \"${preflight_state}\","
+    if [[ -n "$preflight_error_code" ]]; then
+      echo "  \"preflight_error_code\": \"${preflight_error_code}\","
+    fi
     echo "  \"divergent_fixtures\": ${divergent_fixtures},"
     echo "  \"nondeterministic_fixtures\": ${nondeterministic_fixtures},"
     echo "  \"repro_pack_fixtures\": ${repro_pack_fixtures},"
@@ -315,6 +364,7 @@ write_manifest() {
     echo "    \"manifest\": \"${manifest_path}\","
     echo "    \"events\": \"${events_path}\","
     echo "    \"commands\": \"${commands_path}\","
+    echo "    \"preflight_report\": \"${preflight_report_path}\","
     echo "    \"report\": \"${report_path}\","
     echo "    \"evidence\": \"${evidence_path}\","
     echo "    \"governance_actions\": \"${governance_actions_path}\","
@@ -323,6 +373,7 @@ write_manifest() {
     echo '  "operator_verification": ['
     echo "    \"cat ${manifest_path}\","
     echo "    \"cat ${events_path}\","
+    echo "    \"cat ${preflight_report_path}\","
     echo "    \"cat ${report_path}\","
     echo "    \"cat ${evidence_path}\","
     echo "    \"cat ${governance_actions_path}\","
