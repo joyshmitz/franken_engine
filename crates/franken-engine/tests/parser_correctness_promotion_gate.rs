@@ -82,6 +82,11 @@ fn load_doc() -> String {
     fs::read_to_string(path).expect("read parser correctness promotion gate doc")
 }
 
+fn load_script() -> String {
+    let path = Path::new("../../scripts/run_parser_correctness_promotion_gate.sh");
+    fs::read_to_string(path).expect("read parser correctness promotion gate script")
+}
+
 fn unresolved_high_drifts<'a>(
     fixture: &'a ParserCorrectnessPromotionGateFixture,
 ) -> Vec<&'a DriftRecord> {
@@ -415,6 +420,46 @@ fn parser_correctness_replay_scenarios_reference_wrapper_commands() {
             ["hold", "promote"].contains(&scenario.expected_outcome.as_str()),
             "unexpected expected_outcome: {}",
             scenario.expected_outcome
+        );
+    }
+}
+
+#[test]
+fn parser_correctness_evidence_vectors_reference_manifests_and_wrappers() {
+    let fixture = load_fixture();
+    for vector in &fixture.evidence_vectors {
+        assert!(
+            vector.artifact_manifest.ends_with("/run_manifest.json"),
+            "artifact manifest should end with run_manifest.json: {}",
+            vector.artifact_manifest
+        );
+        assert!(
+            vector.replay_command.starts_with("./scripts/e2e/"),
+            "replay command should use e2e wrapper path: {}",
+            vector.replay_command
+        );
+    }
+}
+
+#[test]
+fn parser_correctness_gate_script_contains_fail_closed_rch_markers() {
+    let script = load_script();
+    let required_markers = [
+        "policy-parser-correctness-promotion-gate-v1",
+        "rch_last_remote_exit_code",
+        "rch_has_recoverable_artifact_timeout",
+        "rch_reject_artifact_retrieval_failure",
+        "running locally",
+        "RCH-E326",
+        "rsync error: .*code 23",
+        "parser_frontier_emit_manifest_environment_fields",
+        "./scripts/e2e/parser_correctness_promotion_gate_replay.sh",
+    ];
+
+    for marker in required_markers {
+        assert!(
+            script.contains(marker),
+            "correctness gate script missing marker: {marker}"
         );
     }
 }
