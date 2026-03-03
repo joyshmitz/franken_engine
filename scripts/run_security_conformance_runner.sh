@@ -372,14 +372,20 @@ run_mode() {
       # cargo-test timeout envelope instead of the shorter cargo-check cap.
       run_step "cargo test -p frankenengine-engine --bin franken_security_conformance_runner --test security_conformance_integration --no-run" \
         cargo test -p frankenengine-engine --bin franken_security_conformance_runner --test security_conformance_integration --no-run
+      run_step "cargo test -p frankenengine-engine --bin franken_security_conformance_runner --test security_conformance_runner_cli --no-run" \
+        cargo test -p frankenengine-engine --bin franken_security_conformance_runner --test security_conformance_runner_cli --no-run
       ;;
     test)
       run_step "cargo test -p frankenengine-engine --bin franken_security_conformance_runner --test security_conformance_integration" \
         cargo test -p frankenengine-engine --bin franken_security_conformance_runner --test security_conformance_integration
+      run_step "cargo test -p frankenengine-engine --bin franken_security_conformance_runner --test security_conformance_runner_cli" \
+        cargo test -p frankenengine-engine --bin franken_security_conformance_runner --test security_conformance_runner_cli
       ;;
     clippy)
       run_step "cargo clippy -p frankenengine-engine --bin franken_security_conformance_runner --test security_conformance_integration -- -D warnings" \
         cargo clippy -p frankenengine-engine --bin franken_security_conformance_runner --test security_conformance_integration -- -D warnings
+      run_step "cargo clippy -p frankenengine-engine --bin franken_security_conformance_runner --test security_conformance_runner_cli -- -D warnings" \
+        cargo clippy -p frankenengine-engine --bin franken_security_conformance_runner --test security_conformance_runner_cli -- -D warnings
       ;;
     run)
       mkdir -p "$runner_output_root"
