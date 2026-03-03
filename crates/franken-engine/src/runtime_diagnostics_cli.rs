@@ -1305,10 +1305,10 @@ pub fn build_onboarding_scorecard(input: &OnboardingScorecardInput) -> Onboardin
     )
     .unwrap_or(u64::MAX);
 
-    let baseline_risk_millionths = match input.preflight.verdict {
-        PreflightVerdict::Green => 100_000,
-        PreflightVerdict::Yellow => 400_000,
-        PreflightVerdict::Red => 700_000,
+    let baseline_risk_millionths: u64 = match input.preflight.verdict {
+        PreflightVerdict::Green => 100_000_u64,
+        PreflightVerdict::Yellow => 400_000_u64,
+        PreflightVerdict::Red => 700_000_u64,
     };
     let signal_risk_millionths = critical_signals
         .saturating_mul(120_000)

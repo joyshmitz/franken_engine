@@ -1199,7 +1199,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn pause_budget_serde_roundtrip() {
+    fn pause_budget_custom_serde_roundtrip() {
         let budget = PauseBudget::new(100, 200, 300);
         let json = serde_json::to_string(&budget).unwrap();
         let back: PauseBudget = serde_json::from_str(&json).unwrap();
@@ -1216,7 +1216,7 @@ mod tests {
     }
 
     #[test]
-    fn pause_record_serde_roundtrip() {
+    fn pause_record_full_serde_roundtrip() {
         let record = PauseRecord {
             sequence: 42,
             extension_id: "ext-test".to_string(),
@@ -1281,7 +1281,7 @@ mod tests {
     }
 
     #[test]
-    fn budget_violation_serde_roundtrip() {
+    fn budget_violation_full_serde_roundtrip() {
         let v = BudgetViolation {
             percentile: Percentile::P50,
             observed_ns: 600_000,
@@ -1294,7 +1294,7 @@ mod tests {
     }
 
     #[test]
-    fn percentile_snapshot_serde_roundtrip() {
+    fn percentile_snapshot_full_serde_roundtrip() {
         let snap = PercentileSnapshot {
             count: 100,
             min_ns: 50,
@@ -1428,7 +1428,7 @@ mod tests {
     }
 
     #[test]
-    fn tracker_extensions_deterministic_order() {
+    fn tracker_extensions_btree_alphabetical_order() {
         let mut tracker = PauseTracker::new(PauseBudget::default());
         tracker.record(&make_event(1, "ext-zebra", 100, 0, 0));
         tracker.record(&make_event(2, "ext-alpha", 100, 0, 0));
