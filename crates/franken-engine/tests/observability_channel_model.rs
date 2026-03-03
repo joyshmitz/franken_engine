@@ -203,3 +203,330 @@ fn entropy_certificate_and_quality_sentinel_fail_closed_in_fidelity_emergency() 
     assert_eq!(report.overall_regime, DegradationRegime::Emergency);
     assert!(!report.gate_pass);
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: channel state emit/drain/drop, report generation,
+// epoch resets, cross-channel interaction, canonical specs
+// ────────────────────────────────────────────────────────────
+
+use frankenengine_engine::observability_channel_model::{
+    ChannelPath, ChannelReport, ChannelSpec, DistortionMetric, FailureBudget,
+    RateDistortionEnvelope, RateDistortionPoint, ViolationKind, canonical_risk_ledgers,
+};
+
+fn lossy_spec(channel_id: &str) -> ChannelSpec {
+    ChannelSpec {
+        channel_id: channel_id.to_string(),
+        family: PayloadFamily::Optimization,
+        path: ChannelPath::RuntimeToLedger,
+        envelope: RateDistortionEnvelope {
+            family: PayloadFamily::Optimization,
+            metric: DistortionMetric::SquaredError,
+            frontier: vec![
+                RateDistortionPoint {
+                    distortion_millionths: 0,
+                    rate_millibits: 1_000_000,
+                },
+                RateDistortionPoint {
+                    distortion_millionths: 500_000,
+                    rate_millibits: 500_000,
+                },
+            ],
+            max_distortion_millionths: 500_000,
+            min_rate_millibits: 100_000,
+        },
+        failure_budget: FailureBudget {
+            max_drops_per_epoch: 3,
+            max_degraded_per_epoch: 5,
+            degradation_threshold_millionths: 200_000,
+            fail_closed: true,
+        },
+        max_items_per_epoch: 10,
+        buffer_capacity: 4,
+        lossy_permitted: true,
+        tags: vec![],
+    }
+}
+
+fn lossless_spec(channel_id: &str) -> ChannelSpec {
+    ChannelSpec {
+        channel_id: channel_id.to_string(),
+        family: PayloadFamily::Replay,
+        path: ChannelPath::RuntimeToLedger,
+        envelope: RateDistortionEnvelope {
+            family: PayloadFamily::Replay,
+            metric: DistortionMetric::Hamming,
+            frontier: vec![RateDistortionPoint {
+                distortion_millionths: 0,
+                rate_millibits: 1_000_000,
+            }],
+            max_distortion_millionths: 0,
+            min_rate_millibits: 1_000_000,
+        },
+        failure_budget: FailureBudget {
+            max_drops_per_epoch: 0,
+            max_degraded_per_epoch: 0,
+            degradation_threshold_millionths: 0,
+            fail_closed: true,
+        },
+        max_items_per_epoch: 100,
+        buffer_capacity: 50,
+        lossy_permitted: false,
+        tags: vec![],
+    }
+}
+
+#[test]
+fn emit_drain_cycle_maintains_consistent_buffer_usage() {
+    let spec = lossy_spec("ch-emit-drain");
+    let epoch = SecurityEpoch::from_raw(1);
+    let mut state = ChannelState::new("ch-emit-drain".to_string(), epoch);
+
+    for _ in 0..4 {
+        state.emit(&spec, 0).expect("emit within buffer");
+    }
+    assert_eq!(state.buffer_used, 4);
+    assert_eq!(state.items_emitted, 4);
+
+    state.drain_one();
+    state.drain_one();
+    assert_eq!(state.buffer_used, 2);
+
+    state.emit(&spec, 0).expect("emit after drain");
+    assert_eq!(state.buffer_used, 3);
+    assert_eq!(state.items_emitted, 5);
+}
+
+#[test]
+fn backpressure_blocks_emit_when_buffer_is_full() {
+    let spec = lossy_spec("ch-backpressure");
+    let epoch = SecurityEpoch::from_raw(1);
+    let mut state = ChannelState::new("ch-backpressure".to_string(), epoch);
+
+    for _ in 0..4 {
+        state.emit(&spec, 0).expect("fill buffer");
+    }
+
+    let err = state.emit(&spec, 0).expect_err("buffer full should reject");
+    assert_eq!(err.violation_kind, ViolationKind::BackpressureOverflow);
+    assert_eq!(state.violations.len(), 1);
+
+    state.drain_one();
+    state
+        .emit(&spec, 0)
+        .expect("emit after drain relieves backpressure");
+    assert_eq!(state.items_emitted, 5);
+}
+
+#[test]
+fn rate_cap_blocks_emit_after_max_items_reached() {
+    let spec = lossy_spec("ch-rate-cap");
+    let epoch = SecurityEpoch::from_raw(1);
+    let mut state = ChannelState::new("ch-rate-cap".to_string(), epoch);
+
+    for _ in 0..10 {
+        state.emit(&spec, 0).expect("emit within cap");
+        state.drain_one();
+    }
+
+    let err = state
+        .emit(&spec, 0)
+        .expect_err("rate cap exceeded should reject");
+    assert_eq!(err.violation_kind, ViolationKind::UncappedTelemetry);
+}
+
+#[test]
+fn lossless_channel_rejects_any_distortion() {
+    let spec = lossless_spec("ch-lossless");
+    let epoch = SecurityEpoch::from_raw(1);
+    let mut state = ChannelState::new("ch-lossless".to_string(), epoch);
+
+    state.emit(&spec, 0).expect("zero distortion is ok");
+
+    let err = state
+        .emit(&spec, 1)
+        .expect_err("any distortion on lossless channel should fail");
+    assert_eq!(err.violation_kind, ViolationKind::UnverifiableLoss);
+}
+
+#[test]
+fn drop_budget_exceeded_triggers_violation() {
+    let spec = lossy_spec("ch-drops");
+    let epoch = SecurityEpoch::from_raw(1);
+    let mut state = ChannelState::new("ch-drops".to_string(), epoch);
+
+    for _ in 0..3 {
+        state.record_drop(&spec).expect("drop within budget");
+    }
+    assert!(state.violations.is_empty());
+
+    let err = state
+        .record_drop(&spec)
+        .expect_err("drop budget exceeded (fail_closed)");
+    assert_eq!(err.violation_kind, ViolationKind::DropBudgetExceeded);
+}
+
+#[test]
+fn epoch_reset_clears_all_counters_and_violations() {
+    let spec = lossy_spec("ch-epoch");
+    let epoch = SecurityEpoch::from_raw(1);
+    let mut state = ChannelState::new("ch-epoch".to_string(), epoch);
+
+    state.emit(&spec, 0).expect("emit");
+    state.record_drop(&spec).expect("drop");
+    state.emit(&spec, 300_000).expect("degraded emit");
+    assert!(state.items_emitted > 0);
+    assert!(state.items_dropped > 0);
+    assert!(state.items_degraded > 0);
+
+    state.epoch_reset(SecurityEpoch::from_raw(2));
+    assert_eq!(state.epoch, SecurityEpoch::from_raw(2));
+    assert_eq!(state.items_emitted, 0);
+    assert_eq!(state.items_dropped, 0);
+    assert_eq!(state.items_degraded, 0);
+    assert_eq!(state.buffer_used, 0);
+    assert!(state.violations.is_empty());
+    assert!(state.is_healthy(&spec));
+}
+
+#[test]
+fn report_marks_gate_pass_when_all_channels_healthy() {
+    let specs = vec![lossy_spec("ch-a"), lossy_spec("ch-b")];
+    let epoch = SecurityEpoch::from_raw(5);
+    let mut states = BTreeMap::new();
+
+    let mut state_a = ChannelState::new("ch-a".to_string(), epoch);
+    state_a.emit(&specs[0], 0).expect("emit a");
+    states.insert("ch-a".to_string(), state_a);
+
+    let mut state_b = ChannelState::new("ch-b".to_string(), epoch);
+    state_b.emit(&specs[1], 0).expect("emit b");
+    states.insert("ch-b".to_string(), state_b);
+
+    let report = generate_channel_report(&specs, &states, epoch);
+    assert!(report.gate_pass);
+    assert_eq!(report.total_violations, 0);
+    assert_eq!(report.channels.len(), 2);
+    assert!(report.channels.iter().all(|ch| ch.healthy));
+    assert!(report.summary.contains("PASS"));
+}
+
+#[test]
+fn report_fails_gate_when_any_channel_has_violations() {
+    let spec = lossy_spec("ch-unhealthy");
+    let epoch = SecurityEpoch::from_raw(3);
+
+    let mut state = ChannelState::new("ch-unhealthy".to_string(), epoch);
+    for _ in 0..4 {
+        state.emit(&spec, 0).expect("fill buffer");
+    }
+    let _err = state.emit(&spec, 0);
+
+    let mut states = BTreeMap::new();
+    states.insert("ch-unhealthy".to_string(), state);
+
+    let report = generate_channel_report(&[spec], &states, epoch);
+    assert!(!report.gate_pass);
+    assert!(report.total_violations >= 1);
+    assert!(report.summary.contains("FAIL"));
+}
+
+#[test]
+fn report_with_no_state_for_a_spec_defaults_to_healthy() {
+    let specs = vec![lossy_spec("ch-no-state")];
+    let states = BTreeMap::new();
+    let epoch = SecurityEpoch::from_raw(1);
+
+    let report = generate_channel_report(&specs, &states, epoch);
+    assert!(report.gate_pass);
+    assert_eq!(report.channels.len(), 1);
+    assert!(report.channels[0].healthy);
+    assert_eq!(report.channels[0].items_emitted, 0);
+}
+
+#[test]
+fn report_epoch_is_propagated_to_output() {
+    let specs = canonical_channel_specs();
+    let states = BTreeMap::new();
+    let epoch = SecurityEpoch::from_raw(42);
+
+    let report = generate_channel_report(&specs, &states, epoch);
+    assert_eq!(report.epoch, SecurityEpoch::from_raw(42));
+    assert!(!report.content_hash.is_empty());
+}
+
+#[test]
+fn report_content_hash_is_deterministic() {
+    let specs = canonical_channel_specs();
+    let states = BTreeMap::new();
+    let epoch = SecurityEpoch::from_raw(10);
+
+    let report_a = generate_channel_report(&specs, &states, epoch);
+    let report_b = generate_channel_report(&specs, &states, epoch);
+    assert_eq!(report_a.content_hash, report_b.content_hash);
+}
+
+#[test]
+fn canonical_specs_all_have_nonempty_channel_id_and_valid_envelope() {
+    let specs = canonical_channel_specs();
+    assert!(specs.len() >= 5, "at least one spec per family");
+
+    for spec in &specs {
+        assert!(!spec.channel_id.is_empty());
+        assert!(spec.max_items_per_epoch > 0);
+        assert!(spec.buffer_capacity > 0);
+        assert!(!spec.envelope.frontier.is_empty());
+        assert!(
+            spec.envelope.frontier[0].distortion_millionths
+                <= spec.envelope.max_distortion_millionths
+        );
+    }
+}
+
+#[test]
+fn canonical_risk_ledgers_are_nonempty_with_valid_entries() {
+    let ledgers = canonical_risk_ledgers();
+    assert!(!ledgers.is_empty());
+
+    for ledger in &ledgers {
+        assert!(!ledger.entries.is_empty());
+        for entry in &ledger.entries {
+            assert!(entry.risk_millionths >= 0);
+        }
+    }
+}
+
+#[test]
+fn channel_report_serde_roundtrip() {
+    let specs = canonical_channel_specs();
+    let states = BTreeMap::new();
+    let epoch = SecurityEpoch::from_raw(7);
+
+    let report = generate_channel_report(&specs, &states, epoch);
+    let json = serde_json::to_string(&report).expect("serialize report");
+    let recovered: ChannelReport = serde_json::from_str(&json).expect("deserialize report");
+    assert_eq!(report, recovered);
+}
+
+#[test]
+fn utilization_increases_with_emissions() {
+    let spec = lossy_spec("ch-util");
+    let epoch = SecurityEpoch::from_raw(1);
+    let mut state = ChannelState::new("ch-util".to_string(), epoch);
+
+    let mut states = BTreeMap::new();
+    states.insert("ch-util".to_string(), state.clone());
+    let report_before = generate_channel_report(&[spec.clone()], &states, epoch);
+    let util_before = report_before.channels[0].utilization_millionths;
+
+    for _ in 0..5 {
+        state.emit(&spec, 0).expect("emit");
+        state.drain_one();
+    }
+
+    states.insert("ch-util".to_string(), state);
+    let report_after = generate_channel_report(&[spec], &states, epoch);
+    let util_after = report_after.channels[0].utilization_millionths;
+
+    assert!(util_after > util_before);
+}

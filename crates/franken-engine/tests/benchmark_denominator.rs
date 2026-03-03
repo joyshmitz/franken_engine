@@ -185,3 +185,238 @@ fn publication_gate_events_include_required_structured_fields() {
         assert!(!event.outcome.is_empty());
     }
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: error variants, serde, edge cases, determinism
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn weighted_geometric_mean_rejects_empty_case_set() {
+    let err =
+        weighted_geometric_mean(&[], BaselineEngine::Node).expect_err("empty case set should fail");
+    assert!(matches!(
+        err,
+        BenchmarkDenominatorError::EmptyCaseSet { .. }
+    ));
+}
+
+#[test]
+fn weighted_geometric_mean_rejects_empty_workload_id() {
+    let bad = BenchmarkCase {
+        workload_id: "".to_string(),
+        throughput_franken_tps: 100.0,
+        throughput_baseline_tps: 50.0,
+        weight: None,
+        behavior_equivalent: true,
+        latency_envelope_ok: true,
+        error_envelope_ok: true,
+    };
+    let err = weighted_geometric_mean(&[bad], BaselineEngine::Node)
+        .expect_err("empty workload_id should fail");
+    assert!(matches!(
+        err,
+        BenchmarkDenominatorError::EmptyWorkloadId { .. }
+    ));
+}
+
+#[test]
+fn weighted_geometric_mean_rejects_duplicate_workload_ids() {
+    let cases = vec![case("dup-wl", 3.0, None), case("dup-wl", 4.0, None)];
+    let err = weighted_geometric_mean(&cases, BaselineEngine::Node)
+        .expect_err("duplicate workload_id should fail");
+    assert!(matches!(
+        err,
+        BenchmarkDenominatorError::DuplicateWorkloadId { .. }
+    ));
+}
+
+#[test]
+fn weighted_geometric_mean_rejects_zero_baseline_throughput() {
+    let bad = BenchmarkCase {
+        workload_id: "zero-baseline".to_string(),
+        throughput_franken_tps: 100.0,
+        throughput_baseline_tps: 0.0,
+        weight: None,
+        behavior_equivalent: true,
+        latency_envelope_ok: true,
+        error_envelope_ok: true,
+    };
+    let err = weighted_geometric_mean(&[bad], BaselineEngine::Bun)
+        .expect_err("zero baseline throughput should fail");
+    assert!(matches!(
+        err,
+        BenchmarkDenominatorError::InvalidThroughput { .. }
+    ));
+}
+
+#[test]
+fn publication_gate_denies_on_latency_envelope_failure() {
+    let mut node_bad = case("node-lat", 3.5, None);
+    node_bad.latency_envelope_ok = false;
+
+    let input = PublicationGateInput {
+        node_cases: vec![node_bad],
+        bun_cases: vec![case("bun-ok", 3.5, None)],
+        native_coverage_progression: coverage(),
+        replacement_lineage_ids: vec!["lineage-1".to_string()],
+    };
+
+    let decision = evaluate_publication_gate(&input, &context()).expect("gate should evaluate");
+    assert!(!decision.publish_allowed);
+    assert!(decision.blockers.iter().any(|b| b.contains("latency")));
+}
+
+#[test]
+fn publication_gate_denies_on_error_envelope_failure() {
+    let mut node_bad = case("node-err", 3.5, None);
+    node_bad.error_envelope_ok = false;
+
+    let input = PublicationGateInput {
+        node_cases: vec![node_bad],
+        bun_cases: vec![case("bun-ok", 3.5, None)],
+        native_coverage_progression: coverage(),
+        replacement_lineage_ids: vec!["lineage-1".to_string()],
+    };
+
+    let decision = evaluate_publication_gate(&input, &context()).expect("gate should evaluate");
+    assert!(!decision.publish_allowed);
+    assert!(decision.blockers.iter().any(|b| b.contains("error")));
+}
+
+#[test]
+fn publication_gate_requires_both_node_and_bun_above_threshold() {
+    let input = PublicationGateInput {
+        node_cases: vec![case("n1", 4.0, None)],
+        bun_cases: vec![case("b1", 2.5, None)],
+        native_coverage_progression: coverage(),
+        replacement_lineage_ids: vec!["lineage-1".to_string()],
+    };
+
+    let decision = evaluate_publication_gate(&input, &context()).expect("gate should evaluate");
+    assert!(!decision.publish_allowed);
+    assert!(decision.score_vs_node >= SCORE_THRESHOLD);
+    assert!(decision.score_vs_bun < SCORE_THRESHOLD);
+    assert!(decision.blockers.iter().any(|b| b.contains("score_vs_bun")));
+}
+
+#[test]
+fn publication_gate_decision_json_roundtrip() {
+    let input = PublicationGateInput {
+        node_cases: vec![case("n1", 3.0, None)],
+        bun_cases: vec![case("b1", 3.0, None)],
+        native_coverage_progression: coverage(),
+        replacement_lineage_ids: vec!["lineage-1".to_string()],
+    };
+
+    let decision = evaluate_publication_gate(&input, &context()).expect("gate should evaluate");
+    let json = decision.to_json_pretty().expect("to_json_pretty");
+    let recovered: PublicationGateDecision = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(decision.publish_allowed, recovered.publish_allowed);
+    assert_eq!(decision.blockers, recovered.blockers);
+}
+
+#[test]
+fn publication_gate_is_deterministic_for_identical_inputs() {
+    let input = PublicationGateInput {
+        node_cases: vec![case("n1", 3.2, None), case("n2", 3.4, None)],
+        bun_cases: vec![case("b1", 3.1, None), case("b2", 3.3, None)],
+        native_coverage_progression: coverage(),
+        replacement_lineage_ids: vec!["lineage-a".to_string()],
+    };
+
+    let d1 = evaluate_publication_gate(&input, &context()).expect("gate 1");
+    let d2 = evaluate_publication_gate(&input, &context()).expect("gate 2");
+    assert_eq!(d1.score_vs_node, d2.score_vs_node);
+    assert_eq!(d1.score_vs_bun, d2.score_vs_bun);
+    assert_eq!(d1.publish_allowed, d2.publish_allowed);
+    assert_eq!(d1.blockers, d2.blockers);
+}
+
+#[test]
+fn benchmark_error_stable_codes_are_non_empty() {
+    let errors: Vec<BenchmarkDenominatorError> = vec![
+        BenchmarkDenominatorError::EmptyCaseSet {
+            baseline: "node".to_string(),
+        },
+        BenchmarkDenominatorError::MissingCoverageProgression,
+        BenchmarkDenominatorError::MissingReplacementLineage,
+    ];
+    for err in &errors {
+        let code = err.stable_code();
+        assert!(!code.is_empty());
+        assert!(code.starts_with("FE-BENCH-"));
+    }
+}
+
+#[test]
+fn benchmark_error_display_is_informative() {
+    let err = BenchmarkDenominatorError::EmptyCaseSet {
+        baseline: "node".to_string(),
+    };
+    let msg = err.to_string();
+    assert!(msg.contains("node"));
+    assert!(msg.contains("empty"));
+}
+
+#[test]
+fn benchmark_error_serde_roundtrip() {
+    let err = BenchmarkDenominatorError::InvalidWeightSum {
+        baseline: "bun".to_string(),
+        sum: 1.5,
+    };
+    let json = serde_json::to_string(&err).expect("serialize");
+    let recovered: BenchmarkDenominatorError = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(err, recovered);
+}
+
+#[test]
+fn benchmark_case_serde_roundtrip() {
+    let c = case("serde-wl", 3.5, Some(0.6));
+    let json = serde_json::to_string(&c).expect("serialize");
+    let recovered: BenchmarkCase = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(c.workload_id, recovered.workload_id);
+    assert_eq!(c.weight, recovered.weight);
+}
+
+#[test]
+fn publication_gate_preserves_coverage_and_lineage_in_output() {
+    let input = PublicationGateInput {
+        node_cases: vec![case("n", 3.5, None)],
+        bun_cases: vec![case("b", 3.5, None)],
+        native_coverage_progression: coverage(),
+        replacement_lineage_ids: vec!["lineage-a".to_string(), "lineage-b".to_string()],
+    };
+
+    let decision = evaluate_publication_gate(&input, &context()).expect("gate should evaluate");
+    assert_eq!(decision.native_coverage_progression.len(), 2);
+    assert!(
+        decision
+            .replacement_lineage_ids
+            .contains(&"lineage-a".to_string())
+    );
+    assert!(
+        decision
+            .replacement_lineage_ids
+            .contains(&"lineage-b".to_string())
+    );
+}
+
+use frankenengine_engine::benchmark_denominator::{
+    BenchmarkPublicationEvent, PublicationGateDecision,
+};
+
+#[test]
+fn publication_event_serde_roundtrip() {
+    let event = BenchmarkPublicationEvent {
+        trace_id: "t-1".to_string(),
+        decision_id: "d-1".to_string(),
+        policy_id: "p-1".to_string(),
+        component: "benchmark_denominator".to_string(),
+        event: "gate_decision".to_string(),
+        outcome: "allow".to_string(),
+        error_code: None,
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: BenchmarkPublicationEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(event, recovered);
+}

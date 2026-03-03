@@ -253,3 +253,299 @@ fn module_parse_goal_produces_different_ir_than_script() {
     // Module parse has import handling, so IR should differ
     assert_ne!(script_out.ir1.content_hash(), module_out.ir1.content_hash());
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment 2: serde, flow proof artifact, semantic validation,
+// error variants, individual pass determinism, invariant checks
+// ────────────────────────────────────────────────────────────
+
+use frankenengine_engine::lowering_pipeline::{
+    InvariantCheck, Ir2FlowProofArtifact, IsomorphismLedgerEntry, LoweringEvent,
+    LoweringPipelineOutput, PassWitness,
+};
+
+#[test]
+fn lowering_pipeline_output_serde_roundtrip() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser.parse("1;", ParseGoal::Script).expect("parse");
+    let ir0 = Ir0Module::from_syntax_tree(tree, "serde_fixture.js");
+    let ctx = LoweringContext::new("trace-serde", "decision-serde", "policy-serde");
+    let output = lower_ir0_to_ir3(&ir0, &ctx).expect("pipeline");
+
+    let json = serde_json::to_string(&output).expect("serialize");
+    let recovered: LoweringPipelineOutput = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(output, recovered);
+}
+
+#[test]
+fn pass_witness_serde_roundtrip() {
+    let witness = PassWitness {
+        pass_id: "ir0_to_ir1".to_string(),
+        input_hash: "abc123".to_string(),
+        output_hash: "def456".to_string(),
+        rollback_token: "rb-001".to_string(),
+        invariant_checks: vec![InvariantCheck {
+            name: "non_empty_output".to_string(),
+            passed: true,
+            detail: "ok".to_string(),
+        }],
+    };
+    let json = serde_json::to_string(&witness).expect("serialize");
+    let recovered: PassWitness = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(witness, recovered);
+}
+
+#[test]
+fn isomorphism_ledger_entry_serde_roundtrip() {
+    let entry = IsomorphismLedgerEntry {
+        pass_id: "ir1_to_ir2".to_string(),
+        input_hash: "hash-in".to_string(),
+        output_hash: "hash-out".to_string(),
+        input_op_count: 7,
+        output_op_count: 9,
+    };
+    let json = serde_json::to_string(&entry).expect("serialize");
+    let recovered: IsomorphismLedgerEntry = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(entry, recovered);
+}
+
+#[test]
+fn lowering_event_serde_roundtrip() {
+    let event = LoweringEvent {
+        trace_id: "trace-1".to_string(),
+        decision_id: "decision-1".to_string(),
+        policy_id: "policy-1".to_string(),
+        component: "lowering_pipeline".to_string(),
+        event: "ir0_to_ir1_lowered".to_string(),
+        outcome: "success".to_string(),
+        error_code: None,
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: LoweringEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(event, recovered);
+}
+
+#[test]
+fn ir2_flow_proof_artifact_serde_roundtrip() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser.parse("42;", ParseGoal::Script).expect("parse");
+    let ir0 = Ir0Module::from_syntax_tree(tree, "flow_artifact_serde.js");
+    let ctx = LoweringContext::new("trace-fa", "decision-fa", "policy-fa");
+    let output = lower_ir0_to_ir3(&ir0, &ctx).expect("pipeline");
+
+    let json = serde_json::to_string(&output.ir2_flow_proof_artifact).expect("serialize");
+    let recovered: Ir2FlowProofArtifact = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(output.ir2_flow_proof_artifact, recovered);
+}
+
+#[test]
+fn flow_proof_artifact_context_matches_lowering_context() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser.parse("42;", ParseGoal::Script).expect("parse");
+    let ir0 = Ir0Module::from_syntax_tree(tree, "artifact_ctx.js");
+    let ctx = LoweringContext::new("trace-artctx", "decision-artctx", "policy-artctx");
+    let output = lower_ir0_to_ir3(&ir0, &ctx).expect("pipeline");
+
+    assert_eq!(output.ir2_flow_proof_artifact.trace_id, "trace-artctx");
+    assert_eq!(
+        output.ir2_flow_proof_artifact.decision_id,
+        "decision-artctx"
+    );
+    assert_eq!(output.ir2_flow_proof_artifact.policy_id, "policy-artctx");
+    assert_eq!(output.ir2_flow_proof_artifact.module_id, "artifact_ctx.js");
+    assert!(!output.ir2_flow_proof_artifact.schema_version.is_empty());
+    assert!(!output.ir2_flow_proof_artifact.artifact_id.is_empty());
+}
+
+#[test]
+fn individual_pass_determinism() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser.parse("42;", ParseGoal::Script).expect("parse");
+    let ir0 = Ir0Module::from_syntax_tree(tree, "pass_det.js");
+
+    let pass1_a = lower_ir0_to_ir1(&ir0).expect("ir0->ir1 first");
+    let pass1_b = lower_ir0_to_ir1(&ir0).expect("ir0->ir1 second");
+    assert_eq!(pass1_a.witness, pass1_b.witness);
+    assert_eq!(pass1_a.ledger_entry, pass1_b.ledger_entry);
+    assert_eq!(pass1_a.module.content_hash(), pass1_b.module.content_hash());
+
+    let pass2_a = lower_ir1_to_ir2(&pass1_a.module).expect("ir1->ir2 first");
+    let pass2_b = lower_ir1_to_ir2(&pass1_a.module).expect("ir1->ir2 second");
+    assert_eq!(pass2_a.witness, pass2_b.witness);
+    assert_eq!(pass2_a.module.content_hash(), pass2_b.module.content_hash());
+
+    let pass3_a = lower_ir2_to_ir3(&pass2_a.module).expect("ir2->ir3 first");
+    let pass3_b = lower_ir2_to_ir3(&pass2_a.module).expect("ir2->ir3 second");
+    assert_eq!(pass3_a.witness, pass3_b.witness);
+    assert_eq!(pass3_a.module.content_hash(), pass3_b.module.content_hash());
+}
+
+#[test]
+fn witnesses_contain_invariant_checks_that_all_pass() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser.parse("42;", ParseGoal::Script).expect("parse");
+    let ir0 = Ir0Module::from_syntax_tree(tree, "invariant_fixture.js");
+    let ctx = LoweringContext::new("trace-inv", "decision-inv", "policy-inv");
+    let output = lower_ir0_to_ir3(&ir0, &ctx).expect("pipeline");
+
+    for witness in &output.witnesses {
+        assert!(
+            !witness.invariant_checks.is_empty(),
+            "each pass should have invariant checks"
+        );
+        for check in &witness.invariant_checks {
+            assert!(check.passed, "invariant check '{}' should pass", check.name);
+            assert!(!check.name.is_empty());
+        }
+    }
+}
+
+#[test]
+fn pass_witnesses_have_distinct_pass_ids() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser.parse("42;", ParseGoal::Script).expect("parse");
+    let ir0 = Ir0Module::from_syntax_tree(tree, "distinct_pass_ids.js");
+    let ctx = LoweringContext::new("trace-pid", "decision-pid", "policy-pid");
+    let output = lower_ir0_to_ir3(&ir0, &ctx).expect("pipeline");
+
+    let pass_ids: Vec<&str> = output
+        .witnesses
+        .iter()
+        .map(|w| w.pass_id.as_str())
+        .collect();
+    let unique: std::collections::BTreeSet<&str> = pass_ids.iter().copied().collect();
+    assert_eq!(pass_ids.len(), unique.len(), "pass IDs must be unique");
+    assert_eq!(pass_ids.len(), 3, "should have 3 pass witnesses");
+}
+
+#[test]
+fn isomorphism_ledger_hashes_chain_correctly() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser.parse("42;", ParseGoal::Script).expect("parse");
+    let ir0 = Ir0Module::from_syntax_tree(tree, "ledger_chain.js");
+    let ctx = LoweringContext::new("trace-lc", "decision-lc", "policy-lc");
+    let output = lower_ir0_to_ir3(&ir0, &ctx).expect("pipeline");
+
+    // Each pass's output hash should equal the next pass's input hash
+    for window in output.isomorphism_ledger.windows(2) {
+        assert_eq!(
+            window[0].output_hash, window[1].input_hash,
+            "ledger entries should chain: {} output -> {} input",
+            window[0].pass_id, window[1].pass_id
+        );
+    }
+}
+
+#[test]
+fn rollback_tokens_are_non_empty_and_unique() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser.parse("42;", ParseGoal::Script).expect("parse");
+    let ir0 = Ir0Module::from_syntax_tree(tree, "rollback_tokens.js");
+    let ctx = LoweringContext::new("trace-rb", "decision-rb", "policy-rb");
+    let output = lower_ir0_to_ir3(&ir0, &ctx).expect("pipeline");
+
+    let tokens: Vec<&str> = output
+        .witnesses
+        .iter()
+        .map(|w| w.rollback_token.as_str())
+        .collect();
+    for token in &tokens {
+        assert!(!token.is_empty(), "rollback tokens must be non-empty");
+    }
+    let unique: std::collections::BTreeSet<&str> = tokens.iter().copied().collect();
+    assert_eq!(tokens.len(), unique.len(), "rollback tokens must be unique");
+}
+
+#[test]
+fn static_semantics_detects_duplicate_let_declarations() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser
+        .parse("let x = 1; let x = 2;", ParseGoal::Script)
+        .expect("parse");
+    let ir0 = Ir0Module::from_syntax_tree(tree, "dup_let.js");
+    let result = validate_ir0_static_semantics(&ir0);
+    assert!(!result.is_valid(), "duplicate let should be invalid");
+    assert!(!result.errors.is_empty());
+}
+
+#[test]
+fn static_semantics_detects_const_without_initializer() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser.parse("const x;", ParseGoal::Script).expect("parse");
+    let ir0 = Ir0Module::from_syntax_tree(tree, "const_no_init.js");
+    let result = validate_ir0_static_semantics(&ir0);
+    assert!(
+        !result.is_valid(),
+        "const without initializer should be invalid"
+    );
+}
+
+#[test]
+fn error_variant_display_includes_detail() {
+    let err = LoweringPipelineError::IrContractValidation {
+        code: "FE-IR-0001".to_string(),
+        level: frankenengine_engine::ir_contract::IrLevel::Ir0,
+        message: "missing field".to_string(),
+    };
+    let msg = err.to_string();
+    assert!(msg.contains("FE-IR-0001"));
+    assert!(msg.contains("missing field"));
+
+    let err2 = LoweringPipelineError::FlowLatticeFailure {
+        detail: "lattice not monotone".to_string(),
+    };
+    assert!(err2.to_string().contains("lattice not monotone"));
+}
+
+#[test]
+fn pipeline_events_count_matches_expected() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser.parse("42;", ParseGoal::Script).expect("parse");
+    let ir0 = Ir0Module::from_syntax_tree(tree, "event_count.js");
+    let ctx = LoweringContext::new("trace-ec", "decision-ec", "policy-ec");
+    let output = lower_ir0_to_ir3(&ir0, &ctx).expect("pipeline");
+
+    // Each pass emits a success event: ir0->ir1, ir1->ir2, ir2->ir3
+    assert!(output.events.len() >= 3, "at least 3 events for 3 passes");
+    assert!(output.events.iter().all(|e| e.outcome == "success"));
+    assert!(output.events.iter().all(|e| e.error_code.is_none()));
+}
+
+#[test]
+fn hostcall_source_generates_ifc_flow_proof_entries() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser
+        .parse(r#"hostcall<"net.send">();"#, ParseGoal::Script)
+        .expect("parse");
+    let ir0 = Ir0Module::from_syntax_tree(tree, "hostcall_flow_proof.js");
+    let ctx = LoweringContext::new("trace-hfp", "decision-hfp", "policy-hfp");
+    let output = lower_ir0_to_ir3(&ir0, &ctx).expect("pipeline");
+
+    // Hostcall should generate at least one runtime checkpoint
+    assert!(
+        !output
+            .ir2_flow_proof_artifact
+            .runtime_checkpoints
+            .is_empty()
+            || !output.ir2_flow_proof_artifact.proved_flows.is_empty()
+            || !output
+                .ir2_flow_proof_artifact
+                .required_declassifications
+                .is_empty(),
+        "hostcall source should produce some flow proof entries"
+    );
+}
+
+#[test]
+fn module_with_export_default_produces_ir3() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser
+        .parse(r#"export default 42;"#, ParseGoal::Module)
+        .expect("parse");
+    let ir0 = Ir0Module::from_syntax_tree(tree, "export_default.mjs");
+    let ctx = LoweringContext::new("trace-ed", "decision-ed", "policy-ed");
+    let output = lower_ir0_to_ir3(&ir0, &ctx).expect("pipeline");
+
+    assert!(!output.ir3.instructions.is_empty());
+    assert!(output.ir3.content_hash() != output.ir1.content_hash());
+}

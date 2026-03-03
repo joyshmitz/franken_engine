@@ -366,3 +366,250 @@ fn cross_zone_reference_allowed_type_emits_pass_outcome() {
     assert_eq!(event.event_type, "cross_zone_reference");
     assert_eq!(event.outcome, "allowed");
 }
+
+#[test]
+fn render_and_parse_security_logs_jsonl_roundtrip() {
+    let mut observability = RuntimeSecurityObservability::new();
+    observability.record_auth_failure(context(1, "auth"), AuthFailureType::KeyRevoked, None, None);
+    observability.record_capability_denial(
+        context(2, "cap"),
+        CapabilityDenialReason::Expired,
+        "read_policy",
+    );
+    observability.record_replay_drop(
+        context(3, "replay"),
+        ReplayDropReason::StaleSeq,
+        10,
+        5,
+        "sess-002",
+    );
+
+    let jsonl = render_security_logs_jsonl(observability.logs());
+    let parsed = parse_security_logs_jsonl(&jsonl).expect("parse JSONL");
+    assert_eq!(parsed.len(), 3);
+    assert_eq!(parsed, observability.logs());
+}
+
+use frankenengine_engine::runtime_observability::{
+    RuntimeSecurityMetrics, SecurityEventType, SecurityOutcome, StructuredSecurityLogEvent,
+    redact_sensitive_value, render_security_logs_jsonl,
+};
+
+#[test]
+fn redact_sensitive_value_produces_sha256_prefix() {
+    let result = redact_sensitive_value("secret-key-material");
+    assert!(result.starts_with("sha256:"));
+    assert!(result.len() > 10);
+
+    // Same input produces same output (deterministic)
+    let result2 = redact_sensitive_value("secret-key-material");
+    assert_eq!(result, result2);
+
+    // Different inputs produce different hashes
+    let different = redact_sensitive_value("other-secret");
+    assert_ne!(result, different);
+}
+
+#[test]
+fn security_event_type_display_matches_as_str() {
+    let types = [
+        SecurityEventType::AuthFailure,
+        SecurityEventType::CapabilityDenial,
+        SecurityEventType::ReplayDrop,
+        SecurityEventType::CheckpointViolation,
+        SecurityEventType::RevocationCheck,
+        SecurityEventType::CrossZoneReference,
+    ];
+    for event_type in types {
+        assert_eq!(event_type.to_string(), event_type.as_str());
+        assert!(!event_type.as_str().is_empty());
+    }
+}
+
+#[test]
+fn security_outcome_display_matches_as_str() {
+    let outcomes = [
+        SecurityOutcome::Pass,
+        SecurityOutcome::Allowed,
+        SecurityOutcome::Denied,
+        SecurityOutcome::Dropped,
+        SecurityOutcome::Rejected,
+        SecurityOutcome::Degraded,
+    ];
+    for outcome in outcomes {
+        assert_eq!(outcome.to_string(), outcome.as_str());
+        assert!(!outcome.as_str().is_empty());
+    }
+}
+
+#[test]
+fn structured_security_log_event_serde_roundtrip() {
+    let mut metadata = std::collections::BTreeMap::new();
+    metadata.insert("key".to_string(), "value".to_string());
+
+    let event = StructuredSecurityLogEvent {
+        timestamp_ns: 42,
+        trace_id: "trace-rt".to_string(),
+        component: "test".to_string(),
+        event_type: "auth_failure".to_string(),
+        outcome: "denied".to_string(),
+        error_code: Some("FE-AUTH-0001".to_string()),
+        principal_id: "principal-1".to_string(),
+        decision_id: "decision-1".to_string(),
+        policy_id: "policy-1".to_string(),
+        zone_id: "zone-core".to_string(),
+        metadata,
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: StructuredSecurityLogEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(event, recovered);
+}
+
+#[test]
+fn runtime_security_observability_serde_roundtrip() {
+    let mut observability = RuntimeSecurityObservability::new();
+    observability.record_auth_failure(
+        context(1, "auth"),
+        AuthFailureType::KeyExpired,
+        None,
+        None,
+    );
+    observability.record_checkpoint_violation(
+        context(2, "cp"),
+        CheckpointViolationType::RollbackAttempt,
+        5,
+        7,
+    );
+
+    let json = serde_json::to_string(&observability).expect("serialize");
+    let recovered: RuntimeSecurityObservability = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(observability.logs().len(), recovered.logs().len());
+    assert_eq!(observability.logs(), recovered.logs());
+}
+
+#[test]
+fn replay_drop_metadata_includes_session_id_and_seq_numbers() {
+    let mut observability = RuntimeSecurityObservability::new();
+    let event = observability.record_replay_drop(
+        context(1, "session_channel"),
+        ReplayDropReason::CrossSession,
+        100,
+        50,
+        "sess-xyz",
+    );
+
+    assert_eq!(event.event_type, "replay_drop");
+    let meta = &event.metadata;
+    // Session ID is redacted (hashed), not stored as plaintext
+    assert!(meta.get("session_id_hash").is_some());
+    assert!(meta.get("session_id_hash").unwrap().starts_with("sha256:"));
+}
+
+#[test]
+fn checkpoint_violation_metadata_includes_epoch_info() {
+    let mut observability = RuntimeSecurityObservability::new();
+    let event = observability.record_checkpoint_violation(
+        context(1, "checkpoint"),
+        CheckpointViolationType::ForkDetected,
+        100,
+        101,
+    );
+
+    assert_eq!(event.event_type, "checkpoint_violation");
+    assert!(event.error_code.is_some());
+    assert!(event.required_fields_present());
+}
+
+#[test]
+fn parse_security_logs_jsonl_handles_empty_input() {
+    let parsed = parse_security_logs_jsonl("").expect("empty input should parse");
+    assert!(parsed.is_empty());
+
+    let parsed_whitespace =
+        parse_security_logs_jsonl("   \n  \n").expect("whitespace should parse");
+    assert!(parsed_whitespace.is_empty());
+}
+
+#[test]
+fn parse_security_logs_jsonl_rejects_invalid_json() {
+    let err = parse_security_logs_jsonl("not valid json").expect_err("should fail");
+    assert!(err.contains("failed to parse JSONL line 1"));
+}
+
+#[test]
+fn export_prometheus_metrics_includes_zero_counters_on_fresh_instance() {
+    let observability = RuntimeSecurityObservability::new();
+    let output = observability.export_prometheus_metrics();
+
+    // Should contain all metric family names even with zero values
+    for metric in [
+        "auth_failure_total",
+        CAPABILITY_DENIAL_TOTAL,
+        REPLAY_DROP_TOTAL,
+        CHECKPOINT_VIOLATION_TOTAL,
+        REVOCATION_CHECK_TOTAL,
+        CROSS_ZONE_REFERENCE_TOTAL,
+    ] {
+        assert!(
+            output.contains(metric),
+            "fresh prometheus export should contain {metric}"
+        );
+    }
+}
+
+#[test]
+fn revocation_degraded_seconds_accumulates_across_multiple_checks() {
+    let mut observability = RuntimeSecurityObservability::new();
+
+    observability.record_revocation_check(
+        context(1, "revocation"),
+        RevocationCheckOutcome::Stale,
+        10,
+        20,
+        5,
+        Some(15),
+    );
+    observability.record_revocation_check(
+        context(2, "revocation"),
+        RevocationCheckOutcome::Stale,
+        10,
+        20,
+        5,
+        Some(25),
+    );
+
+    let metrics = observability.metrics();
+    // revocation_freshness_degraded_seconds is set (not accumulated) — last value wins
+    assert_eq!(metrics.revocation_freshness_degraded_seconds, 25);
+    assert_eq!(
+        metrics.revocation_check_total[&RevocationCheckOutcome::Stale],
+        2
+    );
+}
+
+#[test]
+fn all_auth_failure_types_emit_error_codes() {
+    for failure_type in AuthFailureType::ALL {
+        let mut observability = RuntimeSecurityObservability::new();
+        let event = observability.record_auth_failure(context(1, "auth"), failure_type, None, None);
+        assert!(
+            event.error_code.is_some(),
+            "auth failure type {:?} should have an error code",
+            failure_type
+        );
+    }
+}
+
+#[test]
+fn all_capability_denial_reasons_have_error_codes() {
+    for reason in CapabilityDenialReason::ALL {
+        let mut observability = RuntimeSecurityObservability::new();
+        let event =
+            observability.record_capability_denial(context(1, "cap"), reason, "test_capability");
+        assert!(
+            event.error_code.is_some(),
+            "denial reason {:?} should have an error code",
+            reason
+        );
+    }
+}

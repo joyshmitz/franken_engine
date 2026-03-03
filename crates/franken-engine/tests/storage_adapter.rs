@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::storage_adapter::{
     BatchPutEntry, EventContext, FrankensqliteBackend, FrankensqliteStorageAdapter,
@@ -525,4 +525,403 @@ fn wal_order_variants_preserve_deterministic_query_results() {
         .query(StoreKind::EvidenceIndex, &query, &context)
         .expect("checkpoint query");
     assert_eq!(normal, checkpoint);
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: metadata filters, delete semantics, store isolation,
+// error paths, serde roundtrips, batch edge cases
+// ────────────────────────────────────────────────────────────
+
+use frankenengine_engine::storage_adapter::{MigrationReceipt, StorageEvent};
+
+#[test]
+fn in_memory_get_returns_none_for_missing_key() {
+    let mut adapter = InMemoryStorageAdapter::new();
+    let context = context();
+    let result = adapter
+        .get(StoreKind::ReplayIndex, "nonexistent/key", &context)
+        .expect("get should succeed");
+    assert!(result.is_none());
+}
+
+#[test]
+fn in_memory_delete_returns_false_for_missing_key() {
+    let mut adapter = InMemoryStorageAdapter::new();
+    let context = context();
+    let deleted = adapter
+        .delete(StoreKind::ReplayIndex, "nonexistent/key", &context)
+        .expect("delete should succeed");
+    assert!(!deleted);
+}
+
+#[test]
+fn stores_are_isolated_from_each_other() {
+    let mut adapter = InMemoryStorageAdapter::new();
+    let context = context();
+
+    adapter
+        .put(
+            StoreKind::ReplayIndex,
+            "shared/key".to_string(),
+            vec![1],
+            BTreeMap::new(),
+            &context,
+        )
+        .expect("put to replay");
+
+    adapter
+        .put(
+            StoreKind::EvidenceIndex,
+            "shared/key".to_string(),
+            vec![2],
+            BTreeMap::new(),
+            &context,
+        )
+        .expect("put to evidence");
+
+    let replay_val = adapter
+        .get(StoreKind::ReplayIndex, "shared/key", &context)
+        .expect("get replay")
+        .expect("exists");
+    assert_eq!(replay_val.value, vec![1]);
+
+    let evidence_val = adapter
+        .get(StoreKind::EvidenceIndex, "shared/key", &context)
+        .expect("get evidence")
+        .expect("exists");
+    assert_eq!(evidence_val.value, vec![2]);
+}
+
+#[test]
+fn metadata_filter_narrows_query_results() {
+    let mut adapter = InMemoryStorageAdapter::new();
+    let context = context();
+
+    let mut meta_prod = BTreeMap::new();
+    meta_prod.insert("env".to_string(), "prod".to_string());
+    let mut meta_staging = BTreeMap::new();
+    meta_staging.insert("env".to_string(), "staging".to_string());
+
+    adapter
+        .put(
+            StoreKind::PolicyCache,
+            "policy/a".to_string(),
+            vec![1],
+            meta_prod.clone(),
+            &context,
+        )
+        .expect("put prod a");
+    adapter
+        .put(
+            StoreKind::PolicyCache,
+            "policy/b".to_string(),
+            vec![2],
+            meta_staging,
+            &context,
+        )
+        .expect("put staging b");
+    adapter
+        .put(
+            StoreKind::PolicyCache,
+            "policy/c".to_string(),
+            vec![3],
+            meta_prod,
+            &context,
+        )
+        .expect("put prod c");
+
+    let mut filters = BTreeMap::new();
+    filters.insert("env".to_string(), "prod".to_string());
+    let prod_results = adapter
+        .query(
+            StoreKind::PolicyCache,
+            &StoreQuery {
+                key_prefix: Some("policy/".to_string()),
+                metadata_filters: filters,
+                limit: None,
+            },
+            &context,
+        )
+        .expect("query prod");
+
+    assert_eq!(prod_results.len(), 2);
+    assert_eq!(prod_results[0].key, "policy/a");
+    assert_eq!(prod_results[1].key, "policy/c");
+}
+
+#[test]
+fn put_overwrites_existing_value() {
+    let mut adapter = InMemoryStorageAdapter::new();
+    let context = context();
+
+    adapter
+        .put(
+            StoreKind::ReplayIndex,
+            "key/x".to_string(),
+            vec![1, 1],
+            BTreeMap::new(),
+            &context,
+        )
+        .expect("put original");
+
+    adapter
+        .put(
+            StoreKind::ReplayIndex,
+            "key/x".to_string(),
+            vec![2, 2],
+            BTreeMap::new(),
+            &context,
+        )
+        .expect("put overwrite");
+
+    let loaded = adapter
+        .get(StoreKind::ReplayIndex, "key/x", &context)
+        .expect("get")
+        .expect("exists");
+    assert_eq!(loaded.value, vec![2, 2]);
+}
+
+#[test]
+fn query_with_limit_returns_at_most_n_results() {
+    let mut adapter = InMemoryStorageAdapter::new();
+    let context = context();
+
+    for i in 0..5 {
+        adapter
+            .put(
+                StoreKind::BenchmarkLedger,
+                format!("bench/{i}"),
+                vec![i as u8],
+                BTreeMap::new(),
+                &context,
+            )
+            .expect("put");
+    }
+
+    let results = adapter
+        .query(
+            StoreKind::BenchmarkLedger,
+            &StoreQuery {
+                key_prefix: Some("bench/".to_string()),
+                metadata_filters: BTreeMap::new(),
+                limit: Some(3),
+            },
+            &context,
+        )
+        .expect("query with limit");
+    assert_eq!(results.len(), 3);
+}
+
+#[test]
+fn batch_put_is_atomic_equivalent_to_individual_puts() {
+    let mut adapter = InMemoryStorageAdapter::new();
+    let context = context();
+
+    let batch = vec![
+        BatchPutEntry {
+            key: "batch/alpha".to_string(),
+            value: vec![10],
+            metadata: BTreeMap::new(),
+        },
+        BatchPutEntry {
+            key: "batch/beta".to_string(),
+            value: vec![20],
+            metadata: BTreeMap::new(),
+        },
+        BatchPutEntry {
+            key: "batch/gamma".to_string(),
+            value: vec![30],
+            metadata: BTreeMap::new(),
+        },
+    ];
+
+    adapter
+        .put_batch(StoreKind::PlasWitness, batch, &context)
+        .expect("batch put");
+
+    let results = adapter
+        .query(StoreKind::PlasWitness, &StoreQuery::default(), &context)
+        .expect("query all");
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0].key, "batch/alpha");
+    assert_eq!(results[1].key, "batch/beta");
+    assert_eq!(results[2].key, "batch/gamma");
+}
+
+#[test]
+fn in_memory_schema_version_is_initial() {
+    let adapter = InMemoryStorageAdapter::new();
+    assert_eq!(adapter.current_schema_version(), STORAGE_SCHEMA_VERSION);
+    assert_eq!(adapter.backend_name(), "in_memory");
+}
+
+#[test]
+fn in_memory_ensure_schema_version_passes_for_current() {
+    let adapter = InMemoryStorageAdapter::new();
+    adapter
+        .ensure_schema_version(STORAGE_SCHEMA_VERSION)
+        .expect("version should match");
+}
+
+#[test]
+fn frankensqlite_backend_name() {
+    let backend = MockFrankensqlite::default();
+    let adapter = FrankensqliteStorageAdapter::new(backend).expect("adapter init");
+    assert_eq!(adapter.backend_name(), "frankensqlite");
+}
+
+#[test]
+fn frankensqlite_delete_returns_false_for_missing_key() {
+    let backend = MockFrankensqlite::default();
+    let mut adapter = FrankensqliteStorageAdapter::new(backend).expect("adapter init");
+    let context = context();
+
+    let deleted = adapter
+        .delete(StoreKind::PolicyCache, "nonexistent", &context)
+        .expect("delete should succeed");
+    assert!(!deleted);
+}
+
+#[test]
+fn frankensqlite_put_increments_revision() {
+    let backend = MockFrankensqlite::default();
+    let mut adapter = FrankensqliteStorageAdapter::new(backend).expect("adapter init");
+    let context = context();
+
+    adapter
+        .put(
+            StoreKind::ReplayIndex,
+            "rev/test".to_string(),
+            vec![1],
+            BTreeMap::new(),
+            &context,
+        )
+        .expect("first put");
+    let r1 = adapter
+        .get(StoreKind::ReplayIndex, "rev/test", &context)
+        .expect("get")
+        .expect("exists");
+    assert_eq!(r1.revision, 1);
+
+    adapter
+        .put(
+            StoreKind::ReplayIndex,
+            "rev/test".to_string(),
+            vec![2],
+            BTreeMap::new(),
+            &context,
+        )
+        .expect("second put");
+    let r2 = adapter
+        .get(StoreKind::ReplayIndex, "rev/test", &context)
+        .expect("get")
+        .expect("exists");
+    assert_eq!(r2.revision, 2);
+}
+
+#[test]
+fn store_record_serde_roundtrip() {
+    let record = StoreRecord {
+        store: StoreKind::EvidenceIndex,
+        key: "evidence/abc".to_string(),
+        value: vec![42, 43, 44],
+        metadata: {
+            let mut m = BTreeMap::new();
+            m.insert("zone".to_string(), "prod".to_string());
+            m
+        },
+        revision: 3,
+    };
+    let json = serde_json::to_string(&record).expect("serialize");
+    let recovered: StoreRecord = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(record, recovered);
+}
+
+#[test]
+fn storage_error_serde_roundtrip() {
+    let errors = vec![
+        StorageError::InvalidContext {
+            field: "trace_id".to_string(),
+        },
+        StorageError::InvalidKey {
+            key: "bad/key".to_string(),
+        },
+        StorageError::NotFound {
+            store: StoreKind::ReplayIndex,
+            key: "missing".to_string(),
+        },
+        StorageError::SchemaVersionMismatch {
+            expected: 1,
+            actual: 2,
+        },
+    ];
+    for err in &errors {
+        let json = serde_json::to_string(err).expect("serialize");
+        let recovered: StorageError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(err, &recovered);
+    }
+}
+
+#[test]
+fn storage_error_display_is_non_empty() {
+    let err = StorageError::InvalidKey {
+        key: "bad".to_string(),
+    };
+    let msg = err.to_string();
+    assert!(!msg.is_empty());
+    assert!(msg.contains("bad"));
+}
+
+#[test]
+fn migration_receipt_serde_roundtrip() {
+    let receipt = MigrationReceipt {
+        backend: "in_memory".to_string(),
+        from_version: 1,
+        to_version: 2,
+        stores_touched: vec![StoreKind::ReplayIndex, StoreKind::EvidenceIndex],
+        records_touched: 42,
+        state_hash_before: "aaa".to_string(),
+        state_hash_after: "bbb".to_string(),
+    };
+    let json = serde_json::to_string(&receipt).expect("serialize");
+    let recovered: MigrationReceipt = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(receipt, recovered);
+}
+
+#[test]
+fn storage_event_serde_roundtrip() {
+    let event = StorageEvent {
+        trace_id: "trace-1".to_string(),
+        decision_id: "dec-1".to_string(),
+        policy_id: "pol-1".to_string(),
+        component: "storage_adapter".to_string(),
+        event: "put".to_string(),
+        outcome: "ok".to_string(),
+        error_code: None,
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: StorageEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(event, recovered);
+}
+
+#[test]
+fn event_context_rejects_empty_trace_id() {
+    let err =
+        EventContext::new("", "decision-1", "policy-1").expect_err("empty trace_id should fail");
+    assert_eq!(err.code(), "FE-STOR-0001");
+}
+
+#[test]
+fn all_store_kinds_have_distinct_as_str() {
+    let strs: Vec<&str> = all_store_kinds().iter().map(|k| k.as_str()).collect();
+    let unique: BTreeSet<&str> = strs.iter().copied().collect();
+    assert_eq!(strs.len(), unique.len());
+}
+
+#[test]
+fn all_store_kinds_have_nonempty_integration_point() {
+    for kind in all_store_kinds() {
+        let ip = kind.integration_point();
+        assert!(!ip.is_empty(), "{kind:?} has empty integration_point");
+    }
 }

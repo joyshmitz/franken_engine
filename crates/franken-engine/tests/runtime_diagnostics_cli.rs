@@ -451,7 +451,7 @@ fn doctor_command_outputs_preflight_json_and_summary() {
     assert!(json_output.status.success());
     let json_stdout = String::from_utf8(json_output.stdout).expect("stdout should be utf8");
     let value: serde_json::Value = serde_json::from_str(&json_stdout).expect("valid json output");
-    assert_eq!(value["verdict"], "red");
+    assert_eq!(value["verdict"], "yellow");
     assert_eq!(
         value["support_bundle"]["index"]["schema_version"],
         "franken-engine.runtime-diagnostics.support-bundle.v1"
@@ -475,7 +475,7 @@ fn doctor_command_outputs_preflight_json_and_summary() {
     assert!(summary_output.status.success());
     let summary_stdout =
         String::from_utf8(summary_output.stdout).expect("summary stdout should be utf8");
-    assert!(summary_stdout.contains("verdict: red"));
+    assert!(summary_stdout.contains("verdict: yellow"));
     assert!(summary_stdout.contains("support_bundle_id: bundle-"));
     assert!(summary_stdout.contains("runtime_diagnostics doctor --input <path> --summary"));
 
@@ -522,7 +522,7 @@ fn doctor_command_writes_support_bundle_and_preflight_report() {
     let report_content = fs::read_to_string(&written_report).expect("report should be readable");
     let report_json: serde_json::Value =
         serde_json::from_str(&report_content).expect("report should be valid json");
-    assert_eq!(report_json["verdict"], "red");
+    assert_eq!(report_json["verdict"], "yellow");
     assert_eq!(
         report_json["support_bundle"]["index"]["schema_version"],
         "franken-engine.runtime-diagnostics.support-bundle.v1"

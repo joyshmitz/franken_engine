@@ -491,3 +491,45 @@ fn advanced_scenario_matrix_selector_filters_classes_and_faults() {
         Some("latency_spike_partial_failure")
     );
 }
+
+#[test]
+fn deterministic_e2e_harness_lane_script_preserves_step_logs_and_exit_classification() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let script_path = root.join("scripts/run_deterministic_e2e_harness.sh");
+    let script = fs::read_to_string(&script_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", script_path.display()));
+
+    for fragment in [
+        "step_logs_dir=\"${run_dir}/step_logs\"",
+        "\"step_logs\": [",
+        "failed_command=\"${command_text} (rch-exit=${status}; remote-exit=${remote_exit_code})\"",
+        "cargo clippy -p frankenengine-engine --test e2e_harness -- -D warnings",
+        "cargo clippy -p frankenengine-engine --test e2e_harness_integration -- -D warnings",
+    ] {
+        assert!(
+            script.contains(fragment),
+            "missing script fragment in {}: {fragment}",
+            script_path.display()
+        );
+    }
+}
+
+#[test]
+fn deterministic_e2e_harness_readme_documents_ci_clippy_and_step_logs() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let readme_path = root.join("README.md");
+    let readme = fs::read_to_string(&readme_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", readme_path.display()));
+
+    for fragment in [
+        "# CI shortcut (check + test + clippy)",
+        "./scripts/run_deterministic_e2e_harness.sh ci",
+        "step_logs/step_*.log",
+    ] {
+        assert!(
+            readme.contains(fragment),
+            "missing README fragment in {}: {fragment}",
+            readme_path.display()
+        );
+    }
+}
