@@ -1,0 +1,62 @@
+{
+  "schema_version": "franken-engine.rgc-cli-operator-workflow-verification-pack.v1",
+  "contract_version": "1.0.0",
+  "bead_id": "bd-1lsy.11.11",
+  "policy_id": "policy-rgc-cli-operator-workflow-verification-pack-v1",
+  "workflow_stages": [
+    "init",
+    "compile",
+    "run",
+    "verify",
+    "benchmark",
+    "replay",
+    "triage"
+  ],
+  "required_log_keys": [
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "scenario_id",
+    "path_type",
+    "outcome",
+    "error_code"
+  ],
+  "required_artifacts": [
+    "run_manifest.json",
+    "events.jsonl",
+    "commands.txt",
+    "support_bundle/preflight_report.json",
+    "support_bundle/onboarding_scorecard.json"
+  ],
+  "failure_scenarios": [
+    {
+      "scenario_id": "missing_input",
+      "path_type": "failure",
+      "command_template": "runtime_diagnostics onboarding-scorecard --input <missing-path>",
+      "expected_exit_code": 1,
+      "expected_error_code": "FE-RGC-061-INPUT-0001",
+      "expected_message_fragment": "failed to read input file"
+    },
+    {
+      "scenario_id": "invalid_signals_json",
+      "path_type": "failure",
+      "command_template": "runtime_diagnostics onboarding-scorecard --input <path> --signals <invalid-json>",
+      "expected_exit_code": 1,
+      "expected_error_code": "FE-RGC-061-SIGNALS-0002",
+      "expected_message_fragment": "failed to parse signal file"
+    }
+  ],
+  "gate_runner": {
+    "script": "scripts/run_rgc_cli_operator_workflow_verification_pack.sh",
+    "replay_wrapper": "scripts/e2e/rgc_cli_operator_workflow_verification_pack_replay.sh",
+    "strict_mode": "rch_only_no_local_fallback",
+    "manifest_schema_version": "franken-engine.rgc-cli-operator-workflow-verification-pack.run-manifest.v1"
+  },
+  "operator_verification": [
+    "./scripts/run_rgc_cli_operator_workflow_verification_pack.sh ci",
+    "./scripts/e2e/rgc_cli_operator_workflow_verification_pack_replay.sh ci",
+    "jq empty docs/rgc_cli_operator_workflow_verification_pack_v1.json"
+  ]
+}
