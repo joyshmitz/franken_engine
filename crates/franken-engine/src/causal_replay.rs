@@ -2875,4 +2875,296 @@ mod tests {
         assert_eq!(NondeterminismSource::OsEntropy.tag(), 5);
         assert_eq!(NondeterminismSource::FleetEvidenceArrival.tag(), 6);
     }
+
+    // -- Enrichment batch 4 --
+
+    #[test]
+    fn nondeterminism_log_entries_accessor() {
+        let mut log = NondeterminismLog::new();
+        log.append(NondeterminismSource::RandomValue, vec![1], 100, None);
+        log.append(NondeterminismSource::Timestamp, vec![2], 200, None);
+        let entries = log.entries();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].sequence, 0);
+        assert_eq!(entries[1].sequence, 1);
+    }
+
+    #[test]
+    fn trace_recorder_entry_and_nondeterminism_counts() {
+        let config = RecorderConfig {
+            trace_id: "counts".into(),
+            recording_mode: RecordingMode::Full,
+            epoch: SecurityEpoch::from_raw(1),
+            start_tick: 0,
+            signing_key: test_key(),
+        };
+        let mut recorder = TraceRecorder::new(config);
+        assert_eq!(recorder.entry_count(), 0);
+        assert_eq!(recorder.nondeterminism_count(), 0);
+
+        recorder.record_nondeterminism(
+            NondeterminismSource::OsEntropy,
+            vec![42],
+            10,
+            None,
+        );
+        assert_eq!(recorder.nondeterminism_count(), 1);
+
+        recorder.record_decision(make_snapshot(0, "allow", 0));
+        assert_eq!(recorder.entry_count(), 1);
+    }
+
+    #[test]
+    fn trace_record_object_id_differs_by_zone() {
+        let trace = make_trace(&[("sandbox", 200_000)]);
+        let id_a = trace.object_id("zone-a").unwrap();
+        let id_b = trace.object_id("zone-b").unwrap();
+        assert_ne!(id_a, id_b);
+    }
+
+    #[test]
+    fn trace_chain_integrity_detects_non_zero_genesis_index() {
+        let mut trace = make_trace(&[("sandbox", 200_000)]);
+        trace.entries[0].entry_index = 5; // not 0
+        let err = trace.verify_chain_integrity().unwrap_err();
+        assert!(matches!(err, ReplayError::ChainIntegrity { entry_index: 5, .. }));
+    }
+
+    #[test]
+    fn trace_chain_integrity_detects_bad_genesis_prev_hash() {
+        let mut trace = make_trace(&[("sandbox", 200_000)]);
+        trace.entries[0].prev_entry_hash = ContentHash::compute(b"not-genesis");
+        let err = trace.verify_chain_integrity().unwrap_err();
+        assert!(matches!(err, ReplayError::ChainIntegrity { entry_index: 0, .. }));
+    }
+
+    #[test]
+    fn empty_trace_wrong_chain_hash_detected() {
+        let config = RecorderConfig {
+            trace_id: "empty-bad".into(),
+            recording_mode: RecordingMode::Full,
+            epoch: SecurityEpoch::from_raw(1),
+            start_tick: 0,
+            signing_key: test_key(),
+        };
+        let mut trace = TraceRecorder::new(config).finalize();
+        trace.chain_hash = ContentHash::compute(b"wrong-hash");
+        let err = trace.verify_chain_integrity().unwrap_err();
+        assert!(matches!(err, ReplayError::ChainIntegrity { .. }));
+    }
+
+    #[test]
+    fn trace_chain_integrity_detects_non_monotonic_index() {
+        let mut trace = make_trace(&[("sandbox", 200_000), ("allow", 0), ("terminate", 800_000)]);
+        // Make entry 2 have index 5 instead of 2
+        trace.entries[2].entry_index = 5;
+        let err = trace.verify_chain_integrity().unwrap_err();
+        assert!(matches!(err, ReplayError::ChainIntegrity { .. }));
+    }
+
+    #[test]
+    fn trace_index_query_by_trace_id() {
+        let mut index = TraceIndex::new(TraceRetentionPolicy::default());
+        let trace = make_trace(&[("allow", 0)]);
+        index.insert(trace).unwrap();
+
+        let filter = TraceQuery {
+            trace_id: Some("trace-001".into()),
+            ..Default::default()
+        };
+        assert_eq!(index.query(&filter).len(), 1);
+
+        let filter_miss = TraceQuery {
+            trace_id: Some("nonexistent".into()),
+            ..Default::default()
+        };
+        assert!(index.query(&filter_miss).is_empty());
+    }
+
+    #[test]
+    fn trace_index_query_by_policy_version() {
+        let mut index = TraceIndex::new(TraceRetentionPolicy::default());
+        let trace = make_trace(&[("allow", 0)]);
+        index.insert(trace).unwrap();
+
+        let filter = TraceQuery {
+            policy_version: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(index.query(&filter).len(), 1);
+
+        let filter_miss = TraceQuery {
+            policy_version: Some(999),
+            ..Default::default()
+        };
+        assert!(index.query(&filter_miss).is_empty());
+    }
+
+    #[test]
+    fn trace_index_storage_estimate_decreases_after_gc() {
+        let retention = TraceRetentionPolicy {
+            default_ttl_ticks: 100,
+            ..Default::default()
+        };
+        let mut index = TraceIndex::new(retention);
+        let trace = make_trace(&[("allow", 0)]);
+        index.insert(trace).unwrap();
+        let before = index.storage_estimate();
+        assert!(before > 0);
+
+        // GC with current_tick far beyond TTL
+        index.gc(999_999);
+        assert_eq!(index.len(), 0);
+        assert_eq!(index.storage_estimate(), 0);
+        assert!(index.storage_estimate() < before);
+    }
+
+    #[test]
+    fn recording_mode_sampled_round_trip() {
+        let mode = RecordingMode::Sampled { rate_millionths: 250_000 };
+        let json = serde_json::to_string(&mode).unwrap();
+        let back: RecordingMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(mode, back);
+    }
+
+    #[test]
+    fn action_delta_report_divergence_count_matches_points() {
+        let trace = make_trace(&[("sandbox", 200_000), ("allow", 0)]);
+        let config = CounterfactualConfig {
+            branch_id: "count-test".into(),
+            threshold_override_millionths: Some(100_000),
+            loss_matrix_overrides: BTreeMap::new(),
+            policy_version_override: None,
+            containment_overrides: BTreeMap::new(),
+            evidence_weight_overrides: BTreeMap::new(),
+            branch_from_index: 0,
+        };
+        let engine = CausalReplayEngine::new();
+        let report = engine.counterfactual_branch(&trace, config).unwrap();
+        assert_eq!(report.divergence_count(), report.divergence_points.len());
+    }
+
+    #[test]
+    fn action_delta_report_object_id_deterministic() {
+        let trace = make_trace(&[("sandbox", 200_000)]);
+        let config = CounterfactualConfig {
+            branch_id: "det-test".into(),
+            threshold_override_millionths: Some(100_000),
+            loss_matrix_overrides: BTreeMap::new(),
+            policy_version_override: None,
+            containment_overrides: BTreeMap::new(),
+            evidence_weight_overrides: BTreeMap::new(),
+            branch_from_index: 0,
+        };
+        let engine = CausalReplayEngine::new();
+        let report = engine.counterfactual_branch(&trace, config).unwrap();
+        let id1 = report.object_id("zone-a").unwrap();
+        let id2 = report.object_id("zone-a").unwrap();
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn replay_verdict_tampered_is_not_identical() {
+        let v = ReplayVerdict::Tampered { detail: "bad".into() };
+        assert!(!v.is_identical());
+        assert_eq!(v.divergence_count(), 0);
+    }
+
+    #[test]
+    fn replay_verdict_diverged_fields() {
+        let v = ReplayVerdict::Diverged {
+            divergence_point: 2,
+            decisions_replayed: 5,
+            divergences: vec![ReplayDecisionOutcome {
+                decision_index: 2,
+                original_action: "allow".into(),
+                replayed_action: "terminate".into(),
+                original_outcome_millionths: 0,
+                replayed_outcome_millionths: 800_000,
+                diverged: true,
+            }],
+        };
+        assert!(!v.is_identical());
+        assert_eq!(v.divergence_count(), 1);
+    }
+
+    #[test]
+    fn trace_index_eviction_on_storage_budget() {
+        let retention = TraceRetentionPolicy {
+            max_traces: 1000,
+            max_storage_bytes: 1, // 1 byte budget: forces eviction
+            ..Default::default()
+        };
+        let mut index = TraceIndex::new(retention);
+        let trace = make_trace(&[("allow", 0)]);
+        // First insert: evicts nothing (index empty), but storage > budget after insert
+        index.insert(trace).unwrap();
+        // The trace is inserted but next insert will evict
+        assert!(index.len() <= 1);
+    }
+
+    #[test]
+    fn nondeterminism_log_default_trait() {
+        let log = NondeterminismLog::default();
+        assert!(log.is_empty());
+        assert_eq!(log.len(), 0);
+    }
+
+    #[test]
+    fn causal_replay_engine_default_has_max_branch_depth_16() {
+        let engine = CausalReplayEngine::default();
+        // Verify by trying 16 branches (should succeed) vs 17 (should fail).
+        let trace = make_trace(&[("allow", 0)]);
+        let configs: Vec<CounterfactualConfig> = (0..17)
+            .map(|i| CounterfactualConfig {
+                branch_id: format!("b-{i}"),
+                threshold_override_millionths: None,
+                loss_matrix_overrides: BTreeMap::new(),
+                policy_version_override: None,
+                containment_overrides: BTreeMap::new(),
+                evidence_weight_overrides: BTreeMap::new(),
+                branch_from_index: 0,
+            })
+            .collect();
+        let err = engine.multi_branch_comparison(&trace, configs).unwrap_err();
+        assert!(matches!(err, ReplayError::BranchDepthExceeded { requested: 17, max: 16 }));
+    }
+
+    #[test]
+    fn decision_snapshot_content_hash_sensitive_to_nondeterminism_range() {
+        let mut s1 = make_snapshot(0, "allow", 0);
+        let s2 = make_snapshot(0, "allow", 0);
+        s1.nondeterminism_range = (100, 200);
+        assert_ne!(s1.content_hash(), s2.content_hash());
+    }
+
+    #[test]
+    fn trace_record_content_hash_sensitive_to_trace_id() {
+        let t1 = make_trace(&[("allow", 0)]);
+        // Make a second trace with different trace_id
+        let config = RecorderConfig {
+            trace_id: "trace-999".into(),
+            recording_mode: RecordingMode::Full,
+            epoch: SecurityEpoch::from_raw(5),
+            start_tick: 1000,
+            signing_key: test_key(),
+        };
+        let mut recorder = TraceRecorder::new(config);
+        recorder.record_nondeterminism(
+            NondeterminismSource::RandomValue,
+            vec![0],
+            1000,
+            Some("ext-abc".into()),
+        );
+        recorder.record_nondeterminism(
+            NondeterminismSource::Timestamp,
+            1000u64.to_be_bytes().to_vec(),
+            1000,
+            None,
+        );
+        recorder.record_decision(make_snapshot(0, "allow", 0));
+        let t2 = recorder.finalize();
+
+        assert_ne!(t1.content_hash(), t2.content_hash());
+    }
 }

@@ -1939,4 +1939,307 @@ mod tests {
         }
         assert_eq!(displays.len(), 3);
     }
+
+    // -- Enrichment batch 4 --
+
+    #[test]
+    fn capability_as_str_matches_display() {
+        let c = cap("fs.read");
+        assert_eq!(c.as_str(), "fs.read");
+        assert_eq!(c.to_string(), "fs.read");
+    }
+
+    #[test]
+    fn policy_id_as_str_matches_display() {
+        let pid = PolicyId::new("policy-42");
+        assert_eq!(pid.as_str(), "policy-42");
+        assert_eq!(pid.to_string(), "policy-42");
+    }
+
+    #[test]
+    fn capability_ord_is_alphabetical() {
+        assert!(cap("alpha") < cap("beta"));
+        assert!(cap("beta") < cap("gamma"));
+    }
+
+    #[test]
+    fn policy_id_ord_is_alphabetical() {
+        assert!(PolicyId::new("a") < PolicyId::new("b"));
+    }
+
+    #[test]
+    fn merge_operator_serde_all_variants() {
+        for op in [
+            MergeOperator::Union,
+            MergeOperator::Intersection,
+            MergeOperator::Attenuation,
+            MergeOperator::Precedence,
+        ] {
+            let json = serde_json::to_string(&op).unwrap();
+            let back: MergeOperator = serde_json::from_str(&json).unwrap();
+            assert_eq!(op, back);
+        }
+    }
+
+    #[test]
+    fn formal_property_serde_all_variants() {
+        for fp in [
+            FormalProperty::Monotonicity,
+            FormalProperty::NonInterference,
+            FormalProperty::AttenuationLegality,
+            FormalProperty::MergeDeterminism,
+            FormalProperty::PrecedenceStability,
+        ] {
+            let json = serde_json::to_string(&fp).unwrap();
+            let back: FormalProperty = serde_json::from_str(&json).unwrap();
+            assert_eq!(fp, back);
+        }
+    }
+
+    #[test]
+    fn diagnostic_severity_serde_all_variants() {
+        for s in [
+            DiagnosticSeverity::Warning,
+            DiagnosticSeverity::Error,
+            DiagnosticSeverity::Fatal,
+        ] {
+            let json = serde_json::to_string(&s).unwrap();
+            let back: DiagnosticSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(s, back);
+        }
+    }
+
+    #[test]
+    fn compiler_error_serde_all_variants() {
+        let errs = vec![
+            CompilerError::EmptyPolicy { policy_id: PolicyId::new("p") },
+            CompilerError::PolicyTooLarge {
+                policy_id: PolicyId::new("p"),
+                node_count: 100,
+                max_nodes: 50,
+            },
+            CompilerError::HookFailed {
+                hook_name: "test".into(),
+                diagnostics: vec![],
+            },
+        ];
+        for err in &errs {
+            let json = serde_json::to_string(err).unwrap();
+            let back: CompilerError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    #[test]
+    fn granted_capabilities_deduplicates() {
+        let ir = PolicyIr {
+            nodes: vec![
+                simple_node("n1", MergeOperator::Intersection, vec![grant("ext-A", "fs.read", "z1")]),
+                simple_node("n2", MergeOperator::Intersection, vec![grant("ext-B", "fs.read", "z2")]),
+            ],
+            ..valid_policy()
+        };
+        let caps = ir.granted_capabilities();
+        // fs.read appears twice but should be deduplicated
+        assert_eq!(caps.len(), 1);
+        assert!(caps.contains(&cap("fs.read")));
+    }
+
+    #[test]
+    fn subjects_deduplicates() {
+        let ir = PolicyIr {
+            nodes: vec![
+                simple_node("n1", MergeOperator::Intersection, vec![grant("ext-A", "fs.read", "z1")]),
+                simple_node("n2", MergeOperator::Intersection, vec![grant("ext-A", "net.egress", "z2")]),
+            ],
+            ..valid_policy()
+        };
+        let subjects = ir.subjects();
+        assert_eq!(subjects.len(), 1);
+        assert!(subjects.contains("ext-A"));
+    }
+
+    #[test]
+    fn compile_all_passed_true_when_valid() {
+        let compiler = PolicyTheoremCompiler::new();
+        let result = compiler.compile(&valid_policy()).unwrap();
+        assert!(result.all_passed);
+        assert!(result.counterexamples.is_empty());
+        assert!(!result.witnesses.is_empty());
+    }
+
+    #[test]
+    fn compile_all_passed_false_when_violation() {
+        let compiler = PolicyTheoremCompiler::new();
+        let ir = PolicyIr {
+            nodes: vec![simple_node(
+                "n1",
+                MergeOperator::Union,
+                vec![grant("ext-A", "fs.read", "z1")],
+            )],
+            ..valid_policy()
+        };
+        let result = compiler.compile(&ir).unwrap();
+        assert!(!result.all_passed);
+        assert!(!result.counterexamples.is_empty());
+    }
+
+    #[test]
+    fn runtime_check_detects_monotonicity_violation() {
+        let compiler = PolicyTheoremCompiler::new();
+        let mut hooks = MachineCheckHooks::new(compiler);
+        let ir = PolicyIr {
+            nodes: vec![simple_node(
+                "n1",
+                MergeOperator::Union,
+                vec![grant("ext-A", "fs.read", "z1")],
+            )],
+            ..valid_policy()
+        };
+        let result = hooks.runtime_check(&ir).unwrap();
+        assert!(!result.passed);
+        assert!(result.diagnostics.iter().any(|d| d.property_violated == FormalProperty::Monotonicity));
+        assert!(result.diagnostics.iter().any(|d| d.severity == DiagnosticSeverity::Fatal));
+    }
+
+    #[test]
+    fn pre_deployment_check_detects_all_violations() {
+        let compiler = PolicyTheoremCompiler::new();
+        let mut hooks = MachineCheckHooks::new(compiler);
+        let ir = PolicyIr {
+            nodes: vec![simple_node(
+                "n1",
+                MergeOperator::Union,
+                vec![grant("ext-A", "fs.read", "z1")],
+            )],
+            ..valid_policy()
+        };
+        let result = hooks.pre_deployment_check(&ir).unwrap();
+        assert!(!result.passed);
+    }
+
+    #[test]
+    fn constraint_all_variants_serde() {
+        let constraints = vec![
+            Constraint::Invariant("always".into()),
+            Constraint::Precondition("before".into()),
+            Constraint::Postcondition("after".into()),
+            Constraint::NonInterferenceClaim {
+                domain_a: "a".into(),
+                domain_b: "b".into(),
+            },
+        ];
+        for c in &constraints {
+            let json = serde_json::to_string(c).unwrap();
+            let back: Constraint = serde_json::from_str(&json).unwrap();
+            assert_eq!(*c, back);
+        }
+    }
+
+    #[test]
+    fn policy_ir_node_with_decision_point_serde() {
+        let node = PolicyIrNode {
+            node_id: "dp-node".into(),
+            grants: vec![grant("ext-A", "fs.read", "z1")],
+            merge_op: MergeOperator::Intersection,
+            property_claims: BTreeSet::new(),
+            constraints: vec![Constraint::Invariant("always".into())],
+            decision_point: Some(DecisionPoint {
+                threshold: 3,
+                action_map: {
+                    let mut m = BTreeMap::new();
+                    m.insert("high".into(), "sandbox".into());
+                    m
+                },
+                fallback: "allow".into(),
+            }),
+            priority: 5,
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        let back: PolicyIrNode = serde_json::from_str(&json).unwrap();
+        assert_eq!(node, back);
+    }
+
+    #[test]
+    fn receipt_verify_valid_signature() {
+        let compiler = PolicyTheoremCompiler::new();
+        let ir = valid_policy();
+        let result = compiler.compile(&ir).unwrap();
+
+        let sk = SigningKey::from_bytes([42u8; 32]);
+        let vk = sk.verification_key();
+        let mut receipt = PolicyValidationReceipt::from_compilation(
+            &result,
+            [0u8; 32],
+            SecurityEpoch::from_raw(1),
+            1000,
+            &vk,
+        );
+        receipt.sign(&sk);
+        assert!(receipt.verify());
+    }
+
+    #[test]
+    fn receipt_properties_match_compilation_witnesses() {
+        let compiler = PolicyTheoremCompiler::new();
+        let ir = valid_policy();
+        let result = compiler.compile(&ir).unwrap();
+
+        let sk = SigningKey::from_bytes([42u8; 32]);
+        let vk = sk.verification_key();
+        let receipt = PolicyValidationReceipt::from_compilation(
+            &result,
+            [0u8; 32],
+            SecurityEpoch::from_raw(1),
+            1000,
+            &vk,
+        );
+        assert_eq!(receipt.witness_count, result.witnesses.len() as u32);
+        assert_eq!(
+            receipt.properties_verified,
+            result.witnesses.iter().map(|w| w.property).collect::<BTreeSet<_>>()
+        );
+    }
+
+    #[test]
+    fn merge_operator_display_all_unique() {
+        let displays: BTreeSet<String> = [
+            MergeOperator::Union,
+            MergeOperator::Intersection,
+            MergeOperator::Attenuation,
+            MergeOperator::Precedence,
+        ]
+        .iter()
+        .map(|m| m.to_string())
+        .collect();
+        assert_eq!(displays.len(), 4);
+    }
+
+    #[test]
+    fn formal_property_display_all_unique() {
+        let displays: BTreeSet<String> = [
+            FormalProperty::Monotonicity,
+            FormalProperty::NonInterference,
+            FormalProperty::AttenuationLegality,
+            FormalProperty::MergeDeterminism,
+            FormalProperty::PrecedenceStability,
+        ]
+        .iter()
+        .map(|fp| fp.to_string())
+        .collect();
+        assert_eq!(displays.len(), 5);
+    }
+
+    #[test]
+    fn hook_history_tracks_across_multiple_hooks() {
+        let compiler = PolicyTheoremCompiler::new();
+        let mut hooks = MachineCheckHooks::new(compiler);
+        let ir = valid_policy();
+
+        hooks.runtime_check(&ir).unwrap();
+        hooks.pre_deployment_check(&ir).unwrap();
+        assert_eq!(hooks.hook_history().len(), 2);
+        assert_eq!(hooks.hook_history()[0].hook_name, "runtime");
+        assert_eq!(hooks.hook_history()[1].hook_name, "pre-deployment");
+    }
 }

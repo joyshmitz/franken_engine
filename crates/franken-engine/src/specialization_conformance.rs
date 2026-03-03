@@ -2868,4 +2868,472 @@ mod tests {
                 .starts_with("failure:")
         );
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn transformation_type_display_all_4_variants() {
+        let expected = [
+            (TransformationType::HostcallDispatchElision, "hostcall_dispatch_elision"),
+            (TransformationType::LabelCheckElision, "label_check_elision"),
+            (TransformationType::PathRemoval, "path_removal"),
+            (TransformationType::SuperinstructionFusion, "superinstruction_fusion"),
+        ];
+        for (tt, label) in expected {
+            assert_eq!(tt.to_string(), label);
+        }
+    }
+
+    #[test]
+    fn conformance_error_display_exact_formats() {
+        assert_eq!(
+            ConformanceError::InsufficientCorpus {
+                specialization_id: "s1".into(),
+                category: CorpusCategory::EdgeCase,
+                required: 10,
+                found: 3,
+            }
+            .to_string(),
+            "insufficient corpus for s1/edge_case: need 10, found 3"
+        );
+        assert_eq!(
+            ConformanceError::SpecializationNotFound {
+                specialization_id: "s2".into(),
+            }
+            .to_string(),
+            "specialization not found: s2"
+        );
+        assert_eq!(
+            ConformanceError::MissingCorpus {
+                specialization_id: "s3".into(),
+            }
+            .to_string(),
+            "missing test corpus for: s3"
+        );
+        assert_eq!(
+            ConformanceError::ExecutionError {
+                message: "timeout".into(),
+            }
+            .to_string(),
+            "execution error: timeout"
+        );
+        assert_eq!(
+            ConformanceError::ReceiptInvalid {
+                receipt_id: "r1".into(),
+                reasons: vec!["a".into(), "b".into()],
+            }
+            .to_string(),
+            "receipt invalid for r1: a; b"
+        );
+    }
+
+    #[test]
+    fn evidence_artifact_is_passed_accessor() {
+        let engine = SpecializationConformanceEngine::new("p", test_epoch());
+        let artifact = engine.produce_evidence("r1", ContentHash::compute(b"reg"), "env", 1000);
+        assert!(artifact.is_passed());
+        assert_eq!(artifact.failed_specialization_count(), 0);
+    }
+
+    #[test]
+    fn per_specialization_verdict_not_passed() {
+        let v = PerSpecializationVerdict {
+            specialization_id: test_id("spec-fail"),
+            parity_workloads_run: 30,
+            edge_case_workloads_run: 10,
+            epoch_transition_workloads_run: 5,
+            divergence_count: 2,
+            fallback_failures: 1,
+            receipt_validation: ReceiptValidationResult {
+                receipt_id: test_id("rcpt-fail"),
+                well_formed: false,
+                equivalence_hash_matches: false,
+                rollback_validated: false,
+                proof_inputs_consistent: false,
+                schema_version: ReceiptSchemaVersion::CURRENT,
+                valid: false,
+                failure_reasons: vec!["broken".to_string()],
+            },
+            passed: false,
+        };
+        assert!(!v.is_passed());
+        assert!(v.corpus_coverage_sufficient());
+    }
+
+    #[test]
+    fn corpus_coverage_borderline_one_below() {
+        let v = PerSpecializationVerdict {
+            specialization_id: test_id("spec-border"),
+            parity_workloads_run: 29, // one below 30
+            edge_case_workloads_run: 10,
+            epoch_transition_workloads_run: 5,
+            divergence_count: 0,
+            fallback_failures: 0,
+            receipt_validation: ReceiptValidationResult {
+                receipt_id: test_id("rcpt-border"),
+                well_formed: true,
+                equivalence_hash_matches: true,
+                rollback_validated: true,
+                proof_inputs_consistent: true,
+                schema_version: ReceiptSchemaVersion::CURRENT,
+                valid: true,
+                failure_reasons: vec![],
+            },
+            passed: true,
+        };
+        assert!(!v.corpus_coverage_sufficient());
+    }
+
+    #[test]
+    fn validate_receipt_valid() {
+        use crate::proof_specialization_receipt::{
+            EquivalenceEvidence, EquivalenceMethod, RollbackToken, SpecializationReceipt,
+            TransformationWitness,
+        };
+
+        let equiv_hash = ContentHash::compute(b"equiv-evidence");
+        let receipt = SpecializationReceipt {
+            receipt_id: test_id("rcpt-valid"),
+            schema_version: ReceiptSchemaVersion::CURRENT,
+            proof_inputs: vec![test_proof_input("valid")],
+            optimization_class: OptimizationClass::HostcallDispatchSpecialization,
+            transformation_witness: TransformationWitness {
+                description: "elide hostcall".to_string(),
+                before_ir_digest: ContentHash::compute(b"before"),
+                after_ir_digest: ContentHash::compute(b"after"),
+            },
+            equivalence_evidence: EquivalenceEvidence {
+                method: EquivalenceMethod::DifferentialTesting,
+                differential_test_hashes: vec![equiv_hash.clone()],
+                test_count: 100,
+                pass_rate_millionths: 1_000_000,
+            },
+            rollback_token: RollbackToken {
+                baseline_hash: ContentHash::compute(b"baseline"),
+                rollback_procedure_hash: ContentHash::compute(b"rollback"),
+                validated: true,
+            },
+            validity_epoch: test_epoch(),
+            fallback_path: "baseline/path".to_string(),
+            performance_delta: crate::proof_specialization_receipt::PerformanceDelta {
+                latency_reduction_millionths: 200_000,
+                throughput_increase_millionths: 100_000,
+                sample_count: 50,
+            },
+            timestamp_ns: 1_000_000,
+            signature: crate::signature_preimage::Signature::from_bytes(crate::signature_preimage::SIGNATURE_SENTINEL),
+            metadata: BTreeMap::new(),
+        };
+
+        let engine = SpecializationConformanceEngine::new("p", test_epoch());
+        let result = engine.validate_receipt(&receipt, &equiv_hash);
+        assert!(result.is_valid());
+        assert!(result.well_formed);
+        assert!(result.equivalence_hash_matches);
+        assert!(result.rollback_validated);
+        assert!(result.proof_inputs_consistent);
+        assert!(result.failure_reasons.is_empty());
+    }
+
+    #[test]
+    fn validate_receipt_empty_proof_inputs() {
+        use crate::proof_specialization_receipt::{
+            EquivalenceEvidence, EquivalenceMethod, RollbackToken, SpecializationReceipt,
+            TransformationWitness,
+        };
+
+        let equiv_hash = ContentHash::compute(b"equiv");
+        let receipt = SpecializationReceipt {
+            receipt_id: test_id("rcpt-empty-proofs"),
+            schema_version: ReceiptSchemaVersion::CURRENT,
+            proof_inputs: vec![], // empty!
+            optimization_class: OptimizationClass::PathElimination,
+            transformation_witness: TransformationWitness {
+                description: "remove path".to_string(),
+                before_ir_digest: ContentHash::compute(b"b"),
+                after_ir_digest: ContentHash::compute(b"a"),
+            },
+            equivalence_evidence: EquivalenceEvidence {
+                method: EquivalenceMethod::DifferentialTesting,
+                differential_test_hashes: vec![equiv_hash.clone()],
+                test_count: 50,
+                pass_rate_millionths: 1_000_000,
+            },
+            rollback_token: RollbackToken {
+                baseline_hash: ContentHash::compute(b"bl"),
+                rollback_procedure_hash: ContentHash::compute(b"rb"),
+                validated: true,
+            },
+            validity_epoch: test_epoch(),
+            fallback_path: "baseline".to_string(),
+            performance_delta: crate::proof_specialization_receipt::PerformanceDelta {
+                latency_reduction_millionths: 200_000,
+                throughput_increase_millionths: 100_000,
+                sample_count: 50,
+            },
+            timestamp_ns: 1_000_000,
+            signature: crate::signature_preimage::Signature::from_bytes(crate::signature_preimage::SIGNATURE_SENTINEL),
+            metadata: BTreeMap::new(),
+        };
+
+        let engine = SpecializationConformanceEngine::new("p", test_epoch());
+        let result = engine.validate_receipt(&receipt, &equiv_hash);
+        assert!(!result.is_valid());
+        assert!(!result.well_formed);
+        assert!(result.failure_reasons.iter().any(|r| r.contains("empty proof inputs")));
+    }
+
+    #[test]
+    fn validate_receipt_epoch_mismatch() {
+        use crate::proof_specialization_receipt::{
+            EquivalenceEvidence, EquivalenceMethod, RollbackToken, SpecializationReceipt,
+            TransformationWitness,
+        };
+
+        let equiv_hash = ContentHash::compute(b"equiv");
+        let receipt = SpecializationReceipt {
+            receipt_id: test_id("rcpt-epoch"),
+            schema_version: ReceiptSchemaVersion::CURRENT,
+            proof_inputs: vec![test_proof_input("ep")],
+            optimization_class: OptimizationClass::IfcCheckElision,
+            transformation_witness: TransformationWitness {
+                description: "elide check".to_string(),
+                before_ir_digest: ContentHash::compute(b"b"),
+                after_ir_digest: ContentHash::compute(b"a"),
+            },
+            equivalence_evidence: EquivalenceEvidence {
+                method: EquivalenceMethod::DifferentialTesting,
+                differential_test_hashes: vec![equiv_hash.clone()],
+                test_count: 50,
+                pass_rate_millionths: 1_000_000,
+            },
+            rollback_token: RollbackToken {
+                baseline_hash: ContentHash::compute(b"bl"),
+                rollback_procedure_hash: ContentHash::compute(b"rb"),
+                validated: true,
+            },
+            validity_epoch: SecurityEpoch::from_raw(999), // mismatch with engine epoch=10
+            fallback_path: "baseline".to_string(),
+            performance_delta: crate::proof_specialization_receipt::PerformanceDelta {
+                latency_reduction_millionths: 200_000,
+                throughput_increase_millionths: 100_000,
+                sample_count: 50,
+            },
+            timestamp_ns: 1_000_000,
+            signature: crate::signature_preimage::Signature::from_bytes(crate::signature_preimage::SIGNATURE_SENTINEL),
+            metadata: BTreeMap::new(),
+        };
+
+        let engine = SpecializationConformanceEngine::new("p", test_epoch());
+        let result = engine.validate_receipt(&receipt, &equiv_hash);
+        assert!(!result.is_valid());
+        assert!(result.failure_reasons.iter().any(|r| r.contains("epoch mismatch")));
+    }
+
+    #[test]
+    fn validate_receipt_hash_mismatch() {
+        use crate::proof_specialization_receipt::{
+            EquivalenceEvidence, EquivalenceMethod, RollbackToken, SpecializationReceipt,
+            TransformationWitness,
+        };
+
+        let receipt = SpecializationReceipt {
+            receipt_id: test_id("rcpt-hash"),
+            schema_version: ReceiptSchemaVersion::CURRENT,
+            proof_inputs: vec![test_proof_input("hm")],
+            optimization_class: OptimizationClass::SuperinstructionFusion,
+            transformation_witness: TransformationWitness {
+                description: "fuse".to_string(),
+                before_ir_digest: ContentHash::compute(b"b"),
+                after_ir_digest: ContentHash::compute(b"a"),
+            },
+            equivalence_evidence: EquivalenceEvidence {
+                method: EquivalenceMethod::DifferentialTesting,
+                differential_test_hashes: vec![ContentHash::compute(b"stored-hash")],
+                test_count: 50,
+                pass_rate_millionths: 1_000_000,
+            },
+            rollback_token: RollbackToken {
+                baseline_hash: ContentHash::compute(b"bl"),
+                rollback_procedure_hash: ContentHash::compute(b"rb"),
+                validated: true,
+            },
+            validity_epoch: test_epoch(),
+            fallback_path: "baseline".to_string(),
+            performance_delta: crate::proof_specialization_receipt::PerformanceDelta {
+                latency_reduction_millionths: 200_000,
+                throughput_increase_millionths: 100_000,
+                sample_count: 50,
+            },
+            timestamp_ns: 1_000_000,
+            signature: crate::signature_preimage::Signature::from_bytes(crate::signature_preimage::SIGNATURE_SENTINEL),
+            metadata: BTreeMap::new(),
+        };
+
+        let wrong_hash = ContentHash::compute(b"different-hash");
+        let engine = SpecializationConformanceEngine::new("p", test_epoch());
+        let result = engine.validate_receipt(&receipt, &wrong_hash);
+        assert!(!result.is_valid());
+        assert!(result.failure_reasons.iter().any(|r| r.contains("equivalence evidence hash mismatch")));
+    }
+
+    #[test]
+    fn validate_receipt_rollback_not_validated() {
+        use crate::proof_specialization_receipt::{
+            EquivalenceEvidence, EquivalenceMethod, RollbackToken, SpecializationReceipt,
+            TransformationWitness,
+        };
+
+        let equiv_hash = ContentHash::compute(b"equiv");
+        let receipt = SpecializationReceipt {
+            receipt_id: test_id("rcpt-rb"),
+            schema_version: ReceiptSchemaVersion::CURRENT,
+            proof_inputs: vec![test_proof_input("rb")],
+            optimization_class: OptimizationClass::PathElimination,
+            transformation_witness: TransformationWitness {
+                description: "remove".to_string(),
+                before_ir_digest: ContentHash::compute(b"b"),
+                after_ir_digest: ContentHash::compute(b"a"),
+            },
+            equivalence_evidence: EquivalenceEvidence {
+                method: EquivalenceMethod::DifferentialTesting,
+                differential_test_hashes: vec![equiv_hash.clone()],
+                test_count: 50,
+                pass_rate_millionths: 1_000_000,
+            },
+            rollback_token: RollbackToken {
+                baseline_hash: ContentHash::compute(b"bl"),
+                rollback_procedure_hash: ContentHash::compute(b"rb"),
+                validated: false, // not validated!
+            },
+            validity_epoch: test_epoch(),
+            fallback_path: "baseline".to_string(),
+            performance_delta: crate::proof_specialization_receipt::PerformanceDelta {
+                latency_reduction_millionths: 200_000,
+                throughput_increase_millionths: 100_000,
+                sample_count: 50,
+            },
+            timestamp_ns: 1_000_000,
+            signature: crate::signature_preimage::Signature::from_bytes(crate::signature_preimage::SIGNATURE_SENTINEL),
+            metadata: BTreeMap::new(),
+        };
+
+        let engine = SpecializationConformanceEngine::new("p", test_epoch());
+        let result = engine.validate_receipt(&receipt, &equiv_hash);
+        assert!(!result.is_valid());
+        assert!(result.failure_reasons.iter().any(|r| r.contains("rollback token not validated")));
+    }
+
+    #[test]
+    fn multiple_epoch_transitions_in_sequence() {
+        let mut engine = SpecializationConformanceEngine::new("p", SecurityEpoch::from_raw(1));
+        let entry = make_inventory_entry("seq");
+        engine.register_specialization(entry);
+
+        // First transition: 1 -> 2
+        let sim1 = EpochTransitionSimulation {
+            old_epoch: SecurityEpoch::from_raw(1),
+            new_epoch: SecurityEpoch::from_raw(2),
+            invalidated_specialization_ids: vec![],
+            proof_revoked: false,
+            transition_timestamp_ns: 1000,
+        };
+        engine.simulate_epoch_transition(&sim1);
+        assert_eq!(engine.current_epoch(), SecurityEpoch::from_raw(2));
+
+        // Second transition: 2 -> 3
+        let sim2 = EpochTransitionSimulation {
+            old_epoch: SecurityEpoch::from_raw(2),
+            new_epoch: SecurityEpoch::from_raw(3),
+            invalidated_specialization_ids: vec![],
+            proof_revoked: false,
+            transition_timestamp_ns: 2000,
+        };
+        engine.simulate_epoch_transition(&sim2);
+        assert_eq!(engine.current_epoch(), SecurityEpoch::from_raw(3));
+    }
+
+    #[test]
+    fn invalidation_evidence_multiple_specs() {
+        let mut engine = SpecializationConformanceEngine::new("p", test_epoch());
+        let entry_a = make_inventory_entry("multi-a");
+        let id_a = entry_a.specialization_id.clone();
+        engine.register_specialization(entry_a);
+        let entry_b = make_inventory_entry("multi-b");
+        let id_b = entry_b.specialization_id.clone();
+        engine.register_specialization(entry_b);
+
+        let simulation = EpochTransitionSimulation {
+            old_epoch: test_epoch(),
+            new_epoch: SecurityEpoch::from_raw(11),
+            invalidated_specialization_ids: vec![id_a.clone(), id_b.clone()],
+            proof_revoked: true,
+            transition_timestamp_ns: 5000,
+        };
+
+        let evidence = engine.simulate_epoch_transition(&simulation);
+        assert_eq!(evidence.len(), 2);
+        assert_eq!(evidence[0].specialization_id, id_a);
+        assert_eq!(evidence[1].specialization_id, id_b);
+        assert!(evidence.iter().all(|e| e.invalidation_reason == "proof_revoked"));
+        assert!(evidence.iter().all(|e| e.fallback_outcome.is_success()));
+    }
+
+    #[test]
+    fn compare_outcomes_return_divergence_takes_priority() {
+        // When both return_value and side_effect_trace differ,
+        // return_value divergence should be reported (first check wins)
+        let mut engine = SpecializationConformanceEngine::new("p", test_epoch());
+        let spec_id = test_id("spec-priority");
+        let specialized = WorkloadOutcome {
+            return_value: "100".to_string(),
+            side_effect_trace: vec![SideEffect {
+                effect_type: "a".to_string(),
+                description: "x".to_string(),
+                sequence: 0,
+            }],
+            exceptions: vec![],
+            evidence_entries: vec![],
+        };
+        let unspecialized = WorkloadOutcome {
+            return_value: "200".to_string(),
+            side_effect_trace: vec![], // also different
+            exceptions: vec!["err".to_string()], // also different
+            evidence_entries: vec!["ev".to_string()], // also different
+        };
+
+        let result = engine.compare_outcomes(&CompareOutcomesInput {
+            specialization_id: &spec_id,
+            workload_id: "w-prio",
+            category: CorpusCategory::SemanticParity,
+            specialized: &specialized,
+            unspecialized: &unspecialized,
+            specialized_duration_us: 50,
+            unspecialized_duration_us: 50,
+            epoch_transition_tested: false,
+            fallback_outcome: None,
+            receipt_valid: true,
+        });
+
+        assert!(result.outcome.is_diverge());
+        let detail = result.divergence_detail.as_ref().unwrap();
+        // ReturnValue check fires first
+        assert_eq!(detail.divergence_kind, DivergenceKind::ReturnValue);
+    }
+
+    #[test]
+    fn performance_delta_large_speedup() {
+        // 10us specialized vs 1000us unspecialized = 99% speedup
+        let delta = SpecializationConformanceEngine::compute_performance_delta(10, 1000);
+        assert_eq!(delta.speedup_millionths, 990_000); // 99%
+    }
+
+    #[test]
+    fn engine_inventory_accessor() {
+        let mut engine = SpecializationConformanceEngine::new("p", test_epoch());
+        let entry = make_inventory_entry("inv-acc");
+        let key = format!("{}", entry.specialization_id);
+        engine.register_specialization(entry);
+        assert!(engine.inventory().contains_key(&key));
+    }
 }

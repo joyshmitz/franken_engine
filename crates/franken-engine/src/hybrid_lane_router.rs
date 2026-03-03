@@ -1843,4 +1843,179 @@ mod tests {
         let back: ConformalConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(config, back);
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn compute_reward_zero_baseline_no_panic() {
+        let obs = LaneObservation {
+            lane: LaneChoice::Js,
+            latency_us: 1000,
+            success: true,
+            dom_ops: 100,
+            signals_evaluated: 50,
+            safe_mode_entered: false,
+            compatibility_errors: 0,
+        };
+        let r = compute_reward(&obs, 0);
+        assert!(r >= 0 && r <= MILLION);
+    }
+
+    #[test]
+    fn risk_accumulator_default_matches_new() {
+        let a = RiskAccumulator::default();
+        let b = RiskAccumulator::new();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn adaptive_weights_default_matches_new() {
+        let a = AdaptiveWeights::default();
+        let b = AdaptiveWeights::new();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn change_point_non_positive_threshold_triggers_after_min_obs() {
+        let mut m = ChangePointMonitor::new(ChangePointConfig {
+            threshold_millionths: 0,
+            drift_millionths: 0,
+            min_observations: 5,
+        });
+        for _ in 0..4 {
+            m.observe(500_000);
+        }
+        assert!(!m.is_triggered()); // below min_observations
+        m.observe(500_000);
+        assert!(m.is_triggered()); // at min_observations with non-positive threshold
+    }
+
+    #[test]
+    fn conformal_window_eviction() {
+        let mut cs = ConformalState::new(ConformalConfig {
+            target_coverage_millionths: 500_000,
+            min_observations: 1,
+            window_size: 3,
+        });
+        cs.observe(true);
+        cs.observe(true);
+        cs.observe(true);
+        assert_eq!(cs.window.len(), 3);
+        cs.observe(false); // evicts oldest
+        assert_eq!(cs.window.len(), 3);
+        // Window is now [true, true, false] = 2/3 ~ 666666
+        assert!(cs.coverage_millionths() > 600_000);
+    }
+
+    #[test]
+    fn router_consecutive_conservative_rounds_tracks() {
+        let mut router = HybridLaneRouter::with_defaults();
+        let obs = good_observation(LaneChoice::Js);
+        router.observe(LaneChoice::Js, &obs, None);
+        router.observe(LaneChoice::Js, &obs, None);
+        assert_eq!(router.consecutive_conservative_rounds, 2);
+
+        // Promote and observe — counter resets
+        router.promote_to_adaptive().unwrap();
+        router.observe(LaneChoice::Js, &obs, None);
+        assert_eq!(router.consecutive_conservative_rounds, 0);
+    }
+
+    #[test]
+    fn change_point_config_serde_roundtrip() {
+        let config = ChangePointConfig::default_config();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: ChangePointConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, back);
+    }
+
+    #[test]
+    fn change_point_monitor_serde_roundtrip() {
+        let mut m = ChangePointMonitor::new(ChangePointConfig::default_config());
+        m.observe(500_000);
+        m.observe(600_000);
+        let json = serde_json::to_string(&m).unwrap();
+        let back: ChangePointMonitor = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, back);
+    }
+
+    #[test]
+    fn risk_accumulator_serde_roundtrip() {
+        let mut ra = RiskAccumulator::new();
+        let obs = good_observation(LaneChoice::Js);
+        ra.record(&obs, 800_000);
+        let json = serde_json::to_string(&ra).unwrap();
+        let back: RiskAccumulator = serde_json::from_str(&json).unwrap();
+        assert_eq!(ra, back);
+    }
+
+    #[test]
+    fn adaptive_weights_serde_roundtrip() {
+        let mut w = AdaptiveWeights::new();
+        w.update(LaneChoice::Wasm, 500_000);
+        let json = serde_json::to_string(&w).unwrap();
+        let back: AdaptiveWeights = serde_json::from_str(&json).unwrap();
+        assert_eq!(w, back);
+    }
+
+    #[test]
+    fn router_summary_serde_roundtrip() {
+        let mut router = HybridLaneRouter::with_defaults();
+        let obs = good_observation(LaneChoice::Js);
+        router.observe(LaneChoice::Js, &obs, None);
+        let summary = router.summary();
+        let json = serde_json::to_string(&summary).unwrap();
+        let back: RouterSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, back);
+    }
+
+    #[test]
+    fn routing_decision_trace_serde_roundtrip() {
+        let trace = RoutingDecisionTrace {
+            round: 42,
+            policy: RoutingPolicy::Adaptive,
+            chosen_lane: LaneChoice::Wasm,
+            rejected_lanes: vec![LaneChoice::Js],
+            probabilities_millionths: vec![400_000, 600_000],
+            random_draw_millionths: Some(550_000),
+            reward_millionths: Some(800_000),
+            cumulative_regret_millionths: 100_000,
+            p99_latency_us: 5000,
+            compatibility_errors: 0,
+            conformal_coverage_millionths: 950_000,
+            cusum_stat_millionths: 300_000,
+            demotion_reason: None,
+        };
+        let json = serde_json::to_string(&trace).unwrap();
+        let back: RoutingDecisionTrace = serde_json::from_str(&json).unwrap();
+        assert_eq!(trace, back);
+    }
+
+    #[test]
+    fn router_error_serde_all_variants() {
+        for err in [
+            RouterError::AlreadyConservative,
+            RouterError::InvalidRandomDraw { value: -1 },
+            RouterError::InvalidConfig { reason: "bad".into() },
+        ] {
+            let json = serde_json::to_string(&err).unwrap();
+            let back: RouterError = serde_json::from_str(&json).unwrap();
+            assert_eq!(err, back);
+        }
+    }
+
+    #[test]
+    fn risk_accumulator_latencies_window_caps_at_1000() {
+        let mut ra = RiskAccumulator::new();
+        let obs = good_observation(LaneChoice::Js);
+        for _ in 0..1050 {
+            ra.record(&obs, 500_000);
+        }
+        assert!(ra.latencies_us.len() <= 1000);
+    }
+
+    #[test]
+    fn routing_policy_ord_conservative_before_adaptive() {
+        assert!(RoutingPolicy::Conservative < RoutingPolicy::Adaptive);
+    }
 }

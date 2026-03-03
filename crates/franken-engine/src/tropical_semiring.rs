@@ -1831,4 +1831,302 @@ mod tests {
         let dyn_err: &dyn std::error::Error = &err;
         assert!(!dyn_err.to_string().is_empty());
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    #[should_panic(expected = "use TropicalWeight::INFINITY")]
+    fn finite_panics_on_i64_max() {
+        let _ = TropicalWeight::finite(i64::MAX);
+    }
+
+    #[test]
+    fn is_finite_and_is_infinite_are_complementary() {
+        let finite = TropicalWeight::finite(0);
+        assert!(finite.is_finite());
+        assert!(!finite.is_infinite());
+        let inf = TropicalWeight::INFINITY;
+        assert!(inf.is_infinite());
+        assert!(!inf.is_finite());
+    }
+
+    #[test]
+    fn tropical_weight_ord_respects_inner_value() {
+        let a = TropicalWeight::finite(-10);
+        let b = TropicalWeight::ZERO;
+        let c = TropicalWeight::finite(10);
+        let d = TropicalWeight::INFINITY;
+        assert!(a < b);
+        assert!(b < c);
+        assert!(c < d);
+    }
+
+    #[test]
+    fn tropical_mul_saturates_large_finite_values() {
+        // Two large positive values should saturate to i64::MAX (= INFINITY)
+        let a = TropicalWeight::finite(i64::MAX / 2 + 1);
+        let b = TropicalWeight::finite(i64::MAX / 2 + 1);
+        let result = a.tropical_mul(b);
+        assert!(result.is_infinite());
+    }
+
+    #[test]
+    fn tropical_mul_negative_values() {
+        let a = TropicalWeight::finite(-3);
+        let b = TropicalWeight::finite(-5);
+        // In tropical mul (= addition): -3 + (-5) = -8
+        assert_eq!(a.tropical_mul(b), TropicalWeight::finite(-8));
+    }
+
+    #[test]
+    fn tropical_weight_display_zero_and_negative() {
+        assert_eq!(format!("{}", TropicalWeight::ZERO), "0");
+        assert_eq!(format!("{}", TropicalWeight::finite(-7)), "-7");
+    }
+
+    #[test]
+    fn tropical_schema_version_stable() {
+        assert_eq!(TROPICAL_SCHEMA_VERSION, "franken-engine.tropical-semiring.v1");
+    }
+
+    #[test]
+    fn matrix_identity_has_zero_diagonal_infinity_off() {
+        let id = TropicalMatrix::identity(3).unwrap();
+        for i in 0..3 {
+            assert_eq!(id.get(i, i), TropicalWeight::ZERO);
+            for j in 0..3 {
+                if i != j {
+                    assert!(id.get(i, j).is_infinite());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn matrix_tropical_add_dimension_mismatch() {
+        let a = TropicalMatrix::new_infinity(2).unwrap();
+        let b = TropicalMatrix::new_infinity(3).unwrap();
+        assert!(matches!(
+            a.tropical_add(&b),
+            Err(TropicalError::DimensionMismatch { left: 2, right: 3 })
+        ));
+    }
+
+    #[test]
+    fn matrix_content_hash_sensitive_to_dimension() {
+        let m2 = TropicalMatrix::new_infinity(2).unwrap();
+        let m3 = TropicalMatrix::new_infinity(3).unwrap();
+        assert_ne!(m2.content_hash(), m3.content_hash());
+    }
+
+    #[test]
+    fn floyd_warshall_self_loop_zero_on_diagonal() {
+        // No edges at all — FW should set diagonal to 0
+        let m = TropicalMatrix::new_infinity(3).unwrap();
+        let apsp = m.floyd_warshall().unwrap();
+        for i in 0..3 {
+            assert_eq!(apsp.get(i, i), TropicalWeight::ZERO);
+        }
+    }
+
+    #[test]
+    fn instruction_cost_graph_len_and_is_empty() {
+        let graph = make_chain_graph(4);
+        assert_eq!(graph.len(), 4);
+        assert!(!graph.is_empty());
+    }
+
+    #[test]
+    fn instruction_cost_graph_register_pressure_direct() {
+        let nodes = vec![
+            InstructionNode {
+                index: 0,
+                cost: TropicalWeight::finite(1),
+                predecessors: vec![],
+                successors: vec![1],
+                register_pressure: 3,
+                mnemonic: "a".into(),
+            },
+            InstructionNode {
+                index: 1,
+                cost: TropicalWeight::finite(1),
+                predecessors: vec![0],
+                successors: vec![],
+                register_pressure: 7,
+                mnemonic: "b".into(),
+            },
+        ];
+        let graph = InstructionCostGraph::new(nodes).unwrap();
+        assert_eq!(graph.peak_register_pressure(), 7);
+        assert_eq!(graph.total_register_pressure(), 10);
+    }
+
+    #[test]
+    fn dead_code_zero_total_nodes() {
+        let apsp = TropicalMatrix::new_infinity(1).unwrap();
+        let elim = DeadCodeEliminator { output_nodes: vec![] };
+        let report = elim.find_dead_code(&apsp, 0);
+        assert_eq!(report.elimination_ratio_millionths, 0);
+        assert!(report.dead_indices.is_empty());
+        assert!(report.live_indices.is_empty());
+    }
+
+    #[test]
+    fn register_pressure_at_exact_limit() {
+        let nodes = vec![InstructionNode {
+            index: 0,
+            cost: TropicalWeight::finite(1),
+            predecessors: vec![],
+            successors: vec![],
+            register_pressure: 8,
+            mnemonic: "exact".into(),
+        }];
+        let graph = InstructionCostGraph::new(nodes).unwrap();
+        let analyzer = RegisterPressureAnalyzer { pressure_limit: 8 };
+        let report = analyzer.analyze(&graph);
+        assert!(!report.exceeds_limit);
+        assert_eq!(report.estimated_spills, 0);
+    }
+
+    #[test]
+    fn tropical_pass_witness_all_fields_populated() {
+        let witness = TropicalPassWitness {
+            schema: TROPICAL_SCHEMA_VERSION.to_string(),
+            ir_level: IrLevel::Ir3,
+            input_hash: ContentHash::compute(b"input"),
+            output_hash: ContentHash::compute(b"output"),
+            critical_path: CriticalPathResult {
+                makespan: TropicalWeight::finite(10),
+                critical_source: 0,
+                critical_sink: 5,
+                apsp_hash: ContentHash::compute(b"apsp"),
+            },
+            dead_code: Some(DeadCodeReport {
+                dead_indices: vec![3],
+                live_indices: vec![0, 1, 2, 4, 5],
+                total_nodes: 6,
+                elimination_ratio_millionths: 166_666,
+            }),
+            register_pressure: Some(RegisterPressureReport {
+                peak_pressure: 12,
+                total_pressure: 48,
+                pressure_limit: 16,
+                exceeds_limit: false,
+                estimated_spills: 0,
+                node_count: 6,
+            }),
+            certificate: Some(OptimalityCertificate {
+                schema: TROPICAL_SCHEMA_VERSION.to_string(),
+                achieved_cost: TropicalWeight::finite(10),
+                critical_path_lower_bound: TropicalWeight::finite(10),
+                optimality_ratio_millionths: 1_000_000,
+                input_graph_hash: ContentHash::compute(b"input"),
+                apsp_hash: ContentHash::compute(b"apsp"),
+                is_exact: true,
+            }),
+        };
+        let json = serde_json::to_string(&witness).unwrap();
+        let back: TropicalPassWitness = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, witness);
+        assert!(back.dead_code.is_some());
+        assert!(back.register_pressure.is_some());
+        assert!(back.certificate.is_some());
+    }
+
+    #[test]
+    fn tropical_error_display_all_variants_non_empty() {
+        let variants: Vec<TropicalError> = vec![
+            TropicalError::DimensionExceeded { dim: 5000, max: 4096 },
+            TropicalError::DimensionMismatch { left: 3, right: 4 },
+            TropicalError::NegativeCycle { node: 2 },
+            TropicalError::EmptyGraph,
+            TropicalError::CycleInDag { nodes_in_cycle: vec![0, 1] },
+            TropicalError::NodeOutOfBounds { index: 10, size: 5 },
+        ];
+        let mut displays = std::collections::BTreeSet::new();
+        for v in &variants {
+            let s = format!("{v}");
+            assert!(!s.is_empty());
+            displays.insert(s);
+        }
+        // All display strings are unique
+        assert_eq!(displays.len(), variants.len());
+    }
+
+    #[test]
+    fn schedule_quality_ord_optimal_is_smallest() {
+        assert!(ScheduleQuality::Optimal < ScheduleQuality::BoundedSuboptimal);
+        assert!(ScheduleQuality::BoundedSuboptimal < ScheduleQuality::Heuristic);
+    }
+
+    #[test]
+    fn kleene_star_negative_boundary() {
+        // -1 diverges, 0 converges
+        assert!(TropicalWeight::finite(-1).kleene_star().is_none());
+        assert!(TropicalWeight::ZERO.kleene_star().is_some());
+    }
+
+    #[test]
+    fn floyd_warshall_triangle_inequality() {
+        // For any APSP result: dist[i][j] <= dist[i][k] + dist[k][j]
+        let mut m = TropicalMatrix::new_infinity(4).unwrap();
+        m.set(0, 1, TropicalWeight::finite(3));
+        m.set(1, 2, TropicalWeight::finite(4));
+        m.set(0, 2, TropicalWeight::finite(10)); // direct but longer
+        m.set(2, 3, TropicalWeight::finite(2));
+        let apsp = m.floyd_warshall().unwrap();
+        // dist[0][2] should be min(10, 3+4) = 7
+        assert_eq!(apsp.get(0, 2), TropicalWeight::finite(7));
+        // Triangle: dist[0][3] = dist[0][2] + dist[2][3] = 7 + 2 = 9
+        assert_eq!(apsp.get(0, 3), TropicalWeight::finite(9));
+    }
+
+    #[test]
+    fn out_of_bounds_successor_rejected() {
+        let nodes = vec![InstructionNode {
+            index: 0,
+            cost: TropicalWeight::finite(1),
+            predecessors: vec![],
+            successors: vec![99],
+            register_pressure: 1,
+            mnemonic: "bad_succ".into(),
+        }];
+        let result = InstructionCostGraph::new(nodes);
+        assert!(matches!(result, Err(TropicalError::NodeOutOfBounds { .. })));
+    }
+
+    #[test]
+    fn certificate_verify_boundary_at_threshold() {
+        let cert = OptimalityCertificate {
+            schema: TROPICAL_SCHEMA_VERSION.to_string(),
+            achieved_cost: TropicalWeight::finite(12),
+            critical_path_lower_bound: TropicalWeight::finite(10),
+            optimality_ratio_millionths: 1_200_000,
+            input_graph_hash: ContentHash::compute(b"t"),
+            apsp_hash: ContentHash::compute(b"a"),
+            is_exact: false,
+        };
+        // Exactly at threshold passes
+        assert!(cert.verify(1_200_000));
+        // One below fails
+        assert!(!cert.verify(1_199_999));
+    }
+
+    #[test]
+    fn matrix_mul_associativity() {
+        // (A ⊗ B) ⊗ C == A ⊗ (B ⊗ C) — semiring property
+        let mut a = TropicalMatrix::new_infinity(3).unwrap();
+        let mut b = TropicalMatrix::new_infinity(3).unwrap();
+        let mut c = TropicalMatrix::new_infinity(3).unwrap();
+        a.set(0, 1, TropicalWeight::finite(2));
+        a.set(1, 2, TropicalWeight::finite(3));
+        b.set(0, 1, TropicalWeight::finite(1));
+        b.set(1, 2, TropicalWeight::finite(4));
+        c.set(0, 2, TropicalWeight::finite(5));
+        let ab = a.tropical_mul(&b).unwrap();
+        let ab_c = ab.tropical_mul(&c).unwrap();
+        let bc = b.tropical_mul(&c).unwrap();
+        let a_bc = a.tropical_mul(&bc).unwrap();
+        assert_eq!(ab_c, a_bc);
+    }
 }

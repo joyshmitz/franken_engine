@@ -1826,4 +1826,284 @@ mod tests {
         let json2 = serde_json::to_string(&s2).unwrap();
         assert_eq!(json1, json2, "identical stacks must produce identical JSON");
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn extraction_policy_default_is_min_cost() {
+        assert_eq!(ExtractionPolicy::default(), ExtractionPolicy::MinCost);
+    }
+
+    #[test]
+    fn extraction_policy_custom_display() {
+        let p = ExtractionPolicy::Custom {
+            name: "my_func".to_string(),
+        };
+        assert_eq!(format!("{p}"), "custom:my_func");
+    }
+
+    #[test]
+    fn budget_envelope_consume_unlisted_kind_returns_true() {
+        let mut be = BudgetEnvelope { limits: BTreeMap::new() };
+        // No limits configured — unlimited
+        assert!(be.consume(BudgetKind::TimeMs, 999_999));
+    }
+
+    #[test]
+    fn budget_envelope_default_matches_production() {
+        let def = BudgetEnvelope::default();
+        let prod = BudgetEnvelope::production();
+        assert_eq!(def, prod);
+    }
+
+    #[test]
+    fn campaign_status_serde_all_variants() {
+        for s in [
+            CampaignStatus::Pending,
+            CampaignStatus::Saturating,
+            CampaignStatus::Extracting,
+            CampaignStatus::Completed,
+            CampaignStatus::Failed,
+            CampaignStatus::RolledBack,
+        ] {
+            let json = serde_json::to_string(&s).unwrap();
+            let back: CampaignStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(s, back);
+        }
+    }
+
+    #[test]
+    fn campaign_status_display_includes_saturating() {
+        assert_eq!(format!("{}", CampaignStatus::Saturating), "saturating");
+    }
+
+    #[test]
+    fn saturation_outcome_serde_all_variants() {
+        for o in [
+            SaturationOutcome::Saturated,
+            SaturationOutcome::BudgetExhausted,
+            SaturationOutcome::NodeLimitReached,
+            SaturationOutcome::IterationLimitReached,
+            SaturationOutcome::PolicyStopped,
+        ] {
+            let json = serde_json::to_string(&o).unwrap();
+            let back: SaturationOutcome = serde_json::from_str(&json).unwrap();
+            assert_eq!(o, back);
+        }
+    }
+
+    #[test]
+    fn interference_kind_serde_all_variants() {
+        for k in [
+            InterferenceKind::None,
+            InterferenceKind::RewriteConflict,
+            InterferenceKind::BudgetContention,
+            InterferenceKind::SemanticInterference,
+            InterferenceKind::OrderDependence,
+        ] {
+            let json = serde_json::to_string(&k).unwrap();
+            let back: InterferenceKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(k, back);
+        }
+    }
+
+    #[test]
+    fn optimization_event_kind_display_all_unique() {
+        let kinds = [
+            OptimizationEventKind::CampaignRegistered,
+            OptimizationEventKind::SaturationStarted,
+            OptimizationEventKind::SaturationCompleted,
+            OptimizationEventKind::ExtractionStarted,
+            OptimizationEventKind::ExtractionCompleted,
+            OptimizationEventKind::InterferenceChecked,
+            OptimizationEventKind::CampaignFailed,
+            OptimizationEventKind::CampaignRolledBack,
+            OptimizationEventKind::BudgetConsumed,
+        ];
+        let mut displays = BTreeSet::new();
+        for k in &kinds {
+            displays.insert(k.to_string());
+        }
+        assert_eq!(displays.len(), kinds.len());
+    }
+
+    #[test]
+    fn optimization_event_kind_serde_all_variants() {
+        for k in [
+            OptimizationEventKind::CampaignRegistered,
+            OptimizationEventKind::SaturationStarted,
+            OptimizationEventKind::SaturationCompleted,
+            OptimizationEventKind::ExtractionStarted,
+            OptimizationEventKind::ExtractionCompleted,
+            OptimizationEventKind::InterferenceChecked,
+            OptimizationEventKind::CampaignFailed,
+            OptimizationEventKind::CampaignRolledBack,
+            OptimizationEventKind::BudgetConsumed,
+        ] {
+            let json = serde_json::to_string(&k).unwrap();
+            let back: OptimizationEventKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(k, back);
+        }
+    }
+
+    #[test]
+    fn optimization_event_serde_roundtrip() {
+        let event = OptimizationEvent {
+            seq: 42,
+            kind: OptimizationEventKind::SaturationCompleted,
+            campaign_id: Some("c1".to_string()),
+            detail: "done".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: OptimizationEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn optimization_schema_version_stable() {
+        assert_eq!(
+            OPTIMIZATION_SCHEMA_VERSION,
+            "franken-engine.budgeted-optimization.v1"
+        );
+    }
+
+    #[test]
+    fn stack_with_custom_budget() {
+        let budget = BudgetEnvelope { limits: BTreeMap::new() };
+        let s = BudgetedOptimizationStack::with_budget(budget);
+        assert!(s.global_budget().limits.is_empty());
+    }
+
+    #[test]
+    fn stack_interference_checks_accessor() {
+        let mut s = BudgetedOptimizationStack::new();
+        let mut c1 = make_campaign("c1");
+        c1.add_rule(make_rule("r1", RewriteFamily::AlgebraicSimplification))
+            .unwrap();
+        let mut c2 = make_campaign("c2");
+        c2.add_rule(make_rule("r2", RewriteFamily::DeadCodeElimination))
+            .unwrap();
+        s.register_campaign(c1).unwrap();
+        s.register_campaign(c2).unwrap();
+        assert!(s.interference_checks().is_empty());
+        s.check_interference("c1", "c2");
+        assert_eq!(s.interference_checks().len(), 1);
+    }
+
+    #[test]
+    fn summary_with_failures_and_rollbacks() {
+        let mut s = BudgetedOptimizationStack::new();
+
+        // Completed campaign
+        let mut c1 = make_campaign("c1");
+        c1.expected_gain_millionths = 100_000;
+        s.register_campaign(c1).unwrap();
+        s.record_saturation("c1", make_egraph_snapshot()).unwrap();
+        s.record_extraction("c1", make_extraction_result()).unwrap();
+
+        // Failed campaign
+        let mut c2 = make_campaign("c2");
+        s.register_campaign(c2).unwrap();
+        // manually fail it
+        s.campaigns.get_mut("c2").unwrap().record_failure();
+
+        // Rolled back campaign
+        s.register_campaign(make_campaign("c3")).unwrap();
+        s.record_rollback("c3", make_rollback("c3")).unwrap();
+
+        let summary = s.summary();
+        assert_eq!(summary.total_campaigns, 3);
+        assert_eq!(summary.completed_campaigns, 1);
+        assert_eq!(summary.failed_campaigns, 1);
+        assert_eq!(summary.rolled_back_campaigns, 1);
+    }
+
+    #[test]
+    fn budget_limit_consume_saturates_on_overflow() {
+        let mut bl = BudgetLimit::new(BudgetKind::MemoryBytes, 100);
+        bl.consume(u64::MAX);
+        // saturating_add caps at u64::MAX
+        assert!(bl.is_exhausted());
+        assert_eq!(bl.current_value, u64::MAX);
+    }
+
+    #[test]
+    fn optimization_error_serde_all_variants() {
+        let errors: Vec<OptimizationError> = vec![
+            OptimizationError::RuleLimitExceeded { count: 2, max: 1 },
+            OptimizationError::DuplicateRule("r1".to_string()),
+            OptimizationError::CampaignLimitExceeded { count: 65, max: 64 },
+            OptimizationError::DuplicateCampaign("c1".to_string()),
+            OptimizationError::BudgetExhausted { kind: BudgetKind::TimeMs },
+            OptimizationError::InterferenceBlocking(InterferenceCheck {
+                campaign_a: "a".to_string(),
+                campaign_b: "b".to_string(),
+                kind: InterferenceKind::RewriteConflict,
+                detail: "conflict".to_string(),
+                blocking: true,
+            }),
+            OptimizationError::UnsoundRewrite { rule_id: "x".to_string() },
+            OptimizationError::RollbackFailed {
+                campaign_id: "c1".to_string(),
+                detail: "disk full".to_string(),
+            },
+        ];
+        for e in &errors {
+            let json = serde_json::to_string(e).unwrap();
+            let back: OptimizationError = serde_json::from_str(&json).unwrap();
+            assert_eq!(e, &back);
+        }
+        assert_eq!(errors.len(), 8);
+    }
+
+    #[test]
+    fn stack_record_saturation_unknown_campaign_fails() {
+        let mut s = BudgetedOptimizationStack::new();
+        let result = s.record_saturation("nonexistent", make_egraph_snapshot());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stack_record_extraction_unknown_campaign_fails() {
+        let mut s = BudgetedOptimizationStack::new();
+        let result = s.record_extraction("nonexistent", make_extraction_result());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stack_record_rollback_unknown_campaign_fails() {
+        let mut s = BudgetedOptimizationStack::new();
+        let result = s.record_rollback("nonexistent", make_rollback("nonexistent"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn campaign_ready_rule_count_mixed_sound_unsound() {
+        let mut c = make_campaign("c1");
+        c.add_rule(make_rule("r1", RewriteFamily::AlgebraicSimplification))
+            .unwrap();
+        let mut unsound_rule = make_rule("r2", RewriteFamily::DeadCodeElimination);
+        unsound_rule.sound = false;
+        c.add_rule(unsound_rule).unwrap();
+        let mut disabled_rule = make_rule("r3", RewriteFamily::PartialEvaluation);
+        disabled_rule.enabled = false;
+        c.add_rule(disabled_rule).unwrap();
+        assert_eq!(c.ready_rule_count(), 1);
+        assert_eq!(c.rules.len(), 3);
+    }
+
+    #[test]
+    fn rewrite_family_ord_algebraic_before_custom() {
+        assert!(RewriteFamily::AlgebraicSimplification < RewriteFamily::Custom);
+    }
+
+    #[test]
+    fn budget_kind_ord_time_before_saturation() {
+        assert!(BudgetKind::TimeMs < BudgetKind::SaturationIterations);
+    }
+
+    #[test]
+    fn campaign_status_ord_pending_before_completed() {
+        assert!(CampaignStatus::Pending < CampaignStatus::Completed);
+    }
 }

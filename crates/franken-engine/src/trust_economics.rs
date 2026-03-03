@@ -2010,6 +2010,390 @@ mod tests {
         );
     }
 
+    // -- Enrichment batch 4 --
+
+    #[test]
+    fn millionths_constant_is_stable() {
+        assert_eq!(MILLIONTHS, 1_000_000);
+    }
+
+    #[test]
+    fn true_state_all_has_four_variants_in_order() {
+        assert_eq!(TrueState::ALL.len(), 4);
+        assert_eq!(TrueState::ALL[0], TrueState::Benign);
+        assert_eq!(TrueState::ALL[1], TrueState::Suspicious);
+        assert_eq!(TrueState::ALL[2], TrueState::Malicious);
+        assert_eq!(TrueState::ALL[3], TrueState::Compromised);
+    }
+
+    #[test]
+    fn containment_action_all_has_seven_variants_in_severity_order() {
+        assert_eq!(ContainmentAction::ALL.len(), 7);
+        assert_eq!(ContainmentAction::ALL[0], ContainmentAction::Allow);
+        assert_eq!(ContainmentAction::ALL[1], ContainmentAction::Warn);
+        assert_eq!(ContainmentAction::ALL[2], ContainmentAction::Challenge);
+        assert_eq!(ContainmentAction::ALL[3], ContainmentAction::Sandbox);
+        assert_eq!(ContainmentAction::ALL[4], ContainmentAction::Suspend);
+        assert_eq!(ContainmentAction::ALL[5], ContainmentAction::Terminate);
+        assert_eq!(ContainmentAction::ALL[6], ContainmentAction::Quarantine);
+    }
+
+    #[test]
+    fn true_state_ord_follows_declaration_order() {
+        assert!(TrueState::Benign < TrueState::Suspicious);
+        assert!(TrueState::Suspicious < TrueState::Malicious);
+        assert!(TrueState::Malicious < TrueState::Compromised);
+    }
+
+    #[test]
+    fn containment_action_ord_follows_severity_order() {
+        assert!(ContainmentAction::Allow < ContainmentAction::Warn);
+        assert!(ContainmentAction::Warn < ContainmentAction::Challenge);
+        assert!(ContainmentAction::Challenge < ContainmentAction::Sandbox);
+        assert!(ContainmentAction::Sandbox < ContainmentAction::Suspend);
+        assert!(ContainmentAction::Suspend < ContainmentAction::Terminate);
+        assert!(ContainmentAction::Terminate < ContainmentAction::Quarantine);
+    }
+
+    #[test]
+    fn sub_loss_zero_all_fields_are_zero() {
+        let z = SubLoss::zero();
+        assert_eq!(z.direct_damage, 0);
+        assert_eq!(z.operational_disruption, 0);
+        assert_eq!(z.trust_damage, 0);
+        assert_eq!(z.containment_cost, 0);
+        assert_eq!(z.false_action_cost, 0);
+        assert_eq!(z.total(), 0);
+    }
+
+    #[test]
+    fn sub_loss_total_saturates_on_multi_field_overflow() {
+        let sl = SubLoss {
+            direct_damage: i64::MAX / 2 + 1,
+            operational_disruption: i64::MAX / 2 + 1,
+            trust_damage: i64::MAX / 2 + 1,
+            containment_cost: 0,
+            false_action_cost: 0,
+        };
+        assert_eq!(sl.total(), i64::MAX, "should saturate across 3 fields");
+    }
+
+    #[test]
+    fn decomposed_loss_matrix_new_is_empty() {
+        let m = DecomposedLossMatrix::new(1, "test", "justification");
+        assert_eq!(m.cell_count(), 0);
+        assert!(!m.is_complete());
+        assert_eq!(m.version, 1);
+        assert_eq!(m.deployment_context, "test");
+        assert_eq!(m.justification, "justification");
+    }
+
+    #[test]
+    fn decomposed_loss_matrix_is_complete_when_all_28_cells_set() {
+        let mut m = DecomposedLossMatrix::new(1, "test", "test");
+        for &state in &TrueState::ALL {
+            for &action in &ContainmentAction::ALL {
+                m.set(state, action, SubLoss::zero());
+            }
+        }
+        assert!(m.is_complete());
+        assert_eq!(m.cell_count(), 28);
+    }
+
+    #[test]
+    fn decomposed_loss_matrix_total_loss_missing_cell_returns_zero() {
+        let m = DecomposedLossMatrix::new(1, "test", "test");
+        assert_eq!(m.total_loss(TrueState::Benign, ContainmentAction::Allow), 0);
+    }
+
+    #[test]
+    fn decomposed_loss_matrix_asymmetry_violations_explicit() {
+        let mut m = DecomposedLossMatrix::new(1, "test", "test");
+        // For Allow: benign_loss=100 > malicious_loss=50 => violation
+        m.set(
+            TrueState::Benign,
+            ContainmentAction::Allow,
+            SubLoss { direct_damage: 100, ..SubLoss::zero() },
+        );
+        m.set(
+            TrueState::Malicious,
+            ContainmentAction::Allow,
+            SubLoss { direct_damage: 50, ..SubLoss::zero() },
+        );
+        let violations = m.asymmetry_violations();
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].0, ContainmentAction::Allow);
+        assert_eq!(violations[0].1, 100); // benign loss
+        assert_eq!(violations[0].2, 50); // malicious loss
+    }
+
+    #[test]
+    fn decomposed_loss_matrix_no_violations_when_malicious_ge_benign() {
+        let mut m = DecomposedLossMatrix::new(1, "test", "test");
+        for &action in &ContainmentAction::ALL {
+            m.set(
+                TrueState::Benign,
+                action,
+                SubLoss { direct_damage: 10, ..SubLoss::zero() },
+            );
+            m.set(
+                TrueState::Malicious,
+                action,
+                SubLoss { direct_damage: 100, ..SubLoss::zero() },
+            );
+        }
+        assert!(m.asymmetry_violations().is_empty());
+    }
+
+    #[test]
+    fn decomposed_loss_matrix_to_scalar_totals_matches_cells() {
+        let mut m = DecomposedLossMatrix::new(1, "test", "test");
+        let sl = SubLoss {
+            direct_damage: 100,
+            operational_disruption: 200,
+            trust_damage: 300,
+            containment_cost: 400,
+            false_action_cost: 500,
+        };
+        m.set(TrueState::Benign, ContainmentAction::Allow, sl);
+        let totals = m.to_scalar_totals();
+        assert_eq!(totals.len(), 1);
+        assert_eq!(
+            totals[&(TrueState::Benign, ContainmentAction::Allow)],
+            1500
+        );
+    }
+
+    #[test]
+    fn attacker_cost_model_adjusted_cost_with_strategy() {
+        let mut m = sample_attacker_model();
+        m.strategy_adjustments.insert(
+            "supply-chain".into(),
+            StrategyCostAdjustment {
+                strategy_name: "supply-chain".into(),
+                discovery_delta: 500_000,
+                development_delta: -200_000,
+                evasion_delta: 100_000,
+                justification: "supply-chain is easier to develop".into(),
+            },
+        );
+        let base = m.total_base_cost();
+        let adjusted = m.adjusted_cost("supply-chain").unwrap();
+        assert_eq!(adjusted, base + 500_000 - 200_000 + 100_000);
+    }
+
+    #[test]
+    fn attacker_cost_model_adjusted_cost_unknown_strategy_is_none() {
+        let m = sample_attacker_model();
+        assert_eq!(m.adjusted_cost("nonexistent"), None);
+    }
+
+    #[test]
+    fn attacker_cost_model_strategy_roi_with_adjustment() {
+        let mut m = AttackerCostModel {
+            discovery_cost: 500_000,
+            development_cost: 500_000,
+            deployment_cost: 0,
+            persistence_cost: 0,
+            evasion_cost: 0,
+            expected_gain: 2_000_000,
+            strategy_adjustments: BTreeMap::new(),
+            version: 1,
+            calibration_source: "test".into(),
+        };
+        m.strategy_adjustments.insert(
+            "phishing".into(),
+            StrategyCostAdjustment {
+                strategy_name: "phishing".into(),
+                discovery_delta: 0,
+                development_delta: 0,
+                evasion_delta: 0,
+                justification: "no extra cost".into(),
+            },
+        );
+        // adjusted_cost = 1_000_000, gain = 2_000_000, roi = 1_000_000 * 1M / 1M = 1_000_000
+        let roi = m.strategy_roi("phishing").unwrap();
+        assert_eq!(roi, 1_000_000);
+    }
+
+    #[test]
+    fn attacker_cost_model_strategy_roi_unknown_is_none() {
+        let m = sample_attacker_model();
+        assert_eq!(m.strategy_roi("nonexistent"), None);
+    }
+
+    #[test]
+    fn strategy_cost_adjustment_serde_roundtrip() {
+        let adj = StrategyCostAdjustment {
+            strategy_name: "supply-chain".into(),
+            discovery_delta: 500_000,
+            development_delta: -200_000,
+            evasion_delta: 100_000,
+            justification: "test justification".into(),
+        };
+        let json = serde_json::to_string(&adj).unwrap();
+        let back: StrategyCostAdjustment = serde_json::from_str(&json).unwrap();
+        assert_eq!(adj, back);
+    }
+
+    #[test]
+    fn classify_roi_alert_level_exact_boundaries() {
+        // 2_000_000 (exactly 2x) should be Profitable, not HighlyProfitable
+        assert_eq!(classify_roi_alert_level(2_000_000), RoiAlertLevel::Profitable);
+        // 500_000 (exactly 0.5x) should be Neutral, not Unprofitable
+        assert_eq!(classify_roi_alert_level(500_000), RoiAlertLevel::Neutral);
+        // 1_000_001 (just above 1x) should be Profitable
+        assert_eq!(classify_roi_alert_level(1_000_001), RoiAlertLevel::Profitable);
+    }
+
+    #[test]
+    fn classify_roi_trend_exact_dead_zone_boundaries() {
+        // delta == 50_000 => Stable (not Rising, since > not >=)
+        assert_eq!(classify_roi_trend(&[900_000, 950_000]), RoiTrend::Stable);
+        // delta == 50_001 => Rising
+        assert_eq!(classify_roi_trend(&[900_000, 950_001]), RoiTrend::Rising);
+        // delta == -50_000 => Stable (not Falling)
+        assert_eq!(classify_roi_trend(&[950_000, 900_000]), RoiTrend::Stable);
+        // delta == -50_001 => Falling
+        assert_eq!(classify_roi_trend(&[950_001, 900_000]), RoiTrend::Falling);
+    }
+
+    #[test]
+    fn roi_alert_level_display_values() {
+        assert_eq!(RoiAlertLevel::Unprofitable.to_string(), "unprofitable");
+        assert_eq!(RoiAlertLevel::Neutral.to_string(), "neutral");
+        assert_eq!(RoiAlertLevel::Profitable.to_string(), "profitable");
+        assert_eq!(RoiAlertLevel::HighlyProfitable.to_string(), "highly_profitable");
+    }
+
+    #[test]
+    fn roi_trend_display_values() {
+        assert_eq!(RoiTrend::Rising.to_string(), "rising");
+        assert_eq!(RoiTrend::Stable.to_string(), "stable");
+        assert_eq!(RoiTrend::Falling.to_string(), "falling");
+    }
+
+    #[test]
+    fn attacker_roi_assessment_serde_roundtrip() {
+        let a = AttackerRoiAssessment::new("ext-z", 1_500_000, &[1_000_000, 1_500_000]);
+        let json = serde_json::to_string(&a).unwrap();
+        let back: AttackerRoiAssessment = serde_json::from_str(&json).unwrap();
+        assert_eq!(a, back);
+    }
+
+    #[test]
+    fn fleet_roi_summary_serde_roundtrip() {
+        let mut assessments = BTreeMap::new();
+        assessments.insert(
+            "ext-a".to_string(),
+            AttackerRoiAssessment::new("ext-a", 2_500_000, &[2_000_000, 2_500_000]),
+        );
+        let summary = summarize_fleet_roi(&assessments);
+        let json = serde_json::to_string(&summary).unwrap();
+        let back: FleetRoiSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(summary, back);
+    }
+
+    #[test]
+    fn default_conservative_loss_matrix_is_complete() {
+        let m = default_conservative_loss_matrix();
+        assert!(m.is_complete());
+        assert_eq!(m.cell_count(), 28);
+        assert_eq!(m.version, 1);
+    }
+
+    #[test]
+    fn model_inputs_validate_valid_symmetric_matrix() {
+        // Build a matrix where malicious >= benign for all actions.
+        let mut matrix = DecomposedLossMatrix::new(1, "test", "test");
+        for &state in &TrueState::ALL {
+            for &action in &ContainmentAction::ALL {
+                let severity = match state {
+                    TrueState::Benign => 10_000,
+                    TrueState::Suspicious => 50_000,
+                    TrueState::Malicious => 200_000,
+                    TrueState::Compromised => 500_000,
+                };
+                matrix.set(state, action, SubLoss {
+                    direct_damage: severity,
+                    ..SubLoss::zero()
+                });
+            }
+        }
+        let inputs = TrustEconomicsModelInputs {
+            loss_matrix: matrix,
+            attacker_cost: sample_attacker_model(),
+            containment_cost: sample_containment_model(),
+            model_version: 1,
+            epoch: SecurityEpoch::from_raw(1),
+            calibration_timestamp_ns: 0,
+            calibration_source: "test".into(),
+            provenance_chain: vec![],
+        };
+        assert!(inputs.validate().is_ok());
+    }
+
+    #[test]
+    fn model_inputs_validate_zero_attacker_cost_after_symmetric_matrix() {
+        // Build valid (no asymmetry) but with zero attacker cost.
+        let mut matrix = DecomposedLossMatrix::new(1, "test", "test");
+        for &state in &TrueState::ALL {
+            for &action in &ContainmentAction::ALL {
+                let severity = match state {
+                    TrueState::Benign => 10_000,
+                    _ => 100_000,
+                };
+                matrix.set(state, action, SubLoss {
+                    direct_damage: severity,
+                    ..SubLoss::zero()
+                });
+            }
+        }
+        let inputs = TrustEconomicsModelInputs {
+            loss_matrix: matrix,
+            attacker_cost: AttackerCostModel {
+                discovery_cost: 0,
+                development_cost: 0,
+                deployment_cost: 0,
+                persistence_cost: 0,
+                evasion_cost: 0,
+                expected_gain: 1_000_000,
+                strategy_adjustments: BTreeMap::new(),
+                version: 1,
+                calibration_source: "test".into(),
+            },
+            containment_cost: sample_containment_model(),
+            model_version: 1,
+            epoch: SecurityEpoch::from_raw(1),
+            calibration_timestamp_ns: 0,
+            calibration_source: "test".into(),
+            provenance_chain: vec![],
+        };
+        assert!(matches!(
+            inputs.validate(),
+            Err(TrustEconomicsError::ZeroAttackerCost)
+        ));
+    }
+
+    #[test]
+    fn containment_cost_model_all_actions_populated() {
+        let mut m = ContainmentCostModel::new(1, "enterprise", "manual");
+        for &action in &ContainmentAction::ALL {
+            m.set(action, ActionCost {
+                execution_latency_us: 1000,
+                resource_consumption: 100,
+                collateral_impact: 200,
+                operator_burden: 300,
+                reversibility_cost: 400,
+            });
+        }
+        assert_eq!(m.action_costs.len(), 7);
+        for &action in &ContainmentAction::ALL {
+            assert!(m.get(action).is_some());
+            assert_eq!(m.total_cost(action), 1000); // 100+200+300+400
+        }
+    }
+
     #[test]
     fn trust_economics_error_implements_std_error() {
         let variants: Vec<Box<dyn std::error::Error>> = vec![

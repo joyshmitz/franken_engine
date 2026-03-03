@@ -2409,4 +2409,360 @@ mod tests {
         assert_eq!(decoded.config.thresholds, engine.config.thresholds);
         assert!(matches!(decoded.partition_mode, PartitionMode::Normal));
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn config_default_exact_values() {
+        let cfg = ConvergenceConfig::default();
+        assert_eq!(cfg.degraded_tightening_factor, 750_000);
+        assert_eq!(cfg.convergence_timeout_ns, 1_000_000_000);
+        assert_eq!(cfg.signing_key, b"default-convergence-key".to_vec());
+        assert_eq!(cfg.max_escalation_depth, 3);
+        assert!(cfg.thresholds.is_valid());
+    }
+
+    #[test]
+    fn convergence_verification_diverged_serde_roundtrip() {
+        let v = ConvergenceVerification::Diverged {
+            checkpoint_seq: 7,
+            local_summary_hash: ContentHash::compute(b"local"),
+            checkpoint_summary_hash: ContentHash::compute(b"remote"),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        let decoded: ConvergenceVerification = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, decoded);
+    }
+
+    #[test]
+    fn convergence_error_serde_all_5_variants() {
+        let variants: Vec<ConvergenceError> = vec![
+            ConvergenceError::MaxEscalationReached {
+                extension_id: "ext-1".into(),
+                depth: 3,
+            },
+            ConvergenceError::AlreadyAtMaxSeverity {
+                extension_id: "ext-2".into(),
+            },
+            ConvergenceError::ActionAlreadyExecuted {
+                extension_id: "ext-3".into(),
+                action: ContainmentAction::Terminate,
+            },
+            ConvergenceError::InvalidThresholds,
+            ConvergenceError::Protocol(ProtocolError::EmptyIntents),
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let decoded: ConvergenceError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, decoded);
+        }
+    }
+
+    #[test]
+    fn convergence_error_source_returns_none() {
+        use std::error::Error;
+        let err = ConvergenceError::MaxEscalationReached {
+            extension_id: "ext-1".into(),
+            depth: 2,
+        };
+        assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn convergence_error_display_exact_formats() {
+        assert_eq!(
+            ConvergenceError::MaxEscalationReached {
+                extension_id: "ext-a".into(),
+                depth: 5,
+            }
+            .to_string(),
+            "max escalation depth 5 reached for ext-a"
+        );
+        assert_eq!(
+            ConvergenceError::AlreadyAtMaxSeverity {
+                extension_id: "ext-b".into(),
+            }
+            .to_string(),
+            "extension ext-b already at maximum severity (quarantine)"
+        );
+        assert_eq!(
+            ConvergenceError::ActionAlreadyExecuted {
+                extension_id: "ext-c".into(),
+                action: ContainmentAction::Suspend,
+            }
+            .to_string(),
+            "action suspend already executed for ext-c"
+        );
+        assert_eq!(
+            ConvergenceError::InvalidThresholds.to_string(),
+            "invalid threshold configuration"
+        );
+        let proto_msg = ConvergenceError::Protocol(ProtocolError::EmptyIntents).to_string();
+        assert!(proto_msg.starts_with("protocol error: "));
+    }
+
+    #[test]
+    fn event_ring_buffer_eviction() {
+        let mut engine = test_engine("local");
+        engine.max_events = 5;
+
+        // Generate 7 events — only last 5 should survive.
+        for i in 0..7u64 {
+            let decision = engine.evaluate_extension(&format!("ext-{i}"), 300_000, 5);
+            engine.execute_decision(&decision, i * 1_000_000_000);
+        }
+
+        assert_eq!(engine.events.len(), 5);
+        // The first events should have been evicted.
+        assert!(engine.events[0].fields.get("extension_id").unwrap() != "ext-0");
+    }
+
+    #[test]
+    fn effective_thresholds_degraded_majority_uses_base() {
+        let mut engine = test_engine("local");
+        // Degraded but majority (local=4 out of 5, need 3 for 50% quorum).
+        engine.partition_mode = PartitionMode::Degraded(PartitionInfo {
+            detected_at_ns: 0,
+            unreachable_nodes: {
+                let mut s = BTreeSet::new();
+                s.insert(test_node("n1"));
+                s
+            },
+            local_partition_size: 4,
+            total_fleet_size: 5,
+        });
+
+        let effective = engine.effective_thresholds();
+        // Majority partition → base thresholds, NOT tightened.
+        assert_eq!(effective, engine.config.thresholds);
+    }
+
+    #[test]
+    fn evaluate_all_returns_decisions_for_all_extensions() {
+        let engine = test_engine("local");
+        let mut fleet = test_fleet_state("local");
+
+        fleet
+            .process_evidence(&test_evidence("n1", "ext-1", 1, 300_000))
+            .unwrap();
+        fleet
+            .process_evidence(&test_evidence("n1", "ext-2", 2, 100_000))
+            .unwrap();
+
+        let decisions = engine.evaluate_all(&fleet);
+        assert_eq!(decisions.len(), 2);
+
+        let ext_ids: BTreeSet<_> = decisions.iter().map(|d| d.extension_id.as_str()).collect();
+        assert!(ext_ids.contains("ext-1"));
+        assert!(ext_ids.contains("ext-2"));
+    }
+
+    #[test]
+    fn reconciliation_conflict_in_normal_mode_emits_event_but_no_increment() {
+        let mut engine = test_engine("local");
+        // Engine is in Normal mode (default).
+        engine.record_reconciliation_conflict(
+            "ext-1",
+            ContainmentAction::Sandbox,
+            ContainmentAction::Terminate,
+            1_000_000_000,
+        );
+
+        let conflicts = engine.events_of_type(&ConvergenceEventType::ReconciliationConflict);
+        assert_eq!(conflicts.len(), 1);
+        // No HealingInfo to increment — no panic.
+        assert!(matches!(engine.partition_mode, PartitionMode::Normal));
+    }
+
+    #[test]
+    fn reconciliation_conflict_resolved_action_is_higher_severity() {
+        let mut engine = test_engine("local");
+        engine.partition_mode = PartitionMode::Healing(HealingInfo {
+            heal_started_ns: 1,
+            reconciling_nodes: BTreeSet::new(),
+            conflict_count: 0,
+            merged_evidence_count: 0,
+        });
+
+        engine.record_reconciliation_conflict(
+            "ext-1",
+            ContainmentAction::Sandbox,
+            ContainmentAction::Terminate,
+            2_000_000_000,
+        );
+
+        let conflicts = engine.events_of_type(&ConvergenceEventType::ReconciliationConflict);
+        assert_eq!(
+            conflicts[0].fields.get("resolved_action").unwrap(),
+            "terminate"
+        );
+        assert_eq!(
+            conflicts[0].fields.get("local_action").unwrap(),
+            "sandbox"
+        );
+        assert_eq!(
+            conflicts[0].fields.get("remote_action").unwrap(),
+            "terminate"
+        );
+    }
+
+    #[test]
+    fn re_partition_during_healing_reverts_to_degraded() {
+        let mut engine = test_engine("local");
+        let mut fleet = test_fleet_state("local");
+
+        fleet
+            .process_heartbeat(&test_heartbeat("remote-1", 1, 1_000_000_000))
+            .unwrap();
+
+        // Trigger partition.
+        engine.update_partition_state(&fleet, 20_000_000_000);
+        assert!(matches!(engine.partition_mode, PartitionMode::Degraded(_)));
+
+        // Heal: fresh heartbeat.
+        fleet
+            .process_heartbeat(&test_heartbeat("remote-1", 2, 19_000_000_000))
+            .unwrap();
+        engine.update_partition_state(&fleet, 20_000_000_000);
+        assert!(matches!(engine.partition_mode, PartitionMode::Healing(_)));
+
+        // Re-partition: remote-1 goes stale again, remote-2 also stale.
+        fleet
+            .process_heartbeat(&test_heartbeat("remote-2", 1, 1_000_000_000))
+            .unwrap();
+        engine.update_partition_state(&fleet, 40_000_000_000);
+        // Should revert from Healing to Degraded.
+        assert!(matches!(engine.partition_mode, PartitionMode::Degraded(_)));
+    }
+
+    #[test]
+    fn verify_converged_emits_event_with_checkpoint_seq() {
+        let mut engine = test_engine("local");
+        let fleet = test_fleet_state("local");
+
+        let summary_hash = fleet.evidence.summary_hash();
+        let checkpoint = make_checkpoint(42, summary_hash, vec![]);
+
+        engine.verify_against_checkpoint(&fleet, &checkpoint, 5_000_000_000);
+
+        let events = engine.events_of_type(&ConvergenceEventType::ConvergenceVerified);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].fields.get("checkpoint_seq").unwrap(), "42");
+    }
+
+    #[test]
+    fn verify_diverged_emits_event_with_hash_info() {
+        let mut engine = test_engine("local");
+        let fleet = test_fleet_state("local");
+
+        let different_hash = ContentHash::compute(b"different-state");
+        let checkpoint = make_checkpoint(99, different_hash, vec![]);
+
+        engine.verify_against_checkpoint(&fleet, &checkpoint, 5_000_000_000);
+
+        let events = engine.events_of_type(&ConvergenceEventType::ConvergenceDiverged);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].fields.get("checkpoint_seq").unwrap(), "99");
+        assert!(events[0].fields.contains_key("local_hash"));
+    }
+
+    #[test]
+    fn action_ids_are_unique_across_executions() {
+        let mut engine = test_engine("local");
+
+        let d1 = engine.evaluate_extension("ext-1", 300_000, 5);
+        let r1 = engine.execute_decision(&d1, 1_000_000_000).unwrap();
+
+        let d2 = engine.evaluate_extension("ext-2", 600_000, 10);
+        let r2 = engine.execute_decision(&d2, 2_000_000_000).unwrap();
+
+        assert_ne!(r1.action_id, r2.action_id);
+        assert!(r1.action_id.contains("local"));
+        assert!(r2.action_id.contains("local"));
+    }
+
+    #[test]
+    fn escalation_emits_escalation_triggered_event() {
+        let mut engine = test_engine("local");
+
+        let sandbox = ConvergenceDecision {
+            extension_id: "ext-1".into(),
+            action: ContainmentAction::Sandbox,
+            posterior_delta: 300_000,
+            crossed_threshold: Some(200_000),
+            degraded_mode: false,
+            evidence_count: 5,
+        };
+        engine.execute_decision(&sandbox, 1_000_000_000).unwrap();
+
+        engine.escalate("ext-1", 300_000, 5, 2_000_000_000).unwrap();
+
+        let events = engine.events_of_type(&ConvergenceEventType::EscalationTriggered);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].fields.get("extension_id").unwrap(), "ext-1");
+        assert_eq!(events[0].fields.get("from_action").unwrap(), "sandbox");
+        assert_eq!(events[0].fields.get("to_action").unwrap(), "suspend");
+        assert_eq!(events[0].fields.get("depth").unwrap(), "1");
+    }
+
+    #[test]
+    fn engine_new_starts_with_expected_initial_state() {
+        let engine = test_engine("local");
+        assert!(matches!(engine.partition_mode, PartitionMode::Normal));
+        assert_eq!(engine.current_epoch, SecurityEpoch::GENESIS);
+        assert_eq!(engine.policy_version, 1);
+        assert_eq!(engine.action_registry.total_actions(), 0);
+        assert!(engine.events.is_empty());
+    }
+
+    #[test]
+    fn escalation_from_allow_to_sandbox() {
+        let mut engine = test_engine("local");
+        // No prior action — escalation from Allow to Sandbox.
+        let receipt = engine.escalate("ext-1", 100_000, 2, 1_000_000_000).unwrap();
+        assert_eq!(receipt.action_type, ContainmentAction::Sandbox);
+        assert_eq!(receipt.escalation_depth, 1);
+    }
+
+    #[test]
+    fn receipt_signing_preimage_sensitive_to_degraded_mode() {
+        let base = ContainmentReceipt {
+            action_id: "a1".into(),
+            extension_id: "ext-1".into(),
+            action_type: ContainmentAction::Sandbox,
+            evidence_ids: vec![],
+            posterior_snapshot: 300_000,
+            policy_version: 1,
+            node_id: test_node("local"),
+            epoch: SecurityEpoch::GENESIS,
+            timestamp_ns: 1_000,
+            degraded_mode: false,
+            escalation_depth: 0,
+            signature: AuthenticityHash::compute_keyed(b"k", b"v"),
+        };
+        let mut degraded = base.clone();
+        degraded.degraded_mode = true;
+        assert_ne!(base.signing_preimage(), degraded.signing_preimage());
+    }
+
+    #[test]
+    fn receipt_signing_preimage_sensitive_to_escalation_depth() {
+        let base = ContainmentReceipt {
+            action_id: "a1".into(),
+            extension_id: "ext-1".into(),
+            action_type: ContainmentAction::Sandbox,
+            evidence_ids: vec![],
+            posterior_snapshot: 300_000,
+            policy_version: 1,
+            node_id: test_node("local"),
+            epoch: SecurityEpoch::GENESIS,
+            timestamp_ns: 1_000,
+            degraded_mode: false,
+            escalation_depth: 0,
+            signature: AuthenticityHash::compute_keyed(b"k", b"v"),
+        };
+        let mut escalated = base.clone();
+        escalated.escalation_depth = 2;
+        assert_ne!(base.signing_preimage(), escalated.signing_preimage());
+    }
 }

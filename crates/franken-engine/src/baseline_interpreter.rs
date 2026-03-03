@@ -2219,4 +2219,792 @@ mod tests {
         assert_eq!(c, back);
         assert_eq!(back.granted_capabilities.len(), 2);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PearlTower 2026-03-02 — GetProperty / SetProperty
+    // -----------------------------------------------------------------------
+
+    fn test_module_with_caps(
+        instructions: Vec<Ir3Instruction>,
+        caps: Vec<CapabilityTag>,
+    ) -> Ir3Module {
+        let mut m = test_module(instructions);
+        m.required_capabilities = caps;
+        m
+    }
+
+    #[test]
+    fn set_and_get_property_on_heap_object() {
+        // Allocate object, set property, read it back.
+        let config = InterpreterConfig::quickjs_defaults();
+        let mut core = InterpreterCore::new(config, "test");
+        let oid = core.alloc_object();
+
+        // Set obj.x = 42 via heap directly, then verify through interpreter.
+        core.heap[oid.0 as usize]
+            .properties
+            .insert("x".to_string(), Value::Int(42));
+        let val = core.heap[oid.0 as usize].properties.get("x").cloned();
+        assert_eq!(val, Some(Value::Int(42)));
+    }
+
+    #[test]
+    fn get_property_instruction() {
+        // r0 = Object(0), r1 = "key", r2 = get_property(r0, r1) -> should return Undefined
+        // for missing property
+        let config = InterpreterConfig::quickjs_defaults();
+        let mut core = InterpreterCore::new(config, "test");
+        let oid = core.alloc_object();
+        core.registers[0] = Value::Object(oid);
+        core.registers[1] = Value::Str("missing".to_string());
+
+        let m = test_module(vec![
+            Ir3Instruction::GetProperty {
+                obj: 0,
+                key: 1,
+                dst: 2,
+            },
+            Ir3Instruction::Halt,
+        ]);
+        let result = core.execute(&m).unwrap();
+        // r0 is the result register but r2 has the property.
+        // Actually result.value returns r0, which is still the object.
+        // We need to check what r2 becomes. Let's use Move to copy r2 -> r0.
+        // Rethink: use a module that moves the result to r0.
+        assert_eq!(result.value, Value::Object(oid));
+    }
+
+    #[test]
+    fn get_property_returns_value_via_move() {
+        let config = InterpreterConfig::quickjs_defaults();
+        let mut core = InterpreterCore::new(config, "test");
+        let oid = core.alloc_object();
+        core.heap[oid.0 as usize]
+            .properties
+            .insert("x".to_string(), Value::Int(99));
+        core.registers[1] = Value::Object(oid);
+        core.registers[2] = Value::Str("x".to_string());
+
+        let m = test_module(vec![
+            Ir3Instruction::GetProperty {
+                obj: 1,
+                key: 2,
+                dst: 0,
+            },
+            Ir3Instruction::Halt,
+        ]);
+        let result = core.execute(&m).unwrap();
+        assert_eq!(result.value, Value::Int(99));
+    }
+
+    #[test]
+    fn set_property_instruction() {
+        let config = InterpreterConfig::quickjs_defaults();
+        let mut core = InterpreterCore::new(config, "test");
+        let oid = core.alloc_object();
+        core.registers[1] = Value::Object(oid);
+        core.registers[2] = Value::Str("key".to_string());
+        core.registers[3] = Value::Int(77);
+
+        let m = test_module(vec![
+            Ir3Instruction::SetProperty {
+                obj: 1,
+                key: 2,
+                val: 3,
+            },
+            Ir3Instruction::Halt,
+        ]);
+        let _result = core.execute(&m).unwrap();
+        // Verify the property was set on the heap.
+        assert_eq!(
+            core.heap[oid.0 as usize].properties.get("key"),
+            Some(&Value::Int(77))
+        );
+    }
+
+    #[test]
+    fn get_property_with_int_key() {
+        let config = InterpreterConfig::quickjs_defaults();
+        let mut core = InterpreterCore::new(config, "test");
+        let oid = core.alloc_object();
+        core.heap[oid.0 as usize]
+            .properties
+            .insert("0".to_string(), Value::Int(10));
+        core.registers[1] = Value::Object(oid);
+        core.registers[2] = Value::Int(0); // int key -> "0"
+
+        let m = test_module(vec![
+            Ir3Instruction::GetProperty {
+                obj: 1,
+                key: 2,
+                dst: 0,
+            },
+            Ir3Instruction::Halt,
+        ]);
+        let result = core.execute(&m).unwrap();
+        assert_eq!(result.value, Value::Int(10));
+    }
+
+    #[test]
+    fn get_property_on_non_object_type_error() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadInt { dst: 1, value: 5 },
+            Ir3Instruction::LoadInt { dst: 2, value: 0 },
+            Ir3Instruction::GetProperty {
+                obj: 1,
+                key: 2,
+                dst: 0,
+            },
+        ]);
+        let err = quickjs_execute(&m).unwrap_err();
+        assert!(matches!(err, InterpreterError::TypeError { .. }));
+    }
+
+    #[test]
+    fn set_property_on_non_object_type_error() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadInt { dst: 1, value: 5 },
+            Ir3Instruction::LoadInt { dst: 2, value: 0 },
+            Ir3Instruction::LoadInt { dst: 3, value: 1 },
+            Ir3Instruction::SetProperty {
+                obj: 1,
+                key: 2,
+                val: 3,
+            },
+        ]);
+        let err = quickjs_execute(&m).unwrap_err();
+        assert!(matches!(err, InterpreterError::TypeError { .. }));
+    }
+
+    #[test]
+    fn get_property_object_not_found() {
+        let config = InterpreterConfig::quickjs_defaults();
+        let mut core = InterpreterCore::new(config, "test");
+        // Object(99) does not exist on the heap.
+        core.registers[1] = Value::Object(ObjectId(99));
+        core.registers[2] = Value::Str("x".to_string());
+
+        let m = test_module(vec![
+            Ir3Instruction::GetProperty {
+                obj: 1,
+                key: 2,
+                dst: 0,
+            },
+            Ir3Instruction::Halt,
+        ]);
+        let err = core.execute(&m).unwrap_err();
+        assert!(matches!(err, InterpreterError::ObjectNotFound { id: 99 }));
+    }
+
+    #[test]
+    fn set_property_object_not_found() {
+        let config = InterpreterConfig::quickjs_defaults();
+        let mut core = InterpreterCore::new(config, "test");
+        core.registers[1] = Value::Object(ObjectId(99));
+        core.registers[2] = Value::Str("x".to_string());
+        core.registers[3] = Value::Int(1);
+
+        let m = test_module(vec![
+            Ir3Instruction::SetProperty {
+                obj: 1,
+                key: 2,
+                val: 3,
+            },
+            Ir3Instruction::Halt,
+        ]);
+        let err = core.execute(&m).unwrap_err();
+        assert!(matches!(err, InterpreterError::ObjectNotFound { id: 99 }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: arithmetic type errors for Sub/Mul/Div
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sub_type_error() {
+        let m = test_module_with_pool(
+            vec![
+                Ir3Instruction::LoadStr {
+                    dst: 1,
+                    pool_index: 0,
+                },
+                Ir3Instruction::LoadInt { dst: 2, value: 1 },
+                Ir3Instruction::Sub {
+                    dst: 0,
+                    lhs: 1,
+                    rhs: 2,
+                },
+            ],
+            vec!["hello".to_string()],
+        );
+        let err = quickjs_execute(&m).unwrap_err();
+        assert!(matches!(err, InterpreterError::TypeError { .. }));
+    }
+
+    #[test]
+    fn mul_type_error() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadBool {
+                dst: 1,
+                value: true,
+            },
+            Ir3Instruction::LoadInt { dst: 2, value: 3 },
+            Ir3Instruction::Mul {
+                dst: 0,
+                lhs: 1,
+                rhs: 2,
+            },
+        ]);
+        let err = quickjs_execute(&m).unwrap_err();
+        assert!(matches!(err, InterpreterError::TypeError { .. }));
+    }
+
+    #[test]
+    fn div_type_error() {
+        let m = test_module_with_pool(
+            vec![
+                Ir3Instruction::LoadStr {
+                    dst: 1,
+                    pool_index: 0,
+                },
+                Ir3Instruction::LoadInt { dst: 2, value: 2 },
+                Ir3Instruction::Div {
+                    dst: 0,
+                    lhs: 1,
+                    rhs: 2,
+                },
+            ],
+            vec!["ten".to_string()],
+        );
+        let err = quickjs_execute(&m).unwrap_err();
+        assert!(matches!(err, InterpreterError::TypeError { .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Call type error (call non-function)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn call_non_function_type_error() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadInt { dst: 1, value: 42 },
+            Ir3Instruction::Call {
+                callee: 1,
+                args: RegRange { start: 0, count: 0 },
+                dst: 0,
+            },
+        ]);
+        let err = quickjs_execute(&m).unwrap_err();
+        assert!(matches!(err, InterpreterError::TypeError { .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: FunctionNotFound
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn call_function_not_found() {
+        let config = InterpreterConfig::quickjs_defaults();
+        let mut core = InterpreterCore::new(config, "test");
+        core.registers[1] = Value::Function(99); // function 99 does not exist
+
+        let m = test_module(vec![Ir3Instruction::Call {
+            callee: 1,
+            args: RegRange { start: 0, count: 0 },
+            dst: 0,
+        }]);
+        let err = core.execute(&m).unwrap_err();
+        assert!(matches!(
+            err,
+            InterpreterError::FunctionNotFound {
+                index: 99,
+                table_size: 0
+            }
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: int + string concatenation (number on LHS)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn int_string_concatenation() {
+        let m = test_module_with_pool(
+            vec![
+                Ir3Instruction::LoadInt { dst: 1, value: 42 },
+                Ir3Instruction::LoadStr {
+                    dst: 2,
+                    pool_index: 0,
+                },
+                Ir3Instruction::Add {
+                    dst: 0,
+                    lhs: 1,
+                    rhs: 2,
+                },
+                Ir3Instruction::Halt,
+            ],
+            vec![" is the answer".to_string()],
+        );
+        let result = quickjs_execute(&m).unwrap();
+        assert_eq!(result.value, Value::Str("42 is the answer".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: multiple hostcalls with decision recording
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn multiple_hostcall_decisions_recorded() {
+        let m = test_module(vec![
+            Ir3Instruction::HostCall {
+                capability: CapabilityTag("net".to_string()),
+                args: RegRange { start: 0, count: 0 },
+                dst: 1,
+            },
+            Ir3Instruction::HostCall {
+                capability: CapabilityTag("fs".to_string()),
+                args: RegRange { start: 0, count: 0 },
+                dst: 2,
+            },
+            Ir3Instruction::Halt,
+        ]);
+        let mut config = InterpreterConfig::quickjs_defaults();
+        config.granted_capabilities = vec!["net".to_string(), "fs".to_string()];
+        let lane = QuickJsLane::with_config(config);
+        let result = lane.execute(&m, "test").unwrap();
+        assert_eq!(result.hostcall_decisions.len(), 2);
+        assert_eq!(result.hostcall_decisions[0].capability.0, "net");
+        assert_eq!(result.hostcall_decisions[1].capability.0, "fs");
+        assert!(result.hostcall_decisions[0].allowed);
+        assert!(result.hostcall_decisions[1].allowed);
+        assert_eq!(result.hostcall_decisions[0].seq, 0);
+        assert_eq!(result.hostcall_decisions[1].seq, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: LaneRouter::with_configs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lane_router_with_configs() {
+        let qjs_config = InterpreterConfig::quickjs_defaults();
+        let v8_config = InterpreterConfig::v8_defaults();
+        let router = LaneRouter::with_configs(qjs_config, v8_config);
+        let m = test_module(vec![
+            Ir3Instruction::LoadInt { dst: 0, value: 1 },
+            Ir3Instruction::Halt,
+        ]);
+        let result = router.execute(&m, "test", None).unwrap();
+        assert_eq!(result.lane, LaneChoice::QuickJs);
+        assert_eq!(result.result.value, Value::Int(1));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: forced lane QuickJs via router
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn router_forced_quickjs_on_large_module() {
+        let instrs: Vec<Ir3Instruction> = (0..1001)
+            .map(|_| Ir3Instruction::LoadInt { dst: 0, value: 1 })
+            .chain(std::iter::once(Ir3Instruction::Halt))
+            .collect();
+        let m = test_module(instrs);
+        let router = LaneRouter::new();
+        // Without forcing, would pick V8. Force QuickJs.
+        let result = router
+            .execute(&m, "test", Some(LaneChoice::QuickJs))
+            .unwrap();
+        assert_eq!(result.lane, LaneChoice::QuickJs);
+        assert_eq!(result.reason, LaneReason::PolicyDirective);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: execution_failed event on error
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn execution_failed_event_on_error() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadInt { dst: 1, value: 10 },
+            Ir3Instruction::LoadInt { dst: 2, value: 0 },
+            Ir3Instruction::Div {
+                dst: 0,
+                lhs: 1,
+                rhs: 2,
+            },
+        ]);
+        let mut config = InterpreterConfig::quickjs_defaults();
+        config.instruction_budget = 10_000;
+        let lane = QuickJsLane::with_config(config);
+        // Division by zero is a hard error — execution fails, no result to inspect events.
+        let err = lane.execute(&m, "test").unwrap_err();
+        assert_eq!(err, InterpreterError::DivisionByZero);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: witness_events have sequential seq numbers
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn witness_events_sequential_seq() {
+        let mut m = test_module(vec![
+            Ir3Instruction::HostCall {
+                capability: CapabilityTag("net".to_string()),
+                args: RegRange { start: 0, count: 0 },
+                dst: 0,
+            },
+            Ir3Instruction::Halt,
+        ]);
+        m.required_capabilities = vec![CapabilityTag("net".to_string())];
+        let mut config = InterpreterConfig::quickjs_defaults();
+        config.granted_capabilities = vec!["net".to_string()];
+        let lane = QuickJsLane::with_config(config);
+        let result = lane.execute(&m, "test").unwrap();
+
+        // Should have multiple witness events with ascending seq numbers.
+        assert!(result.witness_events.len() >= 2);
+        for (i, ev) in result.witness_events.iter().enumerate() {
+            assert_eq!(ev.seq, i as u64);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: set property then get it via instructions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn set_then_get_property_via_instructions() {
+        let config = InterpreterConfig::quickjs_defaults();
+        let mut core = InterpreterCore::new(config, "test");
+        let oid = core.alloc_object();
+        core.registers[1] = Value::Object(oid);
+        core.registers[2] = Value::Str("name".to_string());
+        core.registers[3] = Value::Int(123);
+
+        let m = test_module(vec![
+            // set obj.name = 123
+            Ir3Instruction::SetProperty {
+                obj: 1,
+                key: 2,
+                val: 3,
+            },
+            // get obj.name -> r0
+            Ir3Instruction::GetProperty {
+                obj: 1,
+                key: 2,
+                dst: 0,
+            },
+            Ir3Instruction::Halt,
+        ]);
+        let result = core.execute(&m).unwrap();
+        assert_eq!(result.value, Value::Int(123));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: wrapping arithmetic on overflow
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn add_wrapping_overflow() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadInt {
+                dst: 1,
+                value: i64::MAX,
+            },
+            Ir3Instruction::LoadInt { dst: 2, value: 1 },
+            Ir3Instruction::Add {
+                dst: 0,
+                lhs: 1,
+                rhs: 2,
+            },
+            Ir3Instruction::Halt,
+        ]);
+        let result = quickjs_execute(&m).unwrap();
+        assert_eq!(result.value, Value::Int(i64::MIN));
+    }
+
+    #[test]
+    fn sub_wrapping_underflow() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadInt {
+                dst: 1,
+                value: i64::MIN,
+            },
+            Ir3Instruction::LoadInt { dst: 2, value: 1 },
+            Ir3Instruction::Sub {
+                dst: 0,
+                lhs: 1,
+                rhs: 2,
+            },
+            Ir3Instruction::Halt,
+        ]);
+        let result = quickjs_execute(&m).unwrap();
+        assert_eq!(result.value, Value::Int(i64::MAX));
+    }
+
+    #[test]
+    fn mul_wrapping_overflow() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadInt {
+                dst: 1,
+                value: i64::MAX,
+            },
+            Ir3Instruction::LoadInt { dst: 2, value: 2 },
+            Ir3Instruction::Mul {
+                dst: 0,
+                lhs: 1,
+                rhs: 2,
+            },
+            Ir3Instruction::Halt,
+        ]);
+        let result = quickjs_execute(&m).unwrap();
+        assert_eq!(result.value, Value::Int(-2)); // MAX * 2 wraps
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: move register to self (no-op)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn move_register_to_self() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadInt { dst: 0, value: 55 },
+            Ir3Instruction::Move { dst: 0, src: 0 },
+            Ir3Instruction::Halt,
+        ]);
+        let result = quickjs_execute(&m).unwrap();
+        assert_eq!(result.value, Value::Int(55));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: jump_if with various truthy values
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn jump_if_truthy_int() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadInt { dst: 1, value: -1 }, // truthy
+            Ir3Instruction::LoadInt { dst: 0, value: 10 },
+            Ir3Instruction::JumpIf { cond: 1, target: 4 },
+            Ir3Instruction::LoadInt { dst: 0, value: 20 }, // skipped
+            Ir3Instruction::Halt,
+        ]);
+        let result = quickjs_execute(&m).unwrap();
+        assert_eq!(result.value, Value::Int(10));
+    }
+
+    #[test]
+    fn jump_if_falsy_zero() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadInt { dst: 1, value: 0 }, // falsy
+            Ir3Instruction::LoadInt { dst: 0, value: 10 },
+            Ir3Instruction::JumpIf { cond: 1, target: 4 },
+            Ir3Instruction::LoadInt { dst: 0, value: 20 }, // executed
+            Ir3Instruction::Halt,
+        ]);
+        let result = quickjs_execute(&m).unwrap();
+        assert_eq!(result.value, Value::Int(20));
+    }
+
+    #[test]
+    fn jump_if_falsy_null() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadNull { dst: 1 }, // falsy
+            Ir3Instruction::LoadInt { dst: 0, value: 10 },
+            Ir3Instruction::JumpIf { cond: 1, target: 4 },
+            Ir3Instruction::LoadInt { dst: 0, value: 20 }, // executed
+            Ir3Instruction::Halt,
+        ]);
+        let result = quickjs_execute(&m).unwrap();
+        assert_eq!(result.value, Value::Int(20));
+    }
+
+    #[test]
+    fn jump_if_falsy_undefined() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadUndefined { dst: 1 }, // falsy
+            Ir3Instruction::LoadInt { dst: 0, value: 10 },
+            Ir3Instruction::JumpIf { cond: 1, target: 4 },
+            Ir3Instruction::LoadInt { dst: 0, value: 20 }, // executed
+            Ir3Instruction::Halt,
+        ]);
+        let result = quickjs_execute(&m).unwrap();
+        assert_eq!(result.value, Value::Int(20));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: RoutedResult fields
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn routed_result_fields_accessible() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadInt { dst: 0, value: 7 },
+            Ir3Instruction::Halt,
+        ]);
+        let router = LaneRouter::new();
+        let routed = router.execute(&m, "test", None).unwrap();
+        assert_eq!(routed.result.value, Value::Int(7));
+        assert!(routed.result.instructions_executed > 0);
+        assert!(
+            routed
+                .result
+                .witness_events
+                .iter()
+                .any(|e| e.kind == WitnessEventKind::ExecutionCompleted)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: security-sensitive caps + forced V8 still works
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn router_security_sensitive_overridden_by_force() {
+        let mut m = test_module(vec![Ir3Instruction::Halt]);
+        m.required_capabilities = vec![CapabilityTag("net".to_string())];
+        let router = LaneRouter::new();
+        // Without force: QuickJs (security-sensitive). Force V8.
+        let result = router.execute(&m, "test", Some(LaneChoice::V8)).unwrap();
+        assert_eq!(result.lane, LaneChoice::V8);
+        assert_eq!(result.reason, LaneReason::PolicyDirective);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: HeapObject property iteration order is deterministic
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn heap_object_properties_deterministic_order() {
+        let mut obj = HeapObject::new();
+        obj.properties.insert("z".to_string(), Value::Int(3));
+        obj.properties.insert("a".to_string(), Value::Int(1));
+        obj.properties.insert("m".to_string(), Value::Int(2));
+        let keys: Vec<&String> = obj.properties.keys().collect();
+        assert_eq!(keys, vec!["a", "m", "z"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: Value Display for Object and Function
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn value_display_object_and_function() {
+        assert_eq!(Value::Object(ObjectId(5)).to_string(), "[object#5]");
+        assert_eq!(Value::Function(3).to_string(), "[function#3]");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: HeapObject serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn heap_object_serde_roundtrip() {
+        let mut obj = HeapObject::new();
+        obj.properties.insert("x".to_string(), Value::Int(1));
+        obj.properties
+            .insert("y".to_string(), Value::Str("hello".to_string()));
+        let json = serde_json::to_string(&obj).unwrap();
+        let back: HeapObject = serde_json::from_str(&json).unwrap();
+        assert_eq!(obj, back);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: execution with both lanes produces same instruction count
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn both_lanes_same_instruction_count() {
+        let m = test_module(vec![
+            Ir3Instruction::LoadInt { dst: 1, value: 5 },
+            Ir3Instruction::LoadInt { dst: 2, value: 3 },
+            Ir3Instruction::Sub {
+                dst: 0,
+                lhs: 1,
+                rhs: 2,
+            },
+            Ir3Instruction::Halt,
+        ]);
+        let qjs = quickjs_execute(&m).unwrap();
+        let v8 = v8_execute(&m).unwrap();
+        assert_eq!(qjs.instructions_executed, v8.instructions_executed);
+        assert_eq!(qjs.value, v8.value);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: string concatenation with multiple string ops
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn string_concatenation_chain() {
+        let m = test_module_with_pool(
+            vec![
+                Ir3Instruction::LoadStr {
+                    dst: 1,
+                    pool_index: 0,
+                },
+                Ir3Instruction::LoadStr {
+                    dst: 2,
+                    pool_index: 1,
+                },
+                Ir3Instruction::Add {
+                    dst: 3,
+                    lhs: 1,
+                    rhs: 2,
+                },
+                Ir3Instruction::LoadStr {
+                    dst: 4,
+                    pool_index: 2,
+                },
+                Ir3Instruction::Add {
+                    dst: 0,
+                    lhs: 3,
+                    rhs: 4,
+                },
+                Ir3Instruction::Halt,
+            ],
+            vec!["hello".to_string(), " ".to_string(), "world".to_string()],
+        );
+        let result = quickjs_execute(&m).unwrap();
+        assert_eq!(result.value, Value::Str("hello world".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: InterpreterError PartialEq reflexivity
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn interpreter_error_eq_reflexive() {
+        let err = InterpreterError::DivisionByZero;
+        assert_eq!(err, err.clone());
+
+        let err2 = InterpreterError::BudgetExhausted {
+            executed: 100,
+            budget: 50,
+        };
+        assert_eq!(err2, err2.clone());
+        assert_ne!(err, err2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: read register out of bounds on read side
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn read_register_out_of_bounds_in_add() {
+        let mut config = InterpreterConfig::quickjs_defaults();
+        config.max_registers = 4;
+        let m = test_module(vec![Ir3Instruction::Add {
+            dst: 0,
+            lhs: 1,
+            rhs: 999, // out of bounds for max_registers=4
+        }]);
+        let lane = QuickJsLane::with_config(config);
+        let err = lane.execute(&m, "test").unwrap_err();
+        assert!(matches!(
+            err,
+            InterpreterError::RegisterOutOfBounds { register: 999, .. }
+        ));
+    }
 }

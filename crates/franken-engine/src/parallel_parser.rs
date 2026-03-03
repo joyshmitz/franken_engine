@@ -3875,4 +3875,370 @@ mod tests {
             );
         }
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn serial_reason_display_single_worker() {
+        assert_eq!(
+            SerialReason::SingleWorker.to_string(),
+            "single worker configured"
+        );
+    }
+
+    #[test]
+    fn serial_reason_display_no_deterministic_split_points() {
+        assert_eq!(
+            SerialReason::NoDeterministicSplitPoints.to_string(),
+            "no deterministic split points"
+        );
+    }
+
+    #[test]
+    fn serial_reason_display_budget_exhausted() {
+        let reason = SerialReason::BudgetExhausted { budget_us: 50_000 };
+        assert_eq!(reason.to_string(), "budget exhausted (50000us)");
+    }
+
+    #[test]
+    fn serial_reason_display_parity_mismatch() {
+        let reason = SerialReason::ParityMismatch { mismatch_index: 7 };
+        assert_eq!(reason.to_string(), "parity mismatch at token 7");
+    }
+
+    #[test]
+    fn serial_reason_display_merge_buffer_exceeded() {
+        let reason = SerialReason::MergeBufferExceeded {
+            buffer_bytes: 2_000_000,
+            limit: 1_048_576,
+        };
+        assert!(reason.to_string().contains("2000000B exceeds 1048576B"));
+    }
+
+    #[test]
+    fn serial_reason_display_transcript_divergence() {
+        let reason = SerialReason::TranscriptDivergence {
+            detail: "hash mismatch".to_string(),
+        };
+        assert!(reason.to_string().contains("hash mismatch"));
+    }
+
+    #[test]
+    fn serial_reason_serde_merge_buffer_and_transcript() {
+        let variants = vec![
+            SerialReason::MergeBufferExceeded {
+                buffer_bytes: 2_000_000,
+                limit: 1_000_000,
+            },
+            SerialReason::TranscriptDivergence {
+                detail: "diverged".into(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: SerialReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn fallback_cause_display_routing() {
+        let cause = FallbackCause::Routing(SerialReason::SingleWorker);
+        assert_eq!(cause.to_string(), "routing: single worker configured");
+    }
+
+    #[test]
+    fn fallback_cause_display_resource_limit() {
+        let cause = FallbackCause::ResourceLimit(SerialReason::BudgetExhausted { budget_us: 100 });
+        assert_eq!(cause.to_string(), "resource limit: budget exhausted (100us)");
+    }
+
+    #[test]
+    fn fallback_cause_display_transcript_divergence() {
+        let cause = FallbackCause::TranscriptDivergence {
+            detail: "bad hash".to_string(),
+        };
+        assert!(cause.to_string().contains("transcript divergence"));
+        assert!(cause.to_string().contains("bad hash"));
+    }
+
+    #[test]
+    fn parse_error_display_input_too_large() {
+        let e = ParseError::InputTooLarge {
+            size: 5000,
+            max: 1000,
+        };
+        assert!(e.to_string().contains("5000B exceeds 1000B"));
+    }
+
+    #[test]
+    fn parse_error_display_invalid_config() {
+        let e = ParseError::InvalidConfig {
+            detail: "max_workers must be >= 1".to_string(),
+        };
+        assert!(e.to_string().contains("invalid config"));
+        assert!(e.to_string().contains("max_workers"));
+    }
+
+    #[test]
+    fn transcript_replay_error_display_all_distinct() {
+        let hash_a = ContentHash::compute(b"a");
+        let hash_b = ContentHash::compute(b"b");
+        let variants: Vec<TranscriptReplayError> = vec![
+            TranscriptReplayError::PlanHashMismatch {
+                expected: hash_a.clone(),
+                actual: hash_b.clone(),
+            },
+            TranscriptReplayError::WorkerCountMismatch {
+                expected: 4,
+                actual: 2,
+            },
+            TranscriptReplayError::InvalidExecutionOrderLength {
+                expected_chunks: 4,
+                actual_entries: 3,
+            },
+            TranscriptReplayError::InvalidDispatchCount {
+                expected_steps: 4,
+                actual_steps: 3,
+            },
+            TranscriptReplayError::InvalidChunkReference {
+                step_index: 0,
+                chunk_index: 10,
+                chunk_count: 4,
+            },
+            TranscriptReplayError::DuplicateChunkReference { chunk_index: 2 },
+            TranscriptReplayError::MissingChunkReference { chunk_index: 3 },
+            TranscriptReplayError::DispatchStepMismatch {
+                expected_step: 0,
+                actual_step: 1,
+            },
+            TranscriptReplayError::DispatchChunkMismatch {
+                step_index: 0,
+                expected_chunk: 1,
+                actual_chunk: 2,
+            },
+            TranscriptReplayError::WorkerSlotOutOfRange {
+                step_index: 0,
+                worker_slot: 5,
+                worker_count: 4,
+            },
+            TranscriptReplayError::TranscriptHashMismatch {
+                expected: hash_a,
+                actual: hash_b,
+            },
+        ];
+        let mut set = std::collections::BTreeSet::new();
+        for v in &variants {
+            set.insert(v.to_string());
+        }
+        assert_eq!(set.len(), variants.len());
+    }
+
+    #[test]
+    fn transcript_replay_error_serde_roundtrip() {
+        let hash = ContentHash::compute(b"test");
+        let variants = vec![
+            TranscriptReplayError::PlanHashMismatch {
+                expected: hash.clone(),
+                actual: hash.clone(),
+            },
+            TranscriptReplayError::WorkerCountMismatch {
+                expected: 4,
+                actual: 2,
+            },
+            TranscriptReplayError::DuplicateChunkReference { chunk_index: 1 },
+            TranscriptReplayError::MissingChunkReference { chunk_index: 3 },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: TranscriptReplayError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn chunk_result_serde_roundtrip() {
+        let cr = ChunkResult {
+            chunk_index: 1,
+            chunk_start: 100,
+            chunk_end: 200,
+            tokens: vec![Token {
+                kind: TokenKind::Identifier,
+                start: 0,
+                end: 5,
+            }],
+            token_count: 1,
+        };
+        let json = serde_json::to_string(&cr).unwrap();
+        let back: ChunkResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(cr, back);
+    }
+
+    #[test]
+    fn schedule_dispatch_serde_roundtrip() {
+        let dispatch = ScheduleDispatch {
+            step_index: 3,
+            chunk_index: 1,
+            worker_slot: 2,
+        };
+        let json = serde_json::to_string(&dispatch).unwrap();
+        let back: ScheduleDispatch = serde_json::from_str(&json).unwrap();
+        assert_eq!(dispatch, back);
+    }
+
+    #[test]
+    fn failover_trigger_serde_roundtrip() {
+        let trigger = FailoverTrigger {
+            class: FailoverTriggerClass::Timeout,
+            detail: "chunk 0 exceeded budget".to_string(),
+        };
+        let json = serde_json::to_string(&trigger).unwrap();
+        let back: FailoverTrigger = serde_json::from_str(&json).unwrap();
+        assert_eq!(trigger, back);
+    }
+
+    #[test]
+    fn failover_decision_serde_roundtrip() {
+        let decision = FailoverDecision {
+            trigger: FailoverTrigger {
+                class: FailoverTriggerClass::ParityMismatch,
+                detail: "token 42".to_string(),
+            },
+            transition_path: vec![
+                FailoverState::ParallelAttempted,
+                FailoverState::TriggerClassified,
+                FailoverState::SerialFallbackRequested,
+                FailoverState::SerialFallbackCompleted,
+            ],
+            witness_ids: vec!["w1".to_string(), "w2".to_string()],
+            replay_command: "franken-engine replay --trace t1".to_string(),
+        };
+        let json = serde_json::to_string(&decision).unwrap();
+        let back: FailoverDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(decision, back);
+    }
+
+    #[test]
+    fn parse_log_entry_serde_roundtrip() {
+        let entry = ParseLogEntry {
+            trace_id: "t1".into(),
+            component: COMPONENT.into(),
+            event: "parse_complete".into(),
+            outcome: "ok".into(),
+            parser_mode: Some("parallel".into()),
+            worker_count: Some(4),
+            input_bytes: Some(1000),
+            token_count: Some(50),
+            fallback_reason: None,
+            failover_trigger: None,
+            failover_transition_path: None,
+            failover_witness_ids: None,
+            replay_command: None,
+            parity_result: Some("ok".into()),
+            cancellation_state: None,
+            cancellation_elapsed_us: None,
+            backpressure_level: Some("normal".into()),
+            backpressure_peak_queue_depth: Some(0),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: ParseLogEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn check_parity_both_empty_is_ok() {
+        let result = check_parity(&[], &[]);
+        assert!(result.parity_ok);
+        assert_eq!(result.mismatch_index, None);
+        assert_eq!(result.parallel_count, 0);
+        assert_eq!(result.serial_count, 0);
+    }
+
+    #[test]
+    fn classify_backpressure_level_normal() {
+        assert_eq!(classify_backpressure_level(0), BackpressureLevel::Normal);
+        assert_eq!(classify_backpressure_level(1), BackpressureLevel::Normal);
+    }
+
+    #[test]
+    fn classify_backpressure_level_elevated() {
+        assert_eq!(classify_backpressure_level(2), BackpressureLevel::Elevated);
+        assert_eq!(classify_backpressure_level(11), BackpressureLevel::Elevated);
+    }
+
+    #[test]
+    fn classify_backpressure_level_critical() {
+        assert_eq!(
+            classify_backpressure_level(12),
+            BackpressureLevel::Critical
+        );
+        assert_eq!(
+            classify_backpressure_level(100),
+            BackpressureLevel::Critical
+        );
+    }
+
+    #[test]
+    fn token_kind_code_all_variants() {
+        assert_eq!(token_kind_code(TokenKind::Identifier), 0);
+        assert_eq!(token_kind_code(TokenKind::NumericLiteral), 1);
+        assert_eq!(token_kind_code(TokenKind::StringLiteral), 2);
+        assert_eq!(token_kind_code(TokenKind::UnterminatedString), 3);
+        assert_eq!(token_kind_code(TokenKind::TwoCharOperator), 4);
+        assert_eq!(token_kind_code(TokenKind::Punctuation), 5);
+    }
+
+    #[test]
+    fn splitmix64_deterministic() {
+        let a = splitmix64(42);
+        let b = splitmix64(42);
+        assert_eq!(a, b);
+        // Different inputs produce different outputs.
+        assert_ne!(splitmix64(0), splitmix64(1));
+    }
+
+    #[test]
+    fn deterministic_chunk_elapsed_us_increases_with_step() {
+        let t0 = deterministic_chunk_elapsed_us(100, 10, 0);
+        let t1 = deterministic_chunk_elapsed_us(100, 10, 1);
+        let t2 = deterministic_chunk_elapsed_us(100, 10, 2);
+        assert!(t0 < t1);
+        assert!(t1 < t2);
+    }
+
+    #[test]
+    fn zero_budget_is_error() {
+        let config = ParallelConfig {
+            chunk_budget_us: 0,
+            ..default_config()
+        };
+        let input = make_input("x", &config);
+        assert!(matches!(
+            parse(&input),
+            Err(ParseError::InvalidConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn parse_error_serde_all_variants() {
+        let variants = vec![
+            ParseError::LexerError {
+                chunk_index: 0,
+                detail: "bad".into(),
+            },
+            ParseError::InputTooLarge {
+                size: 1000,
+                max: 500,
+            },
+            ParseError::InvalidConfig {
+                detail: "zero workers".into(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ParseError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
 }

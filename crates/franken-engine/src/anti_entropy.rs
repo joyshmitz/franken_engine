@@ -2242,4 +2242,111 @@ mod tests {
         let back: Iblt = serde_json::from_str(&json).unwrap();
         assert_eq!(back, iblt);
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn session_epoch_accessor() {
+        let session = ReconcileSession::new(SecurityEpoch::from_raw(42), ReconcileConfig::default());
+        assert_eq!(session.epoch(), SecurityEpoch::from_raw(42));
+    }
+
+    #[test]
+    fn session_drain_events_empties() {
+        let config = ReconcileConfig {
+            iblt_cells: 128,
+            iblt_hashes: 3,
+            max_retries: 2,
+            retry_scale_factor: 2,
+        };
+        let mut session = ReconcileSession::new(test_epoch(), config);
+        let objects: BTreeSet<[u8; 32]> = (0..5).map(make_hash).collect();
+        let remote_iblt = session.build_iblt(&objects);
+        session
+            .reconcile(&objects, &remote_iblt, "peer", "t1")
+            .unwrap();
+        assert!(!session.drain_events().is_empty());
+        assert!(session.drain_events().is_empty());
+    }
+
+    #[test]
+    fn exact_difference_identical_sets_empty() {
+        let objects: BTreeSet<[u8; 32]> = (0..10).map(make_hash).collect();
+        let (lo, ro) = ReconcileSession::exact_difference(&objects, &objects);
+        assert!(lo.is_empty());
+        assert!(ro.is_empty());
+    }
+
+    #[test]
+    fn exact_difference_disjoint_sets() {
+        let local: BTreeSet<[u8; 32]> = (0..5).map(make_hash).collect();
+        let remote: BTreeSet<[u8; 32]> = (5..10).map(make_hash).collect();
+        let (lo, ro) = ReconcileSession::exact_difference(&local, &remote);
+        assert_eq!(lo.len(), 5);
+        assert_eq!(ro.len(), 5);
+    }
+
+    #[test]
+    fn fallback_protocol_epoch_accessor() {
+        let fb = FallbackProtocol::new(SecurityEpoch::from_raw(7));
+        assert_eq!(fb.epoch(), SecurityEpoch::from_raw(7));
+    }
+
+    #[test]
+    fn rate_monitor_total_recorded_tracks() {
+        let mut monitor = FallbackRateMonitor::new(test_epoch(), FallbackConfig::default());
+        assert_eq!(monitor.total_recorded(), 0);
+        monitor.record(false);
+        monitor.record(true);
+        monitor.record(false);
+        assert_eq!(monitor.total_recorded(), 3);
+    }
+
+    #[test]
+    fn iblt_subtract_hash_count_mismatch() {
+        let a = Iblt::new(64, 3);
+        let b = Iblt::new(64, 4); // different num_hashes
+        assert!(matches!(
+            a.subtract(&b),
+            Err(ReconcileError::IbltSizeMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn incremental_fallback_with_one_range_matches_full() {
+        let mut fb = FallbackProtocol::new(test_epoch());
+        let local: BTreeSet<[u8; 32]> = (0..10).map(make_hash).collect();
+        let remote: BTreeSet<[u8; 32]> = (5..15).map(make_hash).collect();
+
+        let full = fb.execute(FallbackRequest {
+            local_hashes: &local,
+            remote_hashes: &remote,
+            trigger: FallbackTrigger::PeelFailed { remaining_cells: 1 },
+            reconciliation_id: "r1",
+            peer: "p1",
+            trace_id: "t1",
+        });
+
+        let mut fb2 = FallbackProtocol::new(test_epoch());
+        let incr = fb2.execute_incremental(
+            FallbackRequest {
+                local_hashes: &local,
+                remote_hashes: &remote,
+                trigger: FallbackTrigger::PeelFailed { remaining_cells: 1 },
+                reconciliation_id: "r1",
+                peer: "p1",
+                trace_id: "t1",
+            },
+            1, // num_ranges=1 delegates to execute()
+        );
+
+        assert_eq!(
+            full.objects_to_send.iter().collect::<BTreeSet<_>>(),
+            incr.objects_to_send.iter().collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            full.objects_to_fetch.iter().collect::<BTreeSet<_>>(),
+            incr.objects_to_fetch.iter().collect::<BTreeSet<_>>()
+        );
+    }
 }

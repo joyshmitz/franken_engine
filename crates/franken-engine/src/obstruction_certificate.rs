@@ -4151,4 +4151,353 @@ mod tests {
         assert!(kinds.contains(&&FallbackActionKind::SplitBoundary));
         assert!(kinds.contains(&&FallbackActionKind::Escalate));
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn compute_rationale_hash_varies_with_targets() {
+        let h1 = FallbackAction::compute_rationale_hash(
+            &FallbackActionKind::Isolate,
+            &["A".to_string()],
+            "same desc",
+        );
+        let h2 = FallbackAction::compute_rationale_hash(
+            &FallbackActionKind::Isolate,
+            &["B".to_string()],
+            "same desc",
+        );
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn compute_rationale_hash_varies_with_description() {
+        let h1 = FallbackAction::compute_rationale_hash(
+            &FallbackActionKind::Degrade,
+            &["A".to_string()],
+            "desc one",
+        );
+        let h2 = FallbackAction::compute_rationale_hash(
+            &FallbackActionKind::Degrade,
+            &["A".to_string()],
+            "desc two",
+        );
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn certification_outcome_ordering_complete() {
+        assert!(CertificationOutcome::Clear < CertificationOutcome::ObstructedWithFallbacks);
+        assert!(
+            CertificationOutcome::ObstructedWithFallbacks
+                < CertificationOutcome::ObstructedNoFallback
+        );
+        assert!(CertificationOutcome::ObstructedNoFallback < CertificationOutcome::BudgetExhausted);
+    }
+
+    #[test]
+    fn fallback_action_id_deterministic() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::UnresolvedContext {
+                consumer: "C".into(),
+                context_key: "K".into(),
+            },
+            SeverityScore::critical(),
+            DEBT_UNRESOLVED_CONTEXT,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let r1 = c.certify(&input).unwrap();
+        let r2 = c.certify(&input).unwrap();
+        let p1 = r1.certificates[0].fallback_plan.as_ref().unwrap();
+        let p2 = r2.certificates[0].fallback_plan.as_ref().unwrap();
+        for (a1, a2) in p1.actions.iter().zip(p2.actions.iter()) {
+            assert_eq!(a1.id, a2.id);
+        }
+    }
+
+    #[test]
+    fn fallback_action_ids_distinct_per_kind() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::UnresolvedContext {
+                consumer: "C".into(),
+                context_key: "K".into(),
+            },
+            SeverityScore::critical(),
+            DEBT_UNRESOLVED_CONTEXT,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let plan = result.certificates[0].fallback_plan.as_ref().unwrap();
+        let ids: BTreeSet<_> = plan.actions.iter().map(|a| &a.id).collect();
+        assert_eq!(ids.len(), plan.actions.len());
+    }
+
+    #[test]
+    fn max_actions_per_plan_truncation() {
+        let config = ObstructionCertifierConfig {
+            max_actions_per_plan: 2,
+            ..ObstructionCertifierConfig::default()
+        };
+        let c = ObstructionCertifier::with_config(config);
+        let v = make_violation(
+            CoherenceViolationKind::UnresolvedContext {
+                consumer: "C".into(),
+                context_key: "K".into(),
+            },
+            SeverityScore::critical(),
+            DEBT_UNRESOLVED_CONTEXT,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let plan = result.certificates[0].fallback_plan.as_ref().unwrap();
+        assert!(plan.actions.len() <= 2);
+    }
+
+    #[test]
+    fn render_report_multiple_obstructions_numbered() {
+        let c = ObstructionCertifier::new();
+        let v1 = make_violation(
+            CoherenceViolationKind::UnresolvedContext {
+                consumer: "A".into(),
+                context_key: "K1".into(),
+            },
+            SeverityScore::critical(),
+            DEBT_UNRESOLVED_CONTEXT,
+        );
+        let v2 = make_violation(
+            CoherenceViolationKind::CapabilityGap {
+                component: "B".into(),
+                missing_capabilities: vec!["x".into()],
+            },
+            SeverityScore::high(),
+            DEBT_CAPABILITY_GAP,
+        );
+        let input = make_check_result(vec![v1, v2], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let report = render_certification_report(&result);
+        assert!(report.contains("Obstruction #1"));
+        assert!(report.contains("Obstruction #2"));
+    }
+
+    #[test]
+    fn render_report_action_line_includes_feasible_label() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::UnresolvedContext {
+                consumer: "C".into(),
+                context_key: "K".into(),
+            },
+            SeverityScore::critical(),
+            DEBT_UNRESOLVED_CONTEXT,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let report = render_certification_report(&result);
+        assert!(report.contains("feasible"));
+        assert!(report.contains("cost="));
+    }
+
+    #[test]
+    fn infeasible_certificates_mixed_feasible_and_infeasible() {
+        let schema = SchemaId::from_definition(b"test.enrichment2.v1");
+        let plan_feasible = FallbackPlan {
+            id: derive_id(ObjectDomain::EvidenceRecord, "p", &schema, b"p1").unwrap(),
+            certificate_id: derive_id(ObjectDomain::EvidenceRecord, "c", &schema, b"c1").unwrap(),
+            actions: vec![],
+            recommended_action_index: 0,
+            has_feasible_resolution: true,
+            debt_code: None,
+            plan_hash: ContentHash::compute(b"feasible"),
+        };
+        let plan_infeasible = FallbackPlan {
+            id: derive_id(ObjectDomain::EvidenceRecord, "p", &schema, b"p2").unwrap(),
+            certificate_id: derive_id(ObjectDomain::EvidenceRecord, "c", &schema, b"c2").unwrap(),
+            actions: vec![],
+            recommended_action_index: 0,
+            has_feasible_resolution: false,
+            debt_code: Some(DEBT_FALLBACK_INFEASIBLE.to_string()),
+            plan_hash: ContentHash::compute(b"infeasible"),
+        };
+        let cert1 = ObstructionCertificate {
+            id: derive_id(ObjectDomain::EvidenceRecord, "c", &schema, b"c1").unwrap(),
+            source_violation_id: derive_id(ObjectDomain::EvidenceRecord, "v", &schema, b"v1")
+                .unwrap(),
+            violation_kind_tag: "feasible-kind".into(),
+            severity: SeverityScore::critical(),
+            debt_code: DEBT_UNRESOLVED_CONTEXT.into(),
+            detected_epoch: 1,
+            witness_components: BTreeSet::new(),
+            witness_fragments: vec![],
+            explanation: "ok".into(),
+            certificate_hash: ContentHash::compute(b"c1"),
+            fallback_plan: Some(plan_feasible),
+        };
+        let cert2 = ObstructionCertificate {
+            id: derive_id(ObjectDomain::EvidenceRecord, "c", &schema, b"c2").unwrap(),
+            source_violation_id: derive_id(ObjectDomain::EvidenceRecord, "v", &schema, b"v2")
+                .unwrap(),
+            violation_kind_tag: "infeasible-kind".into(),
+            severity: SeverityScore::critical(),
+            debt_code: DEBT_CAPABILITY_GAP.into(),
+            detected_epoch: 1,
+            witness_components: BTreeSet::new(),
+            witness_fragments: vec![],
+            explanation: "nope".into(),
+            certificate_hash: ContentHash::compute(b"c2"),
+            fallback_plan: Some(plan_infeasible),
+        };
+        let result = CertificationResult {
+            schema_version: OBSTRUCTION_CERT_SCHEMA_VERSION.into(),
+            bead_id: OBSTRUCTION_CERT_BEAD_ID.into(),
+            outcome: CertificationOutcome::ObstructedNoFallback,
+            certificates: vec![cert1, cert2],
+            total_obstructions: 2,
+            blocking_obstructions: 2,
+            feasible_fallback_count: 1,
+            infeasible_fallback_count: 1,
+            certification_epoch: 1,
+            result_hash: ContentHash::compute(b"mixed"),
+        };
+        let infeasible = result.infeasible_certificates();
+        assert_eq!(infeasible.len(), 1);
+        assert_eq!(infeasible[0].violation_kind_tag, "infeasible-kind");
+    }
+
+    #[test]
+    fn duplicate_provider_three_providers_witness() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::DuplicateProvider {
+                providers: vec!["P1".into(), "P2".into(), "P3".into()],
+                context_key: "Ctx".into(),
+            },
+            SeverityScore::high(),
+            DEBT_UNRESOLVED_CONTEXT,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let cert = &result.certificates[0];
+        assert_eq!(cert.witness_components.len(), 3);
+        assert_eq!(cert.witness_fragments.len(), 3);
+    }
+
+    #[test]
+    fn fallback_action_kind_display_all_distinct() {
+        let kinds = [
+            FallbackActionKind::Isolate,
+            FallbackActionKind::Degrade,
+            FallbackActionKind::SplitBoundary,
+            FallbackActionKind::InjectAdapter,
+            FallbackActionKind::RemoveAndStub,
+            FallbackActionKind::Escalate,
+        ];
+        let displays: BTreeSet<String> = kinds.iter().map(|k| format!("{k}")).collect();
+        assert_eq!(displays.len(), kinds.len());
+    }
+
+    #[test]
+    fn feasible_fallback_count_accuracy() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::UnresolvedContext {
+                consumer: "A".into(),
+                context_key: "K".into(),
+            },
+            SeverityScore::critical(),
+            DEBT_UNRESOLVED_CONTEXT,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        assert_eq!(result.feasible_fallback_count, 1);
+        assert_eq!(result.infeasible_fallback_count, 0);
+    }
+
+    #[test]
+    fn certificate_id_differs_from_source_violation_id() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::UnresolvedContext {
+                consumer: "C".into(),
+                context_key: "K".into(),
+            },
+            SeverityScore::critical(),
+            DEBT_UNRESOLVED_CONTEXT,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let cert = &result.certificates[0];
+        assert_ne!(cert.id, cert.source_violation_id);
+    }
+
+    #[test]
+    fn build_clear_result_deterministic() {
+        let c = ObstructionCertifier::new();
+        let input = make_check_result(vec![], CoherenceOutcome::Coherent);
+        let r1 = c.certify(&input).unwrap();
+        let r2 = c.certify(&input).unwrap();
+        assert_eq!(r1.result_hash, r2.result_hash);
+    }
+
+    #[test]
+    fn suspense_boundary_many_children_witness_bounded() {
+        let mut config = ObstructionCertifierConfig::default();
+        config.max_witness_components = 3;
+        let c = ObstructionCertifier::with_config(config);
+        let children: Vec<String> = (0..10).map(|i| format!("Child{i}")).collect();
+        let v = make_violation(
+            CoherenceViolationKind::SuspenseBoundaryConflict {
+                boundary_component: "Boundary".into(),
+                conflicting_children: children,
+                reason: "conflict".into(),
+            },
+            SeverityScore::high(),
+            DEBT_SUSPENSE_BOUNDARY_CONFLICT,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let cert = &result.certificates[0];
+        // max_witness_components is 3: boundary + 2 children
+        assert!(cert.witness_components.len() <= 3);
+    }
+
+    #[test]
+    fn obstruction_error_display_exact_format() {
+        let e1 = ObstructionError::BudgetExhausted {
+            resource: "actions".into(),
+            limit: 50,
+        };
+        assert_eq!(e1.to_string(), "budget exhausted for actions: limit=50");
+
+        let e2 = ObstructionError::InvalidInput("missing data".into());
+        assert_eq!(e2.to_string(), "invalid input: missing data");
+
+        let e3 = ObstructionError::InternalInconsistency("hash fail".into());
+        assert_eq!(e3.to_string(), "internal inconsistency: hash fail");
+    }
+
+    #[test]
+    fn render_report_clear_has_no_recommended_label() {
+        let c = ObstructionCertifier::new();
+        let input = make_check_result(vec![], CoherenceOutcome::Coherent);
+        let result = c.certify(&input).unwrap();
+        let report = render_certification_report(&result);
+        assert!(!report.contains("[RECOMMENDED]"));
+    }
+
+    #[test]
+    fn effect_cycle_explanation_contains_arrow_chain() {
+        let c = ObstructionCertifier::new();
+        let v = make_violation(
+            CoherenceViolationKind::EffectOrderCycle {
+                cycle_participants: vec!["X".into(), "Y".into(), "Z".into()],
+            },
+            SeverityScore::critical(),
+            DEBT_EFFECT_CYCLE,
+        );
+        let input = make_check_result(vec![v], CoherenceOutcome::Incoherent);
+        let result = c.certify(&input).unwrap();
+        let cert = &result.certificates[0];
+        assert!(cert.explanation.contains("X -> Y -> Z"));
+    }
 }

@@ -1924,4 +1924,469 @@ mod tests {
             assert_eq!(*v, back);
         }
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn signal_graph_mark_dirty_on_disposed_returns_error() {
+        let mut g = SignalGraph::new();
+        let s = g.next_signal_id();
+        g.register(s, SignalKind::Source, BTreeSet::new()).unwrap();
+        g.dispose(s).unwrap();
+        assert!(matches!(
+            g.mark_dirty(s),
+            Err(SignalGraphError::Disposed(_))
+        ));
+    }
+
+    #[test]
+    fn signal_graph_mark_clean_on_disposed_returns_error() {
+        let mut g = SignalGraph::new();
+        let s = g.next_signal_id();
+        g.register(s, SignalKind::Source, BTreeSet::new()).unwrap();
+        g.dispose(s).unwrap();
+        assert!(matches!(
+            g.mark_clean(s),
+            Err(SignalGraphError::Disposed(_))
+        ));
+    }
+
+    #[test]
+    fn signal_graph_dispose_not_found() {
+        let mut g = SignalGraph::new();
+        assert!(matches!(
+            g.dispose(SignalId(999)),
+            Err(SignalGraphError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn signal_graph_generation_increments_on_dirty() {
+        let mut g = SignalGraph::new();
+        let s = g.next_signal_id();
+        g.register(s, SignalKind::Source, BTreeSet::new()).unwrap();
+        g.mark_clean(s).unwrap();
+
+        let gen_before = g.get(s).unwrap().generation;
+        g.mark_dirty(s).unwrap();
+        let gen_after = g.get(s).unwrap().generation;
+        assert!(gen_after > gen_before);
+    }
+
+    #[test]
+    fn dom_patch_create_with_invalid_parent_returns_error() {
+        let mut t = DomTree::new();
+        let id = t.next_element_id();
+        assert!(matches!(
+            t.apply_patch(&DomPatch::CreateElement {
+                id,
+                tag: "div".into(),
+                parent: Some(DomElementId(999)),
+            }),
+            Err(DomPatchError::ParentNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn dom_patch_move_element_not_found() {
+        let mut t = DomTree::new();
+        let parent = t.next_element_id();
+        t.apply_patch(&DomPatch::CreateElement {
+            id: parent,
+            tag: "div".into(),
+            parent: None,
+        })
+        .unwrap();
+        assert!(matches!(
+            t.apply_patch(&DomPatch::MoveElement {
+                id: DomElementId(999),
+                new_parent: parent,
+                before_sibling: None,
+            }),
+            Err(DomPatchError::ElementNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn dom_patch_move_to_missing_parent() {
+        let mut t = DomTree::new();
+        let elem = t.next_element_id();
+        t.apply_patch(&DomPatch::CreateElement {
+            id: elem,
+            tag: "span".into(),
+            parent: None,
+        })
+        .unwrap();
+        assert!(matches!(
+            t.apply_patch(&DomPatch::MoveElement {
+                id: elem,
+                new_parent: DomElementId(999),
+                before_sibling: None,
+            }),
+            Err(DomPatchError::ParentNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn dom_patch_set_text_on_missing_element() {
+        let mut t = DomTree::new();
+        assert!(matches!(
+            t.apply_patch(&DomPatch::SetTextContent {
+                id: DomElementId(99),
+                text: "hello".into(),
+            }),
+            Err(DomPatchError::ElementNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn dom_patch_remove_property_on_missing_element() {
+        let mut t = DomTree::new();
+        assert!(matches!(
+            t.apply_patch(&DomPatch::RemoveProperty {
+                id: DomElementId(99),
+                key: "class".into(),
+            }),
+            Err(DomPatchError::ElementNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn dom_patch_replace_missing_element() {
+        let mut t = DomTree::new();
+        assert!(matches!(
+            t.apply_patch(&DomPatch::ReplaceElement {
+                old: DomElementId(99),
+                new_id: DomElementId(100),
+                tag: "div".into(),
+            }),
+            Err(DomPatchError::ElementNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn dom_patch_move_with_before_sibling() {
+        let mut t = DomTree::new();
+        let parent = t.next_element_id();
+        let a = t.next_element_id();
+        let b = t.next_element_id();
+        let c = t.next_element_id();
+        t.apply_patch(&DomPatch::CreateElement {
+            id: parent,
+            tag: "ul".into(),
+            parent: None,
+        })
+        .unwrap();
+        t.apply_patch(&DomPatch::CreateElement {
+            id: a,
+            tag: "li".into(),
+            parent: Some(parent),
+        })
+        .unwrap();
+        t.apply_patch(&DomPatch::CreateElement {
+            id: b,
+            tag: "li".into(),
+            parent: Some(parent),
+        })
+        .unwrap();
+        // Create c as orphan, then move before b
+        t.apply_patch(&DomPatch::CreateElement {
+            id: c,
+            tag: "li".into(),
+            parent: None,
+        })
+        .unwrap();
+        t.apply_patch(&DomPatch::MoveElement {
+            id: c,
+            new_parent: parent,
+            before_sibling: Some(b),
+        })
+        .unwrap();
+        // Should be: a, c, b
+        let children = &t.get(parent).unwrap().children;
+        assert_eq!(children, &[a, c, b]);
+    }
+
+    #[test]
+    fn patch_batch_is_empty_and_push() {
+        let mut batch = PatchBatch::new("App", 0);
+        assert!(batch.is_empty());
+        batch.push(DomPatch::RemoveElement {
+            id: DomElementId(1),
+        });
+        assert!(!batch.is_empty());
+        assert_eq!(batch.patches.len(), 1);
+    }
+
+    #[test]
+    fn dom_patch_target_element_all_variants() {
+        let cases: Vec<(DomPatch, DomElementId)> = vec![
+            (
+                DomPatch::CreateElement {
+                    id: DomElementId(1),
+                    tag: "div".into(),
+                    parent: None,
+                },
+                DomElementId(1),
+            ),
+            (
+                DomPatch::RemoveElement {
+                    id: DomElementId(2),
+                },
+                DomElementId(2),
+            ),
+            (
+                DomPatch::SetProperty {
+                    id: DomElementId(3),
+                    key: "k".into(),
+                    value: "v".into(),
+                },
+                DomElementId(3),
+            ),
+            (
+                DomPatch::RemoveProperty {
+                    id: DomElementId(4),
+                    key: "k".into(),
+                },
+                DomElementId(4),
+            ),
+            (
+                DomPatch::SetTextContent {
+                    id: DomElementId(5),
+                    text: "t".into(),
+                },
+                DomElementId(5),
+            ),
+            (
+                DomPatch::MoveElement {
+                    id: DomElementId(6),
+                    new_parent: DomElementId(0),
+                    before_sibling: None,
+                },
+                DomElementId(6),
+            ),
+            (
+                DomPatch::ReplaceElement {
+                    old: DomElementId(7),
+                    new_id: DomElementId(8),
+                    tag: "p".into(),
+                },
+                DomElementId(7),
+            ),
+        ];
+        for (patch, expected) in cases {
+            assert_eq!(patch.target_element(), expected);
+        }
+    }
+
+    #[test]
+    fn dom_patch_serde_all_variants() {
+        let variants: Vec<DomPatch> = vec![
+            DomPatch::CreateElement {
+                id: DomElementId(1),
+                tag: "div".into(),
+                parent: Some(DomElementId(0)),
+            },
+            DomPatch::RemoveElement {
+                id: DomElementId(2),
+            },
+            DomPatch::SetProperty {
+                id: DomElementId(3),
+                key: "class".into(),
+                value: "active".into(),
+            },
+            DomPatch::RemoveProperty {
+                id: DomElementId(4),
+                key: "style".into(),
+            },
+            DomPatch::SetTextContent {
+                id: DomElementId(5),
+                text: "hello".into(),
+            },
+            DomPatch::MoveElement {
+                id: DomElementId(6),
+                new_parent: DomElementId(0),
+                before_sibling: Some(DomElementId(1)),
+            },
+            DomPatch::ReplaceElement {
+                old: DomElementId(7),
+                new_id: DomElementId(8),
+                tag: "strong".into(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: DomPatch = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    #[test]
+    fn js_lane_config_validate_all_error_paths() {
+        let mut c = JsLaneConfig::default_config();
+        c.max_signal_depth = 0;
+        c.max_updates_per_flush = 0;
+        c.max_dom_elements = 0;
+        let errors = c.validate();
+        assert_eq!(errors.len(), 3);
+        assert!(errors.iter().any(|e| e.contains("max_signal_depth")));
+        assert!(errors.iter().any(|e| e.contains("max_updates_per_flush")));
+        assert!(errors.iter().any(|e| e.contains("max_dom_elements")));
+    }
+
+    #[test]
+    fn event_type_bubbles_comprehensive() {
+        let bubbling = [
+            EventType::Click,
+            EventType::Input,
+            EventType::Change,
+            EventType::Submit,
+            EventType::KeyDown,
+            EventType::KeyUp,
+            EventType::Scroll,
+        ];
+        let non_bubbling = [
+            EventType::Focus,
+            EventType::Blur,
+            EventType::MouseEnter,
+            EventType::MouseLeave,
+            EventType::Resize,
+        ];
+        for et in &bubbling {
+            assert!(et.bubbles(), "{et:?} should bubble");
+        }
+        for et in &non_bubbling {
+            assert!(!et.bubbles(), "{et:?} should not bubble");
+        }
+        assert_eq!(bubbling.len() + non_bubbling.len(), EventType::ALL.len());
+    }
+
+    #[test]
+    fn event_delegation_ids_auto_increment() {
+        let mut d = EventDelegation::new();
+        let id0 = d.register(EventType::Click, DomElementId(1), "A", false);
+        let id1 = d.register(EventType::Input, DomElementId(2), "B", false);
+        let id2 = d.register(EventType::Focus, DomElementId(3), "C", true);
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+    }
+
+    #[test]
+    fn event_delegation_find_handlers_no_match() {
+        let mut d = EventDelegation::new();
+        d.register(EventType::Click, DomElementId(1), "A", false);
+        let found = d.find_handlers(EventType::Input, DomElementId(1));
+        assert!(found.is_empty());
+        let found2 = d.find_handlers(EventType::Click, DomElementId(999));
+        assert!(found2.is_empty());
+    }
+
+    #[test]
+    fn flush_summary_serde_roundtrip() {
+        let s = FlushSummary {
+            updates_processed: 10,
+            signals_evaluated: 20,
+            patches_emitted: 5,
+            handlers_cleaned: 2,
+            cycle_sequence: 42,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: FlushSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn lane_state_ord_ready_before_shutdown() {
+        assert!(LaneState::Ready < LaneState::Processing);
+        assert!(LaneState::Processing < LaneState::Suspended);
+        assert!(LaneState::Suspended < LaneState::Shutdown);
+    }
+
+    #[test]
+    fn lane_derive_id_changes_after_mutation() {
+        let mut lane = JsRuntimeLane::with_defaults();
+        let id_before = lane.derive_id();
+        let s = lane.signal_graph.next_signal_id();
+        lane.signal_graph
+            .register(s, SignalKind::Source, BTreeSet::new())
+            .unwrap();
+        let id_after = lane.derive_id();
+        assert_ne!(id_before, id_after);
+    }
+
+    #[test]
+    fn scheduled_update_serde_roundtrip() {
+        let u = ScheduledUpdate {
+            signal_id: SignalId(5),
+            priority: UpdatePriority::UserBlocking,
+            sequence: 7,
+            component: "Counter".into(),
+        };
+        let json = serde_json::to_string(&u).unwrap();
+        let back: ScheduledUpdate = serde_json::from_str(&json).unwrap();
+        assert_eq!(u, back);
+    }
+
+    #[test]
+    fn dom_element_record_serde_roundtrip() {
+        let mut props = BTreeMap::new();
+        props.insert("class".into(), "active".into());
+        let rec = DomElementRecord {
+            id: DomElementId(1),
+            tag: "div".into(),
+            parent: Some(DomElementId(0)),
+            children: vec![DomElementId(2), DomElementId(3)],
+            properties: props,
+            text_content: Some("hello".into()),
+        };
+        let json = serde_json::to_string(&rec).unwrap();
+        let back: DomElementRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(rec, back);
+    }
+
+    #[test]
+    fn event_handler_serde_roundtrip() {
+        let h = EventHandler {
+            id: 42,
+            event_type: EventType::Submit,
+            target_element: DomElementId(10),
+            component: "Form".into(),
+            capture: true,
+        };
+        let json = serde_json::to_string(&h).unwrap();
+        let back: EventHandler = serde_json::from_str(&json).unwrap();
+        assert_eq!(h, back);
+    }
+
+    #[test]
+    fn dom_tree_contains_returns_false_for_missing() {
+        let t = DomTree::new();
+        assert!(!t.contains(DomElementId(999)));
+    }
+
+    #[test]
+    fn dom_tree_get_returns_none_for_missing() {
+        let t = DomTree::new();
+        assert!(t.get(DomElementId(0)).is_none());
+    }
+
+    #[test]
+    fn signal_graph_node_count_excludes_disposed() {
+        let mut g = SignalGraph::new();
+        let s1 = g.next_signal_id();
+        let s2 = g.next_signal_id();
+        g.register(s1, SignalKind::Source, BTreeSet::new()).unwrap();
+        g.register(s2, SignalKind::Source, BTreeSet::new()).unwrap();
+        assert_eq!(g.node_count(), 2);
+        g.dispose(s1).unwrap();
+        assert_eq!(g.node_count(), 1);
+    }
+
+    #[test]
+    fn schema_version_stable() {
+        let a = lane_schema();
+        let b = lane_schema();
+        assert_eq!(a, b);
+    }
 }

@@ -2409,6 +2409,247 @@ mod tests {
         assert_eq!(displays.len(), deduped.len());
     }
 
+    // ── Enrichment batch 4: isolation, migrate same, batch, adapter serde ─
+
+    #[test]
+    fn storage_schema_version_constant_is_stable() {
+        assert_eq!(STORAGE_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn store_kind_serde_round_trip_all_variants() {
+        for kind in [
+            StoreKind::ReplayIndex,
+            StoreKind::EvidenceIndex,
+            StoreKind::BenchmarkLedger,
+            StoreKind::PolicyCache,
+            StoreKind::PlasWitness,
+            StoreKind::ReplacementLineage,
+            StoreKind::IfcProvenance,
+            StoreKind::SpecializationIndex,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let back: StoreKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, kind, "StoreKind::{kind:?}");
+        }
+    }
+
+    #[test]
+    fn store_kind_ord_is_deterministic() {
+        let mut kinds = vec![
+            StoreKind::SpecializationIndex,
+            StoreKind::ReplayIndex,
+            StoreKind::PlasWitness,
+            StoreKind::BenchmarkLedger,
+        ];
+        let mut kinds2 = kinds.clone();
+        kinds.sort();
+        kinds2.sort();
+        assert_eq!(kinds, kinds2);
+    }
+
+    #[test]
+    fn in_memory_migrate_same_version_is_noop() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let receipt = adapter.migrate_to(STORAGE_SCHEMA_VERSION).unwrap();
+        assert_eq!(receipt.from_version, STORAGE_SCHEMA_VERSION);
+        assert_eq!(receipt.to_version, STORAGE_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn different_stores_are_isolated() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let context = ctx();
+        adapter
+            .put(
+                StoreKind::ReplayIndex,
+                "shared-key".into(),
+                vec![1],
+                BTreeMap::new(),
+                &context,
+            )
+            .unwrap();
+        adapter
+            .put(
+                StoreKind::PolicyCache,
+                "shared-key".into(),
+                vec![2],
+                BTreeMap::new(),
+                &context,
+            )
+            .unwrap();
+        let r1 = adapter
+            .get(StoreKind::ReplayIndex, "shared-key", &context)
+            .unwrap()
+            .unwrap();
+        let r2 = adapter
+            .get(StoreKind::PolicyCache, "shared-key", &context)
+            .unwrap()
+            .unwrap();
+        assert_eq!(r1.value, vec![1]);
+        assert_eq!(r2.value, vec![2]);
+    }
+
+    #[test]
+    fn in_memory_batch_put_then_query() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let context = ctx();
+        let entries = vec![
+            BatchPutEntry {
+                key: "batch/c".into(),
+                value: vec![3],
+                metadata: BTreeMap::new(),
+            },
+            BatchPutEntry {
+                key: "batch/a".into(),
+                value: vec![1],
+                metadata: BTreeMap::new(),
+            },
+            BatchPutEntry {
+                key: "batch/b".into(),
+                value: vec![2],
+                metadata: BTreeMap::new(),
+            },
+        ];
+        adapter
+            .put_batch(StoreKind::BenchmarkLedger, entries, &context)
+            .unwrap();
+        let rows = adapter
+            .query(
+                StoreKind::BenchmarkLedger,
+                &StoreQuery::default(),
+                &context,
+            )
+            .unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].key, "batch/a");
+        assert_eq!(rows[1].key, "batch/b");
+        assert_eq!(rows[2].key, "batch/c");
+    }
+
+    #[test]
+    fn in_memory_delete_then_query_empty() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let context = ctx();
+        adapter
+            .put(
+                StoreKind::ReplayIndex,
+                "only".into(),
+                vec![1],
+                BTreeMap::new(),
+                &context,
+            )
+            .unwrap();
+        adapter
+            .delete(StoreKind::ReplayIndex, "only", &context)
+            .unwrap();
+        let rows = adapter
+            .query(StoreKind::ReplayIndex, &StoreQuery::default(), &context)
+            .unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn canonicalize_records_empty() {
+        let result = canonicalize_records(vec![], None);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn canonicalize_records_limit_exceeds_count() {
+        let records = vec![StoreRecord {
+            store: StoreKind::ReplayIndex,
+            key: "k".into(),
+            value: vec![],
+            metadata: BTreeMap::new(),
+            revision: 1,
+        }];
+        let result = canonicalize_records(records, Some(100));
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn storage_event_with_error_code_some() {
+        let event = StorageEvent {
+            trace_id: "t".into(),
+            decision_id: "d".into(),
+            policy_id: "p".into(),
+            component: "storage_adapter".into(),
+            event: "put".into(),
+            outcome: "error".into(),
+            error_code: Some("FE-STOR-0002".into()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: StorageEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.error_code, Some("FE-STOR-0002".into()));
+    }
+
+    #[test]
+    fn store_record_with_metadata() {
+        let mut meta = BTreeMap::new();
+        meta.insert("env".into(), "prod".into());
+        meta.insert("lane".into(), "runtime".into());
+        let record = StoreRecord {
+            store: StoreKind::EvidenceIndex,
+            key: "k".into(),
+            value: vec![42],
+            metadata: meta,
+            revision: 1,
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let back: StoreRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.metadata.len(), 2);
+        assert_eq!(back.metadata.get("env"), Some(&"prod".to_string()));
+    }
+
+    #[test]
+    fn frankensqlite_migrate_success_receipt() {
+        let backend = MockFrankenSqlite::default();
+        let mut adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        let receipt = adapter.migrate_to(STORAGE_SCHEMA_VERSION + 1).unwrap();
+        assert_eq!(receipt.backend, "frankensqlite");
+        assert_eq!(receipt.from_version, STORAGE_SCHEMA_VERSION);
+        assert_eq!(receipt.to_version, STORAGE_SCHEMA_VERSION + 1);
+        assert_ne!(receipt.state_hash_before, receipt.state_hash_after);
+    }
+
+    #[test]
+    fn frankensqlite_events_accessor() {
+        let backend = MockFrankenSqlite::default();
+        let mut adapter = FrankensqliteStorageAdapter::new(backend).unwrap();
+        assert!(adapter.events().is_empty());
+        adapter
+            .put(
+                StoreKind::ReplayIndex,
+                "k".into(),
+                vec![1],
+                BTreeMap::new(),
+                &ctx(),
+            )
+            .unwrap();
+        assert_eq!(adapter.events().len(), 1);
+        assert_eq!(adapter.events()[0].event, "put");
+        assert_eq!(adapter.events()[0].outcome, "ok");
+    }
+
+    #[test]
+    fn in_memory_adapter_serde_roundtrip() {
+        let mut adapter = InMemoryStorageAdapter::new();
+        let context = ctx();
+        adapter
+            .put(
+                StoreKind::ReplayIndex,
+                "k1".into(),
+                vec![1],
+                BTreeMap::new(),
+                &context,
+            )
+            .unwrap();
+        let json = serde_json::to_string(&adapter).unwrap();
+        let back: InMemoryStorageAdapter = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.current_schema_version(), adapter.current_schema_version());
+    }
+
     #[test]
     fn storage_error_code_all_unique() {
         let errors = vec![

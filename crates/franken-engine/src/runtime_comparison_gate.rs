@@ -1944,4 +1944,149 @@ mod tests {
         displays.insert(GateOutcome::Fail.to_string());
         assert_eq!(displays.len(), 2);
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn gate_blocker_serde_all_9_variants() {
+        let blockers = vec![
+            GateBlocker::MissingCategory {
+                category: "micro".to_string(),
+            },
+            GateBlocker::ExcessiveVariance {
+                benchmark_id: "b1".to_string(),
+                runtime: RuntimeId::FrankenEngine,
+                cv_millionths: 50_000,
+                max_cv_millionths: 30_000,
+            },
+            GateBlocker::InsufficientRuns {
+                benchmark_id: "b2".to_string(),
+                runtime: RuntimeId::NodeLts,
+                run_count: 5,
+                required: 30,
+            },
+            GateBlocker::IncompleteMethodology {
+                missing_sections: vec!["warmup_policy".to_string()],
+            },
+            GateBlocker::IncompleteArtifactBundle {
+                missing_artifacts: vec!["replay_script".to_string()],
+            },
+            GateBlocker::ReproducibilityFailed {
+                benchmark_id: "b3".to_string(),
+                original_ns: 1000,
+                replay_ns: 2000,
+                deviation_millionths: 500_000,
+            },
+            GateBlocker::MissingRuntime {
+                runtime: RuntimeId::BunStable,
+            },
+            GateBlocker::NoBenchmarks,
+            GateBlocker::BenchmarkSniffingDetected {
+                detail: "config mismatch".to_string(),
+            },
+        ];
+        for b in &blockers {
+            let json = serde_json::to_string(b).unwrap();
+            let back: GateBlocker = serde_json::from_str(&json).unwrap();
+            assert_eq!(*b, back);
+        }
+    }
+
+    #[test]
+    fn methodology_all_missing_returns_five() {
+        let m = MethodologyAudit {
+            selection_rationale: false,
+            warmup_policy: false,
+            gc_jit_settling: false,
+            statistical_treatment: false,
+            known_limitations: false,
+            peer_reviewed: false,
+            reviewer_ids: Vec::new(),
+        };
+        assert!(!m.is_complete());
+        assert_eq!(m.missing_sections().len(), 5);
+    }
+
+    #[test]
+    fn artifacts_all_missing_returns_five() {
+        let a = ArtifactBundleAudit {
+            raw_timing_data: false,
+            environment_fingerprint: false,
+            run_manifest: false,
+            replay_script: false,
+            dependency_manifests: false,
+            bundle_hash: ContentHash::compute(b"empty"),
+        };
+        assert!(!a.is_complete());
+        assert_eq!(a.missing_artifacts().len(), 5);
+    }
+
+    #[test]
+    fn log_entries_failed_gate_has_error_code() {
+        let results = passing_results();
+        let mut methodology = passing_methodology();
+        methodology.warmup_policy = false;
+        let artifacts = passing_artifacts();
+        let env = test_environment();
+        let input = make_passing_input(&results, &methodology, &artifacts, &[], &env);
+        let bundle = evaluate_gate(&input).unwrap();
+        assert!(!bundle.outcome.is_pass());
+
+        let entries = generate_log_entries("trace-fail", &bundle);
+        assert_eq!(entries[0].error_code.as_deref(), Some("GATE_FAILED"));
+    }
+
+    #[test]
+    fn category_summary_serde_roundtrip() {
+        let cs = CategorySummary {
+            category: BenchmarkCategory::Micro,
+            benchmark_count: 3,
+            vs_node_delta_millionths: 200_000,
+            vs_bun_delta_millionths: 100_000,
+            vs_node_memory_delta_millionths: 50_000,
+            vs_bun_memory_delta_millionths: -10_000,
+        };
+        let json = serde_json::to_string(&cs).unwrap();
+        let back: CategorySummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(cs, back);
+    }
+
+    #[test]
+    fn constants_sanity() {
+        assert_eq!(DEFAULT_MAX_CV_MILLIONTHS, 30_000);
+        assert_eq!(DEFAULT_MIN_RUNS_PER_BENCHMARK, 30);
+        assert_eq!(REQUIRED_CATEGORIES.len(), 5);
+        assert_eq!(GATE_COMPONENT, "runtime_comparison_gate");
+    }
+
+    #[test]
+    fn category_display_all_match_as_str() {
+        for cat in BenchmarkCategory::all() {
+            assert_eq!(format!("{cat}"), cat.as_str());
+        }
+    }
+
+    #[test]
+    fn runtime_id_display_all_match_as_str() {
+        for rt in RuntimeId::all() {
+            assert_eq!(format!("{rt}"), rt.as_str());
+        }
+    }
+
+    #[test]
+    fn performance_summary_zero_deltas_with_equal_timing() {
+        // FrankenEngine = Node = Bun => delta should be 0.
+        let mut results = Vec::new();
+        for cat in BenchmarkCategory::all() {
+            let id = format!("bench_{}", cat.as_str());
+            for rt in RuntimeId::all() {
+                results.push(make_result(&id, *cat, *rt, 1000, 5000));
+            }
+        }
+        let summaries = compute_category_summaries(&results);
+        for s in &summaries {
+            assert_eq!(s.vs_node_delta_millionths, 0);
+            assert_eq!(s.vs_bun_delta_millionths, 0);
+        }
+    }
 }

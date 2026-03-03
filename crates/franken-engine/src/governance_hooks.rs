@@ -3642,4 +3642,298 @@ mod tests {
             "PreDeploy hook should report artifact_count in details"
         );
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn governance_error_source_returns_none() {
+        use std::error::Error;
+        let variants: Vec<GovernanceError> = vec![
+            GovernanceError::EmptyPolicyDefinition,
+            GovernanceError::InvalidPolicySyntax {
+                expected_format: "toml".into(),
+                reason: "bad".into(),
+            },
+            GovernanceError::PolicySchemaViolation {
+                constraint: "c".into(),
+            },
+            GovernanceError::IdDerivationFailed {
+                detail: "d".into(),
+            },
+            GovernanceError::InvalidTimeRange {
+                start: ts(100),
+                end: ts(50),
+            },
+            GovernanceError::NoEvidenceInRange {
+                start: ts(0),
+                end: ts(100),
+            },
+            GovernanceError::UnknownFramework {
+                framework: "x".into(),
+            },
+            GovernanceError::MissingControl {
+                control_id: "c".into(),
+            },
+            GovernanceError::HookFailed {
+                hook_type: GovernanceHookType::PreDeploy,
+                reason: "r".into(),
+            },
+            GovernanceError::SerialisationFailed {
+                reason: "r".into(),
+            },
+        ];
+        for v in &variants {
+            assert!(v.source().is_none(), "source() should be None for {v:?}");
+        }
+    }
+
+    #[test]
+    fn governance_error_display_exact_format_all_10() {
+        assert_eq!(
+            GovernanceError::EmptyPolicyDefinition.to_string(),
+            "policy definition bytes are empty"
+        );
+        assert_eq!(
+            GovernanceError::InvalidPolicySyntax {
+                expected_format: "toml".into(),
+                reason: "missing =".into(),
+            }
+            .to_string(),
+            "invalid toml policy syntax: missing ="
+        );
+        assert_eq!(
+            GovernanceError::PolicySchemaViolation {
+                constraint: "version must be non-zero".into(),
+            }
+            .to_string(),
+            "policy schema violation: version must be non-zero"
+        );
+        assert_eq!(
+            GovernanceError::IdDerivationFailed {
+                detail: "empty bytes".into(),
+            }
+            .to_string(),
+            "ID derivation failed: empty bytes"
+        );
+        assert_eq!(
+            GovernanceError::InvalidTimeRange {
+                start: ts(100),
+                end: ts(50),
+            }
+            .to_string(),
+            "invalid time range: start tick:100 > end tick:50"
+        );
+        assert_eq!(
+            GovernanceError::NoEvidenceInRange {
+                start: ts(0),
+                end: ts(100),
+            }
+            .to_string(),
+            "no evidence found in range tick:0..=tick:100"
+        );
+        assert_eq!(
+            GovernanceError::UnknownFramework {
+                framework: "soc3".into(),
+            }
+            .to_string(),
+            "unknown compliance framework: soc3"
+        );
+        assert_eq!(
+            GovernanceError::MissingControl {
+                control_id: "CC6.1".into(),
+            }
+            .to_string(),
+            "missing compliance control: CC6.1"
+        );
+        assert_eq!(
+            GovernanceError::HookFailed {
+                hook_type: GovernanceHookType::PreDeploy,
+                reason: "timeout".into(),
+            }
+            .to_string(),
+            "governance hook pre_deploy failed: timeout"
+        );
+        assert_eq!(
+            GovernanceError::SerialisationFailed {
+                reason: "IO error".into(),
+            }
+            .to_string(),
+            "serialisation failed: IO error"
+        );
+    }
+
+    #[test]
+    fn csv_export_escapes_commas_in_summary() {
+        let mut entry = make_entry("policy_update", 10);
+        entry.summary = "contains, a comma".to_string();
+        let entries = vec![entry];
+        let req = make_export_request(AuditExportFormat::Csv, 0, 100);
+        let result = export_audit_evidence(req, entries, ts(200)).unwrap();
+        let text = std::str::from_utf8(&result.payload_bytes).unwrap();
+        // csv_escape wraps in quotes when commas are present.
+        assert!(
+            text.contains("\"contains, a comma\""),
+            "csv should quote fields with commas: {text}"
+        );
+    }
+
+    #[test]
+    fn export_zero_width_window_includes_exact_tick() {
+        let entries = vec![
+            make_entry("policy_update", 50),
+            make_entry("policy_update", 51),
+        ];
+        let req = make_export_request(AuditExportFormat::JsonLines, 50, 50);
+        let result = export_audit_evidence(req, entries, ts(200)).unwrap();
+        assert_eq!(result.entry_count, 1, "zero-width window should include exact tick");
+    }
+
+    #[test]
+    fn compile_policy_different_bytes_different_artifact_id() {
+        let r1 = compile_policy(
+            PolicySource::InlineToml {
+                label: "t".to_string(),
+            },
+            b"key1 = true",
+            "p1",
+            1,
+            ts(1),
+            BTreeSet::new(),
+        );
+        let r2 = compile_policy(
+            PolicySource::InlineToml {
+                label: "t".to_string(),
+            },
+            b"key2 = false",
+            "p2",
+            1,
+            ts(1),
+            BTreeSet::new(),
+        );
+        assert_ne!(
+            r1.artifact().unwrap().artifact_id,
+            r2.artifact().unwrap().artifact_id,
+            "different policy bytes should yield different artifact IDs"
+        );
+    }
+
+    #[test]
+    fn compliance_framework_serde_all_6_variants() {
+        let variants = vec![
+            ComplianceFramework::Soc2,
+            ComplianceFramework::Iso27001,
+            ComplianceFramework::Hipaa,
+            ComplianceFramework::PciDss,
+            ComplianceFramework::Gdpr,
+            ComplianceFramework::Custom("my_fw".to_string()),
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let decoded: ComplianceFramework = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, decoded);
+        }
+    }
+
+    #[test]
+    fn governance_pipeline_new_starts_with_empty_events() {
+        let pipeline = GovernancePipeline::new(GovernancePipelineConfig::default());
+        assert!(pipeline.events().is_empty());
+    }
+
+    #[test]
+    fn policy_change_hook_distinct_artifacts_passes() {
+        let mut pipeline = GovernancePipeline::new(GovernancePipelineConfig {
+            hooks: vec![GovernanceHookType::PolicyChange],
+            halt_on_failure: true,
+            ..Default::default()
+        });
+        let art1 = compile_ok(
+            PolicySource::InlineToml {
+                label: "a".to_string(),
+            },
+            b"key1 = true",
+        );
+        let art2 = compile_ok(
+            PolicySource::InlineToml {
+                label: "b".to_string(),
+            },
+            b"key2 = false",
+        );
+        let results =
+            run_governance_pipeline(&mut pipeline, &[art1, art2], vec![], ts(100)).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].passed, "PolicyChange should pass for distinct artifacts");
+        assert_eq!(
+            results[0].details.get("unique_count"),
+            Some(&"2".to_string())
+        );
+    }
+
+    #[test]
+    fn hook_result_display_exact_format() {
+        let pass = GovernanceHookResult::pass(GovernanceHookType::PreDeploy, "all good", ts(1));
+        assert_eq!(
+            format!("{pass}"),
+            "[PASS] pre_deploy \u{2014} all good"
+        );
+        let fail = GovernanceHookResult::fail(
+            GovernanceHookType::ComplianceCheck,
+            "below threshold",
+            ts(2),
+        );
+        assert_eq!(
+            format!("{fail}"),
+            "[FAIL] compliance_check \u{2014} below threshold"
+        );
+    }
+
+    #[test]
+    fn diagnostic_severity_as_str_all_3() {
+        assert_eq!(DiagnosticSeverity::Info.as_str(), "info");
+        assert_eq!(DiagnosticSeverity::Warning.as_str(), "warning");
+        assert_eq!(DiagnosticSeverity::Error.as_str(), "error");
+    }
+
+    #[test]
+    fn governance_pipeline_config_default_frameworks_all_5_builtins() {
+        let cfg = GovernancePipelineConfig::default();
+        assert_eq!(cfg.frameworks.len(), 5);
+        assert!(cfg.frameworks.contains(&ComplianceFramework::Soc2));
+        assert!(cfg.frameworks.contains(&ComplianceFramework::Iso27001));
+        assert!(cfg.frameworks.contains(&ComplianceFramework::Hipaa));
+        assert!(cfg.frameworks.contains(&ComplianceFramework::PciDss));
+        assert!(cfg.frameworks.contains(&ComplianceFramework::Gdpr));
+    }
+
+    #[test]
+    fn compliance_control_direct_construction_with_gaps() {
+        let ctrl = ComplianceControl {
+            control_id: "CC6.1".to_string(),
+            description: "Access controls".to_string(),
+            satisfied: false,
+            evidence_entry_ids: vec![],
+            gaps: vec![
+                "no evidence of kind 'capability_decision'".to_string(),
+                "no evidence of kind 'policy_update'".to_string(),
+            ],
+        };
+        assert!(!ctrl.satisfied);
+        assert_eq!(ctrl.gaps.len(), 2);
+        let json = serde_json::to_string(&ctrl).unwrap();
+        let decoded: ComplianceControl = serde_json::from_str(&json).unwrap();
+        assert_eq!(ctrl, decoded);
+    }
+
+    #[test]
+    fn export_parquet_and_pdf_entry_count_matches() {
+        let entries: Vec<EvidenceEntry> = (0..5)
+            .map(|i| make_entry("security_action", i * 10))
+            .collect();
+        let req_parquet = make_export_request(AuditExportFormat::Parquet, 0, 100);
+        let result_parquet = export_audit_evidence(req_parquet, entries.clone(), ts(200)).unwrap();
+        let req_pdf = make_export_request(AuditExportFormat::CompliancePdf, 0, 100);
+        let result_pdf = export_audit_evidence(req_pdf, entries, ts(200)).unwrap();
+        assert_eq!(result_parquet.entry_count, 5);
+        assert_eq!(result_pdf.entry_count, 5);
+    }
 }

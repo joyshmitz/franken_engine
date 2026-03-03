@@ -2318,6 +2318,296 @@ mod tests {
         );
     }
 
+    // --- Enrichment batch 4: constants, ordering, correlation, edge cases ---
+
+    #[test]
+    fn schema_version_constants_are_stable() {
+        assert_eq!(
+            RGC_TEST_HARNESS_SCHEMA_VERSION,
+            "franken-engine.rgc-test-harness.v1"
+        );
+        assert_eq!(
+            RGC_TEST_HARNESS_EVENT_SCHEMA_VERSION,
+            "franken-engine.rgc-test-event.v1"
+        );
+        assert_eq!(
+            RGC_TEST_HARNESS_MANIFEST_SCHEMA_VERSION,
+            "franken-engine.rgc-test-harness.run-manifest.v1"
+        );
+        assert_eq!(
+            RGC_BASELINE_E2E_SCENARIO_SCHEMA_VERSION,
+            "franken-engine.rgc-baseline-e2e-scenario.v1"
+        );
+        assert_eq!(
+            RGC_ARTIFACT_VALIDATOR_SCHEMA_VERSION,
+            "franken-engine.rgc-artifact-validator.v1"
+        );
+        assert_eq!(
+            RGC_ARTIFACT_BUNDLE_VALIDATOR_SCHEMA_VERSION,
+            "franken-engine.rgc-artifact-bundle-validator.v1"
+        );
+    }
+
+    #[test]
+    fn harness_lane_ord_is_deterministic() {
+        let mut lanes = vec![
+            HarnessLane::E2e,
+            HarnessLane::Security,
+            HarnessLane::Parser,
+            HarnessLane::Governance,
+            HarnessLane::Runtime,
+        ];
+        let mut lanes2 = lanes.clone();
+        lanes.sort();
+        lanes2.sort();
+        assert_eq!(lanes, lanes2, "sorting must be deterministic");
+    }
+
+    #[test]
+    fn baseline_scenario_domain_ord_is_deterministic() {
+        let mut domains = vec![
+            BaselineScenarioDomain::Security,
+            BaselineScenarioDomain::Runtime,
+            BaselineScenarioDomain::Module,
+        ];
+        let mut domains2 = domains.clone();
+        domains.sort();
+        domains2.sort();
+        assert_eq!(domains, domains2);
+    }
+
+    #[test]
+    fn context_event_populates_all_fields_from_context() {
+        let ctx = DeterministicTestContext::new("sc-42", "fix-7", HarnessLane::Parser, 99);
+        let event = ctx.event(EventInput {
+            sequence: 3,
+            component: "parser",
+            event: "parse",
+            outcome: "pass",
+            error_code: Some("FE-001"),
+            timing_us: 500,
+            timestamp_unix_ms: 1_700_000_000_000,
+        });
+        assert_eq!(event.schema_version, RGC_TEST_HARNESS_EVENT_SCHEMA_VERSION);
+        assert_eq!(event.scenario_id, "sc-42");
+        assert_eq!(event.fixture_id, "fix-7");
+        assert_eq!(event.trace_id, ctx.trace_id);
+        assert_eq!(event.decision_id, ctx.decision_id);
+        assert_eq!(event.policy_id, ctx.policy_id);
+        assert_eq!(event.lane, HarnessLane::Parser);
+        assert_eq!(event.seed, 99);
+        assert_eq!(event.sequence, 3);
+        assert_eq!(event.component, "parser");
+        assert_eq!(event.event, "parse");
+        assert_eq!(event.outcome, "pass");
+        assert_eq!(event.error_code.as_deref(), Some("FE-001"));
+        assert_eq!(event.timing_us, 500);
+        assert_eq!(event.timestamp_unix_ms, 1_700_000_000_000);
+    }
+
+    #[test]
+    fn context_with_seed_zero() {
+        let ctx = DeterministicTestContext::new("sc", "fix", HarnessLane::Runtime, 0);
+        assert!(ctx.trace_id.starts_with("trace-rgc-"));
+        assert_eq!(ctx.seed, 0);
+    }
+
+    #[test]
+    fn context_with_seed_max() {
+        let ctx = DeterministicTestContext::new("sc", "fix", HarnessLane::Runtime, u64::MAX);
+        assert!(ctx.trace_id.starts_with("trace-rgc-"));
+        assert_eq!(ctx.seed, u64::MAX);
+    }
+
+    #[test]
+    fn fixture_loader_rejects_whitespace_only_path() {
+        let root = PathBuf::from("/tmp");
+        let error = load_json_fixture::<DemoFixture>(&root, "   ")
+            .expect_err("whitespace-only path must fail");
+        assert!(matches!(
+            error,
+            FixtureLoadError::InvalidRelativePath { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_triad_event_correlation_mismatch() {
+        let root = temp_dir("validate_triad_event_corr");
+        let ctx = DeterministicTestContext::new("corr-test", "fix-1", HarnessLane::Runtime, 77);
+        let run_id = ctx.default_run_id();
+        let mut event = ctx.event(EventInput {
+            sequence: 0,
+            component: "test",
+            event: "step",
+            outcome: "pass",
+            error_code: None,
+            timing_us: 10,
+            timestamp_unix_ms: 1_700_100_000_000,
+        });
+        // Corrupt the event's trace_id
+        event.trace_id = "trace-rgc-wrong".to_string();
+        let events = vec![event];
+        let commands = vec!["cargo test".to_string()];
+        let manifest =
+            HarnessRunManifest::from_context(&ctx, run_id, 1, 1, "replay.sh", 1_700_100_000_100);
+        let triad = write_artifact_triad(&root, &manifest, &events, &commands)
+            .expect("write should succeed");
+        let report = validate_artifact_triad(&triad.run_dir);
+        assert!(!report.valid);
+        assert!(report.findings.iter().any(|f| {
+            f.error_code == ArtifactValidationErrorCode::CorrelationMismatch
+                && f.message.contains("trace_id mismatch")
+        }));
+    }
+
+    #[test]
+    fn validate_bundle_path_is_file_not_directory() {
+        let root = temp_dir("validate_bundle_file");
+        fs::create_dir_all(&root).expect("create dir");
+        let file_path = root.join("not_a_dir");
+        fs::write(&file_path, "data").expect("write file");
+        let report = validate_artifact_bundle(&file_path, &[]);
+        assert!(!report.valid);
+        assert!(report.findings.iter().any(|f| {
+            f.error_code == ArtifactBundleValidationErrorCode::MissingBundleDirectory
+        }));
+    }
+
+    #[test]
+    fn validate_bundle_no_required_lanes() {
+        let root = temp_dir("validate_bundle_no_req_lanes");
+        let bundle_dir = root.join("bundle");
+        fs::create_dir_all(&bundle_dir).expect("create bundle dir");
+        write_lane_triad(
+            &bundle_dir,
+            "rgc-no-req",
+            "fixture-shared",
+            HarnessLane::Runtime,
+            1,
+        );
+        let report = validate_artifact_bundle(&bundle_dir, &[]);
+        assert!(
+            report.valid,
+            "no required lanes means any present lane is fine: {:?}",
+            report.findings
+        );
+    }
+
+    #[test]
+    fn artifact_validation_finding_serde_round_trip() {
+        let finding = ArtifactValidationFinding {
+            component: "test".to_string(),
+            event: "validate".to_string(),
+            outcome: "fail".to_string(),
+            error_code: ArtifactValidationErrorCode::CountMismatch,
+            message: "mismatch".to_string(),
+        };
+        let json = serde_json::to_string(&finding).expect("serialize");
+        let restored: ArtifactValidationFinding =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(finding, restored);
+    }
+
+    #[test]
+    fn artifact_bundle_validation_finding_serde_round_trip() {
+        let finding = ArtifactBundleValidationFinding {
+            component: "test".to_string(),
+            event: "validate_bundle".to_string(),
+            outcome: "fail".to_string(),
+            error_code: ArtifactBundleValidationErrorCode::DuplicateLane,
+            message: "dup".to_string(),
+            owner_hint: "owner".to_string(),
+            remediation_hint: "fix it".to_string(),
+            repro_command: "cargo test".to_string(),
+        };
+        let json = serde_json::to_string(&finding).expect("serialize");
+        let restored: ArtifactBundleValidationFinding =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(finding, restored);
+    }
+
+    #[test]
+    fn artifact_bundle_correlation_signature_serde_round_trip() {
+        let sig = ArtifactBundleCorrelationSignature {
+            scenario_id: "test".to_string(),
+            seed: 42,
+            lanes: vec![HarnessLane::Parser, HarnessLane::Runtime],
+        };
+        let json = serde_json::to_string(&sig).expect("serialize");
+        let restored: ArtifactBundleCorrelationSignature =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(sig, restored);
+    }
+
+    #[test]
+    fn sanitize_label_unicode_chars() {
+        assert_eq!(sanitize_label("café_naïve"), "caf-_na-ve");
+    }
+
+    #[test]
+    fn context_policy_id_includes_lane_name() {
+        for lane in [
+            HarnessLane::Parser,
+            HarnessLane::Runtime,
+            HarnessLane::Security,
+            HarnessLane::Governance,
+            HarnessLane::E2e,
+        ] {
+            let ctx = DeterministicTestContext::new("sc", "fix", lane, 1);
+            assert!(
+                ctx.policy_id.contains(lane.as_str()),
+                "policy_id {} should contain {}",
+                ctx.policy_id,
+                lane.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn baseline_registry_scenario_ids_are_sorted() {
+        let registry = baseline_e2e_scenario_registry();
+        let ids: Vec<&str> = registry.iter().map(|s| s.scenario_id.as_str()).collect();
+        let mut sorted = ids.clone();
+        sorted.sort();
+        assert_eq!(ids, sorted, "scenario IDs must be sorted");
+    }
+
+    #[test]
+    fn baseline_registry_all_scenarios_are_e2e_lane() {
+        let registry = baseline_e2e_scenario_registry();
+        for scenario in &registry {
+            assert_eq!(scenario.lane, HarnessLane::E2e);
+        }
+    }
+
+    #[test]
+    fn baseline_registry_failure_scenarios_have_error_codes() {
+        let registry = baseline_e2e_scenario_registry();
+        for scenario in &registry {
+            if scenario.outcome == BaselineScenarioOutcome::CanonicalFailure {
+                assert!(
+                    scenario.error_code.is_some(),
+                    "failure scenario {} must have error_code",
+                    scenario.scenario_id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn baseline_registry_happy_scenarios_have_no_error_codes() {
+        let registry = baseline_e2e_scenario_registry();
+        for scenario in &registry {
+            if scenario.outcome == BaselineScenarioOutcome::HappyPath {
+                assert!(
+                    scenario.error_code.is_none(),
+                    "happy scenario {} must not have error_code",
+                    scenario.scenario_id
+                );
+            }
+        }
+    }
+
     #[test]
     fn write_artifact_triad_creates_expected_files() {
         let root = temp_dir("write_triad_files_check");

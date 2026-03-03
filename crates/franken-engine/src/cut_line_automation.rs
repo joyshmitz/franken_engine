@@ -4520,4 +4520,556 @@ mod tests {
         });
         assert!(result.is_none());
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PearlTower 2026-03-02
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cut_line_serde_all_variants() {
+        for cl in CutLine::all() {
+            let json = serde_json::to_string(cl).unwrap();
+            let restored: CutLine = serde_json::from_str(&json).unwrap();
+            assert_eq!(*cl, restored);
+        }
+    }
+
+    #[test]
+    fn gate_category_serde_all_variants() {
+        let categories = [
+            GateCategory::SemanticContract,
+            GateCategory::CompilerCorrectness,
+            GateCategory::RuntimeParity,
+            GateCategory::PerformanceBenchmark,
+            GateCategory::SecuritySurvival,
+            GateCategory::DeterministicReplay,
+            GateCategory::ObservabilityIntegrity,
+            GateCategory::FlakeBurden,
+            GateCategory::GovernanceCompliance,
+            GateCategory::HandoffReadiness,
+        ];
+        for cat in &categories {
+            let json = serde_json::to_string(cat).unwrap();
+            let restored: GateCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(*cat, restored);
+        }
+        assert_eq!(categories.len(), 10);
+    }
+
+    #[test]
+    fn gate_category_display_all_unique() {
+        let mut displays = std::collections::BTreeSet::new();
+        let categories = [
+            GateCategory::SemanticContract,
+            GateCategory::CompilerCorrectness,
+            GateCategory::RuntimeParity,
+            GateCategory::PerformanceBenchmark,
+            GateCategory::SecuritySurvival,
+            GateCategory::DeterministicReplay,
+            GateCategory::ObservabilityIntegrity,
+            GateCategory::FlakeBurden,
+            GateCategory::GovernanceCompliance,
+            GateCategory::HandoffReadiness,
+        ];
+        for cat in &categories {
+            displays.insert(cat.to_string());
+        }
+        assert_eq!(displays.len(), 10, "all GateCategory Display must be unique");
+    }
+
+    #[test]
+    fn full_c0_to_c5_promotion_pipeline() {
+        let mut evaluator = CutLineEvaluator::with_defaults();
+        let now = 1_000_000_000;
+
+        evaluator.evaluate(GateEvaluationInput {
+            cut_line: CutLine::C0,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![
+                make_passing_input(GateCategory::SemanticContract, now),
+                make_passing_input(GateCategory::GovernanceCompliance, now),
+            ],
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        });
+        evaluator.evaluate(GateEvaluationInput {
+            cut_line: CutLine::C1,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: make_c1_inputs(now),
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        });
+        evaluator.evaluate(GateEvaluationInput {
+            cut_line: CutLine::C2,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: make_c2_inputs(now),
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        });
+        evaluator.evaluate(GateEvaluationInput {
+            cut_line: CutLine::C3,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: make_c3_inputs(now),
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        });
+        evaluator.evaluate(GateEvaluationInput {
+            cut_line: CutLine::C4,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: make_c4_inputs(now),
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        });
+        evaluator.evaluate(GateEvaluationInput {
+            cut_line: CutLine::C5,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: make_c5_inputs(now),
+            predecessor_promoted: false,
+            zone: "prod".into(),
+        });
+
+        let summary = evaluator.promotion_summary();
+        assert!(summary.all_promoted());
+        assert_eq!(summary.promoted_lines.len(), 6);
+        assert_eq!(summary.next_line, None);
+        assert_eq!(summary.progress_millionths(), 1_000_000);
+        assert_eq!(summary.approved_count, 6);
+        assert_eq!(summary.denied_count, 0);
+    }
+
+    #[test]
+    fn default_spec_staleness_decreases_c0_to_c5() {
+        let specs = [
+            CutLineSpec::default_c0(),
+            CutLineSpec::default_c1(),
+            CutLineSpec::default_c2(),
+            CutLineSpec::default_c3(),
+            CutLineSpec::default_c4(),
+            CutLineSpec::default_c5(),
+        ];
+        for i in 1..specs.len() {
+            assert!(
+                specs[i].max_input_staleness_ns <= specs[i - 1].max_input_staleness_ns,
+                "staleness should decrease or stay the same from {} to {}",
+                specs[i - 1].cut_line,
+                specs[i].cut_line
+            );
+        }
+    }
+
+    #[test]
+    fn metadata_key_present_rejects_whitespace_only() {
+        let mut input = make_passing_input(GateCategory::CompilerCorrectness, 1000);
+        input
+            .metadata
+            .insert("some_key".to_string(), "   ".to_string());
+        assert!(!CutLineEvaluator::metadata_key_present(&input, "some_key"));
+    }
+
+    #[test]
+    fn metadata_key_present_rejects_empty() {
+        let mut input = make_passing_input(GateCategory::CompilerCorrectness, 1000);
+        input
+            .metadata
+            .insert("some_key".to_string(), String::new());
+        assert!(!CutLineEvaluator::metadata_key_present(&input, "some_key"));
+    }
+
+    #[test]
+    fn metadata_key_present_accepts_valid() {
+        let mut input = make_passing_input(GateCategory::CompilerCorrectness, 1000);
+        input
+            .metadata
+            .insert("some_key".to_string(), "value".to_string());
+        assert!(CutLineEvaluator::metadata_key_present(&input, "some_key"));
+    }
+
+    #[test]
+    fn metadata_key_present_absent_key() {
+        let input = make_passing_input(GateCategory::CompilerCorrectness, 1000);
+        assert!(!CutLineEvaluator::metadata_key_present(
+            &input,
+            "nonexistent"
+        ));
+    }
+
+    #[test]
+    fn promotion_record_fields_populated() {
+        let mut evaluator = CutLineEvaluator::with_defaults();
+        let now = 1_000_000_000;
+        let epoch = SecurityEpoch::from_raw(99);
+        let record = evaluator
+            .evaluate(GateEvaluationInput {
+                cut_line: CutLine::C0,
+                now_ns: now,
+                epoch,
+                inputs: vec![
+                    make_passing_input(GateCategory::SemanticContract, now),
+                    make_passing_input(GateCategory::GovernanceCompliance, now),
+                ],
+                predecessor_promoted: false,
+                zone: "staging".into(),
+            })
+            .unwrap();
+
+        assert_eq!(record.cut_line, CutLine::C0);
+        assert_eq!(record.epoch, epoch);
+        assert_eq!(record.timestamp_ns, now);
+        assert_eq!(record.zone, "staging");
+        assert!(record.predecessor_hash.is_none()); // C0 has no predecessor
+        assert!(!record.rationale.is_empty());
+        assert!(!record.evaluations.is_empty());
+    }
+
+    #[test]
+    fn gate_evaluation_to_gate_result_failing() {
+        let eval = GateEvaluation {
+            category: GateCategory::RuntimeParity,
+            mandatory: true,
+            passed: false,
+            score_millionths: Some(500_000),
+            evidence_refs: vec!["ref_a".into(), "ref_b".into()],
+            summary: "below threshold".into(),
+            input_validity: InputValidity::Valid,
+        };
+        let result = eval.to_gate_result();
+        assert_eq!(result.gate_name, "runtime_parity");
+        assert!(!result.passed);
+        assert_eq!(result.evidence_refs.len(), 2);
+        assert_eq!(result.summary, "below threshold");
+    }
+
+    #[test]
+    fn record_hash_changes_with_timestamp() {
+        let mut e1 = CutLineEvaluator::with_defaults();
+        let mut e2 = CutLineEvaluator::with_defaults();
+
+        let r1 = e1
+            .evaluate(GateEvaluationInput {
+                cut_line: CutLine::C0,
+                now_ns: 1_000_000_000,
+                epoch: test_epoch(),
+                inputs: vec![
+                    make_passing_input(GateCategory::SemanticContract, 1_000_000_000),
+                    make_passing_input(GateCategory::GovernanceCompliance, 1_000_000_000),
+                ],
+                predecessor_promoted: false,
+                zone: "test".into(),
+            })
+            .unwrap();
+
+        let r2 = e2
+            .evaluate(GateEvaluationInput {
+                cut_line: CutLine::C0,
+                now_ns: 2_000_000_000,
+                epoch: test_epoch(),
+                inputs: vec![
+                    make_passing_input(GateCategory::SemanticContract, 2_000_000_000),
+                    make_passing_input(GateCategory::GovernanceCompliance, 2_000_000_000),
+                ],
+                predecessor_promoted: false,
+                zone: "test".into(),
+            })
+            .unwrap();
+
+        assert_ne!(r1.record_hash, r2.record_hash);
+    }
+
+    #[test]
+    fn record_hash_changes_with_cut_line() {
+        let spec_c0 = CutLineSpec {
+            cut_line: CutLine::C0,
+            requirements: vec![GateRequirement {
+                category: GateCategory::SemanticContract,
+                mandatory: true,
+                description: "test".into(),
+                min_score_millionths: None,
+            }],
+            max_input_staleness_ns: 86_400_000_000_000,
+            min_schema_major: 1,
+            requires_predecessor: false,
+        };
+        let spec_c1 = CutLineSpec {
+            cut_line: CutLine::C1,
+            requirements: vec![GateRequirement {
+                category: GateCategory::SemanticContract,
+                mandatory: true,
+                description: "test".into(),
+                min_score_millionths: None,
+            }],
+            max_input_staleness_ns: 86_400_000_000_000,
+            min_schema_major: 1,
+            requires_predecessor: false,
+        };
+
+        let mut e1 = CutLineEvaluator::new(vec![spec_c0]);
+        let mut e2 = CutLineEvaluator::new(vec![spec_c1]);
+        let now = 1_000_000_000;
+
+        let r1 = e1
+            .evaluate(GateEvaluationInput {
+                cut_line: CutLine::C0,
+                now_ns: now,
+                epoch: test_epoch(),
+                inputs: vec![make_passing_input(GateCategory::SemanticContract, now)],
+                predecessor_promoted: false,
+                zone: "test".into(),
+            })
+            .unwrap();
+
+        let r2 = e2
+            .evaluate(GateEvaluationInput {
+                cut_line: CutLine::C1,
+                now_ns: now,
+                epoch: test_epoch(),
+                inputs: vec![make_passing_input(GateCategory::SemanticContract, now)],
+                predecessor_promoted: false,
+                zone: "test".into(),
+            })
+            .unwrap();
+
+        assert_ne!(r1.record_hash, r2.record_hash);
+    }
+
+    #[test]
+    fn evaluate_c1_missing_unit_taxonomy_metadata_denied() {
+        let mut evaluator = CutLineEvaluator::with_defaults();
+        let now = 1_000_000_000;
+
+        evaluator.evaluate(GateEvaluationInput {
+            cut_line: CutLine::C0,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![
+                make_passing_input(GateCategory::SemanticContract, now),
+                make_passing_input(GateCategory::GovernanceCompliance, now),
+            ],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        });
+
+        let mut c1_inputs = make_c1_inputs(now);
+        c1_inputs
+            .iter_mut()
+            .find(|input| input.category == GateCategory::CompilerCorrectness)
+            .expect("compiler correctness input")
+            .metadata
+            .remove(C1_FRX20_1_UNIT_TAXONOMY_REF_KEY);
+
+        let record = evaluator
+            .evaluate(GateEvaluationInput {
+                cut_line: CutLine::C1,
+                now_ns: now,
+                epoch: test_epoch(),
+                inputs: c1_inputs,
+                predecessor_promoted: false,
+                zone: "test".into(),
+            })
+            .unwrap();
+
+        assert_eq!(record.verdict, GateVerdict::Denied);
+        let compiler_eval = record
+            .evaluations
+            .iter()
+            .find(|e| e.category == GateCategory::CompilerCorrectness)
+            .unwrap();
+        assert!(matches!(
+            compiler_eval.input_validity,
+            InputValidity::Incompatible { .. }
+        ));
+    }
+
+    #[test]
+    fn evaluate_c2_missing_security_survival_metadata_denied() {
+        let mut evaluator = CutLineEvaluator::with_defaults();
+        let now = 1_000_000_000;
+
+        evaluator.evaluate(GateEvaluationInput {
+            cut_line: CutLine::C0,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![
+                make_passing_input(GateCategory::SemanticContract, now),
+                make_passing_input(GateCategory::GovernanceCompliance, now),
+            ],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        });
+        evaluator.evaluate(GateEvaluationInput {
+            cut_line: CutLine::C1,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: make_c1_inputs(now),
+            predecessor_promoted: false,
+            zone: "test".into(),
+        });
+
+        let mut c2_inputs = make_c2_inputs(now);
+        c2_inputs
+            .iter_mut()
+            .find(|input| input.category == GateCategory::SecuritySurvival)
+            .expect("security survival input")
+            .metadata
+            .remove(C2_ROLLBACK_DRILL_REPORT_REF_KEY);
+
+        let record = evaluator
+            .evaluate(GateEvaluationInput {
+                cut_line: CutLine::C2,
+                now_ns: now,
+                epoch: test_epoch(),
+                inputs: c2_inputs,
+                predecessor_promoted: false,
+                zone: "test".into(),
+            })
+            .unwrap();
+
+        assert_eq!(record.verdict, GateVerdict::Denied);
+        let security_eval = record
+            .evaluations
+            .iter()
+            .find(|e| e.category == GateCategory::SecuritySurvival)
+            .unwrap();
+        assert!(matches!(
+            security_eval.input_validity,
+            InputValidity::Incompatible { .. }
+        ));
+    }
+
+    #[test]
+    fn input_validity_display_content_checks() {
+        let stale = InputValidity::Stale {
+            age_ns: 5000,
+            max_age_ns: 1000,
+        };
+        let s = stale.to_string();
+        assert!(s.contains("5000"));
+        assert!(s.contains("1000"));
+
+        let missing = InputValidity::Missing {
+            field: "test_field".into(),
+        };
+        assert!(missing.to_string().contains("test_field"));
+
+        let incompat = InputValidity::Incompatible {
+            reason: "v2 required".into(),
+        };
+        assert!(incompat.to_string().contains("v2 required"));
+    }
+
+    #[test]
+    fn gate_input_with_empty_evidence_refs() {
+        let input = GateInput {
+            category: GateCategory::SemanticContract,
+            score_millionths: None,
+            passed: true,
+            evidence_hash: ContentHash::compute(b"empty"),
+            evidence_refs: vec![],
+            collected_at_ns: 1000,
+            schema_major: 1,
+            metadata: BTreeMap::new(),
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        let restored: GateInput = serde_json::from_str(&json).unwrap();
+        assert!(restored.evidence_refs.is_empty());
+    }
+
+    #[test]
+    fn evaluator_serde_roundtrip_multiple_evaluations() {
+        let mut evaluator = CutLineEvaluator::with_defaults();
+        let now = 1_000_000_000;
+
+        // Denied C0.
+        evaluator.evaluate(GateEvaluationInput {
+            cut_line: CutLine::C0,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        });
+
+        // Approved C0.
+        evaluator.evaluate(GateEvaluationInput {
+            cut_line: CutLine::C0,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![
+                make_passing_input(GateCategory::SemanticContract, now),
+                make_passing_input(GateCategory::GovernanceCompliance, now),
+            ],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        });
+
+        let json = serde_json::to_string(&evaluator).unwrap();
+        let restored: CutLineEvaluator = serde_json::from_str(&json).unwrap();
+        assert_eq!(evaluator.history_len(), restored.history_len());
+        assert_eq!(
+            evaluator.is_promoted(CutLine::C0),
+            restored.is_promoted(CutLine::C0)
+        );
+        assert_eq!(evaluator.history_len(), 2);
+    }
+
+    #[test]
+    fn gate_history_tamper_record_hash_detected() {
+        let mut evaluator = CutLineEvaluator::with_defaults();
+        let now = 1_000_000_000;
+        evaluator.evaluate(GateEvaluationInput {
+            cut_line: CutLine::C0,
+            now_ns: now,
+            epoch: test_epoch(),
+            inputs: vec![
+                make_passing_input(GateCategory::SemanticContract, now),
+                make_passing_input(GateCategory::GovernanceCompliance, now),
+            ],
+            predecessor_promoted: false,
+            zone: "test".into(),
+        });
+
+        let mut history = GateHistory::from_evaluator(&evaluator);
+        assert!(history.verify());
+        // Tamper with a record's hash.
+        history.records[0].record_hash = ContentHash::compute(b"tampered");
+        assert!(!history.verify());
+    }
+
+    #[test]
+    fn cut_line_display_all_variants_non_empty() {
+        for cl in CutLine::all() {
+            let s = cl.to_string();
+            assert!(!s.is_empty());
+            assert!(s.starts_with('C'));
+        }
+    }
+
+    #[test]
+    fn default_c2_staleness_thirty_minutes() {
+        let c2 = CutLineSpec::default_c2();
+        assert_eq!(c2.max_input_staleness_ns, 1_800_000_000_000);
+    }
+
+    #[test]
+    fn default_c3_staleness_fifteen_minutes() {
+        let c3 = CutLineSpec::default_c3();
+        assert_eq!(c3.max_input_staleness_ns, 900_000_000_000);
+    }
+
+    #[test]
+    fn default_c4_staleness_ten_minutes() {
+        let c4 = CutLineSpec::default_c4();
+        assert_eq!(c4.max_input_staleness_ns, 600_000_000_000);
+    }
+
+    #[test]
+    fn default_c5_staleness_five_minutes() {
+        let c5 = CutLineSpec::default_c5();
+        assert_eq!(c5.max_input_staleness_ns, 300_000_000_000);
+    }
 }
