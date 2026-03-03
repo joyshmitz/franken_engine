@@ -2221,4 +2221,357 @@ mod tests {
         }
         assert_eq!(set.len(), variants.len());
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn frir_pipeline_error_display_non_empty_all() {
+        let variants: Vec<FrirPipelineError> = vec![
+            FrirPipelineError::PassLimitExceeded { count: 70, max: 64 },
+            FrirPipelineError::ObligationLimitExceeded {
+                count: 600,
+                max: 512,
+            },
+            FrirPipelineError::AssumptionLimitExceeded {
+                count: 300,
+                max: 256,
+            },
+            FrirPipelineError::BrokenChain {
+                pass_index: 3,
+                detail: "hash mismatch".into(),
+            },
+            FrirPipelineError::InvariantFailed {
+                kind: InvariantKind::TypeSafety,
+                pass_index: 2,
+                detail: "x".into(),
+            },
+            FrirPipelineError::BudgetExceeded {
+                elapsed_ms: 5000,
+                budget_ms: 1000,
+            },
+            FrirPipelineError::DuplicatePassIndex(4),
+        ];
+        for v in &variants {
+            assert!(
+                !v.to_string().is_empty(),
+                "expected non-empty Display for {v:?}"
+            );
+        }
+        assert_eq!(variants.len(), 7);
+    }
+
+    #[test]
+    fn frir_pipeline_error_display_exact_all_7() {
+        assert_eq!(
+            FrirPipelineError::PassLimitExceeded { count: 70, max: 64 }.to_string(),
+            "pass limit exceeded: 70 > 64"
+        );
+        assert_eq!(
+            FrirPipelineError::ObligationLimitExceeded {
+                count: 600,
+                max: 512
+            }
+            .to_string(),
+            "obligation limit exceeded: 600 > 512"
+        );
+        assert_eq!(
+            FrirPipelineError::AssumptionLimitExceeded {
+                count: 300,
+                max: 256
+            }
+            .to_string(),
+            "assumption limit exceeded: 300 > 256"
+        );
+        assert_eq!(
+            FrirPipelineError::BrokenChain {
+                pass_index: 3,
+                detail: "bad".into()
+            }
+            .to_string(),
+            "broken chain at pass 3: bad"
+        );
+        assert_eq!(
+            FrirPipelineError::InvariantFailed {
+                kind: InvariantKind::Determinism,
+                pass_index: 0,
+                detail: "nondeterministic".into(),
+            }
+            .to_string(),
+            "invariant determinism failed at pass 0: nondeterministic"
+        );
+        assert_eq!(
+            FrirPipelineError::BudgetExceeded {
+                elapsed_ms: 5000,
+                budget_ms: 1000
+            }
+            .to_string(),
+            "budget exceeded: 5000ms > 1000ms"
+        );
+        assert_eq!(
+            FrirPipelineError::DuplicatePassIndex(7).to_string(),
+            "duplicate pass index: 7"
+        );
+    }
+
+    #[test]
+    fn frir_pipeline_error_serde_roundtrip_all() {
+        let variants: Vec<FrirPipelineError> = vec![
+            FrirPipelineError::PassLimitExceeded { count: 70, max: 64 },
+            FrirPipelineError::ObligationLimitExceeded {
+                count: 600,
+                max: 512,
+            },
+            FrirPipelineError::AssumptionLimitExceeded {
+                count: 300,
+                max: 256,
+            },
+            FrirPipelineError::BrokenChain {
+                pass_index: 3,
+                detail: "hash".into(),
+            },
+            FrirPipelineError::InvariantFailed {
+                kind: InvariantKind::EffectContainment,
+                pass_index: 1,
+                detail: "leak".into(),
+            },
+            FrirPipelineError::BudgetExceeded {
+                elapsed_ms: 5000,
+                budget_ms: 1000,
+            },
+            FrirPipelineError::DuplicatePassIndex(2),
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: FrirPipelineError = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn fallback_reason_serde_roundtrip_all() {
+        let variants: Vec<FallbackReason> = vec![
+            FallbackReason::MissingWitness {
+                pass_index: 0,
+                pass_kind: PassKind::Parse,
+            },
+            FallbackReason::InvalidWitness {
+                pass_index: 1,
+                pass_kind: PassKind::ScopeResolve,
+                detail: "bad".into(),
+            },
+            FallbackReason::StaleWitness {
+                pass_index: 2,
+                pass_kind: PassKind::EffectAnalysis,
+            },
+            FallbackReason::VerificationBudgetExceeded {
+                elapsed_ms: 10_000,
+                budget_ms: 5_000,
+            },
+            FallbackReason::UnfulfilledObligation {
+                obligation_id: "obl-1".into(),
+                pass_index: 3,
+            },
+            FallbackReason::ExplicitOptOut {
+                reason: "debug mode".into(),
+            },
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: FallbackReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 6);
+    }
+
+    #[test]
+    fn fallback_reason_display_exact() {
+        assert_eq!(
+            FallbackReason::MissingWitness {
+                pass_index: 0,
+                pass_kind: PassKind::Parse
+            }
+            .to_string(),
+            "missing witness at pass 0 (parse)"
+        );
+        assert_eq!(
+            FallbackReason::InvalidWitness {
+                pass_index: 1,
+                pass_kind: PassKind::ScopeResolve,
+                detail: "x".into()
+            }
+            .to_string(),
+            "invalid witness at pass 1 (scope_resolve): x"
+        );
+        assert_eq!(
+            FallbackReason::StaleWitness {
+                pass_index: 2,
+                pass_kind: PassKind::EffectAnalysis
+            }
+            .to_string(),
+            "stale witness at pass 2 (effect_analysis)"
+        );
+        assert_eq!(
+            FallbackReason::VerificationBudgetExceeded {
+                elapsed_ms: 10_000,
+                budget_ms: 5_000
+            }
+            .to_string(),
+            "verification budget exceeded: 10000ms > 5000ms"
+        );
+        assert_eq!(
+            FallbackReason::UnfulfilledObligation {
+                obligation_id: "obl-1".into(),
+                pass_index: 3
+            }
+            .to_string(),
+            "unfulfilled obligation obl-1 at pass 3"
+        );
+        assert_eq!(
+            FallbackReason::ExplicitOptOut {
+                reason: "debug".into()
+            }
+            .to_string(),
+            "explicit opt-out: debug"
+        );
+    }
+
+    #[test]
+    fn pass_kind_serde_roundtrip_all_15() {
+        let variants = [
+            PassKind::Parse,
+            PassKind::ScopeResolve,
+            PassKind::CapabilityAnnotate,
+            PassKind::EffectAnalysis,
+            PassKind::HookSlotValidation,
+            PassKind::DependencyGraph,
+            PassKind::DeadCodeElimination,
+            PassKind::MemoizationBoundary,
+            PassKind::SignalGraphExtraction,
+            PassKind::DomUpdatePlanning,
+            PassKind::EGraphOptimization,
+            PassKind::PartialEvaluation,
+            PassKind::Incrementalization,
+            PassKind::CodeGeneration,
+            PassKind::Custom,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: PassKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+        assert_eq!(variants.len(), 15);
+    }
+
+    #[test]
+    fn lane_target_serde_roundtrip_all() {
+        let variants = [LaneTarget::Js, LaneTarget::Wasm, LaneTarget::Baseline];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: LaneTarget = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+        assert_eq!(variants.len(), 3);
+    }
+
+    #[test]
+    fn frir_pipeline_event_kind_serde_includes_pipeline_completed() {
+        let v = FrirPipelineEventKind::PipelineCompleted;
+        let json = serde_json::to_string(&v).unwrap();
+        let back: FrirPipelineEventKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+        assert_eq!(v.to_string(), "pipeline_completed");
+    }
+
+    #[test]
+    fn frir_version_display_format() {
+        assert_eq!(FrirVersion::CURRENT.to_string(), "0.1.0");
+        let custom = FrirVersion {
+            major: 2,
+            minor: 3,
+            patch: 7,
+        };
+        assert_eq!(custom.to_string(), "2.3.7");
+    }
+
+    #[test]
+    fn frir_version_can_read_same_minor_different_patch() {
+        let reader = FrirVersion {
+            major: 0,
+            minor: 1,
+            patch: 5,
+        };
+        let artifact = FrirVersion {
+            major: 0,
+            minor: 1,
+            patch: 0,
+        };
+        assert!(reader.can_read(&artifact));
+        assert!(artifact.can_read(&reader));
+    }
+
+    #[test]
+    fn frir_version_cannot_read_higher_minor() {
+        let reader = FrirVersion {
+            major: 0,
+            minor: 1,
+            patch: 0,
+        };
+        let artifact = FrirVersion {
+            major: 0,
+            minor: 2,
+            patch: 0,
+        };
+        assert!(!reader.can_read(&artifact));
+    }
+
+    #[test]
+    fn frir_version_cannot_read_cross_major() {
+        let reader = FrirVersion {
+            major: 1,
+            minor: 1,
+            patch: 0,
+        };
+        let artifact = FrirVersion {
+            major: 0,
+            minor: 1,
+            patch: 0,
+        };
+        assert!(!reader.can_read(&artifact));
+        assert!(!artifact.can_read(&reader));
+    }
+
+    #[test]
+    fn witness_verdict_allows_optimized_path_only_valid() {
+        assert!(WitnessVerdict::Valid.allows_optimized_path());
+        assert!(!WitnessVerdict::Invalid.allows_optimized_path());
+        assert!(!WitnessVerdict::Missing.allows_optimized_path());
+        assert!(!WitnessVerdict::Stale.allows_optimized_path());
+        assert!(!WitnessVerdict::TimedOut.allows_optimized_path());
+    }
+
+    #[test]
+    fn frir_pipeline_event_serde_roundtrip() {
+        let event = FrirPipelineEvent {
+            seq: 42,
+            kind: FrirPipelineEventKind::WitnessVerified,
+            pass_index: Some(3),
+            detail: "pass 3 verified".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: FrirPipelineEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn frir_pipeline_event_serde_no_pass_index() {
+        let event = FrirPipelineEvent {
+            seq: 1,
+            kind: FrirPipelineEventKind::PipelineStarted,
+            pass_index: None,
+            detail: "started".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: FrirPipelineEvent = serde_json::from_str(&json).unwrap();
+        assert!(back.pass_index.is_none());
+    }
 }

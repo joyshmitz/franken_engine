@@ -1844,7 +1844,9 @@ mod tests {
 
     #[test]
     fn budget_envelope_consume_unlisted_kind_returns_true() {
-        let mut be = BudgetEnvelope { limits: BTreeMap::new() };
+        let mut be = BudgetEnvelope {
+            limits: BTreeMap::new(),
+        };
         // No limits configured — unlimited
         assert!(be.consume(BudgetKind::TimeMs, 999_999));
     }
@@ -1969,7 +1971,9 @@ mod tests {
 
     #[test]
     fn stack_with_custom_budget() {
-        let budget = BudgetEnvelope { limits: BTreeMap::new() };
+        let budget = BudgetEnvelope {
+            limits: BTreeMap::new(),
+        };
         let s = BudgetedOptimizationStack::with_budget(budget);
         assert!(s.global_budget().limits.is_empty());
     }
@@ -2002,7 +2006,7 @@ mod tests {
         s.record_extraction("c1", make_extraction_result()).unwrap();
 
         // Failed campaign
-        let mut c2 = make_campaign("c2");
+        let c2 = make_campaign("c2");
         s.register_campaign(c2).unwrap();
         // manually fail it
         s.campaigns.get_mut("c2").unwrap().record_failure();
@@ -2034,7 +2038,9 @@ mod tests {
             OptimizationError::DuplicateRule("r1".to_string()),
             OptimizationError::CampaignLimitExceeded { count: 65, max: 64 },
             OptimizationError::DuplicateCampaign("c1".to_string()),
-            OptimizationError::BudgetExhausted { kind: BudgetKind::TimeMs },
+            OptimizationError::BudgetExhausted {
+                kind: BudgetKind::TimeMs,
+            },
             OptimizationError::InterferenceBlocking(InterferenceCheck {
                 campaign_a: "a".to_string(),
                 campaign_b: "b".to_string(),
@@ -2042,7 +2048,9 @@ mod tests {
                 detail: "conflict".to_string(),
                 blocking: true,
             }),
-            OptimizationError::UnsoundRewrite { rule_id: "x".to_string() },
+            OptimizationError::UnsoundRewrite {
+                rule_id: "x".to_string(),
+            },
             OptimizationError::RollbackFailed {
                 campaign_id: "c1".to_string(),
                 detail: "disk full".to_string(),

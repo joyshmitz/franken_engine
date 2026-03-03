@@ -2524,4 +2524,329 @@ mod tests {
         let back: SpecVar = serde_json::from_str(&json).unwrap();
         assert_eq!(var, back);
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn synthesis_error_source_returns_none() {
+        let errors: Vec<SynthesisError> = vec![
+            SynthesisError::EmptySpec,
+            SynthesisError::InvalidConstraint {
+                id: "c".into(),
+                reason: "r".into(),
+            },
+            SynthesisError::Infeasible {
+                constraint_ids: vec!["c".into()],
+            },
+            SynthesisError::BudgetExhausted {
+                stage: PipelineStage::TableGeneration,
+            },
+            SynthesisError::NoSafetySpec,
+            SynthesisError::InvalidVariable { name: "v".into() },
+            SynthesisError::InternalError("msg".into()),
+        ];
+        for err in &errors {
+            assert!(
+                std::error::Error::source(err).is_none(),
+                "source should be None for {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn synthesis_error_display_exact_all_7() {
+        assert_eq!(SynthesisError::EmptySpec.to_string(), "empty specification");
+        assert_eq!(
+            SynthesisError::InvalidConstraint {
+                id: "c1".into(),
+                reason: "bad var".into()
+            }
+            .to_string(),
+            "invalid constraint c1: bad var"
+        );
+        assert_eq!(
+            SynthesisError::Infeasible {
+                constraint_ids: vec!["a".into(), "b".into()]
+            }
+            .to_string(),
+            "infeasible: a, b"
+        );
+        assert_eq!(
+            SynthesisError::BudgetExhausted {
+                stage: PipelineStage::ArtifactAssembly
+            }
+            .to_string(),
+            "budget exhausted at ArtifactAssembly"
+        );
+        assert_eq!(
+            SynthesisError::NoSafetySpec.to_string(),
+            "no safety specification provided"
+        );
+        assert_eq!(
+            SynthesisError::InvalidVariable { name: "foo".into() }.to_string(),
+            "invalid variable: foo"
+        );
+        assert_eq!(
+            SynthesisError::InternalError("boom".into()).to_string(),
+            "internal error: boom"
+        );
+    }
+
+    #[test]
+    fn decision_entry_serde_roundtrip() {
+        let entry = DecisionEntry {
+            action: "escalate".into(),
+            expected_loss_millionths: 350_000,
+            guardrail_blocked: true,
+            pre_guardrail_action: "opt_risky".into(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: DecisionEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn decision_table_row_serde_roundtrip() {
+        let row = DecisionTableRow {
+            state: ObservableState {
+                values: BTreeMap::from([("x".into(), 500_000)]),
+            },
+            entry: DecisionEntry {
+                action: "allow".into(),
+                expected_loss_millionths: 100_000,
+                guardrail_blocked: false,
+                pre_guardrail_action: "allow".into(),
+            },
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        let back: DecisionTableRow = serde_json::from_str(&json).unwrap();
+        assert_eq!(row, back);
+    }
+
+    #[test]
+    fn automaton_state_serde_roundtrip() {
+        let state = AutomatonState {
+            id: "normal".into(),
+            label: "Normal operation".into(),
+            accepting: true,
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let back: AutomatonState = serde_json::from_str(&json).unwrap();
+        assert_eq!(state, back);
+    }
+
+    #[test]
+    fn transition_guard_serde_roundtrip() {
+        let guard = TransitionGuard {
+            variable: "risk".into(),
+            op: CmpOp::Gt,
+            threshold_millionths: 800_000,
+        };
+        let json = serde_json::to_string(&guard).unwrap();
+        let back: TransitionGuard = serde_json::from_str(&json).unwrap();
+        assert_eq!(guard, back);
+    }
+
+    #[test]
+    fn transition_serde_roundtrip() {
+        let t = Transition {
+            from: "normal".into(),
+            to: "elevated".into(),
+            guards: vec![TransitionGuard {
+                variable: "load".into(),
+                op: CmpOp::Ge,
+                threshold_millionths: 700_000,
+            }],
+            priority: 3,
+            emit_action: Some("escalate".into()),
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: Transition = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+    }
+
+    #[test]
+    fn transition_no_emit_action_serde_roundtrip() {
+        let t = Transition {
+            from: "a".into(),
+            to: "b".into(),
+            guards: vec![],
+            priority: 0,
+            emit_action: None,
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: Transition = serde_json::from_str(&json).unwrap();
+        assert_eq!(t, back);
+        assert!(back.emit_action.is_none());
+    }
+
+    #[test]
+    fn calibrated_threshold_serde_roundtrip() {
+        let ct = CalibratedThreshold {
+            threshold_id: "t1".into(),
+            variable: "risk".into(),
+            value_millionths: 600_000,
+            calibration_method: CalibrationMethod::ConformalQuantile,
+            sample_count: 1000,
+            coverage_millionths: 950_000,
+        };
+        let json = serde_json::to_string(&ct).unwrap();
+        let back: CalibratedThreshold = serde_json::from_str(&json).unwrap();
+        assert_eq!(ct, back);
+    }
+
+    #[test]
+    fn evidence_item_serde_roundtrip() {
+        let item = EvidenceItem {
+            category: EvidenceCategory::FormalProof,
+            description: "verified via SMT".into(),
+            confidence_millionths: 999_000,
+            artifact_hash: "abc123".into(),
+        };
+        let json = serde_json::to_string(&item).unwrap();
+        let back: EvidenceItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(item, back);
+    }
+
+    #[test]
+    fn observable_state_serde_roundtrip() {
+        let state = ObservableState {
+            values: BTreeMap::from([("x".into(), 100), ("y".into(), 200)]),
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let back: ObservableState = serde_json::from_str(&json).unwrap();
+        assert_eq!(state, back);
+    }
+
+    #[test]
+    fn deterministic_hash_fixed_length_16_hex() {
+        let h = deterministic_hash("anything");
+        assert_eq!(h.len(), 16);
+        assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn deterministic_hash_empty_input() {
+        let h = deterministic_hash("");
+        assert_eq!(h.len(), 16);
+        assert_ne!(h, deterministic_hash("nonempty"));
+    }
+
+    #[test]
+    fn automaton_transition_priority_resolution() {
+        // Build a manual automaton with two transitions from same state, different priorities
+        let mut states = BTreeMap::new();
+        states.insert(
+            "s0".into(),
+            AutomatonState {
+                id: "s0".into(),
+                label: "start".into(),
+                accepting: true,
+            },
+        );
+        states.insert(
+            "low".into(),
+            AutomatonState {
+                id: "low".into(),
+                label: "low pri".into(),
+                accepting: true,
+            },
+        );
+        states.insert(
+            "high".into(),
+            AutomatonState {
+                id: "high".into(),
+                label: "high pri".into(),
+                accepting: true,
+            },
+        );
+        let automaton = TransitionAutomaton {
+            automaton_id: "priority_test".into(),
+            states,
+            transitions: vec![
+                Transition {
+                    from: "s0".into(),
+                    to: "low".into(),
+                    guards: vec![TransitionGuard {
+                        variable: "x".into(),
+                        op: CmpOp::Gt,
+                        threshold_millionths: 0,
+                    }],
+                    priority: 1,
+                    emit_action: Some("go_low".into()),
+                },
+                Transition {
+                    from: "s0".into(),
+                    to: "high".into(),
+                    guards: vec![TransitionGuard {
+                        variable: "x".into(),
+                        op: CmpOp::Gt,
+                        threshold_millionths: 0,
+                    }],
+                    priority: 5,
+                    emit_action: Some("go_high".into()),
+                },
+            ],
+            initial_state: "s0".into(),
+            content_hash: "test".into(),
+        };
+        let bindings = BTreeMap::from([("x".into(), 100i64)]);
+        let (new_state, action) = automaton.step("s0", &bindings);
+        assert_eq!(new_state, "high", "higher priority transition must win");
+        assert_eq!(action.as_deref(), Some("go_high"));
+    }
+
+    #[test]
+    fn pipeline_no_objectives_only_safety_specs() {
+        let p = pipeline();
+        let spec = SynthesisSpec {
+            spec_id: "safety_only".into(),
+            variables: vec![
+                SpecVar {
+                    name: "x".into(),
+                    domain: VarDomain::BoundedInt {
+                        lo: 0,
+                        hi: 1_000_000,
+                    },
+                },
+                SpecVar {
+                    name: "y".into(),
+                    domain: VarDomain::BoundedInt {
+                        lo: 0,
+                        hi: 1_000_000,
+                    },
+                },
+            ],
+            constraints: Vec::new(),
+            objectives: Vec::new(),
+            safety_specs: vec![SafetySpec {
+                id: "s1".into(),
+                property: "safety".into(),
+                maximin_value_millionths: 300_000,
+                strategy_vars: vec!["x".into()],
+                adversary_vars: vec!["y".into()],
+                cvar_alpha_millionths: 50_000,
+                cvar_bound_millionths: 600_000,
+            }],
+            epoch: 5,
+        };
+        let output = p.synthesize(&spec).unwrap();
+        assert!(
+            output.decision_tables.is_empty(),
+            "no objectives => no tables"
+        );
+        assert_eq!(output.automata.len(), 1);
+        assert!(!output.threshold_bundles.is_empty());
+        assert_eq!(output.stage_witnesses.len(), 5);
+    }
+
+    #[test]
+    fn certificate_epoch_matches_spec() {
+        let p = pipeline();
+        let spec = simple_spec();
+        let output = p.synthesize(&spec).unwrap();
+        for cert in &output.certificates {
+            assert_eq!(cert.epoch, spec.epoch);
+        }
+    }
 }

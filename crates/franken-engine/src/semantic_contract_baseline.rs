@@ -2928,4 +2928,304 @@ mod tests {
         }
         assert_eq!(variants.len(), 7);
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn foundation_error_source_returns_none_all_variants() {
+        use std::error::Error as _;
+        let variants: Vec<FoundationError> = vec![
+            FoundationError::CorpusAlreadyFrozen,
+            FoundationError::CorpusCapacityExceeded,
+            FoundationError::DuplicateFixture,
+            FoundationError::EmptyCorpus,
+            FoundationError::EmptyPackage,
+            FoundationError::PackageAlreadyFrozen,
+            FoundationError::PackageNotFound,
+            FoundationError::BaselineNotFound,
+            FoundationError::ContractCapacityExceeded,
+            FoundationError::AdjudicationCapacityExceeded,
+            FoundationError::NoConsumerLanes,
+            FoundationError::InvalidContract("x".to_string()),
+            FoundationError::IncompatibleVersion,
+        ];
+        for v in &variants {
+            assert!(v.source().is_none(), "expected None source for {v}");
+        }
+        assert_eq!(variants.len(), 13);
+    }
+
+    #[test]
+    fn foundation_error_display_exact_all_13() {
+        assert_eq!(
+            FoundationError::CorpusCapacityExceeded.to_string(),
+            "corpus capacity exceeded (max 10000)"
+        );
+        assert_eq!(
+            FoundationError::DuplicateFixture.to_string(),
+            "duplicate fixture ID"
+        );
+        assert_eq!(
+            FoundationError::EmptyPackage.to_string(),
+            "cannot freeze package with no contracts"
+        );
+        assert_eq!(
+            FoundationError::PackageAlreadyFrozen.to_string(),
+            "package is already frozen"
+        );
+        assert_eq!(
+            FoundationError::BaselineNotFound.to_string(),
+            "baseline not found"
+        );
+        assert_eq!(
+            FoundationError::ContractCapacityExceeded.to_string(),
+            "contract capacity exceeded"
+        );
+        assert_eq!(
+            FoundationError::AdjudicationCapacityExceeded.to_string(),
+            "adjudication rule capacity exceeded"
+        );
+        assert_eq!(
+            FoundationError::InvalidContract("bad hook".to_string()).to_string(),
+            "invalid contract: bad hook"
+        );
+        assert_eq!(
+            FoundationError::IncompatibleVersion.to_string(),
+            "incompatible contract version"
+        );
+    }
+
+    #[test]
+    fn foundation_error_serde_roundtrip_all_variants() {
+        let variants: Vec<FoundationError> = vec![
+            FoundationError::CorpusAlreadyFrozen,
+            FoundationError::CorpusCapacityExceeded,
+            FoundationError::DuplicateFixture,
+            FoundationError::EmptyCorpus,
+            FoundationError::EmptyPackage,
+            FoundationError::PackageAlreadyFrozen,
+            FoundationError::PackageNotFound,
+            FoundationError::BaselineNotFound,
+            FoundationError::ContractCapacityExceeded,
+            FoundationError::AdjudicationCapacityExceeded,
+            FoundationError::NoConsumerLanes,
+            FoundationError::InvalidContract("msg".to_string()),
+            FoundationError::IncompatibleVersion,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: FoundationError = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+    }
+
+    #[test]
+    fn violation_severity_serde_roundtrip_all_variants() {
+        let variants = [
+            ViolationSeverity::Fatal,
+            ViolationSeverity::Error,
+            ViolationSeverity::Warning,
+            ViolationSeverity::Info,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ViolationSeverity = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 4);
+    }
+
+    #[test]
+    fn adjudication_category_serde_roundtrip_all_variants() {
+        let variants = [
+            AdjudicationCategory::AmbiguousOrdering,
+            AdjudicationCategory::UndefinedEdgeCase,
+            AdjudicationCategory::VersionConflict,
+            AdjudicationCategory::PlatformDivergence,
+            AdjudicationCategory::SpecGap,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: AdjudicationCategory = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 5);
+    }
+
+    #[test]
+    fn adjudication_resolution_serde_roundtrip_all_variants() {
+        let variants = [
+            AdjudicationResolution::PreferReactBehavior,
+            AdjudicationResolution::PreferDeterministic,
+            AdjudicationResolution::PreferConservative,
+            AdjudicationResolution::RequireExplicitFallback,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: AdjudicationResolution = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 4);
+    }
+
+    #[test]
+    fn side_effect_boundary_serde_roundtrip_all_variants() {
+        let variants = [
+            SideEffectBoundary::Contained,
+            SideEffectBoundary::Leaks,
+            SideEffectBoundary::Unknown,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: SideEffectBoundary = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 3);
+    }
+
+    #[test]
+    fn determinism_level_serde_roundtrip_all_variants() {
+        let variants = [
+            DeterminismLevel::FullyDeterministic,
+            DeterminismLevel::OrderDeterministic,
+            DeterminismLevel::Nondeterministic,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: DeterminismLevel = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 3);
+    }
+
+    #[test]
+    fn mutation_kind_serde_roundtrip_all_variants() {
+        let variants = [
+            MutationKind::SetAttribute,
+            MutationKind::RemoveAttribute,
+            MutationKind::AppendChild,
+            MutationKind::RemoveChild,
+            MutationKind::SetTextContent,
+            MutationKind::InsertBefore,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: MutationKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 6);
+    }
+
+    #[test]
+    fn fixture_priority_serde_roundtrip_all_variants() {
+        let variants = [
+            FixturePriority::Critical,
+            FixturePriority::High,
+            FixturePriority::Medium,
+            FixturePriority::Low,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: FixturePriority = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, v);
+        }
+        assert_eq!(variants.len(), 4);
+    }
+
+    #[test]
+    fn effect_is_deterministic_all_levels() {
+        let make = |level: DeterminismLevel| EffectSemanticContract {
+            effect_kind: EffectKind::StateUpdate,
+            timing: EffectTiming::Synchronous,
+            capability_requirements: vec![],
+            side_effect_boundary: SideEffectBoundary::Contained,
+            determinism_guarantee: level,
+        };
+        assert!(make(DeterminismLevel::FullyDeterministic).is_deterministic());
+        assert!(make(DeterminismLevel::OrderDeterministic).is_deterministic());
+        assert!(!make(DeterminismLevel::Nondeterministic).is_deterministic());
+    }
+
+    #[test]
+    fn frozen_baseline_serves_lane_present_and_absent() {
+        let mut corpus = make_corpus_with_fixtures(3);
+        corpus.freeze().unwrap();
+        let mut pkg = ContractPackage::new(corpus).unwrap();
+        pkg.add_hook_contract(HookSemanticContract::canonical_use_state())
+            .unwrap();
+        let lanes = vec![ConsumerLane::Compiler, ConsumerLane::Runtime];
+        let baseline = FrozenBaseline::create(pkg, "cut-1".into(), 10, lanes).unwrap();
+        assert!(baseline.serves_lane(&ConsumerLane::Compiler));
+        assert!(baseline.serves_lane(&ConsumerLane::Runtime));
+        assert!(!baseline.serves_lane(&ConsumerLane::Verification));
+        assert!(!baseline.serves_lane(&ConsumerLane::Governance));
+    }
+
+    #[test]
+    fn version_is_compatible_with_same_major_higher_patch() {
+        let v1 = SemanticContractVersion {
+            major: 0,
+            minor: 1,
+            patch: 5,
+        };
+        let v2 = SemanticContractVersion {
+            major: 0,
+            minor: 1,
+            patch: 0,
+        };
+        assert!(v1.is_compatible_with(&v2));
+        assert!(v2.is_compatible_with(&v1));
+    }
+
+    #[test]
+    fn version_display_custom() {
+        let v = SemanticContractVersion {
+            major: 2,
+            minor: 3,
+            patch: 7,
+        };
+        assert_eq!(v.to_string(), "2.3.7");
+    }
+
+    #[test]
+    fn adjudication_rule_hash_differs_by_resolution() {
+        let make = |res: AdjudicationResolution| {
+            let rule = AdjudicationRule {
+                id: make_id("adj-hash-test"),
+                name: "same-name".to_string(),
+                category: AdjudicationCategory::SpecGap,
+                condition: "same-cond".to_string(),
+                resolution: res,
+                rationale: "does not matter".to_string(),
+                precedent_fixture_ids: vec![],
+            };
+            rule.rule_hash()
+        };
+        let h1 = make(AdjudicationResolution::PreferReactBehavior);
+        let h2 = make(AdjudicationResolution::PreferDeterministic);
+        let h3 = make(AdjudicationResolution::PreferConservative);
+        assert_ne!(h1, h2);
+        assert_ne!(h2, h3);
+        assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn effect_contract_hash_differs_by_boundary() {
+        let make = |boundary: SideEffectBoundary| {
+            let c = EffectSemanticContract {
+                effect_kind: EffectKind::NetworkIo,
+                timing: EffectTiming::Deferred,
+                capability_requirements: vec!["net.fetch".to_string()],
+                side_effect_boundary: boundary,
+                determinism_guarantee: DeterminismLevel::Nondeterministic,
+            };
+            c.contract_hash()
+        };
+        let h1 = make(SideEffectBoundary::Contained);
+        let h2 = make(SideEffectBoundary::Leaks);
+        let h3 = make(SideEffectBoundary::Unknown);
+        assert_ne!(h1, h2);
+        assert_ne!(h2, h3);
+        assert_ne!(h1, h3);
+    }
 }

@@ -1996,7 +1996,9 @@ mod tests {
         for err in [
             RouterError::AlreadyConservative,
             RouterError::InvalidRandomDraw { value: -1 },
-            RouterError::InvalidConfig { reason: "bad".into() },
+            RouterError::InvalidConfig {
+                reason: "bad".into(),
+            },
         ] {
             let json = serde_json::to_string(&err).unwrap();
             let back: RouterError = serde_json::from_str(&json).unwrap();

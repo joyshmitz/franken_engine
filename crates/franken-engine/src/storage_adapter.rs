@@ -2515,11 +2515,7 @@ mod tests {
             .put_batch(StoreKind::BenchmarkLedger, entries, &context)
             .unwrap();
         let rows = adapter
-            .query(
-                StoreKind::BenchmarkLedger,
-                &StoreQuery::default(),
-                &context,
-            )
+            .query(StoreKind::BenchmarkLedger, &StoreQuery::default(), &context)
             .unwrap();
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].key, "batch/a");
@@ -2647,7 +2643,10 @@ mod tests {
             .unwrap();
         let json = serde_json::to_string(&adapter).unwrap();
         let back: InMemoryStorageAdapter = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.current_schema_version(), adapter.current_schema_version());
+        assert_eq!(
+            back.current_schema_version(),
+            adapter.current_schema_version()
+        );
     }
 
     #[test]

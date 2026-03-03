@@ -1762,4 +1762,613 @@ mod tests {
         assert_eq!(m.tasks_completed, 0);
         assert_eq!(m.tasks_timed_out, 0);
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: TaskId serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn task_id_serde_roundtrip() {
+        for val in [0, 1, 42, u64::MAX] {
+            let id = TaskId(val);
+            let json = serde_json::to_string(&id).unwrap();
+            let back: TaskId = serde_json::from_str(&json).unwrap();
+            assert_eq!(id, back);
+        }
+    }
+
+    #[test]
+    fn task_id_ordering() {
+        assert!(TaskId(0) < TaskId(1));
+        assert!(TaskId(1) < TaskId(u64::MAX));
+        assert_eq!(TaskId(42), TaskId(42));
+
+        let mut ids = vec![TaskId(100), TaskId(1), TaskId(50)];
+        ids.sort();
+        assert_eq!(ids, vec![TaskId(1), TaskId(50), TaskId(100)]);
+    }
+
+    #[test]
+    fn task_id_hash_consistency() {
+        use std::collections::BTreeSet;
+        let mut set = BTreeSet::new();
+        set.insert(TaskId(1));
+        set.insert(TaskId(2));
+        set.insert(TaskId(1)); // duplicate
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn task_id_display_max() {
+        let id = TaskId(u64::MAX);
+        assert_eq!(id.to_string(), format!("task:{}", u64::MAX));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: TaskType Ord follows enum declaration order
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn task_type_ord_matches_enum_order() {
+        let types = [
+            TaskType::CancelCleanup,
+            TaskType::QuarantineExec,
+            TaskType::ForcedDrain,
+            TaskType::LeaseRenewal,
+            TaskType::MonitoringProbe,
+            TaskType::EvidenceFlush,
+            TaskType::EpochBarrierTimeout,
+            TaskType::ExtensionDispatch,
+            TaskType::GcCycle,
+            TaskType::PolicyIteration,
+            TaskType::RemoteSync,
+            TaskType::SagaStepExec,
+        ];
+        for window in types.windows(2) {
+            assert!(
+                window[0] < window[1],
+                "{:?} should be < {:?}",
+                window[0],
+                window[1]
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: TaskLabel serde for timed and ready lanes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn task_label_serde_timed_lane() {
+        let label = timed_label("trace-timed-serde");
+        let json = serde_json::to_string(&label).unwrap();
+        let back: TaskLabel = serde_json::from_str(&json).unwrap();
+        assert_eq!(label, back);
+        assert!(json.contains("\"Timed\"") || json.contains("\"timed\""));
+    }
+
+    #[test]
+    fn task_label_serde_ready_lane() {
+        let label = ready_label("trace-ready-serde");
+        let json = serde_json::to_string(&label).unwrap();
+        let back: TaskLabel = serde_json::from_str(&json).unwrap();
+        assert_eq!(label, back);
+    }
+
+    #[test]
+    fn task_label_with_nonzero_priority_sub_band() {
+        let label = TaskLabel {
+            lane: SchedulerLane::Ready,
+            task_type: TaskType::GcCycle,
+            trace_id: "priority-test".to_string(),
+            priority_sub_band: 42,
+        };
+        let json = serde_json::to_string(&label).unwrap();
+        let back: TaskLabel = serde_json::from_str(&json).unwrap();
+        assert_eq!(label, back);
+        assert!(json.contains("42"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: cancel queue FIFO ordering
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cancel_lane_fifo_ordering() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        sched.submit(cancel_label("t1"), 0, "first", 0).unwrap();
+        sched.submit(cancel_label("t2"), 0, "second", 10).unwrap();
+        sched.submit(cancel_label("t3"), 0, "third", 20).unwrap();
+
+        let batch = sched.schedule_batch(10, 30);
+        let cancel_tasks: Vec<_> = batch
+            .iter()
+            .filter(|t| t.label.lane == SchedulerLane::Cancel)
+            .collect();
+        assert_eq!(cancel_tasks[0].payload_id, "first");
+        assert_eq!(cancel_tasks[1].payload_id, "second");
+        assert_eq!(cancel_tasks[2].payload_id, "third");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: multiple schedule_batch rounds
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn multiple_schedule_batch_rounds_persist_state() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        sched.submit(cancel_label("t1"), 0, "c1", 0).unwrap();
+        sched.submit(ready_label("t2"), 0, "r1", 0).unwrap();
+        sched.submit(ready_label("t3"), 0, "r2", 0).unwrap();
+
+        // Round 1: take batch_size=2 → cancel + ready
+        let batch1 = sched.schedule_batch(2, 0);
+        assert_eq!(batch1.len(), 2);
+        assert_eq!(sched.queue_depth(SchedulerLane::Cancel), 0);
+        assert_eq!(sched.queue_depth(SchedulerLane::Ready), 1);
+
+        // Round 2: remaining ready task
+        let batch2 = sched.schedule_batch(10, 0);
+        assert_eq!(batch2.len(), 1);
+        assert_eq!(batch2[0].payload_id, "r2");
+        assert_eq!(sched.total_queue_depth(), 0);
+    }
+
+    #[test]
+    fn schedule_batch_metrics_accumulate_across_rounds() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        sched.submit(cancel_label("t1"), 0, "c1", 0).unwrap();
+        sched.submit(cancel_label("t2"), 0, "c2", 0).unwrap();
+        sched.submit(ready_label("t3"), 0, "r1", 0).unwrap();
+
+        sched.schedule_batch(1, 0); // schedules 1 cancel
+        sched.schedule_batch(1, 0); // schedules 1 cancel
+
+        let m = sched.lane_metrics();
+        assert_eq!(m["cancel"].tasks_scheduled, 2);
+        assert_eq!(m["cancel"].tasks_submitted, 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: event counters accumulate across batches
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn event_counters_accumulate_across_batches() {
+        let config = LaneConfig {
+            ready_min_throughput: 0,
+            ..Default::default()
+        };
+        let mut sched = LaneScheduler::new(config);
+        sched.submit(cancel_label("t1"), 0, "c1", 0).unwrap();
+        sched.submit(cancel_label("t2"), 0, "c2", 0).unwrap();
+        sched.submit(ready_label("t3"), 0, "r1", 0).unwrap();
+
+        assert_eq!(sched.event_counts().get("submit"), Some(&3));
+
+        sched.schedule_batch(1, 0);
+        assert_eq!(sched.event_counts().get("schedule"), Some(&1));
+
+        sched.schedule_batch(1, 0);
+        assert_eq!(sched.event_counts().get("schedule"), Some(&2));
+
+        sched.schedule_batch(1, 0);
+        assert_eq!(sched.event_counts().get("schedule"), Some(&3));
+    }
+
+    #[test]
+    fn event_counters_empty_initially() {
+        let sched = LaneScheduler::new(LaneConfig::default());
+        assert!(sched.event_counts().is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: complete_task on timed lane
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn complete_task_timed_lane() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        let id = sched.submit(timed_label("t1"), 50, "p1", 0).unwrap();
+        sched.schedule_batch(10, 100);
+        sched.drain_events();
+
+        sched.complete_task(id, SchedulerLane::Timed);
+        let m = sched.lane_metrics();
+        assert_eq!(m["timed"].tasks_completed, 1);
+
+        let events = sched.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, "complete");
+        assert_eq!(events[0].lane, "timed");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: drain_events idempotency
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn drain_events_returns_empty_on_second_call() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        sched.submit(cancel_label("t1"), 0, "p1", 0).unwrap();
+
+        let first = sched.drain_events();
+        assert_eq!(first.len(), 1);
+
+        let second = sched.drain_events();
+        assert!(second.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: anti-starvation with empty ready queue
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn anti_starvation_with_empty_ready_queue() {
+        let config = LaneConfig {
+            ready_min_throughput: 5,
+            ..Default::default()
+        };
+        let mut sched = LaneScheduler::new(config);
+        sched.submit(cancel_label("t1"), 0, "c1", 0).unwrap();
+
+        let batch = sched.schedule_batch(10, 0);
+        // Only the cancel task, no ready tasks available.
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].label.lane, SchedulerLane::Cancel);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: submit at exact capacity succeeds, next one fails
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn submit_at_exact_capacity_boundary() {
+        let config = LaneConfig {
+            timed_max_depth: 3,
+            ..Default::default()
+        };
+        let mut sched = LaneScheduler::new(config);
+
+        // Fill exactly to capacity.
+        for i in 0..3 {
+            sched
+                .submit(timed_label(&format!("t{i}")), 100, &format!("p{i}"), 0)
+                .unwrap();
+        }
+        assert_eq!(sched.queue_depth(SchedulerLane::Timed), 3);
+
+        // Next submission should fail.
+        let err = sched
+            .submit(timed_label("overflow"), 100, "overflow", 0)
+            .unwrap_err();
+        assert!(matches!(err, LaneError::LaneFull { max_depth: 3, .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: timed task with deadline_tick = 0
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn timed_task_deadline_zero_scheduled_when_current_zero() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        sched
+            .submit(timed_label("t1"), 0, "zero-deadline", 0)
+            .unwrap();
+
+        // deadline_tick=0, current_ticks=0 → deadline <= current → scheduled.
+        let batch = sched.schedule_batch(10, 0);
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].payload_id, "zero-deadline");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: fresh scheduler metrics initialization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fresh_scheduler_metrics_initialized_for_all_lanes() {
+        let sched = LaneScheduler::new(LaneConfig::default());
+        let m = sched.lane_metrics();
+
+        assert!(m.contains_key("cancel"));
+        assert!(m.contains_key("timed"));
+        assert!(m.contains_key("ready"));
+        assert_eq!(m.len(), 3);
+
+        for (name, metrics) in m {
+            assert_eq!(metrics.lane, *name);
+            assert_eq!(metrics.queue_depth, 0);
+            assert_eq!(metrics.tasks_submitted, 0);
+            assert_eq!(metrics.tasks_scheduled, 0);
+            assert_eq!(metrics.tasks_completed, 0);
+            assert_eq!(metrics.tasks_timed_out, 0);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: complete_task does not affect queue depth
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn complete_task_does_not_modify_queues() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        sched.submit(cancel_label("t1"), 0, "c1", 0).unwrap();
+        sched.submit(cancel_label("t2"), 0, "c2", 0).unwrap();
+
+        let batch = sched.schedule_batch(1, 0);
+        assert_eq!(sched.queue_depth(SchedulerLane::Cancel), 1);
+
+        // Completing a task doesn't remove anything from queues.
+        sched.complete_task(batch[0].task_id, SchedulerLane::Cancel);
+        assert_eq!(sched.queue_depth(SchedulerLane::Cancel), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: all lane errors have distinct display messages
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn all_lane_error_displays_contain_key_info() {
+        let mismatch = LaneError::LaneMismatch {
+            task_type: "gc_cycle".into(),
+            declared_lane: "cancel".into(),
+            required_lane: "ready".into(),
+        };
+        let msg = mismatch.to_string();
+        assert!(msg.contains("gc_cycle"));
+        assert!(msg.contains("cancel"));
+        assert!(msg.contains("ready"));
+
+        let full = LaneError::LaneFull {
+            lane: "timed".into(),
+            max_depth: 1024,
+        };
+        let msg = full.to_string();
+        assert!(msg.contains("timed"));
+        assert!(msg.contains("1024"));
+
+        let not_found = LaneError::TaskNotFound { task_id: 0 };
+        assert!(not_found.to_string().contains("0"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: ScheduledTask submitted_at preserved through scheduling
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn submitted_at_preserved_through_scheduling() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        sched.submit(ready_label("t1"), 0, "p1", 42).unwrap();
+        sched.submit(ready_label("t2"), 0, "p2", 99).unwrap();
+
+        let batch = sched.schedule_batch(10, 100);
+        assert_eq!(batch[0].submitted_at, 42);
+        assert_eq!(batch[1].submitted_at, 99);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: lane mismatch for all incorrect lane combinations
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lane_mismatch_all_wrong_lane_combinations() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+
+        // Cancel type in Timed lane.
+        let err = sched
+            .submit(
+                TaskLabel {
+                    lane: SchedulerLane::Timed,
+                    task_type: TaskType::CancelCleanup,
+                    trace_id: "t1".into(),
+                    priority_sub_band: 0,
+                },
+                0,
+                "p",
+                0,
+            )
+            .unwrap_err();
+        assert!(matches!(err, LaneError::LaneMismatch { .. }));
+
+        // Timed type in Ready lane.
+        let err = sched
+            .submit(
+                TaskLabel {
+                    lane: SchedulerLane::Ready,
+                    task_type: TaskType::LeaseRenewal,
+                    trace_id: "t2".into(),
+                    priority_sub_band: 0,
+                },
+                0,
+                "p",
+                0,
+            )
+            .unwrap_err();
+        assert!(matches!(err, LaneError::LaneMismatch { .. }));
+
+        // Ready type in Cancel lane.
+        let err = sched
+            .submit(
+                TaskLabel {
+                    lane: SchedulerLane::Cancel,
+                    task_type: TaskType::GcCycle,
+                    trace_id: "t3".into(),
+                    priority_sub_band: 0,
+                },
+                0,
+                "p",
+                0,
+            )
+            .unwrap_err();
+        assert!(matches!(err, LaneError::LaneMismatch { .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: timed tasks not yet due remain in queue across rounds
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn timed_not_due_persists_across_rounds() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        sched
+            .submit(timed_label("t1"), 1000, "future-task", 0)
+            .unwrap();
+
+        // Round 1: not due at tick 100.
+        let batch1 = sched.schedule_batch(10, 100);
+        assert!(batch1.is_empty());
+        assert_eq!(sched.queue_depth(SchedulerLane::Timed), 1);
+
+        // Round 2: not due at tick 500.
+        let batch2 = sched.schedule_batch(10, 500);
+        assert!(batch2.is_empty());
+        assert_eq!(sched.queue_depth(SchedulerLane::Timed), 1);
+
+        // Round 3: due at tick 1000.
+        let batch3 = sched.schedule_batch(10, 1000);
+        assert_eq!(batch3.len(), 1);
+        assert_eq!(batch3[0].payload_id, "future-task");
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: submit event includes queue_position
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn submit_event_records_queue_position() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        sched.submit(ready_label("t1"), 0, "p1", 0).unwrap();
+        sched.submit(ready_label("t2"), 0, "p2", 0).unwrap();
+        sched.submit(ready_label("t3"), 0, "p3", 0).unwrap();
+
+        let events = sched.drain_events();
+        assert_eq!(events[0].queue_position, 0);
+        assert_eq!(events[1].queue_position, 1);
+        assert_eq!(events[2].queue_position, 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: complete_task event counter
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn complete_task_event_counter() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+        let id1 = sched.submit(cancel_label("t1"), 0, "c1", 0).unwrap();
+        let id2 = sched.submit(cancel_label("t2"), 0, "c2", 0).unwrap();
+        sched.schedule_batch(10, 0);
+
+        sched.complete_task(id1, SchedulerLane::Cancel);
+        sched.complete_task(id2, SchedulerLane::Cancel);
+
+        assert_eq!(sched.event_counts().get("complete"), Some(&2));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: all three lanes filled simultaneously
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn all_three_lanes_filled_and_drained() {
+        let mut sched = LaneScheduler::new(LaneConfig::default());
+
+        for i in 0..3 {
+            sched
+                .submit(cancel_label(&format!("c{i}")), 0, &format!("cancel-{i}"), 0)
+                .unwrap();
+        }
+        for i in 0..3 {
+            sched
+                .submit(
+                    timed_label(&format!("ti{i}")),
+                    (i + 1) as u64 * 10,
+                    &format!("timed-{i}"),
+                    0,
+                )
+                .unwrap();
+        }
+        for i in 0..3 {
+            sched
+                .submit(ready_label(&format!("r{i}")), 0, &format!("ready-{i}"), 0)
+                .unwrap();
+        }
+
+        assert_eq!(sched.total_queue_depth(), 9);
+
+        let batch = sched.schedule_batch(100, 100);
+        // 3 cancel + 3 timed (all due) + 3 ready = 9
+        assert_eq!(batch.len(), 9);
+
+        // Verify lane ordering: cancel first, then timed, then ready.
+        let lanes: Vec<_> = batch.iter().map(|t| t.label.lane).collect();
+        let cancel_end = lanes
+            .iter()
+            .rposition(|l| *l == SchedulerLane::Cancel)
+            .unwrap();
+        let timed_start = lanes
+            .iter()
+            .position(|l| *l == SchedulerLane::Timed)
+            .unwrap();
+        let timed_end = lanes
+            .iter()
+            .rposition(|l| *l == SchedulerLane::Timed)
+            .unwrap();
+        let ready_start = lanes
+            .iter()
+            .position(|l| *l == SchedulerLane::Ready)
+            .unwrap();
+        assert!(cancel_end < timed_start);
+        assert!(timed_end < ready_start);
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: LaneError serde roundtrip for LaneMismatch
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lane_error_lane_mismatch_serde_roundtrip() {
+        let err = LaneError::LaneMismatch {
+            task_type: "saga_step_exec".to_string(),
+            declared_lane: "timed".to_string(),
+            required_lane: "ready".to_string(),
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        let back: LaneError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    #[test]
+    fn lane_error_empty_trace_id_serde_roundtrip() {
+        let err = LaneError::EmptyTraceId;
+        let json = serde_json::to_string(&err).unwrap();
+        let back: LaneError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+    }
+
+    #[test]
+    fn lane_error_task_not_found_serde_roundtrip() {
+        let err = LaneError::TaskNotFound { task_id: u64::MAX };
+        let json = serde_json::to_string(&err).unwrap();
+        let back: LaneError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+        assert!(json.contains(&u64::MAX.to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: LaneConfig serde with non-default values
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lane_config_serde_non_default() {
+        let cfg = LaneConfig {
+            cancel_max_depth: 1,
+            timed_max_depth: 1,
+            ready_max_depth: 1,
+            ready_min_throughput: 0,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: LaneConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, back);
+    }
 }
