@@ -664,6 +664,8 @@ Artifacts are written under:
 
 `bd-2mds.1.8.2` enforces fail-closed promotion policy for unresolved
 high-severity drift and non-green correctness evidence lanes.
+The gate runner also fails closed on `rch` local-fallback and artifact-retrieval
+failure signatures.
 
 ```bash
 # parser correctness promotion gate (rch-backed check + test + clippy)
