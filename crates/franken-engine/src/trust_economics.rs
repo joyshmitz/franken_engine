@@ -2113,12 +2113,18 @@ mod tests {
         m.set(
             TrueState::Benign,
             ContainmentAction::Allow,
-            SubLoss { direct_damage: 100, ..SubLoss::zero() },
+            SubLoss {
+                direct_damage: 100,
+                ..SubLoss::zero()
+            },
         );
         m.set(
             TrueState::Malicious,
             ContainmentAction::Allow,
-            SubLoss { direct_damage: 50, ..SubLoss::zero() },
+            SubLoss {
+                direct_damage: 50,
+                ..SubLoss::zero()
+            },
         );
         let violations = m.asymmetry_violations();
         assert_eq!(violations.len(), 1);
@@ -2134,12 +2140,18 @@ mod tests {
             m.set(
                 TrueState::Benign,
                 action,
-                SubLoss { direct_damage: 10, ..SubLoss::zero() },
+                SubLoss {
+                    direct_damage: 10,
+                    ..SubLoss::zero()
+                },
             );
             m.set(
                 TrueState::Malicious,
                 action,
-                SubLoss { direct_damage: 100, ..SubLoss::zero() },
+                SubLoss {
+                    direct_damage: 100,
+                    ..SubLoss::zero()
+                },
             );
         }
         assert!(m.asymmetry_violations().is_empty());
@@ -2158,10 +2170,7 @@ mod tests {
         m.set(TrueState::Benign, ContainmentAction::Allow, sl);
         let totals = m.to_scalar_totals();
         assert_eq!(totals.len(), 1);
-        assert_eq!(
-            totals[&(TrueState::Benign, ContainmentAction::Allow)],
-            1500
-        );
+        assert_eq!(totals[&(TrueState::Benign, ContainmentAction::Allow)], 1500);
     }
 
     #[test]
@@ -2239,11 +2248,17 @@ mod tests {
     #[test]
     fn classify_roi_alert_level_exact_boundaries() {
         // 2_000_000 (exactly 2x) should be Profitable, not HighlyProfitable
-        assert_eq!(classify_roi_alert_level(2_000_000), RoiAlertLevel::Profitable);
+        assert_eq!(
+            classify_roi_alert_level(2_000_000),
+            RoiAlertLevel::Profitable
+        );
         // 500_000 (exactly 0.5x) should be Neutral, not Unprofitable
         assert_eq!(classify_roi_alert_level(500_000), RoiAlertLevel::Neutral);
         // 1_000_001 (just above 1x) should be Profitable
-        assert_eq!(classify_roi_alert_level(1_000_001), RoiAlertLevel::Profitable);
+        assert_eq!(
+            classify_roi_alert_level(1_000_001),
+            RoiAlertLevel::Profitable
+        );
     }
 
     #[test]
@@ -2263,7 +2278,10 @@ mod tests {
         assert_eq!(RoiAlertLevel::Unprofitable.to_string(), "unprofitable");
         assert_eq!(RoiAlertLevel::Neutral.to_string(), "neutral");
         assert_eq!(RoiAlertLevel::Profitable.to_string(), "profitable");
-        assert_eq!(RoiAlertLevel::HighlyProfitable.to_string(), "highly_profitable");
+        assert_eq!(
+            RoiAlertLevel::HighlyProfitable.to_string(),
+            "highly_profitable"
+        );
     }
 
     #[test]
@@ -2314,10 +2332,14 @@ mod tests {
                     TrueState::Malicious => 200_000,
                     TrueState::Compromised => 500_000,
                 };
-                matrix.set(state, action, SubLoss {
-                    direct_damage: severity,
-                    ..SubLoss::zero()
-                });
+                matrix.set(
+                    state,
+                    action,
+                    SubLoss {
+                        direct_damage: severity,
+                        ..SubLoss::zero()
+                    },
+                );
             }
         }
         let inputs = TrustEconomicsModelInputs {
@@ -2343,10 +2365,14 @@ mod tests {
                     TrueState::Benign => 10_000,
                     _ => 100_000,
                 };
-                matrix.set(state, action, SubLoss {
-                    direct_damage: severity,
-                    ..SubLoss::zero()
-                });
+                matrix.set(
+                    state,
+                    action,
+                    SubLoss {
+                        direct_damage: severity,
+                        ..SubLoss::zero()
+                    },
+                );
             }
         }
         let inputs = TrustEconomicsModelInputs {
@@ -2379,13 +2405,16 @@ mod tests {
     fn containment_cost_model_all_actions_populated() {
         let mut m = ContainmentCostModel::new(1, "enterprise", "manual");
         for &action in &ContainmentAction::ALL {
-            m.set(action, ActionCost {
-                execution_latency_us: 1000,
-                resource_consumption: 100,
-                collateral_impact: 200,
-                operator_burden: 300,
-                reversibility_cost: 400,
-            });
+            m.set(
+                action,
+                ActionCost {
+                    execution_latency_us: 1000,
+                    resource_consumption: 100,
+                    collateral_impact: 200,
+                    operator_burden: 300,
+                    reversibility_cost: 400,
+                },
+            );
         }
         assert_eq!(m.action_costs.len(), 7);
         for &action in &ContainmentAction::ALL {

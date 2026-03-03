@@ -3657,9 +3657,7 @@ mod tests {
             GovernanceError::PolicySchemaViolation {
                 constraint: "c".into(),
             },
-            GovernanceError::IdDerivationFailed {
-                detail: "d".into(),
-            },
+            GovernanceError::IdDerivationFailed { detail: "d".into() },
             GovernanceError::InvalidTimeRange {
                 start: ts(100),
                 end: ts(50),
@@ -3678,9 +3676,7 @@ mod tests {
                 hook_type: GovernanceHookType::PreDeploy,
                 reason: "r".into(),
             },
-            GovernanceError::SerialisationFailed {
-                reason: "r".into(),
-            },
+            GovernanceError::SerialisationFailed { reason: "r".into() },
         ];
         for v in &variants {
             assert!(v.source().is_none(), "source() should be None for {v:?}");
@@ -3785,7 +3781,10 @@ mod tests {
         ];
         let req = make_export_request(AuditExportFormat::JsonLines, 50, 50);
         let result = export_audit_evidence(req, entries, ts(200)).unwrap();
-        assert_eq!(result.entry_count, 1, "zero-width window should include exact tick");
+        assert_eq!(
+            result.entry_count, 1,
+            "zero-width window should include exact tick"
+        );
     }
 
     #[test]
@@ -3862,7 +3861,10 @@ mod tests {
         let results =
             run_governance_pipeline(&mut pipeline, &[art1, art2], vec![], ts(100)).unwrap();
         assert_eq!(results.len(), 1);
-        assert!(results[0].passed, "PolicyChange should pass for distinct artifacts");
+        assert!(
+            results[0].passed,
+            "PolicyChange should pass for distinct artifacts"
+        );
         assert_eq!(
             results[0].details.get("unique_count"),
             Some(&"2".to_string())
@@ -3872,10 +3874,7 @@ mod tests {
     #[test]
     fn hook_result_display_exact_format() {
         let pass = GovernanceHookResult::pass(GovernanceHookType::PreDeploy, "all good", ts(1));
-        assert_eq!(
-            format!("{pass}"),
-            "[PASS] pre_deploy \u{2014} all good"
-        );
+        assert_eq!(format!("{pass}"), "[PASS] pre_deploy \u{2014} all good");
         let fail = GovernanceHookResult::fail(
             GovernanceHookType::ComplianceCheck,
             "below threshold",

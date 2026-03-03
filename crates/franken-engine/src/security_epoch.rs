@@ -1229,4 +1229,286 @@ mod tests {
         assert!(SecurityEpoch::GENESIS <= SecurityEpoch::from_raw(0));
         assert!(SecurityEpoch::GENESIS < SecurityEpoch::from_raw(1));
     }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn epoch_validation_error_not_yet_valid_display_exact() {
+        let err = EpochValidationError::NotYetValid {
+            current_epoch: SecurityEpoch::from_raw(2),
+            valid_from: SecurityEpoch::from_raw(5),
+        };
+        assert_eq!(
+            err.to_string(),
+            "artifact not yet valid: current epoch:2, valid_from epoch:5"
+        );
+    }
+
+    #[test]
+    fn epoch_validation_error_future_artifact_display_exact() {
+        let err = EpochValidationError::FutureArtifact {
+            current_epoch: SecurityEpoch::from_raw(3),
+            artifact_epoch: SecurityEpoch::from_raw(7),
+        };
+        assert_eq!(
+            err.to_string(),
+            "artifact from future epoch: current epoch:3, artifact epoch:7"
+        );
+    }
+
+    #[test]
+    fn epoch_validation_error_inverted_window_display_exact() {
+        let err = EpochValidationError::InvertedWindow {
+            valid_from: SecurityEpoch::from_raw(10),
+            valid_until: SecurityEpoch::from_raw(3),
+        };
+        assert_eq!(
+            err.to_string(),
+            "inverted validity window: from epoch:10 > until epoch:3"
+        );
+    }
+
+    #[test]
+    fn single_epoch_window_valid() {
+        let tracker = EpochTracker::from_persisted(SecurityEpoch::from_raw(5));
+        let meta = EpochMetadata::windowed(
+            SecurityEpoch::from_raw(5),
+            SecurityEpoch::from_raw(5),
+            SecurityEpoch::from_raw(5),
+        );
+        assert!(tracker.validate_artifact(&meta).is_ok());
+    }
+
+    #[test]
+    fn single_epoch_window_expired() {
+        let tracker = EpochTracker::from_persisted(SecurityEpoch::from_raw(6));
+        let meta = EpochMetadata::windowed(
+            SecurityEpoch::from_raw(5),
+            SecurityEpoch::from_raw(5),
+            SecurityEpoch::from_raw(5),
+        );
+        let errors = tracker.validate_artifact(&meta).unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, EpochValidationError::Expired { .. }))
+        );
+    }
+
+    #[test]
+    fn single_epoch_window_not_yet_valid() {
+        let tracker = EpochTracker::from_persisted(SecurityEpoch::from_raw(4));
+        let meta = EpochMetadata::windowed(
+            SecurityEpoch::from_raw(4),
+            SecurityEpoch::from_raw(5),
+            SecurityEpoch::from_raw(5),
+        );
+        let errors = tracker.validate_artifact(&meta).unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, EpochValidationError::NotYetValid { .. }))
+        );
+    }
+
+    #[test]
+    fn triple_error_collection_future_expired_inverted() {
+        let tracker = EpochTracker::from_persisted(SecurityEpoch::from_raw(15));
+        let meta = EpochMetadata {
+            epoch_id: SecurityEpoch::from_raw(20),
+            valid_from_epoch: SecurityEpoch::from_raw(10),
+            valid_until_epoch: Some(SecurityEpoch::from_raw(5)),
+        };
+        let errors = tracker.validate_artifact(&meta).unwrap_err();
+        assert!(
+            errors.len() >= 3,
+            "expected 3+ errors (inverted + future + expired), got {}",
+            errors.len()
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, EpochValidationError::InvertedWindow { .. }))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, EpochValidationError::FutureArtifact { .. }))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, EpochValidationError::Expired { .. }))
+        );
+    }
+
+    #[test]
+    fn genesis_advance_produces_epoch_one() {
+        let mut tracker = EpochTracker::new();
+        assert_eq!(tracker.current(), SecurityEpoch::GENESIS);
+        let new = tracker
+            .advance(TransitionReason::OperatorManualBump, "genesis-bump")
+            .unwrap();
+        assert_eq!(new.as_u64(), 1);
+        let record = &tracker.transitions()[0];
+        assert_eq!(record.previous_epoch, SecurityEpoch::GENESIS);
+        assert_eq!(record.new_epoch, SecurityEpoch::from_raw(1));
+        assert_eq!(record.trace_id, "genesis-bump");
+    }
+
+    #[test]
+    fn epoch_copy_semantics() {
+        let a = SecurityEpoch::from_raw(42);
+        let b = a;
+        assert_eq!(a, b);
+        assert_eq!(a.as_u64(), 42);
+        assert_eq!(b.as_u64(), 42);
+    }
+
+    #[test]
+    fn epoch_metadata_open_ended_serde_roundtrip() {
+        let meta = EpochMetadata::open_ended(SecurityEpoch::from_raw(7));
+        let json = serde_json::to_string(&meta).unwrap();
+        assert!(json.contains("\"valid_until_epoch\":null"));
+        let restored: EpochMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(meta, restored);
+        assert!(restored.valid_until_epoch.is_none());
+    }
+
+    #[test]
+    fn tracker_all_six_reason_keys_present_after_diverse_transitions() {
+        let mut tracker = EpochTracker::new();
+        let reasons = [
+            TransitionReason::PolicyKeyRotation,
+            TransitionReason::RevocationFrontierAdvance,
+            TransitionReason::GuardrailConfigChange,
+            TransitionReason::LossMatrixUpdate,
+            TransitionReason::RemoteTrustConfigChange,
+            TransitionReason::OperatorManualBump,
+        ];
+        for (i, reason) in reasons.iter().enumerate() {
+            tracker.advance(reason.clone(), &format!("t{i}")).unwrap();
+        }
+        assert_eq!(tracker.transition_counts().len(), 6);
+        for reason in &reasons {
+            assert_eq!(
+                tracker.transition_counts()[&reason.to_string()],
+                1,
+                "expected 1 for {reason}"
+            );
+        }
+        assert_eq!(tracker.current().as_u64(), 6);
+    }
+
+    #[test]
+    fn epoch_display_at_genesis() {
+        assert_eq!(SecurityEpoch::GENESIS.to_string(), "epoch:0");
+    }
+
+    #[test]
+    fn epoch_display_at_max() {
+        assert_eq!(
+            SecurityEpoch::from_raw(u64::MAX).to_string(),
+            format!("epoch:{}", u64::MAX)
+        );
+    }
+
+    #[test]
+    fn transition_reason_equality_and_clone() {
+        let a = TransitionReason::PolicyKeyRotation;
+        let b = TransitionReason::PolicyKeyRotation;
+        let c = TransitionReason::LossMatrixUpdate;
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        let cloned = a.clone();
+        assert_eq!(a, cloned);
+    }
+
+    #[test]
+    fn validate_open_ended_never_expires() {
+        let mut tracker = EpochTracker::new();
+        let meta = tracker.stamp_open_ended();
+        for _ in 0..100 {
+            tracker
+                .advance(TransitionReason::PolicyKeyRotation, "t")
+                .unwrap();
+        }
+        assert_eq!(tracker.current().as_u64(), 100);
+        assert!(tracker.validate_artifact(&meta).is_ok());
+    }
+
+    #[test]
+    fn advance_preserves_previous_transitions() {
+        let mut tracker = EpochTracker::new();
+        tracker
+            .advance(TransitionReason::PolicyKeyRotation, "first")
+            .unwrap();
+        tracker
+            .advance(TransitionReason::LossMatrixUpdate, "second")
+            .unwrap();
+        let transitions = tracker.transitions();
+        assert_eq!(transitions[0].trace_id, "first");
+        assert_eq!(transitions[1].trace_id, "second");
+        assert_eq!(transitions[0].new_epoch, transitions[1].previous_epoch);
+    }
+
+    #[test]
+    fn epoch_validation_error_source_is_none() {
+        let errors: Vec<EpochValidationError> = vec![
+            EpochValidationError::NotYetValid {
+                current_epoch: SecurityEpoch::from_raw(1),
+                valid_from: SecurityEpoch::from_raw(5),
+            },
+            EpochValidationError::Expired {
+                current_epoch: SecurityEpoch::from_raw(10),
+                valid_until: SecurityEpoch::from_raw(5),
+            },
+            EpochValidationError::FutureArtifact {
+                current_epoch: SecurityEpoch::from_raw(3),
+                artifact_epoch: SecurityEpoch::from_raw(7),
+            },
+            EpochValidationError::InvertedWindow {
+                valid_from: SecurityEpoch::from_raw(10),
+                valid_until: SecurityEpoch::from_raw(3),
+            },
+        ];
+        for err in &errors {
+            assert!(
+                std::error::Error::source(err).is_none(),
+                "source should be None for {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn monotonicity_violation_source_is_none() {
+        let err = MonotonicityViolation {
+            current: SecurityEpoch::from_raw(10),
+            attempted: SecurityEpoch::from_raw(5),
+        };
+        assert!(std::error::Error::source(&err).is_none());
+    }
+
+    #[test]
+    fn tracker_serde_preserves_all_fields() {
+        let mut tracker = EpochTracker::new();
+        tracker
+            .advance(TransitionReason::PolicyKeyRotation, "t1")
+            .unwrap();
+        tracker
+            .advance(TransitionReason::PolicyKeyRotation, "t2")
+            .unwrap();
+        tracker
+            .advance(TransitionReason::LossMatrixUpdate, "t3")
+            .unwrap();
+        let json = serde_json::to_string(&tracker).unwrap();
+        let restored: EpochTracker = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.current().as_u64(), 3);
+        assert_eq!(restored.transition_count(), 3);
+        assert_eq!(restored.transitions()[0].trace_id, "t1");
+        assert_eq!(restored.transitions()[1].trace_id, "t2");
+        assert_eq!(restored.transitions()[2].trace_id, "t3");
+        assert_eq!(restored.transition_counts()["policy_key_rotation"], 2);
+        assert_eq!(restored.transition_counts()["loss_matrix_update"], 1);
+    }
 }

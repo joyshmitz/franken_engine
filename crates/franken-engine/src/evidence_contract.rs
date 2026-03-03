@@ -1106,4 +1106,168 @@ mod tests {
             errors.len()
         );
     }
+
+    // ── Enrichment batch: clone/eq, JSON fields, validate_contract fn ──
+
+    #[test]
+    fn contract_clone_eq() {
+        let original = valid_contract();
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn contract_version_clone_eq() {
+        let v = ContractVersion::new(1, 5);
+        let cloned = v;
+        assert_eq!(v, cloned);
+    }
+
+    #[test]
+    fn contract_validation_error_clone_eq() {
+        let err = ContractValidationError::MissingField {
+            field: "change_summary".to_string(),
+        };
+        let cloned = err.clone();
+        assert_eq!(err, cloned);
+    }
+
+    #[test]
+    fn ev_tier_copy_semantics() {
+        let tier = EvTier::Positive;
+        let copied = tier;
+        assert_eq!(tier, copied);
+    }
+
+    #[test]
+    fn rollout_stage_copy_semantics() {
+        let stage = RolloutStage::Canary;
+        let copied = stage;
+        assert_eq!(stage, copied);
+    }
+
+    #[test]
+    fn evidence_contract_json_field_names() {
+        let contract = valid_contract();
+        let json = serde_json::to_string(&contract).unwrap();
+        assert!(json.contains("\"version\""));
+        assert!(json.contains("\"change_summary\""));
+        assert!(json.contains("\"hotspot_evidence\""));
+        assert!(json.contains("\"ev_score\""));
+        assert!(json.contains("\"ev_tier\""));
+        assert!(json.contains("\"expected_loss_model\""));
+        assert!(json.contains("\"fallback_trigger\""));
+        assert!(json.contains("\"rollout_stages\""));
+        assert!(json.contains("\"rollback_command\""));
+        assert!(json.contains("\"benchmark_artifacts\""));
+    }
+
+    #[test]
+    fn contract_version_json_field_names() {
+        let v = ContractVersion::CURRENT;
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains("\"major\""));
+        assert!(json.contains("\"minor\""));
+    }
+
+    #[test]
+    fn validate_contract_fn_returns_empty_for_valid() {
+        let contract = valid_contract();
+        let errors = validate_contract(&contract);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn validate_contract_fn_returns_errors_for_invalid() {
+        let mut contract = valid_contract();
+        contract.change_summary = String::new();
+        let errors = validate_contract(&contract);
+        assert!(!errors.is_empty());
+    }
+
+    #[test]
+    fn ev_exactly_5_0_is_high_impact_passes() {
+        let mut contract = valid_contract();
+        contract.ev_score = 5.0;
+        contract.ev_tier = EvTier::HighImpact;
+        assert!(contract.validate().is_ok());
+    }
+
+    #[test]
+    fn ev_exactly_1_0_is_marginal_fails_threshold() {
+        let mut contract = valid_contract();
+        contract.ev_score = 1.0;
+        contract.ev_tier = EvTier::Marginal;
+        let errors = contract.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ContractValidationError::EvBelowThreshold { .. }))
+        );
+    }
+
+    #[test]
+    fn rollout_ramp_to_canary_invalid() {
+        let mut contract = valid_contract();
+        contract.rollout_stages = vec![RolloutStage::Ramp, RolloutStage::Canary];
+        let errors = contract.validate().unwrap_err();
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            ContractValidationError::InvalidRolloutOrder { position: 1, .. }
+        )));
+    }
+
+    #[test]
+    fn rollout_three_identical_stages_valid() {
+        let mut contract = valid_contract();
+        contract.rollout_stages = vec![
+            RolloutStage::Shadow,
+            RolloutStage::Shadow,
+            RolloutStage::Shadow,
+        ];
+        assert!(contract.validate().is_ok());
+    }
+
+    #[test]
+    fn contract_version_is_compatible_only_for_major_1() {
+        assert!(ContractVersion::new(1, 0).is_compatible());
+        assert!(ContractVersion::new(1, 99).is_compatible());
+        assert!(!ContractVersion::new(0, 1).is_compatible());
+        assert!(!ContractVersion::new(2, 0).is_compatible());
+        assert!(!ContractVersion::new(3, 0).is_compatible());
+    }
+
+    #[test]
+    fn ev_tier_display_contains_range_info() {
+        assert!(EvTier::Reject.to_string().contains("< 1.0"));
+        assert!(EvTier::Marginal.to_string().contains("1.0"));
+        assert!(EvTier::Marginal.to_string().contains("2.0"));
+        assert!(EvTier::Positive.to_string().contains("2.0"));
+        assert!(EvTier::Positive.to_string().contains("5.0"));
+        assert!(EvTier::HighImpact.to_string().contains(">= 5.0"));
+    }
+
+    #[test]
+    fn error_display_missing_field_exact() {
+        let err = ContractValidationError::MissingField {
+            field: "benchmark_artifacts".to_string(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "evidence contract missing required field: benchmark_artifacts"
+        );
+    }
+
+    #[test]
+    fn contract_with_ev_just_below_2_fails() {
+        let mut contract = valid_contract();
+        contract.ev_score = 1.9999;
+        contract.ev_tier = EvTier::Marginal;
+        let errors = contract.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ContractValidationError::EvBelowThreshold { .. }))
+        );
+    }
 }

@@ -1799,6 +1799,7 @@ mod tests {
         };
         let mut cloned = s.clone();
         cloned.role = SignerRole::AttestationCell;
+        assert_eq!(cloned.role, SignerRole::AttestationCell);
         assert_eq!(s.role, SignerRole::PolicyPlane);
     }
 
@@ -1809,6 +1810,10 @@ mod tests {
         cloned.equivalence_verdict = EquivalenceVerdict::NonEquivalent {
             reason: "changed".to_string(),
         };
+        assert!(matches!(
+            cloned.equivalence_verdict,
+            EquivalenceVerdict::NonEquivalent { ref reason } if reason == "changed"
+        ));
         assert_eq!(d.equivalence_verdict, EquivalenceVerdict::Equivalent);
     }
 
@@ -1817,6 +1822,7 @@ mod tests {
         let r = test_receipt();
         let mut cloned = r.clone();
         cloned.optimization_id = "changed".to_string();
+        assert_eq!(cloned.optimization_id, "changed");
         assert_eq!(r.optimization_id, "opt-001");
     }
 
@@ -1825,6 +1831,7 @@ mod tests {
         let t = test_rollback();
         let mut cloned = t.clone();
         cloned.token_id = "changed".to_string();
+        assert_eq!(cloned.token_id, "changed");
         assert_eq!(t.token_id, "rtk-001");
     }
 
@@ -2015,6 +2022,7 @@ mod tests {
         };
         let mut cloned = w.clone();
         cloned.start_timestamp_ticks = 999;
+        assert_eq!(cloned.start_timestamp_ticks, 999);
         assert_eq!(w.start_timestamp_ticks, 100);
     }
 

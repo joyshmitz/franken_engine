@@ -1777,4 +1777,627 @@ mod tests {
         let back: HeartbeatLiveness = serde_json::from_str(&json).unwrap();
         assert_eq!(hb, back);
     }
+
+    // ── Enrichment: MessageSignature serde ─────────────────────────
+
+    #[test]
+    fn message_signature_serde_roundtrip() {
+        let sig = test_signature("node-sig");
+        let json = serde_json::to_string(&sig).unwrap();
+        let back: MessageSignature = serde_json::from_str(&json).unwrap();
+        assert_eq!(sig, back);
+    }
+
+    // ── Enrichment: ProtocolVersion ────────────────────────────────
+
+    #[test]
+    fn protocol_version_current_is_1_0() {
+        assert_eq!(ProtocolVersion::CURRENT.major, 1);
+        assert_eq!(ProtocolVersion::CURRENT.minor, 0);
+    }
+
+    #[test]
+    fn protocol_version_serde_roundtrip() {
+        let v = ProtocolVersion { major: 3, minor: 7 };
+        let json = serde_json::to_string(&v).unwrap();
+        let back: ProtocolVersion = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn protocol_version_ordering() {
+        let v1_0 = ProtocolVersion { major: 1, minor: 0 };
+        let v1_1 = ProtocolVersion { major: 1, minor: 1 };
+        let v2_0 = ProtocolVersion { major: 2, minor: 0 };
+        assert!(v1_0 < v1_1);
+        assert!(v1_1 < v2_0);
+    }
+
+    #[test]
+    fn protocol_version_display_non_current() {
+        let v = ProtocolVersion {
+            major: 5,
+            minor: 12,
+        };
+        assert_eq!(v.to_string(), "5.12");
+    }
+
+    #[test]
+    fn protocol_version_compatibility_same_major_higher_minor_reader() {
+        let reader = ProtocolVersion { major: 1, minor: 3 };
+        let writer = ProtocolVersion { major: 1, minor: 1 };
+        assert!(reader.is_compatible_with(&writer));
+    }
+
+    #[test]
+    fn protocol_version_compatibility_same_major_lower_minor_reader_fails() {
+        let reader = ProtocolVersion { major: 1, minor: 0 };
+        let writer = ProtocolVersion { major: 1, minor: 2 };
+        assert!(!reader.is_compatible_with(&writer));
+    }
+
+    // ── Enrichment: ContainmentAction serde all variants ──────────
+
+    #[test]
+    fn containment_action_serde_all_variants() {
+        for action in [
+            ContainmentAction::Allow,
+            ContainmentAction::Sandbox,
+            ContainmentAction::Suspend,
+            ContainmentAction::Terminate,
+            ContainmentAction::Quarantine,
+        ] {
+            let json = serde_json::to_string(&action).unwrap();
+            let back: ContainmentAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(action, back, "roundtrip failed for {action}");
+        }
+    }
+
+    #[test]
+    fn containment_action_severity_values() {
+        assert_eq!(ContainmentAction::Allow.severity(), 0);
+        assert_eq!(ContainmentAction::Sandbox.severity(), 1);
+        assert_eq!(ContainmentAction::Suspend.severity(), 2);
+        assert_eq!(ContainmentAction::Terminate.severity(), 3);
+        assert_eq!(ContainmentAction::Quarantine.severity(), 4);
+    }
+
+    #[test]
+    fn containment_action_at_least_as_severe_reflexive() {
+        for action in [
+            ContainmentAction::Allow,
+            ContainmentAction::Sandbox,
+            ContainmentAction::Suspend,
+            ContainmentAction::Terminate,
+            ContainmentAction::Quarantine,
+        ] {
+            assert!(
+                action.at_least_as_severe_as(action),
+                "{action} should be at least as severe as itself"
+            );
+        }
+    }
+
+    // ── Enrichment: NodeId ─────────────────────────────────────────
+
+    #[test]
+    fn node_id_as_str() {
+        let node = NodeId::new("fleet-node-42");
+        assert_eq!(node.as_str(), "fleet-node-42");
+    }
+
+    #[test]
+    fn node_id_empty_string() {
+        let node = NodeId::new("");
+        assert_eq!(node.as_str(), "");
+        assert_eq!(node.to_string(), "");
+    }
+
+    // ── Enrichment: SequenceRange edge cases ──────────────────────
+
+    #[test]
+    fn sequence_range_zero_to_zero_is_single() {
+        let r = SequenceRange::new(0, 0);
+        assert_eq!(r.len(), 1);
+        assert!(!r.is_empty());
+    }
+
+    #[test]
+    fn sequence_range_u64_max() {
+        let r = SequenceRange::new(u64::MAX, u64::MAX);
+        assert_eq!(r.len(), 1);
+    }
+
+    // ── Enrichment: ProtocolError Display all variants ─────────────
+
+    #[test]
+    fn protocol_error_display_duplicate_evidence() {
+        let err = ProtocolError::DuplicateEvidence {
+            trace_id: "trace-42".into(),
+            extension_id: "ext-bad".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("duplicate evidence"));
+        assert!(msg.contains("trace-42"));
+        assert!(msg.contains("ext-bad"));
+    }
+
+    #[test]
+    fn protocol_error_display_incompatible_version() {
+        let err = ProtocolError::IncompatibleVersion {
+            local: ProtocolVersion { major: 1, minor: 0 },
+            remote: ProtocolVersion { major: 2, minor: 0 },
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("incompatible"));
+        assert!(msg.contains("1.0"));
+        assert!(msg.contains("2.0"));
+    }
+
+    #[test]
+    fn protocol_error_display_invalid_signature() {
+        let err = ProtocolError::InvalidSignature {
+            node_id: NodeId::new("rogue-node"),
+            message_type: "evidence".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("invalid signature"));
+        assert!(msg.contains("rogue-node"));
+        assert!(msg.contains("evidence"));
+    }
+
+    #[test]
+    fn protocol_error_display_quorum_not_reached() {
+        let err = ProtocolError::QuorumNotReached {
+            required: 5,
+            actual: 2,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("quorum"));
+        assert!(msg.contains("5"));
+        assert!(msg.contains("2"));
+    }
+
+    #[test]
+    fn protocol_error_display_partitioned_node() {
+        let err = ProtocolError::PartitionedNode {
+            node_id: NodeId::new("isolated-1"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("partitioned"));
+        assert!(msg.contains("isolated-1"));
+    }
+
+    #[test]
+    fn protocol_error_display_empty_intents() {
+        let err = ProtocolError::EmptyIntents;
+        assert_eq!(err.to_string(), "no intents to resolve");
+    }
+
+    // ── Enrichment: ProtocolError serde all variants ──────────────
+
+    #[test]
+    fn protocol_error_serde_all_variants() {
+        let variants = vec![
+            ProtocolError::ReplayDetected {
+                node_id: NodeId::new("n"),
+                received_seq: 1,
+                last_accepted_seq: 5,
+            },
+            ProtocolError::DuplicateEvidence {
+                trace_id: "t".into(),
+                extension_id: "e".into(),
+            },
+            ProtocolError::IncompatibleVersion {
+                local: ProtocolVersion::CURRENT,
+                remote: ProtocolVersion { major: 2, minor: 0 },
+            },
+            ProtocolError::InvalidSignature {
+                node_id: NodeId::new("n"),
+                message_type: "intent".into(),
+            },
+            ProtocolError::QuorumNotReached {
+                required: 3,
+                actual: 1,
+            },
+            ProtocolError::PartitionedNode {
+                node_id: NodeId::new("n"),
+            },
+            ProtocolError::EmptyIntents,
+        ];
+        for v in &variants {
+            let json = serde_json::to_string(v).unwrap();
+            let back: ProtocolError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*v, back);
+        }
+    }
+
+    // ── Enrichment: FleetMessage edge cases ────────────────────────
+
+    #[test]
+    fn fleet_message_checkpoint_sequence_is_none() {
+        let checkpoint = QuorumCheckpoint {
+            checkpoint_seq: 1,
+            epoch: SecurityEpoch::from_raw(1),
+            participating_nodes: BTreeSet::new(),
+            evidence_summary_hash: ContentHash::compute(b"summary"),
+            containment_decisions: vec![],
+            quorum_signatures: BTreeMap::new(),
+            timestamp_ns: 1_000_000_000,
+            protocol_version: ProtocolVersion::CURRENT,
+            extensions: BTreeMap::new(),
+        };
+        let msg = FleetMessage::Checkpoint(checkpoint);
+        assert_eq!(msg.sequence(), None);
+    }
+
+    #[test]
+    fn fleet_message_reconciliation_serde_roundtrip() {
+        let req = ReconciliationRequest {
+            node_id: NodeId::new("local"),
+            known_frontier_hash: ContentHash::compute(b"frontier"),
+            requested_ranges: BTreeMap::new(),
+            epoch: SecurityEpoch::from_raw(1),
+            sequence: 5,
+            timestamp_ns: 5_000_000_000,
+            signature: test_signature("local"),
+            protocol_version: ProtocolVersion::CURRENT,
+        };
+        let msg = FleetMessage::Reconciliation(req);
+        let json = serde_json::to_string(&msg).unwrap();
+        let back: FleetMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, back);
+        assert_eq!(msg.sequence(), Some(5));
+    }
+
+    // ── Enrichment: build_checkpoint ───────────────────────────────
+
+    #[test]
+    fn build_checkpoint_success_with_healthy_nodes() {
+        let mut state = FleetProtocolState::new(NodeId::new("local"), GossipConfig::default());
+
+        // Register some healthy nodes via heartbeats
+        let now = 10_000_000_000u64;
+        state
+            .process_heartbeat(&test_heartbeat("node-1", 1, now))
+            .unwrap();
+        state
+            .process_heartbeat(&test_heartbeat("node-2", 1, now))
+            .unwrap();
+
+        // Add an intent so there's something to resolve
+        state
+            .process_intent(&test_intent(
+                "node-1",
+                "ext-1",
+                ContainmentAction::Sandbox,
+                2,
+                1,
+            ))
+            .unwrap();
+
+        let sig = test_signature("local");
+        let checkpoint = state.build_checkpoint(now + 1_000_000_000, sig).unwrap();
+
+        assert_eq!(checkpoint.checkpoint_seq, 1);
+        assert_eq!(checkpoint.participating_nodes.len(), 2);
+        assert!(!checkpoint.containment_decisions.is_empty());
+        assert_eq!(
+            checkpoint.containment_decisions[0].resolved_action,
+            ContainmentAction::Sandbox
+        );
+    }
+
+    #[test]
+    fn build_checkpoint_quorum_not_reached() {
+        let config = GossipConfig {
+            quorum_threshold_millionths: 750_000, // 75%
+            ..GossipConfig::default()
+        };
+        let mut state = FleetProtocolState::new(NodeId::new("local"), config);
+
+        // Register 4 nodes but only 1 is healthy
+        let old = 1_000_000_000u64;
+        let now = 20_000_000_000u64; // 20s later
+
+        state
+            .process_heartbeat(&test_heartbeat("node-1", 1, old))
+            .unwrap();
+        state
+            .process_heartbeat(&test_heartbeat("node-2", 1, old))
+            .unwrap();
+        state
+            .process_heartbeat(&test_heartbeat("node-3", 1, old))
+            .unwrap();
+        state
+            .process_heartbeat(&test_heartbeat("node-4", 1, now))
+            .unwrap();
+
+        let sig = test_signature("local");
+        let err = state.build_checkpoint(now, sig).unwrap_err();
+        assert!(matches!(err, ProtocolError::QuorumNotReached { .. }));
+    }
+
+    #[test]
+    fn build_checkpoint_increments_sequence() {
+        let mut state = FleetProtocolState::new(NodeId::new("local"), GossipConfig::default());
+        let now = 10_000_000_000u64;
+        state
+            .process_heartbeat(&test_heartbeat("node-1", 1, now))
+            .unwrap();
+
+        let cp1 = state
+            .build_checkpoint(now + 1_000_000, test_signature("local"))
+            .unwrap();
+        let cp2 = state
+            .build_checkpoint(now + 2_000_000, test_signature("local"))
+            .unwrap();
+
+        assert_eq!(cp1.checkpoint_seq, 1);
+        assert_eq!(cp2.checkpoint_seq, 2);
+    }
+
+    // ── Enrichment: process_intent version rejection ──────────────
+
+    #[test]
+    fn state_process_intent_incompatible_version() {
+        let mut state = FleetProtocolState::new(NodeId::new("local"), GossipConfig::default());
+        let mut intent = test_intent("node-a", "ext-1", ContainmentAction::Sandbox, 1, 1);
+        intent.protocol_version = ProtocolVersion { major: 3, minor: 0 };
+
+        let err = state.process_intent(&intent).unwrap_err();
+        assert!(matches!(err, ProtocolError::IncompatibleVersion { .. }));
+    }
+
+    #[test]
+    fn state_process_intent_replay_rejected() {
+        let mut state = FleetProtocolState::new(NodeId::new("local"), GossipConfig::default());
+        state
+            .process_intent(&test_intent(
+                "node-a",
+                "ext-1",
+                ContainmentAction::Sandbox,
+                5,
+                1,
+            ))
+            .unwrap();
+
+        let err = state
+            .process_intent(&test_intent(
+                "node-a",
+                "ext-2",
+                ContainmentAction::Terminate,
+                3,
+                1,
+            ))
+            .unwrap_err();
+        assert!(matches!(err, ProtocolError::ReplayDetected { .. }));
+    }
+
+    // ── Enrichment: process_heartbeat version rejection ───────────
+
+    #[test]
+    fn state_process_heartbeat_incompatible_version() {
+        let mut state = FleetProtocolState::new(NodeId::new("local"), GossipConfig::default());
+        let mut hb = test_heartbeat("node-1", 1, 5_000_000_000);
+        hb.protocol_version = ProtocolVersion { major: 2, minor: 0 };
+
+        let err = state.process_heartbeat(&hb).unwrap_err();
+        assert!(matches!(err, ProtocolError::IncompatibleVersion { .. }));
+    }
+
+    #[test]
+    fn state_process_heartbeat_replay_rejected() {
+        let mut state = FleetProtocolState::new(NodeId::new("local"), GossipConfig::default());
+        state
+            .process_heartbeat(&test_heartbeat("node-1", 5, 5_000_000_000))
+            .unwrap();
+
+        let err = state
+            .process_heartbeat(&test_heartbeat("node-1", 3, 6_000_000_000))
+            .unwrap_err();
+        assert!(matches!(err, ProtocolError::ReplayDetected { .. }));
+    }
+
+    // ── Enrichment: NodeSequenceTracker edge cases ─────────────────
+
+    #[test]
+    fn sequence_tracker_last_sequence_unknown_node() {
+        let tracker = NodeSequenceTracker::new();
+        assert_eq!(tracker.last_sequence(&NodeId::new("unknown")), 0);
+    }
+
+    #[test]
+    fn sequence_tracker_serde_roundtrip() {
+        let mut tracker = NodeSequenceTracker::new();
+        tracker.accept(&NodeId::new("a"), 10).unwrap();
+        tracker.accept(&NodeId::new("b"), 20).unwrap();
+
+        let json = serde_json::to_string(&tracker).unwrap();
+        let back: NodeSequenceTracker = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.last_sequence(&NodeId::new("a")), 10);
+        assert_eq!(back.last_sequence(&NodeId::new("b")), 20);
+    }
+
+    // ── Enrichment: NodeHealthTracker ──────────────────────────────
+
+    #[test]
+    fn health_tracker_healthy_and_partitioned_mutual_exclusion() {
+        let mut tracker = NodeHealthTracker::new();
+        tracker.record_heartbeat(&test_heartbeat("healthy", 1, 10_000_000_000));
+        tracker.record_heartbeat(&test_heartbeat("stale", 1, 1_000_000_000));
+
+        let now = 12_000_000_000;
+        let timeout = 5_000_000_000;
+
+        let healthy = tracker.healthy_nodes(now, timeout);
+        let partitioned = tracker.suspected_partitioned(now, timeout);
+
+        // They should not overlap
+        for node in &healthy {
+            assert!(!partitioned.contains(node));
+        }
+        for node in &partitioned {
+            assert!(!healthy.contains(node));
+        }
+        // Together they should cover all known nodes
+        assert_eq!(
+            healthy.len() + partitioned.len(),
+            tracker.known_node_count()
+        );
+    }
+
+    #[test]
+    fn health_tracker_serde_roundtrip() {
+        let mut tracker = NodeHealthTracker::new();
+        tracker.record_heartbeat(&test_heartbeat("node-1", 1, 5_000_000_000));
+
+        let json = serde_json::to_string(&tracker).unwrap();
+        let back: NodeHealthTracker = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.last_heartbeat_ns(&NodeId::new("node-1")),
+            Some(5_000_000_000)
+        );
+    }
+
+    #[test]
+    fn health_tracker_heartbeat_updates_timestamp() {
+        let mut tracker = NodeHealthTracker::new();
+        tracker.record_heartbeat(&test_heartbeat("node-1", 1, 5_000_000_000));
+        assert_eq!(
+            tracker.last_heartbeat_ns(&NodeId::new("node-1")),
+            Some(5_000_000_000)
+        );
+
+        tracker.record_heartbeat(&test_heartbeat("node-1", 2, 10_000_000_000));
+        assert_eq!(
+            tracker.last_heartbeat_ns(&NodeId::new("node-1")),
+            Some(10_000_000_000)
+        );
+    }
+
+    // ── Enrichment: EvidenceAccumulator ────────────────────────────
+
+    #[test]
+    fn accumulator_summary_hash_differs_with_different_evidence() {
+        let mut acc1 = EvidenceAccumulator::new();
+        acc1.ingest(&test_evidence("node-1", "ext-1", 1, 100_000))
+            .unwrap();
+
+        let mut acc2 = EvidenceAccumulator::new();
+        acc2.ingest(&test_evidence("node-1", "ext-1", 1, 200_000))
+            .unwrap();
+
+        assert_ne!(acc1.summary_hash(), acc2.summary_hash());
+    }
+
+    #[test]
+    fn accumulator_empty_summary_hash_deterministic() {
+        let acc1 = EvidenceAccumulator::new();
+        let acc2 = EvidenceAccumulator::new();
+        assert_eq!(acc1.summary_hash(), acc2.summary_hash());
+    }
+
+    // ── Enrichment: GossipConfig ───────────────────────────────────
+
+    #[test]
+    fn gossip_config_default_heartbeat_values() {
+        let config = GossipConfig::default();
+        assert_eq!(config.heartbeat_interval_ns, 5_000_000_000);
+        assert_eq!(config.partition_timeout_ns, 15_000_000_000);
+        assert_eq!(config.checkpoint_interval_ns, 10_000_000_000);
+    }
+
+    // ── Enrichment: DeterministicPrecedence ────────────────────────
+
+    #[test]
+    fn precedence_resolve_all_single_intent() {
+        let intents = vec![test_intent(
+            "node-a",
+            "ext-1",
+            ContainmentAction::Terminate,
+            1,
+            1,
+        )];
+        let winner = DeterministicPrecedence::resolve_all(&intents).unwrap();
+        assert_eq!(winner.proposed_action, ContainmentAction::Terminate);
+        assert_eq!(winner.node_id, NodeId::new("node-a"));
+    }
+
+    #[test]
+    fn precedence_epoch_tiebreak_lower_node_id() {
+        // Same action, same epoch → smaller node-id wins
+        let a = test_intent("aaa", "ext-1", ContainmentAction::Quarantine, 1, 5);
+        let z = test_intent("zzz", "ext-1", ContainmentAction::Quarantine, 1, 5);
+        let winner = DeterministicPrecedence::resolve(&a, &z);
+        assert_eq!(winner.node_id, NodeId::new("aaa"));
+    }
+
+    // ── Enrichment: FleetProtocolState ─────────────────────────────
+
+    #[test]
+    fn state_new_defaults() {
+        let state = FleetProtocolState::new(NodeId::new("local"), GossipConfig::default());
+        assert_eq!(state.local_node_id, NodeId::new("local"));
+        assert_eq!(state.protocol_version, ProtocolVersion::CURRENT);
+        assert_eq!(state.current_epoch, SecurityEpoch::GENESIS);
+        assert_eq!(state.last_checkpoint_seq, 0);
+        assert_eq!(state.local_sequence, 0);
+        assert!(state.pending_intents.is_empty());
+    }
+
+    #[test]
+    fn state_multiple_extensions_intent_resolution() {
+        let mut state = FleetProtocolState::new(NodeId::new("local"), GossipConfig::default());
+
+        state
+            .process_intent(&test_intent(
+                "node-a",
+                "ext-1",
+                ContainmentAction::Sandbox,
+                1,
+                1,
+            ))
+            .unwrap();
+        state
+            .process_intent(&test_intent(
+                "node-b",
+                "ext-2",
+                ContainmentAction::Quarantine,
+                1,
+                1,
+            ))
+            .unwrap();
+
+        let w1 = state.resolve_intents("ext-1").unwrap();
+        assert_eq!(w1.proposed_action, ContainmentAction::Sandbox);
+
+        let w2 = state.resolve_intents("ext-2").unwrap();
+        assert_eq!(w2.proposed_action, ContainmentAction::Quarantine);
+
+        assert!(state.resolve_intents("ext-unknown").is_none());
+    }
+
+    #[test]
+    fn state_evidence_and_intent_separate_sequence_spaces() {
+        let mut state = FleetProtocolState::new(NodeId::new("local"), GossipConfig::default());
+
+        // node-a sends evidence seq=1, then intent seq=2
+        state
+            .process_evidence(&test_evidence("node-a", "ext-1", 1, 100_000))
+            .unwrap();
+        state
+            .process_intent(&test_intent(
+                "node-a",
+                "ext-1",
+                ContainmentAction::Sandbox,
+                2,
+                1,
+            ))
+            .unwrap();
+
+        // Verify both accumulated
+        assert_eq!(state.evidence.posterior_delta("ext-1"), 100_000);
+        assert_eq!(state.pending_intents["ext-1"].len(), 1);
+    }
 }

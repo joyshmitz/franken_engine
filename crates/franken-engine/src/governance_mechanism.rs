@@ -1939,4 +1939,230 @@ mod tests {
             assert_eq!(*v, back);
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PearlTower 2026-03-02
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn mechanism_error_display_exact_all_5() {
+        assert_eq!(
+            MechanismError::InvalidInput {
+                field: "pkg".into(),
+                detail: "empty".into(),
+            }
+            .to_string(),
+            "invalid input: pkg: empty"
+        );
+        assert_eq!(
+            MechanismError::GameModelMissing {
+                subsystem: "compiler".into(),
+            }
+            .to_string(),
+            "game model missing for subsystem: compiler"
+        );
+        assert_eq!(
+            MechanismError::IncentiveViolation {
+                reason: "bad payoff".into(),
+            }
+            .to_string(),
+            "incentive violation: bad payoff"
+        );
+        assert_eq!(
+            MechanismError::QuarantineConstraintViolated {
+                package_id: "pkg-x".into(),
+                reason: "active".into(),
+            }
+            .to_string(),
+            "quarantine constraint for pkg-x: active"
+        );
+        assert_eq!(
+            MechanismError::ReinstateNotAllowed {
+                quarantine_id: "q9".into(),
+                reason: "not active".into(),
+            }
+            .to_string(),
+            "reinstate not allowed for q9: not active"
+        );
+    }
+
+    #[test]
+    fn mechanism_error_source_returns_none_all_variants() {
+        use std::error::Error;
+        let errors: Vec<MechanismError> = vec![
+            MechanismError::InvalidInput {
+                field: "f".into(),
+                detail: "d".into(),
+            },
+            MechanismError::GameModelMissing {
+                subsystem: "s".into(),
+            },
+            MechanismError::IncentiveViolation { reason: "r".into() },
+            MechanismError::QuarantineConstraintViolated {
+                package_id: "p".into(),
+                reason: "d".into(),
+            },
+            MechanismError::ReinstateNotAllowed {
+                quarantine_id: "q".into(),
+                reason: "r".into(),
+            },
+        ];
+        for err in &errors {
+            assert!(err.source().is_none(), "source() should be None for {err}");
+        }
+    }
+
+    #[test]
+    fn ic_class_serde_roundtrip_all_4() {
+        let classes = [
+            IncentiveCompatibilityClass::DominantStrategy,
+            IncentiveCompatibilityClass::BayesNash,
+            IncentiveCompatibilityClass::ExPostRational,
+            IncentiveCompatibilityClass::NonCompliant,
+        ];
+        for c in &classes {
+            let json = serde_json::to_string(c).unwrap();
+            let back: IncentiveCompatibilityClass = serde_json::from_str(&json).unwrap();
+            assert_eq!(*c, back);
+        }
+    }
+
+    #[test]
+    fn mechanism_event_serde_with_attributes() {
+        let mut attrs = BTreeMap::new();
+        attrs.insert("package_id".to_string(), "pkg-a".to_string());
+        attrs.insert("severity".to_string(), "high".to_string());
+        let event = MechanismEvent {
+            kind: "quarantine_imposed".into(),
+            passed: true,
+            summary: "quarantine on pkg-a".into(),
+            attributes: attrs,
+            timestamp: test_ts(4000),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: MechanismEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+        assert_eq!(back.attributes.len(), 2);
+    }
+
+    #[test]
+    fn enforcement_policy_hash_differs_by_policy_id() {
+        let mut m1 = GovernanceMechanism::new(test_epoch());
+        let mut m2 = GovernanceMechanism::new(test_epoch());
+        let model = make_game_model(Subsystem::Compiler);
+        m1.analyze_incentive_compatibility(&model, test_ts(1000));
+        m2.analyze_incentive_compatibility(&model, test_ts(1000));
+        let p1 = m1
+            .compile_enforcement_policy(Subsystem::Compiler, "pol-a", test_ts(2000))
+            .unwrap();
+        let p2 = m2
+            .compile_enforcement_policy(Subsystem::Compiler, "pol-b", test_ts(2000))
+            .unwrap();
+        assert_ne!(p1.content_hash, p2.content_hash);
+    }
+
+    #[test]
+    fn resolve_challenge_not_found_errors() {
+        let mut mech = GovernanceMechanism::new(test_epoch());
+        let result =
+            mech.resolve_challenge("missing-ch", ChallengeOutcome::Rejected, test_ts(5000));
+        assert!(matches!(result, Err(MechanismError::InvalidInput { .. })));
+    }
+
+    #[test]
+    fn approve_reinstate_not_found_errors() {
+        let mut mech = GovernanceMechanism::new(test_epoch());
+        let result = mech.approve_reinstate("missing-req", test_ts(6000));
+        assert!(matches!(
+            result,
+            Err(MechanismError::ReinstateNotAllowed { .. })
+        ));
+    }
+
+    #[test]
+    fn reinstate_requests_accessor_returns_submitted() {
+        let mut mech = GovernanceMechanism::new(test_epoch());
+        assert!(mech.reinstate_requests().is_empty());
+        mech.submit_report(make_report("r1", "pkg-a", 800_000))
+            .unwrap();
+        mech.impose_quarantine(make_quarantine("q1", "pkg-a", "r1"))
+            .unwrap();
+        let req = ReinstateRequest {
+            request_id: "req1".into(),
+            quarantine_id: "q1".into(),
+            justification: "patched".into(),
+            compliance_evidence_id: None,
+            submitted_at: test_ts(5000),
+            approved: None,
+        };
+        mech.request_reinstate(req).unwrap();
+        assert_eq!(mech.reinstate_requests().len(), 1);
+        assert_eq!(mech.reinstate_requests()[0].request_id, "req1");
+    }
+
+    #[test]
+    fn policies_accessor_returns_compiled() {
+        let mut mech = GovernanceMechanism::new(test_epoch());
+        assert!(mech.policies().is_empty());
+        let model = make_game_model(Subsystem::Runtime);
+        mech.analyze_incentive_compatibility(&model, test_ts(1000));
+        mech.compile_enforcement_policy(Subsystem::Runtime, "pol-rt", test_ts(2000))
+            .unwrap();
+        assert_eq!(mech.policies().len(), 1);
+        assert_eq!(mech.policies()[0].policy_id, "pol-rt");
+    }
+
+    #[test]
+    fn analyses_accessor_returns_analyzed() {
+        let mut mech = GovernanceMechanism::new(test_epoch());
+        assert!(mech.analyses().is_empty());
+        let model = make_game_model(Subsystem::ControlPlane);
+        mech.analyze_incentive_compatibility(&model, test_ts(1000));
+        assert_eq!(mech.analyses().len(), 1);
+        assert_eq!(mech.analyses()[0].subsystem, Subsystem::ControlPlane);
+    }
+
+    #[test]
+    fn quarantines_accessor_returns_imposed() {
+        let mut mech = GovernanceMechanism::new(test_epoch());
+        assert!(mech.quarantines().is_empty());
+        mech.submit_report(make_report("r1", "pkg-a", 800_000))
+            .unwrap();
+        mech.impose_quarantine(make_quarantine("q1", "pkg-a", "r1"))
+            .unwrap();
+        assert_eq!(mech.quarantines().len(), 1);
+        assert_eq!(mech.quarantines()[0].quarantine_id, "q1");
+    }
+
+    #[test]
+    fn generate_report_hash_differs_by_state() {
+        let m1 = GovernanceMechanism::new(test_epoch());
+        let mut m2 = GovernanceMechanism::new(test_epoch());
+        m2.submit_report(make_report("r1", "pkg-a", 500_000))
+            .unwrap();
+        assert_ne!(
+            m1.generate_report().report_hash,
+            m2.generate_report().report_hash,
+            "report hash should change when reports are added"
+        );
+    }
+
+    #[test]
+    fn compute_ic_score_non_compliant_zero() {
+        // When truthful_gain <= 0, score should be 0.
+        let score = compute_ic_score(100, -50);
+        assert_eq!(score, 0);
+    }
+
+    #[test]
+    fn enforcement_policy_epoch_matches_mechanism() {
+        let epoch = SecurityEpoch::from_raw(42);
+        let mut mech = GovernanceMechanism::new(epoch);
+        let model = make_game_model(Subsystem::ExtensionHost);
+        mech.analyze_incentive_compatibility(&model, test_ts(1000));
+        let policy = mech
+            .compile_enforcement_policy(Subsystem::ExtensionHost, "pol-e", test_ts(2000))
+            .unwrap();
+        assert_eq!(policy.epoch, epoch);
+    }
 }

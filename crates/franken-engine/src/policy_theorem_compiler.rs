@@ -2012,7 +2012,9 @@ mod tests {
     #[test]
     fn compiler_error_serde_all_variants() {
         let errs = vec![
-            CompilerError::EmptyPolicy { policy_id: PolicyId::new("p") },
+            CompilerError::EmptyPolicy {
+                policy_id: PolicyId::new("p"),
+            },
             CompilerError::PolicyTooLarge {
                 policy_id: PolicyId::new("p"),
                 node_count: 100,
@@ -2034,8 +2036,16 @@ mod tests {
     fn granted_capabilities_deduplicates() {
         let ir = PolicyIr {
             nodes: vec![
-                simple_node("n1", MergeOperator::Intersection, vec![grant("ext-A", "fs.read", "z1")]),
-                simple_node("n2", MergeOperator::Intersection, vec![grant("ext-B", "fs.read", "z2")]),
+                simple_node(
+                    "n1",
+                    MergeOperator::Intersection,
+                    vec![grant("ext-A", "fs.read", "z1")],
+                ),
+                simple_node(
+                    "n2",
+                    MergeOperator::Intersection,
+                    vec![grant("ext-B", "fs.read", "z2")],
+                ),
             ],
             ..valid_policy()
         };
@@ -2049,8 +2059,16 @@ mod tests {
     fn subjects_deduplicates() {
         let ir = PolicyIr {
             nodes: vec![
-                simple_node("n1", MergeOperator::Intersection, vec![grant("ext-A", "fs.read", "z1")]),
-                simple_node("n2", MergeOperator::Intersection, vec![grant("ext-A", "net.egress", "z2")]),
+                simple_node(
+                    "n1",
+                    MergeOperator::Intersection,
+                    vec![grant("ext-A", "fs.read", "z1")],
+                ),
+                simple_node(
+                    "n2",
+                    MergeOperator::Intersection,
+                    vec![grant("ext-A", "net.egress", "z2")],
+                ),
             ],
             ..valid_policy()
         };
@@ -2098,8 +2116,18 @@ mod tests {
         };
         let result = hooks.runtime_check(&ir).unwrap();
         assert!(!result.passed);
-        assert!(result.diagnostics.iter().any(|d| d.property_violated == FormalProperty::Monotonicity));
-        assert!(result.diagnostics.iter().any(|d| d.severity == DiagnosticSeverity::Fatal));
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.property_violated == FormalProperty::Monotonicity)
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.severity == DiagnosticSeverity::Fatal)
+        );
     }
 
     #[test]
@@ -2197,7 +2225,11 @@ mod tests {
         assert_eq!(receipt.witness_count, result.witnesses.len() as u32);
         assert_eq!(
             receipt.properties_verified,
-            result.witnesses.iter().map(|w| w.property).collect::<BTreeSet<_>>()
+            result
+                .witnesses
+                .iter()
+                .map(|w| w.property)
+                .collect::<BTreeSet<_>>()
         );
     }
 

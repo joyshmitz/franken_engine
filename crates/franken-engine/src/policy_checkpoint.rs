@@ -1878,6 +1878,7 @@ mod tests {
         let h = make_policy_head(PolicyType::ExtensionTrust, 3);
         let mut cloned = h.clone();
         cloned.policy_version = 999;
+        assert_eq!(cloned.policy_version, 999);
         assert_eq!(h.policy_version, 3);
     }
 

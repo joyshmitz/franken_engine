@@ -753,6 +753,15 @@ impl DeclassificationReceipt {
     ) -> Result<(), crate::signature_preimage::SignatureError> {
         verify_signature(key, &self.preimage_bytes(), &self.signature)
     }
+
+    /// Deterministic replay command that replays the decision path linked to
+    /// this declassification receipt.
+    pub fn replay_command(&self) -> String {
+        format!(
+            "frankenctl replay run --trace {} --receipt {}",
+            self.replay_linkage, self.receipt_id
+        )
+    }
 }
 
 fn declassification_receipt_schema() -> &'static SchemaHash {
@@ -1320,6 +1329,15 @@ mod tests {
         receipt.sign(&key).unwrap();
         assert!(!receipt.signature.is_sentinel());
         receipt.verify(&key.verification_key()).unwrap();
+    }
+
+    #[test]
+    fn receipt_replay_command_contains_trace_and_receipt_id() {
+        let receipt = make_receipt();
+        let command = receipt.replay_command();
+        assert!(command.contains("frankenctl replay run --trace"));
+        assert!(command.contains(&receipt.replay_linkage));
+        assert!(command.contains(&receipt.receipt_id));
     }
 
     #[test]

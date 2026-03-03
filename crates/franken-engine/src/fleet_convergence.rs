@@ -2596,10 +2596,7 @@ mod tests {
             conflicts[0].fields.get("resolved_action").unwrap(),
             "terminate"
         );
-        assert_eq!(
-            conflicts[0].fields.get("local_action").unwrap(),
-            "sandbox"
-        );
+        assert_eq!(conflicts[0].fields.get("local_action").unwrap(), "sandbox");
         assert_eq!(
             conflicts[0].fields.get("remote_action").unwrap(),
             "terminate"
