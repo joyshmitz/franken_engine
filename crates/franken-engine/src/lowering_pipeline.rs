@@ -4,7 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::ast::{ExportKind, Expression, ParseGoal, Statement, VariableDeclarationKind};
+use crate::ast::{
+    ArrowBody, BinaryOperator, ExportKind, Expression, ParseGoal, Statement,
+    VariableDeclarationKind,
+};
 use crate::flow_lattice::{
     Clearance, DeclassificationObligation, FlowCheckResult as LatticeFlowCheckResult,
     Ir2FlowLattice, LabelClass,
@@ -364,6 +367,8 @@ pub fn validate_ir0_static_semantics(ir0: &Ir0Module) -> SemanticValidationResul
             Statement::Block(_)
             | Statement::If(_)
             | Statement::For(_)
+            | Statement::ForIn(_)
+            | Statement::ForOf(_)
             | Statement::While(_)
             | Statement::DoWhile(_)
             | Statement::Return(_)
@@ -400,6 +405,7 @@ pub fn lower_ir0_to_ir1(
     let mut bindings = Vec::<ResolvedBinding>::new();
     let mut binding_lookup = BTreeMap::<String, BindingId>::new();
     let mut synthetic_export_index = 0u32;
+    let mut label_counter = 0u32;
 
     for statement in &ir0.tree.body {
         match statement {
@@ -535,24 +541,424 @@ pub fn lower_ir0_to_ir1(
                     root_scope_id,
                 )?;
             }
-            Statement::Block(_)
-            | Statement::If(_)
-            | Statement::For(_)
-            | Statement::While(_)
-            | Statement::DoWhile(_)
-            | Statement::Return(_)
-            | Statement::Throw(_)
-            | Statement::TryCatch(_)
-            | Statement::Switch(_)
-            | Statement::Break(_)
-            | Statement::Continue(_)
-            | Statement::FunctionDeclaration(_) => {
-                // Control flow and function declarations: lowering to IR1
-                // will be implemented as the runtime execution pipeline matures.
-                // For now, emit a raw placeholder so downstream passes have content.
+            Statement::Block(block) => {
+                for inner_stmt in &block.body {
+                    lower_statement_to_ir1(
+                        inner_stmt,
+                        &mut ir1.ops,
+                        &mut bindings,
+                        &mut binding_lookup,
+                        &mut binding_index,
+                        root_scope_id,
+                        &mut label_counter,
+                    )?;
+                }
+            }
+            Statement::If(if_stmt) => {
+                lower_expression_to_ir1(
+                    &if_stmt.condition,
+                    &mut ir1.ops,
+                    &mut bindings,
+                    &mut binding_lookup,
+                    &mut binding_index,
+                    root_scope_id,
+                )?;
+                let else_label = alloc_label(&mut label_counter);
+                let end_label = alloc_label(&mut label_counter);
+                ir1.ops.push(Ir1Op::JumpIfFalsy {
+                    label_id: else_label,
+                });
+                lower_statement_to_ir1(
+                    &if_stmt.consequent,
+                    &mut ir1.ops,
+                    &mut bindings,
+                    &mut binding_lookup,
+                    &mut binding_index,
+                    root_scope_id,
+                    &mut label_counter,
+                )?;
+                ir1.ops.push(Ir1Op::Jump {
+                    label_id: end_label,
+                });
+                ir1.ops.push(Ir1Op::Label { id: else_label });
+                if let Some(alternate) = &if_stmt.alternate {
+                    lower_statement_to_ir1(
+                        alternate,
+                        &mut ir1.ops,
+                        &mut bindings,
+                        &mut binding_lookup,
+                        &mut binding_index,
+                        root_scope_id,
+                        &mut label_counter,
+                    )?;
+                }
+                ir1.ops.push(Ir1Op::Label { id: end_label });
+            }
+            Statement::For(for_stmt) => {
+                if let Some(init) = &for_stmt.init {
+                    lower_statement_to_ir1(
+                        init,
+                        &mut ir1.ops,
+                        &mut bindings,
+                        &mut binding_lookup,
+                        &mut binding_index,
+                        root_scope_id,
+                        &mut label_counter,
+                    )?;
+                }
+                let loop_label = alloc_label(&mut label_counter);
+                let end_label = alloc_label(&mut label_counter);
+                ir1.ops.push(Ir1Op::Label { id: loop_label });
+                if let Some(test) = &for_stmt.condition {
+                    lower_expression_to_ir1(
+                        test,
+                        &mut ir1.ops,
+                        &mut bindings,
+                        &mut binding_lookup,
+                        &mut binding_index,
+                        root_scope_id,
+                    )?;
+                    ir1.ops.push(Ir1Op::JumpIfFalsy {
+                        label_id: end_label,
+                    });
+                }
+                lower_statement_to_ir1(
+                    &for_stmt.body,
+                    &mut ir1.ops,
+                    &mut bindings,
+                    &mut binding_lookup,
+                    &mut binding_index,
+                    root_scope_id,
+                    &mut label_counter,
+                )?;
+                if let Some(update) = &for_stmt.update {
+                    lower_expression_to_ir1(
+                        update,
+                        &mut ir1.ops,
+                        &mut bindings,
+                        &mut binding_lookup,
+                        &mut binding_index,
+                        root_scope_id,
+                    )?;
+                    ir1.ops.push(Ir1Op::Pop);
+                }
+                ir1.ops.push(Ir1Op::Jump {
+                    label_id: loop_label,
+                });
+                ir1.ops.push(Ir1Op::Label { id: end_label });
+            }
+            Statement::ForIn(for_in_stmt) => {
+                // Lower the iterated object, then loop over the body.
+                // Full for-in enumeration is not yet implemented; emit a
+                // placeholder loop that evaluates the object once and runs
+                // the body once with the binding set to undefined.
+                lower_expression_to_ir1(
+                    &for_in_stmt.object,
+                    &mut ir1.ops,
+                    &mut bindings,
+                    &mut binding_lookup,
+                    &mut binding_index,
+                    root_scope_id,
+                )?;
+                ir1.ops.push(Ir1Op::Pop);
+                let binding_kind = for_in_stmt
+                    .binding_kind
+                    .map(binding_kind_for_variable_declaration)
+                    .unwrap_or(BindingKind::Var);
+                let binding_id = alloc_binding(
+                    &mut bindings,
+                    &mut binding_lookup,
+                    &mut binding_index,
+                    root_scope_id,
+                    &for_in_stmt.binding,
+                    binding_kind,
+                )
+                .map_err(LoweringPipelineError::SemanticViolation)?;
                 ir1.ops.push(Ir1Op::LoadLiteral {
                     value: Ir1Literal::Undefined,
                 });
+                ir1.ops.push(Ir1Op::StoreBinding { binding_id });
+                lower_statement_to_ir1(
+                    &for_in_stmt.body,
+                    &mut ir1.ops,
+                    &mut bindings,
+                    &mut binding_lookup,
+                    &mut binding_index,
+                    root_scope_id,
+                    &mut label_counter,
+                )?;
+            }
+            Statement::ForOf(for_of_stmt) => {
+                // Lower the iterable expression, then loop over the body.
+                // Full for-of iteration protocol is not yet implemented; emit
+                // a placeholder that evaluates the iterable once and runs the
+                // body once with the binding set to undefined.
+                lower_expression_to_ir1(
+                    &for_of_stmt.iterable,
+                    &mut ir1.ops,
+                    &mut bindings,
+                    &mut binding_lookup,
+                    &mut binding_index,
+                    root_scope_id,
+                )?;
+                ir1.ops.push(Ir1Op::Pop);
+                let binding_kind = for_of_stmt
+                    .binding_kind
+                    .map(binding_kind_for_variable_declaration)
+                    .unwrap_or(BindingKind::Var);
+                let binding_id = alloc_binding(
+                    &mut bindings,
+                    &mut binding_lookup,
+                    &mut binding_index,
+                    root_scope_id,
+                    &for_of_stmt.binding,
+                    binding_kind,
+                )
+                .map_err(LoweringPipelineError::SemanticViolation)?;
+                ir1.ops.push(Ir1Op::LoadLiteral {
+                    value: Ir1Literal::Undefined,
+                });
+                ir1.ops.push(Ir1Op::StoreBinding { binding_id });
+                lower_statement_to_ir1(
+                    &for_of_stmt.body,
+                    &mut ir1.ops,
+                    &mut bindings,
+                    &mut binding_lookup,
+                    &mut binding_index,
+                    root_scope_id,
+                    &mut label_counter,
+                )?;
+            }
+            Statement::While(while_stmt) => {
+                let loop_label = alloc_label(&mut label_counter);
+                let end_label = alloc_label(&mut label_counter);
+                ir1.ops.push(Ir1Op::Label { id: loop_label });
+                lower_expression_to_ir1(
+                    &while_stmt.condition,
+                    &mut ir1.ops,
+                    &mut bindings,
+                    &mut binding_lookup,
+                    &mut binding_index,
+                    root_scope_id,
+                )?;
+                ir1.ops.push(Ir1Op::JumpIfFalsy {
+                    label_id: end_label,
+                });
+                lower_statement_to_ir1(
+                    &while_stmt.body,
+                    &mut ir1.ops,
+                    &mut bindings,
+                    &mut binding_lookup,
+                    &mut binding_index,
+                    root_scope_id,
+                    &mut label_counter,
+                )?;
+                ir1.ops.push(Ir1Op::Jump {
+                    label_id: loop_label,
+                });
+                ir1.ops.push(Ir1Op::Label { id: end_label });
+            }
+            Statement::DoWhile(do_while_stmt) => {
+                let loop_label = alloc_label(&mut label_counter);
+                ir1.ops.push(Ir1Op::Label { id: loop_label });
+                lower_statement_to_ir1(
+                    &do_while_stmt.body,
+                    &mut ir1.ops,
+                    &mut bindings,
+                    &mut binding_lookup,
+                    &mut binding_index,
+                    root_scope_id,
+                    &mut label_counter,
+                )?;
+                lower_expression_to_ir1(
+                    &do_while_stmt.condition,
+                    &mut ir1.ops,
+                    &mut bindings,
+                    &mut binding_lookup,
+                    &mut binding_index,
+                    root_scope_id,
+                )?;
+                // JumpIf truthy → loop back. Since we only have JumpIfFalsy,
+                // emit JumpIfFalsy to end, then unconditional jump to loop.
+                let end_label = alloc_label(&mut label_counter);
+                ir1.ops.push(Ir1Op::JumpIfFalsy {
+                    label_id: end_label,
+                });
+                ir1.ops.push(Ir1Op::Jump {
+                    label_id: loop_label,
+                });
+                ir1.ops.push(Ir1Op::Label { id: end_label });
+            }
+            Statement::Return(ret) => {
+                if let Some(argument) = &ret.argument {
+                    lower_expression_to_ir1(
+                        argument,
+                        &mut ir1.ops,
+                        &mut bindings,
+                        &mut binding_lookup,
+                        &mut binding_index,
+                        root_scope_id,
+                    )?;
+                } else {
+                    ir1.ops.push(Ir1Op::LoadLiteral {
+                        value: Ir1Literal::Undefined,
+                    });
+                }
+                ir1.ops.push(Ir1Op::Return);
+            }
+            Statement::Throw(throw_stmt) => {
+                lower_expression_to_ir1(
+                    &throw_stmt.argument,
+                    &mut ir1.ops,
+                    &mut bindings,
+                    &mut binding_lookup,
+                    &mut binding_index,
+                    root_scope_id,
+                )?;
+                ir1.ops.push(Ir1Op::Throw);
+            }
+            Statement::TryCatch(try_catch) => {
+                let catch_label = alloc_label(&mut label_counter);
+                let end_label = alloc_label(&mut label_counter);
+                ir1.ops.push(Ir1Op::BeginTry { catch_label });
+                for inner in &try_catch.block.body {
+                    lower_statement_to_ir1(
+                        inner,
+                        &mut ir1.ops,
+                        &mut bindings,
+                        &mut binding_lookup,
+                        &mut binding_index,
+                        root_scope_id,
+                        &mut label_counter,
+                    )?;
+                }
+                ir1.ops.push(Ir1Op::EndTry);
+                ir1.ops.push(Ir1Op::Jump {
+                    label_id: end_label,
+                });
+                ir1.ops.push(Ir1Op::Label { id: catch_label });
+                if let Some(handler) = &try_catch.handler {
+                    if let Some(param) = &handler.parameter {
+                        let binding_id = alloc_binding(
+                            &mut bindings,
+                            &mut binding_lookup,
+                            &mut binding_index,
+                            root_scope_id,
+                            param,
+                            BindingKind::Let,
+                        )
+                        .map_err(LoweringPipelineError::SemanticViolation)?;
+                        ir1.ops.push(Ir1Op::StoreBinding { binding_id });
+                    }
+                    for inner in &handler.body.body {
+                        lower_statement_to_ir1(
+                            inner,
+                            &mut ir1.ops,
+                            &mut bindings,
+                            &mut binding_lookup,
+                            &mut binding_index,
+                            root_scope_id,
+                            &mut label_counter,
+                        )?;
+                    }
+                }
+                ir1.ops.push(Ir1Op::Label { id: end_label });
+                if let Some(finalizer) = &try_catch.finalizer {
+                    for inner in &finalizer.body {
+                        lower_statement_to_ir1(
+                            inner,
+                            &mut ir1.ops,
+                            &mut bindings,
+                            &mut binding_lookup,
+                            &mut binding_index,
+                            root_scope_id,
+                            &mut label_counter,
+                        )?;
+                    }
+                }
+            }
+            Statement::Switch(switch_stmt) => {
+                lower_expression_to_ir1(
+                    &switch_stmt.discriminant,
+                    &mut ir1.ops,
+                    &mut bindings,
+                    &mut binding_lookup,
+                    &mut binding_index,
+                    root_scope_id,
+                )?;
+                let end_label = alloc_label(&mut label_counter);
+                for case in &switch_stmt.cases {
+                    if let Some(test) = &case.test {
+                        lower_expression_to_ir1(
+                            test,
+                            &mut ir1.ops,
+                            &mut bindings,
+                            &mut binding_lookup,
+                            &mut binding_index,
+                            root_scope_id,
+                        )?;
+                        // Compare (placeholder: emit as binary op for equality).
+                        ir1.ops.push(Ir1Op::BinaryOp {
+                            operator: BinaryOperator::StrictEqual,
+                        });
+                        let next_case_label = alloc_label(&mut label_counter);
+                        ir1.ops.push(Ir1Op::JumpIfFalsy {
+                            label_id: next_case_label,
+                        });
+                        for body_stmt in &case.consequent {
+                            lower_statement_to_ir1(
+                                body_stmt,
+                                &mut ir1.ops,
+                                &mut bindings,
+                                &mut binding_lookup,
+                                &mut binding_index,
+                                root_scope_id,
+                                &mut label_counter,
+                            )?;
+                        }
+                        ir1.ops.push(Ir1Op::Jump {
+                            label_id: end_label,
+                        });
+                        ir1.ops.push(Ir1Op::Label {
+                            id: next_case_label,
+                        });
+                    } else {
+                        // default case
+                        for body_stmt in &case.consequent {
+                            lower_statement_to_ir1(
+                                body_stmt,
+                                &mut ir1.ops,
+                                &mut bindings,
+                                &mut binding_lookup,
+                                &mut binding_index,
+                                root_scope_id,
+                                &mut label_counter,
+                            )?;
+                        }
+                    }
+                }
+                ir1.ops.push(Ir1Op::Label { id: end_label });
+            }
+            Statement::Break(_) => {
+                // Break requires loop/switch context tracking. Emit Nop for now.
+                ir1.ops.push(Ir1Op::Nop);
+            }
+            Statement::Continue(_) => {
+                // Continue requires loop context tracking. Emit Nop for now.
+                ir1.ops.push(Ir1Op::Nop);
+            }
+            Statement::FunctionDeclaration(func) => {
+                let name = func.name.clone().unwrap_or_else(|| "anonymous".to_string());
+                let binding_id = alloc_binding(
+                    &mut bindings,
+                    &mut binding_lookup,
+                    &mut binding_index,
+                    root_scope_id,
+                    &name,
+                    BindingKind::Var,
+                )
+                .map_err(LoweringPipelineError::SemanticViolation)?;
+                ir1.ops.push(Ir1Op::DeclareFunction { name, binding_id });
             }
         }
     }
@@ -600,6 +1006,496 @@ pub fn lower_ir0_to_ir1(
         },
         module: ir1,
     })
+}
+
+fn alloc_label(counter: &mut u32) -> u32 {
+    let id = *counter;
+    *counter = counter.saturating_add(1);
+    id
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_statement_to_ir1(
+    statement: &Statement,
+    ops: &mut Vec<Ir1Op>,
+    bindings: &mut Vec<ResolvedBinding>,
+    binding_lookup: &mut BTreeMap<String, BindingId>,
+    binding_index: &mut BindingId,
+    scope_id: ScopeId,
+    label_counter: &mut u32,
+) -> Result<(), LoweringPipelineError> {
+    match statement {
+        Statement::Expression(stmt) => {
+            lower_expression_to_ir1(
+                &stmt.expression,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+            )?;
+        }
+        Statement::VariableDeclaration(vd) => {
+            let binding_kind = binding_kind_for_variable_declaration(vd.kind);
+            if vd.kind == VariableDeclarationKind::Const {
+                for d in &vd.declarations {
+                    if d.initializer.is_none() {
+                        return Err(LoweringPipelineError::SemanticViolation(
+                            SemanticError::new(
+                                SemanticErrorCode::ConstWithoutInitializer,
+                                Some(d.name.clone()),
+                                Some(d.span.clone()),
+                            ),
+                        ));
+                    }
+                }
+            }
+            for d in &vd.declarations {
+                let bid = alloc_binding(
+                    bindings,
+                    binding_lookup,
+                    binding_index,
+                    scope_id,
+                    &d.name,
+                    binding_kind,
+                )
+                .map_err(LoweringPipelineError::SemanticViolation)?;
+                if let Some(init) = &d.initializer {
+                    lower_expression_to_ir1(
+                        init,
+                        ops,
+                        bindings,
+                        binding_lookup,
+                        binding_index,
+                        scope_id,
+                    )?;
+                } else {
+                    ops.push(Ir1Op::LoadLiteral {
+                        value: Ir1Literal::Undefined,
+                    });
+                }
+                ops.push(Ir1Op::StoreBinding { binding_id: bid });
+            }
+        }
+        Statement::Block(block) => {
+            for inner in &block.body {
+                lower_statement_to_ir1(
+                    inner,
+                    ops,
+                    bindings,
+                    binding_lookup,
+                    binding_index,
+                    scope_id,
+                    label_counter,
+                )?;
+            }
+        }
+        Statement::If(if_stmt) => {
+            lower_expression_to_ir1(
+                &if_stmt.condition,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+            )?;
+            let else_label = alloc_label(label_counter);
+            let end_label = alloc_label(label_counter);
+            ops.push(Ir1Op::JumpIfFalsy {
+                label_id: else_label,
+            });
+            lower_statement_to_ir1(
+                &if_stmt.consequent,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+                label_counter,
+            )?;
+            ops.push(Ir1Op::Jump {
+                label_id: end_label,
+            });
+            ops.push(Ir1Op::Label { id: else_label });
+            if let Some(alt) = &if_stmt.alternate {
+                lower_statement_to_ir1(
+                    alt,
+                    ops,
+                    bindings,
+                    binding_lookup,
+                    binding_index,
+                    scope_id,
+                    label_counter,
+                )?;
+            }
+            ops.push(Ir1Op::Label { id: end_label });
+        }
+        Statement::For(for_stmt) => {
+            if let Some(init) = &for_stmt.init {
+                lower_statement_to_ir1(
+                    init,
+                    ops,
+                    bindings,
+                    binding_lookup,
+                    binding_index,
+                    scope_id,
+                    label_counter,
+                )?;
+            }
+            let loop_label = alloc_label(label_counter);
+            let end_label = alloc_label(label_counter);
+            ops.push(Ir1Op::Label { id: loop_label });
+            if let Some(test) = &for_stmt.condition {
+                lower_expression_to_ir1(
+                    test,
+                    ops,
+                    bindings,
+                    binding_lookup,
+                    binding_index,
+                    scope_id,
+                )?;
+                ops.push(Ir1Op::JumpIfFalsy {
+                    label_id: end_label,
+                });
+            }
+            lower_statement_to_ir1(
+                &for_stmt.body,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+                label_counter,
+            )?;
+            if let Some(update) = &for_stmt.update {
+                lower_expression_to_ir1(
+                    update,
+                    ops,
+                    bindings,
+                    binding_lookup,
+                    binding_index,
+                    scope_id,
+                )?;
+                ops.push(Ir1Op::Pop);
+            }
+            ops.push(Ir1Op::Jump {
+                label_id: loop_label,
+            });
+            ops.push(Ir1Op::Label { id: end_label });
+        }
+        Statement::ForIn(for_in_stmt) => {
+            // Evaluate the object expression for side effects, then run the
+            // body once with the binding initialised to undefined as a
+            // placeholder (full for-in enumeration is not yet implemented).
+            lower_expression_to_ir1(
+                &for_in_stmt.object,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+            )?;
+            ops.push(Ir1Op::Pop);
+            let binding_kind = for_in_stmt
+                .binding_kind
+                .map(binding_kind_for_variable_declaration)
+                .unwrap_or(BindingKind::Var);
+            let bid = alloc_binding(
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+                &for_in_stmt.binding,
+                binding_kind,
+            )
+            .map_err(LoweringPipelineError::SemanticViolation)?;
+            ops.push(Ir1Op::LoadLiteral {
+                value: Ir1Literal::Undefined,
+            });
+            ops.push(Ir1Op::StoreBinding { binding_id: bid });
+            lower_statement_to_ir1(
+                &for_in_stmt.body,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+                label_counter,
+            )?;
+        }
+        Statement::ForOf(for_of_stmt) => {
+            // Evaluate the iterable expression for side effects, then run the
+            // body once with the binding initialised to undefined as a
+            // placeholder (full for-of iteration protocol is not yet
+            // implemented).
+            lower_expression_to_ir1(
+                &for_of_stmt.iterable,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+            )?;
+            ops.push(Ir1Op::Pop);
+            let binding_kind = for_of_stmt
+                .binding_kind
+                .map(binding_kind_for_variable_declaration)
+                .unwrap_or(BindingKind::Var);
+            let bid = alloc_binding(
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+                &for_of_stmt.binding,
+                binding_kind,
+            )
+            .map_err(LoweringPipelineError::SemanticViolation)?;
+            ops.push(Ir1Op::LoadLiteral {
+                value: Ir1Literal::Undefined,
+            });
+            ops.push(Ir1Op::StoreBinding { binding_id: bid });
+            lower_statement_to_ir1(
+                &for_of_stmt.body,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+                label_counter,
+            )?;
+        }
+        Statement::While(while_stmt) => {
+            let loop_label = alloc_label(label_counter);
+            let end_label = alloc_label(label_counter);
+            ops.push(Ir1Op::Label { id: loop_label });
+            lower_expression_to_ir1(
+                &while_stmt.condition,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+            )?;
+            ops.push(Ir1Op::JumpIfFalsy {
+                label_id: end_label,
+            });
+            lower_statement_to_ir1(
+                &while_stmt.body,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+                label_counter,
+            )?;
+            ops.push(Ir1Op::Jump {
+                label_id: loop_label,
+            });
+            ops.push(Ir1Op::Label { id: end_label });
+        }
+        Statement::DoWhile(do_while) => {
+            let loop_label = alloc_label(label_counter);
+            let end_label = alloc_label(label_counter);
+            ops.push(Ir1Op::Label { id: loop_label });
+            lower_statement_to_ir1(
+                &do_while.body,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+                label_counter,
+            )?;
+            lower_expression_to_ir1(
+                &do_while.condition,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+            )?;
+            ops.push(Ir1Op::JumpIfFalsy {
+                label_id: end_label,
+            });
+            ops.push(Ir1Op::Jump {
+                label_id: loop_label,
+            });
+            ops.push(Ir1Op::Label { id: end_label });
+        }
+        Statement::Return(ret) => {
+            if let Some(arg) = &ret.argument {
+                lower_expression_to_ir1(
+                    arg,
+                    ops,
+                    bindings,
+                    binding_lookup,
+                    binding_index,
+                    scope_id,
+                )?;
+            } else {
+                ops.push(Ir1Op::LoadLiteral {
+                    value: Ir1Literal::Undefined,
+                });
+            }
+            ops.push(Ir1Op::Return);
+        }
+        Statement::Throw(throw_stmt) => {
+            lower_expression_to_ir1(
+                &throw_stmt.argument,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+            )?;
+            ops.push(Ir1Op::Throw);
+        }
+        Statement::TryCatch(tc) => {
+            let catch_label = alloc_label(label_counter);
+            let end_label = alloc_label(label_counter);
+            ops.push(Ir1Op::BeginTry { catch_label });
+            for inner in &tc.block.body {
+                lower_statement_to_ir1(
+                    inner,
+                    ops,
+                    bindings,
+                    binding_lookup,
+                    binding_index,
+                    scope_id,
+                    label_counter,
+                )?;
+            }
+            ops.push(Ir1Op::EndTry);
+            ops.push(Ir1Op::Jump {
+                label_id: end_label,
+            });
+            ops.push(Ir1Op::Label { id: catch_label });
+            if let Some(handler) = &tc.handler {
+                if let Some(param) = &handler.parameter {
+                    let bid = alloc_binding(
+                        bindings,
+                        binding_lookup,
+                        binding_index,
+                        scope_id,
+                        param,
+                        BindingKind::Let,
+                    )
+                    .map_err(LoweringPipelineError::SemanticViolation)?;
+                    ops.push(Ir1Op::StoreBinding { binding_id: bid });
+                }
+                for inner in &handler.body.body {
+                    lower_statement_to_ir1(
+                        inner,
+                        ops,
+                        bindings,
+                        binding_lookup,
+                        binding_index,
+                        scope_id,
+                        label_counter,
+                    )?;
+                }
+            }
+            ops.push(Ir1Op::Label { id: end_label });
+            if let Some(finalizer) = &tc.finalizer {
+                for inner in &finalizer.body {
+                    lower_statement_to_ir1(
+                        inner,
+                        ops,
+                        bindings,
+                        binding_lookup,
+                        binding_index,
+                        scope_id,
+                        label_counter,
+                    )?;
+                }
+            }
+        }
+        Statement::Switch(switch_stmt) => {
+            lower_expression_to_ir1(
+                &switch_stmt.discriminant,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+            )?;
+            let end_label = alloc_label(label_counter);
+            for case in &switch_stmt.cases {
+                if let Some(test) = &case.test {
+                    lower_expression_to_ir1(
+                        test,
+                        ops,
+                        bindings,
+                        binding_lookup,
+                        binding_index,
+                        scope_id,
+                    )?;
+                    ops.push(Ir1Op::BinaryOp {
+                        operator: BinaryOperator::StrictEqual,
+                    });
+                    let next_label = alloc_label(label_counter);
+                    ops.push(Ir1Op::JumpIfFalsy {
+                        label_id: next_label,
+                    });
+                    for body_stmt in &case.consequent {
+                        lower_statement_to_ir1(
+                            body_stmt,
+                            ops,
+                            bindings,
+                            binding_lookup,
+                            binding_index,
+                            scope_id,
+                            label_counter,
+                        )?;
+                    }
+                    ops.push(Ir1Op::Jump {
+                        label_id: end_label,
+                    });
+                    ops.push(Ir1Op::Label { id: next_label });
+                } else {
+                    for body_stmt in &case.consequent {
+                        lower_statement_to_ir1(
+                            body_stmt,
+                            ops,
+                            bindings,
+                            binding_lookup,
+                            binding_index,
+                            scope_id,
+                            label_counter,
+                        )?;
+                    }
+                }
+            }
+            ops.push(Ir1Op::Label { id: end_label });
+        }
+        Statement::Break(_) => {
+            ops.push(Ir1Op::Nop);
+        }
+        Statement::Continue(_) => {
+            ops.push(Ir1Op::Nop);
+        }
+        Statement::FunctionDeclaration(func) => {
+            let name = func.name.clone().unwrap_or_else(|| "anonymous".to_string());
+            let bid = alloc_binding(
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+                &name,
+                BindingKind::Var,
+            )
+            .map_err(LoweringPipelineError::SemanticViolation)?;
+            ops.push(Ir1Op::DeclareFunction {
+                name,
+                binding_id: bid,
+            });
+        }
+        Statement::Import(_) | Statement::Export(_) => {
+            // Handled at top level only.
+            ops.push(Ir1Op::Nop);
+        }
+    }
+    Ok(())
 }
 
 fn binding_kind_for_variable_declaration(kind: VariableDeclarationKind) -> BindingKind {
@@ -808,13 +1704,130 @@ pub fn lower_ir2_to_ir3(
                 let value = last_value_register.unwrap_or(0);
                 ir3.instructions.push(Ir3Instruction::Return { value });
             }
-            Ir1Op::Nop => {
+            Ir1Op::Nop | Ir1Op::Pop | Ir1Op::EndTry => {
                 let register =
                     last_value_register.unwrap_or_else(|| alloc_register(&mut register_cursor));
                 ir3.instructions.push(Ir3Instruction::Move {
                     dst: register,
                     src: register,
                 });
+            }
+            Ir1Op::BinaryOp { operator } => {
+                let rhs = last_value_register.unwrap_or(0);
+                let lhs = if rhs > 0 { rhs - 1 } else { 0 };
+                let dst = alloc_register(&mut register_cursor);
+                let instr = match operator {
+                    BinaryOperator::Add => Ir3Instruction::Add { dst, lhs, rhs },
+                    BinaryOperator::Subtract => Ir3Instruction::Sub { dst, lhs, rhs },
+                    BinaryOperator::Multiply => Ir3Instruction::Mul { dst, lhs, rhs },
+                    BinaryOperator::Divide => Ir3Instruction::Div { dst, lhs, rhs },
+                    _ => {
+                        // Other binary ops (comparisons, logical, bitwise) emit Add as placeholder.
+                        Ir3Instruction::Add { dst, lhs, rhs }
+                    }
+                };
+                ir3.instructions.push(instr);
+                last_value_register = Some(dst);
+            }
+            Ir1Op::UnaryOp { .. } => {
+                let src = last_value_register.unwrap_or(0);
+                let dst = alloc_register(&mut register_cursor);
+                ir3.instructions.push(Ir3Instruction::Move { dst, src });
+                last_value_register = Some(dst);
+            }
+            Ir1Op::AssignOp { binding_id, .. } => {
+                let dst = *binding_registers
+                    .entry(*binding_id)
+                    .or_insert_with(|| alloc_register(&mut register_cursor));
+                let src = last_value_register.unwrap_or(dst);
+                ir3.instructions.push(Ir3Instruction::Move { dst, src });
+                last_value_register = Some(dst);
+            }
+            Ir1Op::Label { .. } => {
+                // Labels are resolved below; emit a no-op placeholder.
+                let register =
+                    last_value_register.unwrap_or_else(|| alloc_register(&mut register_cursor));
+                ir3.instructions.push(Ir3Instruction::Move {
+                    dst: register,
+                    src: register,
+                });
+            }
+            Ir1Op::Jump { .. } | Ir1Op::JumpIfFalsy { .. } | Ir1Op::BeginTry { .. } => {
+                // Jump targets are label IDs; emit Jump with placeholder target.
+                let cond = last_value_register.unwrap_or(0);
+                ir3.instructions.push(Ir3Instruction::Jump { target: 0 });
+                if matches!(op.inner, Ir1Op::JumpIfFalsy { .. }) {
+                    // Replace with conditional jump.
+                    let idx = ir3.instructions.len() - 1;
+                    ir3.instructions[idx] = Ir3Instruction::JumpIf { cond, target: 0 };
+                }
+                last_value_register = Some(cond);
+            }
+            Ir1Op::GetProperty { key } => {
+                let obj = last_value_register.unwrap_or(0);
+                let key_reg = alloc_register(&mut register_cursor);
+                let pool_index = push_constant(&mut ir3.constant_pool, key);
+                ir3.instructions.push(Ir3Instruction::LoadStr {
+                    dst: key_reg,
+                    pool_index,
+                });
+                let dst = alloc_register(&mut register_cursor);
+                ir3.instructions.push(Ir3Instruction::GetProperty {
+                    obj,
+                    key: key_reg,
+                    dst,
+                });
+                last_value_register = Some(dst);
+            }
+            Ir1Op::SetProperty { key } => {
+                let val = last_value_register.unwrap_or(0);
+                let obj = if val > 0 { val - 1 } else { 0 };
+                let key_reg = alloc_register(&mut register_cursor);
+                let pool_index = push_constant(&mut ir3.constant_pool, key);
+                ir3.instructions.push(Ir3Instruction::LoadStr {
+                    dst: key_reg,
+                    pool_index,
+                });
+                ir3.instructions.push(Ir3Instruction::SetProperty {
+                    obj,
+                    key: key_reg,
+                    val,
+                });
+                last_value_register = Some(val);
+            }
+            Ir1Op::NewArray { count } => {
+                let dst = alloc_register(&mut register_cursor);
+                ir3.instructions.push(Ir3Instruction::LoadInt {
+                    dst,
+                    value: i64::from(*count),
+                });
+                last_value_register = Some(dst);
+            }
+            Ir1Op::NewObject { count } => {
+                let dst = alloc_register(&mut register_cursor);
+                ir3.instructions.push(Ir3Instruction::LoadInt {
+                    dst,
+                    value: i64::from(*count),
+                });
+                last_value_register = Some(dst);
+            }
+            Ir1Op::Throw => {
+                let value = last_value_register.unwrap_or(0);
+                ir3.instructions.push(Ir3Instruction::Return { value });
+            }
+            Ir1Op::LoadThis => {
+                let dst = alloc_register(&mut register_cursor);
+                ir3.instructions.push(Ir3Instruction::LoadUndefined { dst });
+                last_value_register = Some(dst);
+            }
+            Ir1Op::DeclareFunction { binding_id, name } => {
+                let dst = *binding_registers
+                    .entry(*binding_id)
+                    .or_insert_with(|| alloc_register(&mut register_cursor));
+                let pool_index = push_constant(&mut ir3.constant_pool, name);
+                ir3.instructions
+                    .push(Ir3Instruction::LoadStr { dst, pool_index });
+                last_value_register = Some(dst);
             }
         }
     }
@@ -1235,20 +2248,290 @@ fn lower_expression_to_ir1(
                 ops.push(Ir1Op::Call { arg_count: 0 });
             }
         }
-        Expression::Binary { .. }
-        | Expression::Unary { .. }
-        | Expression::Assignment { .. }
-        | Expression::Conditional { .. }
-        | Expression::Call { .. }
-        | Expression::Member { .. }
-        | Expression::This
-        | Expression::ArrayLiteral(_)
-        | Expression::ObjectLiteral(_)
-        | Expression::ArrowFunction { .. } => {
-            // Complex expression lowering to IR1 will be implemented as the
-            // expression evaluation pipeline matures. For now, emit undefined.
+        Expression::Binary {
+            operator,
+            left,
+            right,
+        } => {
+            lower_expression_to_ir1(
+                left,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                root_scope_id,
+            )?;
+            lower_expression_to_ir1(
+                right,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                root_scope_id,
+            )?;
+            ops.push(Ir1Op::BinaryOp {
+                operator: *operator,
+            });
+        }
+        Expression::Unary {
+            operator, argument, ..
+        } => {
+            lower_expression_to_ir1(
+                argument,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                root_scope_id,
+            )?;
+            ops.push(Ir1Op::UnaryOp {
+                operator: *operator,
+            });
+        }
+        Expression::Assignment {
+            operator,
+            left,
+            right,
+        } => {
+            lower_expression_to_ir1(
+                right,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                root_scope_id,
+            )?;
+            // Resolve left-hand side as a binding target.
+            if let Expression::Identifier(name) = left.as_ref() {
+                let binding_id = if let Some(existing) = binding_lookup.get(name.as_str()) {
+                    *existing
+                } else {
+                    let id = *binding_index;
+                    *binding_index = binding_index.saturating_add(1);
+                    bindings.push(ResolvedBinding {
+                        name: name.clone(),
+                        binding_id: id,
+                        scope: root_scope_id,
+                        kind: BindingKind::Let,
+                    });
+                    binding_lookup.insert(name.clone(), id);
+                    id
+                };
+                ops.push(Ir1Op::AssignOp {
+                    binding_id,
+                    operator: *operator,
+                });
+            } else {
+                // Non-identifier LHS (member expression, etc.) — emit store placeholder.
+                ops.push(Ir1Op::Nop);
+            }
+        }
+        Expression::Conditional {
+            test,
+            consequent,
+            alternate,
+        } => {
+            lower_expression_to_ir1(
+                test,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                root_scope_id,
+            )?;
+            // Emit both branches; result is the last evaluated.
+            lower_expression_to_ir1(
+                consequent,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                root_scope_id,
+            )?;
+            ops.push(Ir1Op::Pop);
+            lower_expression_to_ir1(
+                alternate,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                root_scope_id,
+            )?;
+        }
+        Expression::Call { callee, arguments } => {
+            lower_expression_to_ir1(
+                callee,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                root_scope_id,
+            )?;
+            for arg in arguments {
+                lower_expression_to_ir1(
+                    arg,
+                    ops,
+                    bindings,
+                    binding_lookup,
+                    binding_index,
+                    root_scope_id,
+                )?;
+            }
+            ops.push(Ir1Op::Call {
+                arg_count: arguments.len() as u32,
+            });
+        }
+        Expression::Member {
+            object,
+            property,
+            computed: _,
+        } => {
+            lower_expression_to_ir1(
+                object,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                root_scope_id,
+            )?;
+            // Extract property key as string.
+            let key = match property.as_ref() {
+                Expression::Identifier(name) => name.clone(),
+                Expression::StringLiteral(s) => s.clone(),
+                _ => "unknown".to_string(),
+            };
+            ops.push(Ir1Op::GetProperty { key });
+        }
+        Expression::This => {
+            ops.push(Ir1Op::LoadThis);
+        }
+        Expression::ArrayLiteral(elements) => {
+            for elem in elements.iter().flatten() {
+                lower_expression_to_ir1(
+                    elem,
+                    ops,
+                    bindings,
+                    binding_lookup,
+                    binding_index,
+                    root_scope_id,
+                )?;
+            }
+            ops.push(Ir1Op::NewArray {
+                count: elements.len() as u32,
+            });
+        }
+        Expression::ObjectLiteral(properties) => {
+            for prop in properties {
+                // Extract key as string from the key expression.
+                let key_str = match &prop.key {
+                    Expression::Identifier(name) => name.clone(),
+                    Expression::StringLiteral(s) => s.clone(),
+                    other => format!("{other:?}"),
+                };
+                ops.push(Ir1Op::LoadLiteral {
+                    value: Ir1Literal::String(key_str),
+                });
+                lower_expression_to_ir1(
+                    &prop.value,
+                    ops,
+                    bindings,
+                    binding_lookup,
+                    binding_index,
+                    root_scope_id,
+                )?;
+            }
+            ops.push(Ir1Op::NewObject {
+                count: properties.len() as u32,
+            });
+        }
+        Expression::ArrowFunction { params, body, .. } => {
+            for param in params {
+                let _binding_id = alloc_binding(
+                    bindings,
+                    binding_lookup,
+                    binding_index,
+                    root_scope_id,
+                    &param.name,
+                    BindingKind::Let,
+                )
+                .map_err(LoweringPipelineError::SemanticViolation)?;
+            }
+            match body {
+                ArrowBody::Expression(expr) => {
+                    lower_expression_to_ir1(
+                        expr,
+                        ops,
+                        bindings,
+                        binding_lookup,
+                        binding_index,
+                        root_scope_id,
+                    )?;
+                }
+                ArrowBody::Block(block) => {
+                    for stmt in &block.body {
+                        // Arrow block bodies need a label_counter; use 0-start inline.
+                        let mut arrow_label_counter = 0u32;
+                        lower_statement_to_ir1(
+                            stmt,
+                            ops,
+                            bindings,
+                            binding_lookup,
+                            binding_index,
+                            root_scope_id,
+                            &mut arrow_label_counter,
+                        )?;
+                    }
+                }
+            }
+            ops.push(Ir1Op::Return);
+        }
+        Expression::New { callee, arguments } => {
+            // Lower the constructor and its arguments for side effects, then
+            // emit a Call placeholder.  A dedicated NewObject opcode is not
+            // yet available in IR1; model `new F(args)` as a call for now.
+            lower_expression_to_ir1(
+                callee,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                root_scope_id,
+            )?;
+            for arg in arguments {
+                lower_expression_to_ir1(
+                    arg,
+                    ops,
+                    bindings,
+                    binding_lookup,
+                    binding_index,
+                    root_scope_id,
+                )?;
+            }
+            ops.push(Ir1Op::Call {
+                arg_count: arguments.len() as u32,
+            });
+        }
+        Expression::TemplateLiteral {
+            quasis,
+            expressions,
+        } => {
+            // Lower each interpolated expression for side effects, then emit
+            // the static string portions as a Raw literal placeholder.  Full
+            // template coercion and concatenation are not yet implemented.
+            for expr in expressions {
+                lower_expression_to_ir1(
+                    expr,
+                    ops,
+                    bindings,
+                    binding_lookup,
+                    binding_index,
+                    root_scope_id,
+                )?;
+                ops.push(Ir1Op::Pop);
+            }
+            let raw = quasis.join("");
             ops.push(Ir1Op::LoadLiteral {
-                value: Ir1Literal::Undefined,
+                value: Ir1Literal::String(raw),
             });
         }
     }
@@ -1305,6 +2588,18 @@ fn classify_ir1_op(
                 );
             }
             (EffectBoundary::Pure, None, None)
+        }
+        Ir1Op::Throw | Ir1Op::BeginTry { .. } | Ir1Op::EndTry => (
+            EffectBoundary::ReadEffect,
+            None,
+            Some(FlowAnnotation {
+                data_label: Label::Internal,
+                sink_clearance: Label::Internal,
+                declassification_required: false,
+            }),
+        ),
+        Ir1Op::GetProperty { .. } | Ir1Op::SetProperty { .. } => {
+            (EffectBoundary::ReadEffect, None, None)
         }
         _ => (EffectBoundary::Pure, None, None),
     }
@@ -1401,6 +2696,8 @@ fn infer_data_label_for_op(
         Ir1Op::Call { .. } => last_label,
         Ir1Op::ExportBinding { .. } => last_label,
         Ir1Op::Return | Ir1Op::Nop => last_label,
+        // New IR1 ops (binary/unary/assign/control-flow) — propagate last label
+        _ => last_label,
     }
 }
 
@@ -1582,9 +2879,13 @@ fn failure_event(context: &LoweringContext, event: &str, error_code: &str) -> Lo
 mod tests {
     use super::*;
     use crate::ast::{
-        ExportDeclaration, ExportKind, Expression, ExpressionStatement, ImportDeclaration,
-        ParseGoal, SourceSpan, Statement, SyntaxTree, VariableDeclaration, VariableDeclarationKind,
-        VariableDeclarator,
+        ArrowBody, AssignmentOperator, BinaryOperator, BlockStatement, BreakStatement, CatchClause,
+        ContinueStatement, DoWhileStatement, ExportDeclaration, ExportKind, Expression,
+        ExpressionStatement, ForInStatement, ForOfStatement, ForStatement, FunctionDeclaration,
+        FunctionParam, IfStatement, ImportDeclaration, ObjectProperty, ParseGoal, ReturnStatement,
+        SourceSpan, Statement, SwitchCase, SwitchStatement, SyntaxTree, ThrowStatement,
+        TryCatchStatement, UnaryOperator, VariableDeclaration, VariableDeclarationKind,
+        VariableDeclarator, WhileStatement,
     };
 
     fn span() -> SourceSpan {
@@ -3314,5 +4615,1383 @@ mod tests {
         let json = serde_json::to_string(&result).unwrap();
         let back: LoweringPassResult<String> = serde_json::from_str(&json).unwrap();
         assert_eq!(result, back);
+    }
+
+    // ================================================================
+    // Expression lowering enrichment
+    // ================================================================
+
+    fn expr_ir0(expression: Expression) -> Ir0Module {
+        let tree = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: vec![Statement::Expression(ExpressionStatement {
+                expression,
+                span: span(),
+            })],
+            span: span(),
+        };
+        Ir0Module::from_syntax_tree(tree, "expr_fixture.js")
+    }
+
+    fn stmt_ir0(stmts: Vec<Statement>) -> Ir0Module {
+        let tree = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: stmts,
+            span: span(),
+        };
+        Ir0Module::from_syntax_tree(tree, "stmt_fixture.js")
+    }
+
+    #[test]
+    fn lower_binary_expression() {
+        let ir0 = expr_ir0(Expression::Binary {
+            operator: BinaryOperator::Add,
+            left: Box::new(Expression::NumericLiteral(1)),
+            right: Box::new(Expression::NumericLiteral(2)),
+        });
+        let result = lower_ir0_to_ir1(&ir0).expect("binary should lower");
+        assert!(result.module.ops.iter().any(|op| matches!(
+            op,
+            Ir1Op::BinaryOp {
+                operator: BinaryOperator::Add
+            }
+        )));
+    }
+
+    #[test]
+    fn lower_unary_expression() {
+        let ir0 = expr_ir0(Expression::Unary {
+            operator: UnaryOperator::Typeof,
+            argument: Box::new(Expression::Identifier("x".into())),
+        });
+        let result = lower_ir0_to_ir1(&ir0).expect("unary should lower");
+        assert!(result.module.ops.iter().any(|op| matches!(
+            op,
+            Ir1Op::UnaryOp {
+                operator: UnaryOperator::Typeof
+            }
+        )));
+    }
+
+    #[test]
+    fn lower_assignment_to_identifier() {
+        let ir0 = expr_ir0(Expression::Assignment {
+            operator: AssignmentOperator::Assign,
+            left: Box::new(Expression::Identifier("x".into())),
+            right: Box::new(Expression::NumericLiteral(42)),
+        });
+        let result = lower_ir0_to_ir1(&ir0).expect("assignment should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::AssignOp { .. }))
+        );
+    }
+
+    #[test]
+    fn lower_assignment_to_member_emits_nop() {
+        let ir0 = expr_ir0(Expression::Assignment {
+            operator: AssignmentOperator::Assign,
+            left: Box::new(Expression::Member {
+                object: Box::new(Expression::Identifier("obj".into())),
+                property: Box::new(Expression::Identifier("prop".into())),
+                computed: false,
+            }),
+            right: Box::new(Expression::NumericLiteral(1)),
+        });
+        let result = lower_ir0_to_ir1(&ir0).expect("member assignment should lower");
+        assert!(result.module.ops.iter().any(|op| matches!(op, Ir1Op::Nop)));
+    }
+
+    #[test]
+    fn lower_conditional_expression() {
+        let ir0 = expr_ir0(Expression::Conditional {
+            test: Box::new(Expression::BooleanLiteral(true)),
+            consequent: Box::new(Expression::NumericLiteral(1)),
+            alternate: Box::new(Expression::NumericLiteral(2)),
+        });
+        let result = lower_ir0_to_ir1(&ir0).expect("conditional should lower");
+        assert!(result.module.ops.iter().any(|op| matches!(op, Ir1Op::Pop)));
+        let lit_count = result
+            .module
+            .ops
+            .iter()
+            .filter(|op| matches!(op, Ir1Op::LoadLiteral { .. }))
+            .count();
+        assert!(lit_count >= 3); // true, 1, 2
+    }
+
+    #[test]
+    fn lower_call_expression() {
+        let ir0 = expr_ir0(Expression::Call {
+            callee: Box::new(Expression::Identifier("fn".into())),
+            arguments: vec![
+                Expression::NumericLiteral(1),
+                Expression::StringLiteral("a".into()),
+            ],
+        });
+        let result = lower_ir0_to_ir1(&ir0).expect("call should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::Call { arg_count: 2 }))
+        );
+    }
+
+    #[test]
+    fn lower_member_expression() {
+        let ir0 = expr_ir0(Expression::Member {
+            object: Box::new(Expression::Identifier("obj".into())),
+            property: Box::new(Expression::Identifier("key".into())),
+            computed: false,
+        });
+        let result = lower_ir0_to_ir1(&ir0).expect("member should lower");
+        assert!(result.module.ops.iter().any(|op| matches!(
+            op,
+            Ir1Op::GetProperty { key } if key == "key"
+        )));
+    }
+
+    #[test]
+    fn lower_this_expression() {
+        let ir0 = expr_ir0(Expression::This);
+        let result = lower_ir0_to_ir1(&ir0).expect("this should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::LoadThis))
+        );
+    }
+
+    #[test]
+    fn lower_array_literal() {
+        let ir0 = expr_ir0(Expression::ArrayLiteral(vec![
+            Some(Expression::NumericLiteral(1)),
+            None,
+            Some(Expression::NumericLiteral(3)),
+        ]));
+        let result = lower_ir0_to_ir1(&ir0).expect("array should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::NewArray { count: 3 }))
+        );
+    }
+
+    #[test]
+    fn lower_object_literal() {
+        let ir0 = expr_ir0(Expression::ObjectLiteral(vec![ObjectProperty {
+            key: Expression::Identifier("a".into()),
+            value: Expression::NumericLiteral(1),
+            computed: false,
+            shorthand: false,
+        }]));
+        let result = lower_ir0_to_ir1(&ir0).expect("object should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::NewObject { count: 1 }))
+        );
+    }
+
+    #[test]
+    fn lower_arrow_function_expression_body() {
+        let ir0 = expr_ir0(Expression::ArrowFunction {
+            params: vec![FunctionParam {
+                name: "x".into(),
+                span: span(),
+            }],
+            body: ArrowBody::Expression(Box::new(Expression::Identifier("x".into()))),
+            is_async: false,
+        });
+        let result = lower_ir0_to_ir1(&ir0).expect("arrow should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::Return))
+        );
+    }
+
+    #[test]
+    fn lower_arrow_function_block_body() {
+        let ir0 = expr_ir0(Expression::ArrowFunction {
+            params: vec![],
+            body: ArrowBody::Block(BlockStatement {
+                body: vec![Statement::Return(ReturnStatement {
+                    argument: Some(Expression::NumericLiteral(99)),
+                    span: span(),
+                })],
+                span: span(),
+            }),
+            is_async: false,
+        });
+        let result = lower_ir0_to_ir1(&ir0).expect("arrow block should lower");
+        let return_count = result
+            .module
+            .ops
+            .iter()
+            .filter(|op| matches!(op, Ir1Op::Return))
+            .count();
+        assert!(return_count >= 2); // inner return + outer return
+    }
+
+    #[test]
+    fn lower_new_expression() {
+        let ir0 = expr_ir0(Expression::New {
+            callee: Box::new(Expression::Identifier("Foo".into())),
+            arguments: vec![Expression::NumericLiteral(1)],
+        });
+        let result = lower_ir0_to_ir1(&ir0).expect("new should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::Call { arg_count: 1 }))
+        );
+    }
+
+    #[test]
+    fn lower_template_literal() {
+        let ir0 = expr_ir0(Expression::TemplateLiteral {
+            quasis: vec!["hello ".into(), " world".into()],
+            expressions: vec![Expression::Identifier("name".into())],
+        });
+        let result = lower_ir0_to_ir1(&ir0).expect("template should lower");
+        // Should pop each interpolated expression and concat quasis.
+        assert!(result.module.ops.iter().any(|op| matches!(op, Ir1Op::Pop)));
+        assert!(result.module.ops.iter().any(|op| matches!(
+            op,
+            Ir1Op::LoadLiteral {
+                value: Ir1Literal::String(s)
+            } if s == "hello  world"
+        )));
+    }
+
+    // ================================================================
+    // Statement lowering enrichment
+    // ================================================================
+
+    #[test]
+    fn lower_block_statement() {
+        let ir0 = stmt_ir0(vec![Statement::Block(BlockStatement {
+            body: vec![Statement::Expression(ExpressionStatement {
+                expression: Expression::NumericLiteral(1),
+                span: span(),
+            })],
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("block should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::LoadLiteral { .. }))
+        );
+    }
+
+    #[test]
+    fn lower_if_statement_with_else() {
+        let ir0 = stmt_ir0(vec![Statement::If(IfStatement {
+            condition: Expression::BooleanLiteral(true),
+            consequent: Box::new(Statement::Expression(ExpressionStatement {
+                expression: Expression::NumericLiteral(1),
+                span: span(),
+            })),
+            alternate: Some(Box::new(Statement::Expression(ExpressionStatement {
+                expression: Expression::NumericLiteral(2),
+                span: span(),
+            }))),
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("if-else should lower");
+        let label_count = result
+            .module
+            .ops
+            .iter()
+            .filter(|op| matches!(op, Ir1Op::Label { .. }))
+            .count();
+        assert_eq!(label_count, 2); // else label + end label
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::JumpIfFalsy { .. }))
+        );
+    }
+
+    #[test]
+    fn lower_if_statement_without_else() {
+        let ir0 = stmt_ir0(vec![Statement::If(IfStatement {
+            condition: Expression::BooleanLiteral(false),
+            consequent: Box::new(Statement::Expression(ExpressionStatement {
+                expression: Expression::NumericLiteral(1),
+                span: span(),
+            })),
+            alternate: None,
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("if-only should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::JumpIfFalsy { .. }))
+        );
+    }
+
+    #[test]
+    fn lower_for_statement() {
+        let ir0 = stmt_ir0(vec![Statement::For(ForStatement {
+            init: Some(Box::new(Statement::VariableDeclaration(
+                VariableDeclaration {
+                    kind: VariableDeclarationKind::Let,
+                    declarations: vec![VariableDeclarator {
+                        name: "i".into(),
+                        initializer: Some(Expression::NumericLiteral(0)),
+                        span: span(),
+                    }],
+                    span: span(),
+                },
+            ))),
+            condition: Some(Expression::BooleanLiteral(true)),
+            update: Some(Expression::NumericLiteral(1)),
+            body: Box::new(Statement::Expression(ExpressionStatement {
+                expression: Expression::NumericLiteral(99),
+                span: span(),
+            })),
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("for should lower");
+        let jump_count = result
+            .module
+            .ops
+            .iter()
+            .filter(|op| matches!(op, Ir1Op::Jump { .. }))
+            .count();
+        assert!(jump_count >= 1); // back-edge
+    }
+
+    #[test]
+    fn lower_for_in_statement() {
+        let ir0 = stmt_ir0(vec![Statement::ForIn(ForInStatement {
+            binding: "k".into(),
+            binding_kind: Some(VariableDeclarationKind::Let),
+            object: Expression::Identifier("obj".into()),
+            body: Box::new(Statement::Expression(ExpressionStatement {
+                expression: Expression::Identifier("k".into()),
+                span: span(),
+            })),
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("for-in should lower");
+        assert!(result.module.ops.iter().any(|op| matches!(op, Ir1Op::Pop)));
+        let binding = result
+            .module
+            .scopes
+            .first()
+            .expect("scope")
+            .bindings
+            .iter()
+            .find(|b| b.name == "k");
+        assert!(binding.is_some());
+    }
+
+    #[test]
+    fn lower_for_of_statement() {
+        let ir0 = stmt_ir0(vec![Statement::ForOf(ForOfStatement {
+            binding: "v".into(),
+            binding_kind: Some(VariableDeclarationKind::Const),
+            iterable: Expression::Identifier("arr".into()),
+            body: Box::new(Statement::Expression(ExpressionStatement {
+                expression: Expression::Identifier("v".into()),
+                span: span(),
+            })),
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("for-of should lower");
+        let binding = result
+            .module
+            .scopes
+            .first()
+            .expect("scope")
+            .bindings
+            .iter()
+            .find(|b| b.name == "v");
+        assert!(binding.is_some());
+    }
+
+    #[test]
+    fn lower_while_statement() {
+        let ir0 = stmt_ir0(vec![Statement::While(WhileStatement {
+            condition: Expression::BooleanLiteral(true),
+            body: Box::new(Statement::Expression(ExpressionStatement {
+                expression: Expression::NumericLiteral(1),
+                span: span(),
+            })),
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("while should lower");
+        let labels = result
+            .module
+            .ops
+            .iter()
+            .filter(|op| matches!(op, Ir1Op::Label { .. }))
+            .count();
+        assert_eq!(labels, 2); // loop + end
+    }
+
+    #[test]
+    fn lower_do_while_statement() {
+        let ir0 = stmt_ir0(vec![Statement::DoWhile(DoWhileStatement {
+            condition: Expression::BooleanLiteral(false),
+            body: Box::new(Statement::Expression(ExpressionStatement {
+                expression: Expression::NumericLiteral(1),
+                span: span(),
+            })),
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("do-while should lower");
+        let labels = result
+            .module
+            .ops
+            .iter()
+            .filter(|op| matches!(op, Ir1Op::Label { .. }))
+            .count();
+        assert_eq!(labels, 2); // loop + end
+    }
+
+    #[test]
+    fn lower_return_with_argument() {
+        let ir0 = stmt_ir0(vec![Statement::Return(ReturnStatement {
+            argument: Some(Expression::NumericLiteral(42)),
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("return should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::Return))
+        );
+    }
+
+    #[test]
+    fn lower_return_without_argument() {
+        let ir0 = stmt_ir0(vec![Statement::Return(ReturnStatement {
+            argument: None,
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("bare return should lower");
+        // Should push undefined then return.
+        assert!(result.module.ops.iter().any(|op| matches!(
+            op,
+            Ir1Op::LoadLiteral {
+                value: Ir1Literal::Undefined
+            }
+        )));
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::Return))
+        );
+    }
+
+    #[test]
+    fn lower_throw_statement() {
+        let ir0 = stmt_ir0(vec![Statement::Throw(ThrowStatement {
+            argument: Expression::StringLiteral("err".into()),
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("throw should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::Throw))
+        );
+    }
+
+    #[test]
+    fn lower_try_catch_with_param() {
+        let ir0 = stmt_ir0(vec![Statement::TryCatch(TryCatchStatement {
+            block: BlockStatement {
+                body: vec![Statement::Expression(ExpressionStatement {
+                    expression: Expression::NumericLiteral(1),
+                    span: span(),
+                })],
+                span: span(),
+            },
+            handler: Some(CatchClause {
+                parameter: Some("e".into()),
+                body: BlockStatement {
+                    body: vec![Statement::Expression(ExpressionStatement {
+                        expression: Expression::Identifier("e".into()),
+                        span: span(),
+                    })],
+                    span: span(),
+                },
+                span: span(),
+            }),
+            finalizer: None,
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("try-catch should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::BeginTry { .. }))
+        );
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::EndTry))
+        );
+        let binding = result
+            .module
+            .scopes
+            .first()
+            .expect("scope")
+            .bindings
+            .iter()
+            .find(|b| b.name == "e");
+        assert!(binding.is_some());
+    }
+
+    #[test]
+    fn lower_try_catch_with_finalizer() {
+        let ir0 = stmt_ir0(vec![Statement::TryCatch(TryCatchStatement {
+            block: BlockStatement {
+                body: vec![Statement::Expression(ExpressionStatement {
+                    expression: Expression::NumericLiteral(1),
+                    span: span(),
+                })],
+                span: span(),
+            },
+            handler: None,
+            finalizer: Some(BlockStatement {
+                body: vec![Statement::Expression(ExpressionStatement {
+                    expression: Expression::NumericLiteral(99),
+                    span: span(),
+                })],
+                span: span(),
+            }),
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("try-finally should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::BeginTry { .. }))
+        );
+    }
+
+    #[test]
+    fn lower_switch_statement() {
+        let ir0 = stmt_ir0(vec![Statement::Switch(SwitchStatement {
+            discriminant: Expression::Identifier("x".into()),
+            cases: vec![
+                SwitchCase {
+                    test: Some(Expression::NumericLiteral(1)),
+                    consequent: vec![Statement::Expression(ExpressionStatement {
+                        expression: Expression::StringLiteral("one".into()),
+                        span: span(),
+                    })],
+                    span: span(),
+                },
+                SwitchCase {
+                    test: None,
+                    consequent: vec![Statement::Expression(ExpressionStatement {
+                        expression: Expression::StringLiteral("default".into()),
+                        span: span(),
+                    })],
+                    span: span(),
+                },
+            ],
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("switch should lower");
+        assert!(result.module.ops.iter().any(|op| matches!(
+            op,
+            Ir1Op::BinaryOp {
+                operator: BinaryOperator::StrictEqual
+            }
+        )));
+    }
+
+    #[test]
+    fn lower_break_emits_nop() {
+        let ir0 = stmt_ir0(vec![Statement::Break(BreakStatement {
+            label: None,
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("break should lower");
+        assert!(result.module.ops.iter().any(|op| matches!(op, Ir1Op::Nop)));
+    }
+
+    #[test]
+    fn lower_continue_emits_nop() {
+        let ir0 = stmt_ir0(vec![Statement::Continue(ContinueStatement {
+            label: None,
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("continue should lower");
+        assert!(result.module.ops.iter().any(|op| matches!(op, Ir1Op::Nop)));
+    }
+
+    #[test]
+    fn lower_function_declaration() {
+        let ir0 = stmt_ir0(vec![Statement::FunctionDeclaration(FunctionDeclaration {
+            name: Some("myFunc".into()),
+            params: vec![FunctionParam {
+                name: "a".into(),
+                span: span(),
+            }],
+            body: BlockStatement {
+                body: vec![],
+                span: span(),
+            },
+            is_async: false,
+            is_generator: false,
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("function should lower");
+        assert!(result.module.ops.iter().any(|op| matches!(
+            op,
+            Ir1Op::DeclareFunction { name, .. } if name == "myFunc"
+        )));
+    }
+
+    #[test]
+    fn lower_anonymous_function_declaration() {
+        let ir0 = stmt_ir0(vec![Statement::FunctionDeclaration(FunctionDeclaration {
+            name: None,
+            params: vec![],
+            body: BlockStatement {
+                body: vec![],
+                span: span(),
+            },
+            is_async: false,
+            is_generator: false,
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("anon function should lower");
+        assert!(result.module.ops.iter().any(|op| matches!(
+            op,
+            Ir1Op::DeclareFunction { name, .. } if name == "anonymous"
+        )));
+    }
+
+    // ================================================================
+    // Additional edge cases
+    // ================================================================
+
+    #[test]
+    fn lower_nested_binary_expressions() {
+        let ir0 = expr_ir0(Expression::Binary {
+            operator: BinaryOperator::Multiply,
+            left: Box::new(Expression::Binary {
+                operator: BinaryOperator::Add,
+                left: Box::new(Expression::NumericLiteral(1)),
+                right: Box::new(Expression::NumericLiteral(2)),
+            }),
+            right: Box::new(Expression::NumericLiteral(3)),
+        });
+        let result = lower_ir0_to_ir1(&ir0).expect("nested binary should lower");
+        let op_count = result
+            .module
+            .ops
+            .iter()
+            .filter(|op| matches!(op, Ir1Op::BinaryOp { .. }))
+            .count();
+        assert_eq!(op_count, 2);
+    }
+
+    #[test]
+    fn lower_call_with_no_args() {
+        let ir0 = expr_ir0(Expression::Call {
+            callee: Box::new(Expression::Identifier("f".into())),
+            arguments: vec![],
+        });
+        let result = lower_ir0_to_ir1(&ir0).expect("0-arg call should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::Call { arg_count: 0 }))
+        );
+    }
+
+    #[test]
+    fn lower_empty_array_literal() {
+        let ir0 = expr_ir0(Expression::ArrayLiteral(vec![]));
+        let result = lower_ir0_to_ir1(&ir0).expect("empty array should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::NewArray { count: 0 }))
+        );
+    }
+
+    #[test]
+    fn lower_empty_object_literal() {
+        let ir0 = expr_ir0(Expression::ObjectLiteral(vec![]));
+        let result = lower_ir0_to_ir1(&ir0).expect("empty object should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::NewObject { count: 0 }))
+        );
+    }
+
+    #[test]
+    fn lower_null_literal_expression() {
+        let ir0 = expr_ir0(Expression::NullLiteral);
+        let result = lower_ir0_to_ir1(&ir0).expect("null should lower");
+        assert!(result.module.ops.iter().any(|op| matches!(
+            op,
+            Ir1Op::LoadLiteral {
+                value: Ir1Literal::Null
+            }
+        )));
+    }
+
+    #[test]
+    fn lower_undefined_literal_expression() {
+        let ir0 = expr_ir0(Expression::UndefinedLiteral);
+        let result = lower_ir0_to_ir1(&ir0).expect("undefined should lower");
+        assert!(result.module.ops.iter().any(|op| matches!(
+            op,
+            Ir1Op::LoadLiteral {
+                value: Ir1Literal::Undefined
+            }
+        )));
+    }
+
+    #[test]
+    fn lower_boolean_true_expression() {
+        let ir0 = expr_ir0(Expression::BooleanLiteral(true));
+        let result = lower_ir0_to_ir1(&ir0).expect("true should lower");
+        assert!(result.module.ops.iter().any(|op| matches!(
+            op,
+            Ir1Op::LoadLiteral {
+                value: Ir1Literal::Boolean(true)
+            }
+        )));
+    }
+
+    #[test]
+    fn lower_identifier_creates_binding() {
+        let ir0 = expr_ir0(Expression::Identifier("myVar".into()));
+        let result = lower_ir0_to_ir1(&ir0).expect("identifier should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::LoadBinding { .. }))
+        );
+        let binding = result
+            .module
+            .scopes
+            .first()
+            .expect("scope")
+            .bindings
+            .iter()
+            .find(|b| b.name == "myVar");
+        assert!(binding.is_some());
+    }
+
+    #[test]
+    fn lower_const_without_init_errors() {
+        let ir0 = stmt_ir0(vec![Statement::VariableDeclaration(VariableDeclaration {
+            kind: VariableDeclarationKind::Const,
+            declarations: vec![VariableDeclarator {
+                name: "x".into(),
+                initializer: None,
+                span: span(),
+            }],
+            span: span(),
+        })]);
+        let err = lower_ir0_to_ir1(&ir0).expect_err("const without init should fail");
+        assert!(matches!(err, LoweringPipelineError::SemanticViolation(_)));
+    }
+
+    #[test]
+    fn validate_static_semantics_for_in_for_of_noop() {
+        let ir0 = stmt_ir0(vec![
+            Statement::ForIn(ForInStatement {
+                binding: "k".into(),
+                binding_kind: Some(VariableDeclarationKind::Let),
+                object: Expression::Identifier("obj".into()),
+                body: Box::new(Statement::Expression(ExpressionStatement {
+                    expression: Expression::NumericLiteral(1),
+                    span: span(),
+                })),
+                span: span(),
+            }),
+            Statement::ForOf(ForOfStatement {
+                binding: "v".into(),
+                binding_kind: Some(VariableDeclarationKind::Const),
+                iterable: Expression::Identifier("arr".into()),
+                body: Box::new(Statement::Expression(ExpressionStatement {
+                    expression: Expression::NumericLiteral(2),
+                    span: span(),
+                })),
+                span: span(),
+            }),
+        ]);
+        let result = validate_ir0_static_semantics(&ir0);
+        assert!(result.is_valid());
+    }
+
+    #[test]
+    fn full_pipeline_binary_expression() {
+        let ir0 = expr_ir0(Expression::Binary {
+            operator: BinaryOperator::Subtract,
+            left: Box::new(Expression::NumericLiteral(10)),
+            right: Box::new(Expression::NumericLiteral(3)),
+        });
+        let ctx = LoweringContext::new("t", "d", "p");
+        let output = lower_ir0_to_ir3(&ir0, &ctx).expect("full pipeline should succeed");
+        assert!(!output.ir3.instructions.is_empty());
+        assert_eq!(output.witnesses.len(), 3);
+        assert_eq!(output.events.len(), 4);
+    }
+
+    #[test]
+    fn full_pipeline_if_statement() {
+        let ir0 = stmt_ir0(vec![Statement::If(IfStatement {
+            condition: Expression::BooleanLiteral(true),
+            consequent: Box::new(Statement::Expression(ExpressionStatement {
+                expression: Expression::NumericLiteral(1),
+                span: span(),
+            })),
+            alternate: None,
+            span: span(),
+        })]);
+        let ctx = LoweringContext::new("t", "d", "p");
+        let output = lower_ir0_to_ir3(&ir0, &ctx).expect("if pipeline should succeed");
+        assert!(!output.ir1.ops.is_empty());
+        assert!(!output.ir3.instructions.is_empty());
+    }
+
+    #[test]
+    fn full_pipeline_while_statement() {
+        let ir0 = stmt_ir0(vec![Statement::While(WhileStatement {
+            condition: Expression::BooleanLiteral(false),
+            body: Box::new(Statement::Expression(ExpressionStatement {
+                expression: Expression::NumericLiteral(1),
+                span: span(),
+            })),
+            span: span(),
+        })]);
+        let ctx = LoweringContext::new("t", "d", "p");
+        let output = lower_ir0_to_ir3(&ir0, &ctx).expect("while pipeline should succeed");
+        assert!(!output.ir3.instructions.is_empty());
+    }
+
+    #[test]
+    fn for_in_without_binding_kind_defaults_to_var() {
+        let ir0 = stmt_ir0(vec![Statement::ForIn(ForInStatement {
+            binding: "k".into(),
+            binding_kind: None,
+            object: Expression::Identifier("obj".into()),
+            body: Box::new(Statement::Expression(ExpressionStatement {
+                expression: Expression::NumericLiteral(1),
+                span: span(),
+            })),
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("for-in default should lower");
+        let binding = result
+            .module
+            .scopes
+            .first()
+            .expect("scope")
+            .bindings
+            .iter()
+            .find(|b| b.name == "k")
+            .expect("k binding");
+        assert_eq!(binding.kind, BindingKind::Var);
+    }
+
+    #[test]
+    fn classify_ir1_op_await_is_read_effect() {
+        let (boundary, cap, _flow) = classify_ir1_op(&Ir1Op::Await);
+        assert_eq!(boundary, EffectBoundary::ReadEffect);
+        assert!(cap.is_none());
+    }
+
+    #[test]
+    fn classify_ir1_op_throw_is_read_effect() {
+        let (boundary, cap, _flow) = classify_ir1_op(&Ir1Op::Throw);
+        assert_eq!(boundary, EffectBoundary::ReadEffect);
+        assert!(cap.is_none());
+    }
+
+    #[test]
+    fn classify_ir1_op_call_is_hostcall() {
+        let (boundary, cap, _flow) = classify_ir1_op(&Ir1Op::Call { arg_count: 1 });
+        assert_eq!(boundary, EffectBoundary::HostcallEffect);
+        assert!(cap.is_some());
+    }
+
+    #[test]
+    fn classify_ir1_op_load_literal_is_pure() {
+        let (boundary, cap, _flow) = classify_ir1_op(&Ir1Op::LoadLiteral {
+            value: Ir1Literal::Integer(42),
+        });
+        assert_eq!(boundary, EffectBoundary::Pure);
+        assert!(cap.is_none());
+    }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    #[test]
+    fn sink_label_to_clearance_public_is_never_sink() {
+        assert_eq!(sink_label_to_clearance(&Label::Public), Clearance::NeverSink);
+    }
+
+    #[test]
+    fn sink_label_to_clearance_internal_is_restricted() {
+        assert_eq!(
+            sink_label_to_clearance(&Label::Internal),
+            Clearance::RestrictedSink
+        );
+    }
+
+    #[test]
+    fn sink_label_to_clearance_confidential_is_audited() {
+        assert_eq!(
+            sink_label_to_clearance(&Label::Confidential),
+            Clearance::AuditedSink
+        );
+    }
+
+    #[test]
+    fn sink_label_to_clearance_secret_is_sealed() {
+        assert_eq!(
+            sink_label_to_clearance(&Label::Secret),
+            Clearance::SealedSink
+        );
+    }
+
+    #[test]
+    fn sink_label_to_clearance_top_secret_is_open() {
+        assert_eq!(
+            sink_label_to_clearance(&Label::TopSecret),
+            Clearance::OpenSink
+        );
+    }
+
+    #[test]
+    fn sink_label_to_clearance_custom_level_0_is_never() {
+        let label = Label::Custom {
+            name: "low".to_string(),
+            level: 0,
+        };
+        assert_eq!(sink_label_to_clearance(&label), Clearance::NeverSink);
+    }
+
+    #[test]
+    fn sink_label_to_clearance_custom_level_1_is_restricted() {
+        let label = Label::Custom {
+            name: "mid".to_string(),
+            level: 1,
+        };
+        assert_eq!(sink_label_to_clearance(&label), Clearance::RestrictedSink);
+    }
+
+    #[test]
+    fn sink_label_to_clearance_custom_level_2_is_audited() {
+        let label = Label::Custom {
+            name: "high".to_string(),
+            level: 2,
+        };
+        assert_eq!(sink_label_to_clearance(&label), Clearance::AuditedSink);
+    }
+
+    #[test]
+    fn sink_label_to_clearance_custom_level_3_is_sealed() {
+        let label = Label::Custom {
+            name: "critical".to_string(),
+            level: 3,
+        };
+        assert_eq!(sink_label_to_clearance(&label), Clearance::SealedSink);
+    }
+
+    #[test]
+    fn sink_label_to_clearance_custom_level_4_plus_is_open() {
+        for level in [4, 5, 100, u32::MAX] {
+            let label = Label::Custom {
+                name: format!("lvl{level}"),
+                level,
+            };
+            assert_eq!(sink_label_to_clearance(&label), Clearance::OpenSink);
+        }
+    }
+
+    #[test]
+    fn flow_capability_supports_declassification_true_cases() {
+        let cases = [
+            CapabilityTag("ifc.declassify".to_string()),
+            CapabilityTag("ifc.declassification.route".to_string()),
+            CapabilityTag("DECLASSIFY".to_string()),
+            CapabilityTag("auto_declassification".to_string()),
+        ];
+        for cap in &cases {
+            assert!(
+                flow_capability_supports_declassification(cap),
+                "expected true for {:?}",
+                cap
+            );
+        }
+    }
+
+    #[test]
+    fn flow_capability_supports_declassification_false_cases() {
+        let cases = [
+            CapabilityTag("hostcall.invoke".to_string()),
+            CapabilityTag("module.import".to_string()),
+            CapabilityTag("ifc.check_flow".to_string()),
+            CapabilityTag("network.write".to_string()),
+        ];
+        for cap in &cases {
+            assert!(
+                !flow_capability_supports_declassification(cap),
+                "expected false for {:?}",
+                cap
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_checkpoint_reason_dynamic_capability() {
+        let flow = FlowAnnotation {
+            data_label: Label::Public,
+            sink_clearance: Label::Public,
+            declassification_required: false,
+        };
+        let cap = CapabilityTag("hostcall.invoke".to_string());
+        assert_eq!(runtime_checkpoint_reason(&flow, &cap), "dynamic_capability");
+    }
+
+    #[test]
+    fn runtime_checkpoint_reason_ambiguous_data_label() {
+        let flow = FlowAnnotation {
+            data_label: Label::Custom {
+                name: "pii".to_string(),
+                level: 2,
+            },
+            sink_clearance: Label::Public,
+            declassification_required: false,
+        };
+        let cap = CapabilityTag("ifc.check_flow".to_string());
+        assert_eq!(
+            runtime_checkpoint_reason(&flow, &cap),
+            "ambiguous_data_label"
+        );
+    }
+
+    #[test]
+    fn runtime_checkpoint_reason_ambiguous_sink_clearance() {
+        let flow = FlowAnnotation {
+            data_label: Label::Public,
+            sink_clearance: Label::Custom {
+                name: "audit_sink".to_string(),
+                level: 1,
+            },
+            declassification_required: false,
+        };
+        let cap = CapabilityTag("ifc.check_flow".to_string());
+        assert_eq!(
+            runtime_checkpoint_reason(&flow, &cap),
+            "ambiguous_sink_clearance"
+        );
+    }
+
+    #[test]
+    fn runtime_checkpoint_reason_fallback() {
+        let flow = FlowAnnotation {
+            data_label: Label::Internal,
+            sink_clearance: Label::Internal,
+            declassification_required: false,
+        };
+        let cap = CapabilityTag("ifc.check_flow".to_string());
+        assert_eq!(
+            runtime_checkpoint_reason(&flow, &cap),
+            "runtime_checkpoint_required"
+        );
+    }
+
+    #[test]
+    fn flow_proof_artifact_entry_serde_roundtrip() {
+        let entry = FlowProofArtifactEntry {
+            op_index: 7,
+            source_label: Label::Confidential,
+            sink_clearance: Label::Internal,
+            capability: Some("hostcall.invoke".to_string()),
+            proof_method: ProofMethod::StaticAnalysis,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: FlowProofArtifactEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn denied_flow_artifact_entry_serde_roundtrip() {
+        let entry = DeniedFlowArtifactEntry {
+            op_index: 3,
+            source_label: Label::Secret,
+            sink_clearance: Label::Public,
+            capability: None,
+            reason: "lattice violation".to_string(),
+            error_code: "FE-LOWER-IFC-0001".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: DeniedFlowArtifactEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn required_declassification_artifact_entry_serde_roundtrip() {
+        let entry = RequiredDeclassificationArtifactEntry {
+            op_index: 5,
+            source_label: Label::Confidential,
+            sink_clearance: Label::Public,
+            capability: Some("ifc.declassify".to_string()),
+            obligation_id: "obl-42".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: RequiredDeclassificationArtifactEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn runtime_checkpoint_artifact_entry_serde_roundtrip() {
+        let entry = RuntimeCheckpointArtifactEntry {
+            op_index: 9,
+            source_label: Label::Internal,
+            sink_clearance: Label::Custom {
+                name: "audit".to_string(),
+                level: 2,
+            },
+            capability: Some("hostcall.invoke".to_string()),
+            reason: "dynamic_capability".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: RuntimeCheckpointArtifactEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn lowering_pipeline_error_display_flow_lattice_failure() {
+        let err = LoweringPipelineError::FlowLatticeFailure {
+            detail: "lattice merge diverged".to_string(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("lattice merge diverged"));
+        assert!(display.contains("flow lattice"));
+    }
+
+    #[test]
+    fn lowering_pipeline_error_display_unauthorized_flow() {
+        let err = LoweringPipelineError::UnauthorizedFlow {
+            op_index: 42,
+            source_label: Label::Secret,
+            sink_clearance: Label::Public,
+            detail: "no route".to_string(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("42"));
+        assert!(display.contains("no route"));
+        assert!(display.contains("unauthorized flow"));
+    }
+
+    #[test]
+    fn lowering_pipeline_error_display_semantic_violation() {
+        let err = LoweringPipelineError::SemanticViolation(SemanticError::new(
+            SemanticErrorCode::ConstWithoutInitializer,
+            Some("x".to_string()),
+            None,
+        ));
+        let display = err.to_string();
+        assert!(display.contains("static semantics violation"));
+    }
+
+    #[test]
+    fn lowering_event_without_error_code_serde() {
+        let event = LoweringEvent {
+            trace_id: "t".to_string(),
+            decision_id: "d".to_string(),
+            policy_id: "p".to_string(),
+            component: "lowering_pipeline".to_string(),
+            event: "success_event".to_string(),
+            outcome: "pass".to_string(),
+            error_code: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: LoweringEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, parsed);
+        assert!(json.contains("null"));
+    }
+
+    #[test]
+    fn invariant_check_failed_serde() {
+        let check = InvariantCheck {
+            name: "binding_uniqueness".to_string(),
+            passed: false,
+            detail: "duplicate binding ID 3 in scope 0".to_string(),
+        };
+        let json = serde_json::to_string(&check).unwrap();
+        let parsed: InvariantCheck = serde_json::from_str(&json).unwrap();
+        assert_eq!(check, parsed);
+        assert!(!parsed.passed);
+    }
+
+    #[test]
+    fn classify_ir1_op_get_property_is_read_effect() {
+        let (boundary, cap, flow) = classify_ir1_op(&Ir1Op::GetProperty {
+            key: "length".to_string(),
+        });
+        assert_eq!(boundary, EffectBoundary::ReadEffect);
+        assert!(cap.is_none());
+        assert!(flow.is_none());
+    }
+
+    #[test]
+    fn classify_ir1_op_set_property_is_read_effect() {
+        let (boundary, cap, flow) = classify_ir1_op(&Ir1Op::SetProperty {
+            key: "x".to_string(),
+        });
+        assert_eq!(boundary, EffectBoundary::ReadEffect);
+        assert!(cap.is_none());
+        assert!(flow.is_none());
+    }
+
+    #[test]
+    fn classify_ir1_op_begin_try_is_read_effect() {
+        let (boundary, cap, flow) = classify_ir1_op(&Ir1Op::BeginTry { catch_label: 0 });
+        assert_eq!(boundary, EffectBoundary::ReadEffect);
+        assert!(cap.is_none());
+        assert!(flow.is_some());
+    }
+
+    #[test]
+    fn classify_ir1_op_end_try_is_read_effect() {
+        let (boundary, cap, flow) = classify_ir1_op(&Ir1Op::EndTry);
+        assert_eq!(boundary, EffectBoundary::ReadEffect);
+        assert!(cap.is_none());
+        assert!(flow.is_some());
+    }
+
+    #[test]
+    fn classify_ir1_op_import_module_has_flow_annotation() {
+        let (boundary, cap, flow) = classify_ir1_op(&Ir1Op::ImportModule {
+            specifier: "fs".to_string(),
+        });
+        assert_eq!(boundary, EffectBoundary::ReadEffect);
+        assert_eq!(cap.unwrap().0, "module.import");
+        let annotation = flow.unwrap();
+        assert_eq!(annotation.data_label, Label::Internal);
+        assert_eq!(annotation.sink_clearance, Label::Internal);
+        assert!(!annotation.declassification_required);
+    }
+
+    #[test]
+    fn classify_ir1_op_load_literal_hostcall_string() {
+        let (boundary, cap, flow) = classify_ir1_op(&Ir1Op::LoadLiteral {
+            value: Ir1Literal::String("hostcall<\"fs.read\">".to_string()),
+        });
+        assert_eq!(boundary, EffectBoundary::HostcallEffect);
+        assert_eq!(cap.unwrap().0, "fs.read");
+        let annotation = flow.unwrap();
+        assert_eq!(annotation.data_label, Label::Confidential);
+    }
+
+    #[test]
+    fn classify_ir1_op_load_literal_plain_string_is_pure() {
+        let (boundary, cap, flow) = classify_ir1_op(&Ir1Op::LoadLiteral {
+            value: Ir1Literal::String("hello world".to_string()),
+        });
+        assert_eq!(boundary, EffectBoundary::Pure);
+        assert!(cap.is_none());
+        assert!(flow.is_none());
+    }
+
+    #[test]
+    fn flow_requires_runtime_checkpoint_dynamic_capability() {
+        let cap = CapabilityTag("hostcall.invoke".to_string());
+        assert!(flow_requires_runtime_checkpoint(None, &cap));
+    }
+
+    #[test]
+    fn flow_requires_runtime_checkpoint_custom_data_label() {
+        let flow = FlowAnnotation {
+            data_label: Label::Custom {
+                name: "pii".to_string(),
+                level: 2,
+            },
+            sink_clearance: Label::Public,
+            declassification_required: false,
+        };
+        let cap = CapabilityTag("ifc.check_flow".to_string());
+        assert!(flow_requires_runtime_checkpoint(Some(&flow), &cap));
+    }
+
+    #[test]
+    fn flow_requires_runtime_checkpoint_custom_sink() {
+        let flow = FlowAnnotation {
+            data_label: Label::Public,
+            sink_clearance: Label::Custom {
+                name: "log".to_string(),
+                level: 0,
+            },
+            declassification_required: false,
+        };
+        let cap = CapabilityTag("ifc.check_flow".to_string());
+        assert!(flow_requires_runtime_checkpoint(Some(&flow), &cap));
+    }
+
+    #[test]
+    fn flow_requires_runtime_checkpoint_static_safe() {
+        let flow = FlowAnnotation {
+            data_label: Label::Public,
+            sink_clearance: Label::Public,
+            declassification_required: false,
+        };
+        let cap = CapabilityTag("ifc.check_flow".to_string());
+        assert!(!flow_requires_runtime_checkpoint(Some(&flow), &cap));
     }
 }

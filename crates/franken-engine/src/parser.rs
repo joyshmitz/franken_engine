@@ -15,10 +15,11 @@ use sha2::{Digest, Sha256};
 use crate::ast::{
     ArrowBody, AssignmentOperator, BinaryOperator, BlockStatement, BreakStatement, CatchClause,
     ContinueStatement, DoWhileStatement, ExportDeclaration, ExportKind, Expression,
-    ExpressionStatement, ForStatement, FunctionDeclaration, FunctionParam, IfStatement,
-    ImportDeclaration, ObjectProperty, ParseGoal, ReturnStatement, SourceSpan, Statement,
-    SwitchCase, SwitchStatement, SyntaxTree, ThrowStatement, TryCatchStatement, UnaryOperator,
-    VariableDeclaration, VariableDeclarationKind, VariableDeclarator, WhileStatement,
+    ExpressionStatement, ForInStatement, ForOfStatement, ForStatement, FunctionDeclaration,
+    FunctionParam, IfStatement, ImportDeclaration, ObjectProperty, ParseGoal, ReturnStatement,
+    SourceSpan, Statement, SwitchCase, SwitchStatement, SyntaxTree, ThrowStatement,
+    TryCatchStatement, UnaryOperator, VariableDeclaration, VariableDeclarationKind,
+    VariableDeclarator, WhileStatement,
 };
 use crate::deterministic_serde::{self, CanonicalValue};
 
@@ -1630,6 +1631,8 @@ fn statement_kind_label(statement: &Statement) -> &'static str {
         Statement::Break(_) => "break",
         Statement::Continue(_) => "continue",
         Statement::FunctionDeclaration(_) => "function_declaration",
+        Statement::ForIn(_) => "for_in",
+        Statement::ForOf(_) => "for_of",
     }
 }
 
@@ -2914,6 +2917,11 @@ fn parse_expression(
         ));
     }
 
+    // Arrow function: lowest precedence (lower than assignment).
+    if let Some(result) = try_parse_arrow_function(expression, span, context, recursion_depth) {
+        return result;
+    }
+
     // Try assignment first (lowest precedence apart from comma).
     if let Some(result) = try_parse_assignment(expression, span, context, recursion_depth) {
         return result;
@@ -2977,9 +2985,17 @@ fn parse_primary_expression(
         return Ok(Expression::Await(Box::new(nested)));
     }
 
-    // Arrow function: (params) => body  or  ident => body  or  async variants.
-    if let Some(result) = try_parse_arrow_function(expression, span, context, recursion_depth) {
-        return result;
+    // new expression: `new Foo(args)`
+    if let Some(rest) = expression
+        .strip_prefix("new ")
+        .or_else(|| expression.strip_prefix("new\t"))
+    {
+        return parse_new_expression(rest.trim(), span, context, recursion_depth);
+    }
+
+    // Template literal: `text ${expr} text`
+    if expression.starts_with('`') && expression.ends_with('`') {
+        return parse_template_literal(expression, span, context, recursion_depth);
     }
 
     // Parenthesized expression.
@@ -3198,6 +3214,106 @@ fn find_top_level_arrow(s: &str) -> Option<usize> {
         i += 1;
     }
     None
+}
+
+// ---------------------------------------------------------------------------
+// New expression parsing
+// ---------------------------------------------------------------------------
+
+fn parse_new_expression(
+    rest: &str,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+    recursion_depth: u64,
+) -> ParseResult<Expression> {
+    // `rest` is everything after `new `, e.g. `Foo(a, b)` or `Foo` or `Foo.Bar()`
+    // Find the arguments list at the end, if any.
+    if rest.ends_with(')') {
+        if let Some((callee_src, args_inner)) = {
+            let open = find_matching_open_paren(rest);
+            open.map(|pos| (rest[..pos].trim(), &rest[pos + 1..rest.len() - 1]))
+        } {
+            let callee = parse_expression(callee_src, span, context, recursion_depth + 1)?;
+            let arguments = if args_inner.trim().is_empty() {
+                Vec::new()
+            } else {
+                parse_comma_separated_exprs(args_inner, span, context, recursion_depth + 1)?
+            };
+            return Ok(Expression::New {
+                callee: Box::new(callee),
+                arguments,
+            });
+        }
+    }
+    // `new Foo` without arguments.
+    let callee = parse_expression(rest, span, context, recursion_depth + 1)?;
+    Ok(Expression::New {
+        callee: Box::new(callee),
+        arguments: Vec::new(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Template literal parsing
+// ---------------------------------------------------------------------------
+
+fn parse_template_literal(
+    expression: &str,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+    recursion_depth: u64,
+) -> ParseResult<Expression> {
+    // Strip outer backticks.
+    let inner = &expression[1..expression.len() - 1];
+    let bytes = inner.as_bytes();
+    let mut quasis = Vec::new();
+    let mut expressions = Vec::new();
+    let mut current_quasi = String::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            // Escaped character — include literally for now.
+            current_quasi.push(bytes[i] as char);
+            current_quasi.push(bytes[i + 1] as char);
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+            // Start of template expression.
+            quasis.push(current_quasi.clone());
+            current_quasi.clear();
+            i += 2; // skip `${`
+            let start = i;
+            let mut depth = 1i32;
+            while i < bytes.len() {
+                match bytes[i] {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            let expr_src = &inner[start..i];
+            let expr = parse_expression(expr_src.trim(), span, context, recursion_depth + 1)?;
+            expressions.push(expr);
+            i += 1; // skip closing `}`
+            continue;
+        }
+        current_quasi.push(bytes[i] as char);
+        i += 1;
+    }
+    quasis.push(current_quasi);
+
+    Ok(Expression::TemplateLiteral {
+        quasis,
+        expressions,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -3769,6 +3885,10 @@ fn match_binary_operator_at(bytes: &[u8], i: usize) -> Option<(BinaryOperator, u
                 if remaining >= 2 && bytes[i + 1] == b'=' {
                     return None;
                 }
+                // Skip `>` that is part of `=>` (arrow).
+                if i > 0 && bytes[i - 1] == b'=' {
+                    return None;
+                }
                 Some(BinaryOperator::GreaterThan)
             }
             b'&' => {
@@ -4256,22 +4376,56 @@ fn parse_comma_separated_exprs(
 }
 
 fn parse_i64_numeric_literal(input: &str) -> Option<i64> {
-    let mut chars = input.chars();
-    let first = chars.next()?;
+    let (is_neg, digits) = if let Some(rest) = input.strip_prefix('-') {
+        (true, rest)
+    } else {
+        (false, input)
+    };
 
-    if first == '-' {
-        let rest = chars.as_str();
-        if rest.is_empty() || !rest.chars().all(|ch| ch.is_ascii_digit()) {
+    if digits.is_empty() {
+        return None;
+    }
+
+    // Strip optional numeric separators (ES2021 but commonly supported).
+    let cleaned: String;
+    let digits_ref = if digits.contains('_') {
+        cleaned = digits.replace('_', "");
+        cleaned.as_str()
+    } else {
+        digits
+    };
+
+    let value = if let Some(hex) = digits_ref
+        .strip_prefix("0x")
+        .or_else(|| digits_ref.strip_prefix("0X"))
+    {
+        if hex.is_empty() || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
             return None;
         }
-        return input.parse::<i64>().ok();
-    }
+        i64::from_str_radix(hex, 16).ok()?
+    } else if let Some(oct) = digits_ref
+        .strip_prefix("0o")
+        .or_else(|| digits_ref.strip_prefix("0O"))
+    {
+        if oct.is_empty() || !oct.chars().all(|c| matches!(c, '0'..='7')) {
+            return None;
+        }
+        i64::from_str_radix(oct, 8).ok()?
+    } else if let Some(bin) = digits_ref
+        .strip_prefix("0b")
+        .or_else(|| digits_ref.strip_prefix("0B"))
+    {
+        if bin.is_empty() || !bin.chars().all(|c| c == '0' || c == '1') {
+            return None;
+        }
+        i64::from_str_radix(bin, 2).ok()?
+    } else if digits_ref.chars().all(|c| c.is_ascii_digit()) {
+        digits_ref.parse::<i64>().ok()?
+    } else {
+        return None;
+    };
 
-    if first.is_ascii_digit() && input.chars().all(|ch| ch.is_ascii_digit()) {
-        return input.parse::<i64>().ok();
-    }
-
-    None
+    Some(if is_neg { -value } else { value })
 }
 
 fn parse_quoted_string(input: &str) -> Option<String> {
@@ -5293,6 +5447,11 @@ fn parse_for_statement(
         )
     })?;
 
+    // Detect for-in / for-of before trying semicolon split.
+    if let Some(forin) = try_parse_for_in_of(header_src, rest, &span, goal, context)? {
+        return Ok(forin);
+    }
+
     // Split header by semicolons: init; condition; update
     let parts: Vec<&str> = header_src.splitn(3, ';').collect();
     let (init_src, cond_src, update_src) = match parts.len() {
@@ -5338,6 +5497,141 @@ fn parse_for_statement(
         body: Box::new(body),
         span,
     }))
+}
+
+/// Detect `for (binding in expr)` or `for (binding of expr)` patterns.
+/// Returns `Some(Statement)` if matched, `None` for a classic C-style for.
+fn try_parse_for_in_of(
+    header: &str,
+    rest: &str,
+    span: &SourceSpan,
+    goal: ParseGoal,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<Option<Statement>> {
+    // Try to split on ` in ` or ` of ` at top level.
+    let (keyword, split_pos) = match find_top_level_keyword(header, " in ") {
+        Some(pos) => ("in", pos),
+        None => match find_top_level_keyword(header, " of ") {
+            Some(pos) => ("of", pos),
+            None => return Ok(None),
+        },
+    };
+
+    let lhs = header[..split_pos].trim();
+    let rhs = header[split_pos + keyword.len() + 2..].trim();
+
+    // Parse binding: optionally `let x`, `const x`, `var x`, or bare `x`.
+    let (binding_kind, binding_name) = if let Some(after) = lhs
+        .strip_prefix("let ")
+        .or_else(|| lhs.strip_prefix("let\t"))
+    {
+        (Some(VariableDeclarationKind::Let), after.trim().to_string())
+    } else if let Some(after) = lhs
+        .strip_prefix("const ")
+        .or_else(|| lhs.strip_prefix("const\t"))
+    {
+        (
+            Some(VariableDeclarationKind::Const),
+            after.trim().to_string(),
+        )
+    } else if let Some(after) = lhs
+        .strip_prefix("var ")
+        .or_else(|| lhs.strip_prefix("var\t"))
+    {
+        (Some(VariableDeclarationKind::Var), after.trim().to_string())
+    } else {
+        (None, lhs.to_string())
+    };
+
+    if !is_identifier(&binding_name) {
+        return Ok(None);
+    }
+
+    let body_src = rest.trim();
+    let body = parse_statement(body_src, goal, span.clone(), context)?;
+
+    if keyword == "in" {
+        let object = parse_expression(rhs, span, context, 1)?;
+        Ok(Some(Statement::ForIn(ForInStatement {
+            binding: binding_name,
+            binding_kind,
+            object,
+            body: Box::new(body),
+            span: span.clone(),
+        })))
+    } else {
+        let iterable = parse_expression(rhs, span, context, 1)?;
+        Ok(Some(Statement::ForOf(ForOfStatement {
+            binding: binding_name,
+            binding_kind,
+            iterable,
+            body: Box::new(body),
+            span: span.clone(),
+        })))
+    }
+}
+
+/// Find a keyword (like ` in ` or ` of `) at the top level of an expression,
+/// respecting parentheses, brackets, braces, and quotes.
+fn find_top_level_keyword(src: &str, keyword: &str) -> Option<usize> {
+    let bytes = src.as_bytes();
+    let kw_bytes = keyword.as_bytes();
+    let kw_len = kw_bytes.len();
+    if bytes.len() < kw_len {
+        return None;
+    }
+    let mut depth_paren = 0i32;
+    let mut depth_bracket = 0i32;
+    let mut depth_brace = 0i32;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_backtick = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_single {
+            if b == b'\\' {
+                i += 1;
+            } else if b == b'\'' {
+                in_single = false;
+            }
+        } else if in_double {
+            if b == b'\\' {
+                i += 1;
+            } else if b == b'"' {
+                in_double = false;
+            }
+        } else if in_backtick {
+            if b == b'\\' {
+                i += 1;
+            } else if b == b'`' {
+                in_backtick = false;
+            }
+        } else {
+            match b {
+                b'\'' => in_single = true,
+                b'"' => in_double = true,
+                b'`' => in_backtick = true,
+                b'(' => depth_paren += 1,
+                b')' => depth_paren -= 1,
+                b'[' => depth_bracket += 1,
+                b']' => depth_bracket -= 1,
+                b'{' => depth_brace += 1,
+                b'}' => depth_brace -= 1,
+                _ => {}
+            }
+            if depth_paren == 0
+                && depth_bracket == 0
+                && depth_brace == 0
+                && i + kw_len <= bytes.len()
+                && &bytes[i..i + kw_len] == kw_bytes
+            {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
 }
 
 fn parse_while_statement(
@@ -7969,6 +8263,44 @@ mod tests {
         assert_eq!(parse_i64_numeric_literal("-7"), Some(-7));
     }
 
+    #[test]
+    fn parse_i64_numeric_literal_hex() {
+        assert_eq!(parse_i64_numeric_literal("0xFF"), Some(255));
+        assert_eq!(parse_i64_numeric_literal("0x1A"), Some(26));
+        assert_eq!(parse_i64_numeric_literal("0X10"), Some(16));
+        assert_eq!(parse_i64_numeric_literal("-0xff"), Some(-255));
+    }
+
+    #[test]
+    fn parse_i64_numeric_literal_octal() {
+        assert_eq!(parse_i64_numeric_literal("0o77"), Some(63));
+        assert_eq!(parse_i64_numeric_literal("0O10"), Some(8));
+        assert_eq!(parse_i64_numeric_literal("-0o10"), Some(-8));
+    }
+
+    #[test]
+    fn parse_i64_numeric_literal_binary() {
+        assert_eq!(parse_i64_numeric_literal("0b1010"), Some(10));
+        assert_eq!(parse_i64_numeric_literal("0B11111111"), Some(255));
+        assert_eq!(parse_i64_numeric_literal("-0b100"), Some(-4));
+    }
+
+    #[test]
+    fn parse_i64_numeric_literal_separators() {
+        assert_eq!(parse_i64_numeric_literal("1_000"), Some(1000));
+        assert_eq!(parse_i64_numeric_literal("0xFF_FF"), Some(65535));
+    }
+
+    #[test]
+    fn parse_i64_numeric_literal_invalid_bases() {
+        assert!(parse_i64_numeric_literal("0x").is_none());
+        assert!(parse_i64_numeric_literal("0o").is_none());
+        assert!(parse_i64_numeric_literal("0b").is_none());
+        assert!(parse_i64_numeric_literal("0xGG").is_none());
+        assert!(parse_i64_numeric_literal("0o89").is_none());
+        assert!(parse_i64_numeric_literal("0b23").is_none());
+    }
+
     // -- split_statement_segments with nested delimiters --
 
     #[test]
@@ -9223,5 +9555,231 @@ mod tests {
     #[test]
     fn find_top_level_colon_none() {
         assert_eq!(find_top_level_colon("abc"), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // For-in / For-of
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn for_in_with_let() {
+        let tree = parse_script("for (let key in obj) { x }");
+        match &tree.body[0] {
+            Statement::ForIn(s) => {
+                assert_eq!(s.binding, "key");
+                assert_eq!(s.binding_kind, Some(VariableDeclarationKind::Let));
+            }
+            other => panic!("expected ForIn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn for_of_with_const() {
+        let tree = parse_script("for (const item of items) { x }");
+        match &tree.body[0] {
+            Statement::ForOf(s) => {
+                assert_eq!(s.binding, "item");
+                assert_eq!(s.binding_kind, Some(VariableDeclarationKind::Const));
+            }
+            other => panic!("expected ForOf, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn for_in_bare_binding() {
+        let tree = parse_script("for (k in obj) { x }");
+        match &tree.body[0] {
+            Statement::ForIn(s) => {
+                assert_eq!(s.binding, "k");
+                assert!(s.binding_kind.is_none());
+            }
+            other => panic!("expected ForIn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn for_of_with_var() {
+        let tree = parse_script("for (var x of arr) { x }");
+        match &tree.body[0] {
+            Statement::ForOf(s) => {
+                assert_eq!(s.binding, "x");
+                assert_eq!(s.binding_kind, Some(VariableDeclarationKind::Var));
+            }
+            other => panic!("expected ForOf, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn for_in_string_object() {
+        let tree = parse_script("for (let k in \"hello\") { x }");
+        match &tree.body[0] {
+            Statement::ForIn(s) => {
+                assert_eq!(s.binding, "k");
+                assert!(matches!(&s.object, Expression::StringLiteral(v) if v == "hello"));
+            }
+            other => panic!("expected ForIn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classic_for_still_works_after_for_in_of() {
+        let tree = parse_script("for (let i = 0; i < 10; i) { x }");
+        assert!(matches!(&tree.body[0], Statement::For(_)));
+    }
+
+    // -----------------------------------------------------------------------
+    // New expression
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn new_expression_with_args() {
+        let tree = parse_script("new Foo(1, 2)");
+        match &tree.body[0] {
+            Statement::Expression(e) => {
+                assert!(
+                    matches!(&e.expression, Expression::New { arguments, .. } if arguments.len() == 2)
+                );
+            }
+            other => panic!("expected Expression, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn new_expression_no_args() {
+        let tree = parse_script("new Foo");
+        match &tree.body[0] {
+            Statement::Expression(e) => {
+                assert!(
+                    matches!(&e.expression, Expression::New { arguments, .. } if arguments.is_empty())
+                );
+            }
+            other => panic!("expected Expression, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn new_expression_member_callee() {
+        let tree = parse_script("new Foo.Bar()");
+        match &tree.body[0] {
+            Statement::Expression(e) => {
+                if let Expression::New { callee, .. } = &e.expression {
+                    assert!(matches!(callee.as_ref(), Expression::Member { .. }));
+                } else {
+                    panic!("expected New");
+                }
+            }
+            other => panic!("expected Expression, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn new_in_variable_decl() {
+        let tree = parse_script("const m = new Map()");
+        match &tree.body[0] {
+            Statement::VariableDeclaration(decl) => {
+                let init = decl.declarations[0].initializer.as_ref().unwrap();
+                assert!(matches!(init, Expression::New { .. }));
+            }
+            other => panic!("expected VariableDeclaration, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Template literal
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn template_literal_plain_text() {
+        let tree = parse_script("const s = `hello`");
+        match &tree.body[0] {
+            Statement::VariableDeclaration(decl) => {
+                let init = decl.declarations[0].initializer.as_ref().unwrap();
+                if let Expression::TemplateLiteral {
+                    quasis,
+                    expressions,
+                } = init
+                {
+                    assert_eq!(quasis, &["hello"]);
+                    assert!(expressions.is_empty());
+                } else {
+                    panic!("expected TemplateLiteral, got {init:?}");
+                }
+            }
+            other => panic!("expected VariableDeclaration, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn template_literal_with_interpolation() {
+        let tree = parse_script("const s = `hi ${name}!`");
+        match &tree.body[0] {
+            Statement::VariableDeclaration(decl) => {
+                let init = decl.declarations[0].initializer.as_ref().unwrap();
+                if let Expression::TemplateLiteral {
+                    quasis,
+                    expressions,
+                } = init
+                {
+                    assert_eq!(quasis, &["hi ", "!"]);
+                    assert_eq!(expressions.len(), 1);
+                } else {
+                    panic!("expected TemplateLiteral, got {init:?}");
+                }
+            }
+            other => panic!("expected VariableDeclaration, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn template_literal_multiple_expressions() {
+        let tree = parse_script("const s = `${a}+${b}=${c}`");
+        match &tree.body[0] {
+            Statement::VariableDeclaration(decl) => {
+                let init = decl.declarations[0].initializer.as_ref().unwrap();
+                if let Expression::TemplateLiteral {
+                    quasis,
+                    expressions,
+                } = init
+                {
+                    assert_eq!(quasis, &["", "+", "=", ""]);
+                    assert_eq!(expressions.len(), 3);
+                } else {
+                    panic!("expected TemplateLiteral, got {init:?}");
+                }
+            }
+            other => panic!("expected VariableDeclaration, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn template_literal_empty() {
+        let tree = parse_script("const s = ``");
+        match &tree.body[0] {
+            Statement::VariableDeclaration(decl) => {
+                let init = decl.declarations[0].initializer.as_ref().unwrap();
+                if let Expression::TemplateLiteral {
+                    quasis,
+                    expressions,
+                } = init
+                {
+                    assert_eq!(quasis, &[""]);
+                    assert!(expressions.is_empty());
+                } else {
+                    panic!("expected TemplateLiteral, got {init:?}");
+                }
+            }
+            other => panic!("expected VariableDeclaration, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn template_literal_as_expression_statement() {
+        let tree = parse_script("`hello ${x}`");
+        match &tree.body[0] {
+            Statement::Expression(e) => {
+                assert!(matches!(&e.expression, Expression::TemplateLiteral { .. }));
+            }
+            other => panic!("expected Expression, got {other:?}"),
+        }
     }
 }

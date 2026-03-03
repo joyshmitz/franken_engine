@@ -160,6 +160,8 @@ pub enum Statement {
     Break(BreakStatement),
     Continue(ContinueStatement),
     FunctionDeclaration(FunctionDeclaration),
+    ForIn(ForInStatement),
+    ForOf(ForOfStatement),
 }
 
 impl Statement {
@@ -181,6 +183,8 @@ impl Statement {
             Self::Break(v) => &v.span,
             Self::Continue(v) => &v.span,
             Self::FunctionDeclaration(v) => &v.span,
+            Self::ForIn(v) => &v.span,
+            Self::ForOf(v) => &v.span,
         }
     }
 
@@ -298,6 +302,20 @@ impl Statement {
                     CanonicalValue::String("function_declaration".to_string()),
                 );
                 map.insert("payload".to_string(), func.canonical_value());
+            }
+            Self::ForIn(stmt) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("for_in".to_string()),
+                );
+                map.insert("payload".to_string(), stmt.canonical_value());
+            }
+            Self::ForOf(stmt) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("for_of".to_string()),
+                );
+                map.insert("payload".to_string(), stmt.canonical_value());
             }
         }
         map.insert("span".to_string(), self.span().canonical_value());
@@ -541,6 +559,66 @@ impl ForStatement {
                 .map(Expression::canonical_value)
                 .unwrap_or(CanonicalValue::Null),
         );
+        map.insert("body".to_string(), self.body.canonical_value());
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForInStatement {
+    pub binding: String,
+    pub binding_kind: Option<VariableDeclarationKind>,
+    pub object: Expression,
+    pub body: Box<Statement>,
+    pub span: SourceSpan,
+}
+
+impl ForInStatement {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "binding".to_string(),
+            CanonicalValue::String(self.binding.clone()),
+        );
+        map.insert(
+            "binding_kind".to_string(),
+            self.binding_kind
+                .as_ref()
+                .map(|k| CanonicalValue::String(format!("{k:?}")))
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert("object".to_string(), self.object.canonical_value());
+        map.insert("body".to_string(), self.body.canonical_value());
+        map.insert("span".to_string(), self.span.canonical_value());
+        CanonicalValue::Map(map)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForOfStatement {
+    pub binding: String,
+    pub binding_kind: Option<VariableDeclarationKind>,
+    pub iterable: Expression,
+    pub body: Box<Statement>,
+    pub span: SourceSpan,
+}
+
+impl ForOfStatement {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "binding".to_string(),
+            CanonicalValue::String(self.binding.clone()),
+        );
+        map.insert(
+            "binding_kind".to_string(),
+            self.binding_kind
+                .as_ref()
+                .map(|k| CanonicalValue::String(format!("{k:?}")))
+                .unwrap_or(CanonicalValue::Null),
+        );
+        map.insert("iterable".to_string(), self.iterable.canonical_value());
         map.insert("body".to_string(), self.body.canonical_value());
         map.insert("span".to_string(), self.span.canonical_value());
         CanonicalValue::Map(map)
@@ -893,9 +971,9 @@ impl BinaryOperator {
     /// Precedence level for Pratt parsing (higher binds tighter).
     pub fn precedence(self) -> u8 {
         match self {
+            Self::NullishCoalescing => 3,
             Self::LogicalOr => 4,
             Self::LogicalAnd => 5,
-            Self::NullishCoalescing => 4,
             Self::BitwiseOr => 6,
             Self::BitwiseXor => 7,
             Self::BitwiseAnd => 8,
@@ -1086,6 +1164,14 @@ pub enum Expression {
         params: Vec<FunctionParam>,
         body: ArrowBody,
         is_async: bool,
+    },
+    New {
+        callee: Box<Expression>,
+        arguments: Vec<Expression>,
+    },
+    TemplateLiteral {
+        quasis: Vec<String>,
+        expressions: Vec<Expression>,
     },
     Raw(String),
 }
@@ -1283,6 +1369,46 @@ impl Expression {
                 );
                 map.insert("body".to_string(), body.canonical_value());
                 map.insert("is_async".to_string(), CanonicalValue::Bool(*is_async));
+            }
+            Self::New { callee, arguments } => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("new".to_string()),
+                );
+                map.insert("callee".to_string(), callee.canonical_value());
+                map.insert(
+                    "arguments".to_string(),
+                    CanonicalValue::Array(
+                        arguments.iter().map(Expression::canonical_value).collect(),
+                    ),
+                );
+            }
+            Self::TemplateLiteral {
+                quasis,
+                expressions,
+            } => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("template_literal".to_string()),
+                );
+                map.insert(
+                    "quasis".to_string(),
+                    CanonicalValue::Array(
+                        quasis
+                            .iter()
+                            .map(|q| CanonicalValue::String(q.clone()))
+                            .collect(),
+                    ),
+                );
+                map.insert(
+                    "expressions".to_string(),
+                    CanonicalValue::Array(
+                        expressions
+                            .iter()
+                            .map(Expression::canonical_value)
+                            .collect(),
+                    ),
+                );
             }
             Self::Raw(value) => {
                 map.insert(
@@ -2219,6 +2345,1212 @@ mod tests {
         assert_eq!(span, restored);
     }
 
+    // -----------------------------------------------------------------------
+    // Enrichment batch 4: operators, complex expressions, control-flow stmts
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn unary_operator_as_str_all_variants() {
+        let cases = [
+            (UnaryOperator::Negate, "-"),
+            (UnaryOperator::BitwiseNot, "~"),
+            (UnaryOperator::LogicalNot, "!"),
+            (UnaryOperator::Typeof, "typeof"),
+            (UnaryOperator::Void, "void"),
+            (UnaryOperator::Delete, "delete"),
+            (UnaryOperator::UnaryPlus, "+"),
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for (op, expected) in &cases {
+            assert_eq!(op.as_str(), *expected);
+            assert!(seen.insert(op.as_str()), "duplicate: {expected}");
+        }
+        assert_eq!(seen.len(), 7);
+    }
+
+    #[test]
+    fn unary_operator_serde_roundtrip_all() {
+        let ops = [
+            UnaryOperator::Negate,
+            UnaryOperator::BitwiseNot,
+            UnaryOperator::LogicalNot,
+            UnaryOperator::Typeof,
+            UnaryOperator::Void,
+            UnaryOperator::Delete,
+            UnaryOperator::UnaryPlus,
+        ];
+        for op in ops {
+            let json = serde_json::to_string(&op).expect("serialize");
+            let restored: UnaryOperator = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(restored, op);
+        }
+    }
+
+    #[test]
+    fn assignment_operator_as_str_all_variants() {
+        let cases = [
+            (AssignmentOperator::Assign, "="),
+            (AssignmentOperator::AddAssign, "+="),
+            (AssignmentOperator::SubtractAssign, "-="),
+            (AssignmentOperator::MultiplyAssign, "*="),
+            (AssignmentOperator::DivideAssign, "/="),
+            (AssignmentOperator::RemainderAssign, "%="),
+            (AssignmentOperator::ExponentiateAssign, "**="),
+            (AssignmentOperator::LeftShiftAssign, "<<="),
+            (AssignmentOperator::RightShiftAssign, ">>="),
+            (AssignmentOperator::UnsignedRightShiftAssign, ">>>="),
+            (AssignmentOperator::BitwiseAndAssign, "&="),
+            (AssignmentOperator::BitwiseOrAssign, "|="),
+            (AssignmentOperator::BitwiseXorAssign, "^="),
+            (AssignmentOperator::LogicalAndAssign, "&&="),
+            (AssignmentOperator::LogicalOrAssign, "||="),
+            (AssignmentOperator::NullishCoalescingAssign, "??="),
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for (op, expected) in &cases {
+            assert_eq!(op.as_str(), *expected);
+            assert!(seen.insert(op.as_str()), "duplicate: {expected}");
+        }
+        assert_eq!(seen.len(), 16);
+    }
+
+    #[test]
+    fn assignment_operator_serde_roundtrip_all() {
+        let ops = [
+            AssignmentOperator::Assign,
+            AssignmentOperator::AddAssign,
+            AssignmentOperator::SubtractAssign,
+            AssignmentOperator::MultiplyAssign,
+            AssignmentOperator::DivideAssign,
+            AssignmentOperator::RemainderAssign,
+            AssignmentOperator::ExponentiateAssign,
+            AssignmentOperator::LeftShiftAssign,
+            AssignmentOperator::RightShiftAssign,
+            AssignmentOperator::UnsignedRightShiftAssign,
+            AssignmentOperator::BitwiseAndAssign,
+            AssignmentOperator::BitwiseOrAssign,
+            AssignmentOperator::BitwiseXorAssign,
+            AssignmentOperator::LogicalAndAssign,
+            AssignmentOperator::LogicalOrAssign,
+            AssignmentOperator::NullishCoalescingAssign,
+        ];
+        for op in ops {
+            let json = serde_json::to_string(&op).expect("serialize");
+            let restored: AssignmentOperator = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(restored, op);
+        }
+    }
+
+    #[test]
+    fn binary_operator_as_str_all_unique() {
+        let ops = [
+            BinaryOperator::Add,
+            BinaryOperator::Subtract,
+            BinaryOperator::Multiply,
+            BinaryOperator::Divide,
+            BinaryOperator::Remainder,
+            BinaryOperator::Exponentiate,
+            BinaryOperator::Equal,
+            BinaryOperator::NotEqual,
+            BinaryOperator::StrictEqual,
+            BinaryOperator::StrictNotEqual,
+            BinaryOperator::LessThan,
+            BinaryOperator::LessThanOrEqual,
+            BinaryOperator::GreaterThan,
+            BinaryOperator::GreaterThanOrEqual,
+            BinaryOperator::LogicalAnd,
+            BinaryOperator::LogicalOr,
+            BinaryOperator::NullishCoalescing,
+            BinaryOperator::BitwiseAnd,
+            BinaryOperator::BitwiseOr,
+            BinaryOperator::BitwiseXor,
+            BinaryOperator::LeftShift,
+            BinaryOperator::RightShift,
+            BinaryOperator::UnsignedRightShift,
+            BinaryOperator::Instanceof,
+            BinaryOperator::In,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for op in &ops {
+            assert!(seen.insert(op.as_str()), "duplicate: {}", op.as_str());
+        }
+        assert_eq!(seen.len(), 25);
+    }
+
+    #[test]
+    fn binary_operator_precedence_ordering() {
+        assert!(BinaryOperator::Exponentiate.precedence() > BinaryOperator::Multiply.precedence());
+        assert!(BinaryOperator::Multiply.precedence() > BinaryOperator::Add.precedence());
+        assert!(BinaryOperator::Add.precedence() > BinaryOperator::LeftShift.precedence());
+        assert!(BinaryOperator::LeftShift.precedence() > BinaryOperator::LessThan.precedence());
+        assert!(BinaryOperator::LessThan.precedence() > BinaryOperator::Equal.precedence());
+        assert!(BinaryOperator::Equal.precedence() > BinaryOperator::BitwiseAnd.precedence());
+        assert!(BinaryOperator::BitwiseAnd.precedence() > BinaryOperator::BitwiseXor.precedence());
+        assert!(BinaryOperator::BitwiseXor.precedence() > BinaryOperator::BitwiseOr.precedence());
+        assert!(BinaryOperator::BitwiseOr.precedence() > BinaryOperator::LogicalAnd.precedence());
+        assert!(BinaryOperator::LogicalAnd.precedence() > BinaryOperator::LogicalOr.precedence());
+        assert!(
+            BinaryOperator::LogicalOr.precedence()
+                > BinaryOperator::NullishCoalescing.precedence()
+        );
+    }
+
+    #[test]
+    fn binary_operator_only_exponentiate_is_right_associative() {
+        let ops = [
+            BinaryOperator::Add,
+            BinaryOperator::Subtract,
+            BinaryOperator::Multiply,
+            BinaryOperator::Divide,
+            BinaryOperator::Equal,
+            BinaryOperator::LogicalAnd,
+            BinaryOperator::BitwiseOr,
+        ];
+        for op in ops {
+            assert!(!op.is_right_associative(), "{:?} should be left-assoc", op);
+        }
+        assert!(BinaryOperator::Exponentiate.is_right_associative());
+    }
+
+    #[test]
+    fn expression_binary_canonical_value() {
+        let expr = Expression::Binary {
+            operator: BinaryOperator::Add,
+            left: Box::new(Expression::NumericLiteral(1)),
+            right: Box::new(Expression::NumericLiteral(2)),
+        };
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("binary".to_string()))
+                );
+                assert_eq!(
+                    map.get("operator"),
+                    Some(&CanonicalValue::String("+".to_string()))
+                );
+                assert!(map.contains_key("left"));
+                assert!(map.contains_key("right"));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn expression_unary_canonical_value() {
+        let expr = Expression::Unary {
+            operator: UnaryOperator::Typeof,
+            argument: Box::new(Expression::Identifier("x".to_string())),
+        };
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("unary".to_string()))
+                );
+                assert_eq!(
+                    map.get("operator"),
+                    Some(&CanonicalValue::String("typeof".to_string()))
+                );
+                assert!(map.contains_key("argument"));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn expression_assignment_canonical_value() {
+        let expr = Expression::Assignment {
+            operator: AssignmentOperator::AddAssign,
+            left: Box::new(Expression::Identifier("x".to_string())),
+            right: Box::new(Expression::NumericLiteral(5)),
+        };
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("assignment".to_string()))
+                );
+                assert_eq!(
+                    map.get("operator"),
+                    Some(&CanonicalValue::String("+=".to_string()))
+                );
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn expression_conditional_canonical_value() {
+        let expr = Expression::Conditional {
+            test: Box::new(Expression::BooleanLiteral(true)),
+            consequent: Box::new(Expression::NumericLiteral(1)),
+            alternate: Box::new(Expression::NumericLiteral(0)),
+        };
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("conditional".to_string()))
+                );
+                assert!(map.contains_key("test"));
+                assert!(map.contains_key("consequent"));
+                assert!(map.contains_key("alternate"));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn expression_call_canonical_value() {
+        let expr = Expression::Call {
+            callee: Box::new(Expression::Identifier("fn".to_string())),
+            arguments: vec![
+                Expression::NumericLiteral(1),
+                Expression::StringLiteral("a".to_string()),
+            ],
+        };
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("call".to_string()))
+                );
+                if let Some(CanonicalValue::Array(args)) = map.get("arguments") {
+                    assert_eq!(args.len(), 2);
+                } else {
+                    panic!("arguments should be array");
+                }
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn expression_member_canonical_value() {
+        let expr = Expression::Member {
+            object: Box::new(Expression::Identifier("obj".to_string())),
+            property: Box::new(Expression::Identifier("prop".to_string())),
+            computed: false,
+        };
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("member".to_string()))
+                );
+                assert_eq!(map.get("computed"), Some(&CanonicalValue::Bool(false)));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn expression_member_computed_canonical_value() {
+        let expr = Expression::Member {
+            object: Box::new(Expression::Identifier("arr".to_string())),
+            property: Box::new(Expression::NumericLiteral(0)),
+            computed: true,
+        };
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(map.get("computed"), Some(&CanonicalValue::Bool(true)));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn expression_this_canonical_value() {
+        let expr = Expression::This;
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("this".to_string()))
+                );
+                assert_eq!(map.get("value"), Some(&CanonicalValue::Null));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn expression_array_literal_canonical_value() {
+        let expr = Expression::ArrayLiteral(vec![
+            Some(Expression::NumericLiteral(1)),
+            None, // sparse hole
+            Some(Expression::NumericLiteral(3)),
+        ]);
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("array".to_string()))
+                );
+                if let Some(CanonicalValue::Array(elems)) = map.get("elements") {
+                    assert_eq!(elems.len(), 3);
+                    assert_eq!(elems[1], CanonicalValue::Null);
+                } else {
+                    panic!("elements should be array");
+                }
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn expression_object_literal_canonical_value() {
+        let expr = Expression::ObjectLiteral(vec![ObjectProperty {
+            key: Expression::Identifier("a".to_string()),
+            value: Expression::NumericLiteral(1),
+            computed: false,
+            shorthand: true,
+        }]);
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("object".to_string()))
+                );
+                if let Some(CanonicalValue::Array(props)) = map.get("properties") {
+                    assert_eq!(props.len(), 1);
+                } else {
+                    panic!("properties should be array");
+                }
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn object_property_canonical_value_includes_all_fields() {
+        let prop = ObjectProperty {
+            key: Expression::StringLiteral("k".to_string()),
+            value: Expression::NumericLiteral(42),
+            computed: true,
+            shorthand: false,
+        };
+        match prop.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert!(map.contains_key("key"));
+                assert!(map.contains_key("value"));
+                assert_eq!(map.get("computed"), Some(&CanonicalValue::Bool(true)));
+                assert_eq!(map.get("shorthand"), Some(&CanonicalValue::Bool(false)));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn expression_arrow_function_canonical_value() {
+        let expr = Expression::ArrowFunction {
+            params: vec![FunctionParam {
+                name: "x".to_string(),
+                span: make_span(),
+            }],
+            body: ArrowBody::Expression(Box::new(Expression::Identifier("x".to_string()))),
+            is_async: true,
+        };
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("arrow_function".to_string()))
+                );
+                assert_eq!(map.get("is_async"), Some(&CanonicalValue::Bool(true)));
+                assert!(map.contains_key("params"));
+                assert!(map.contains_key("body"));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn arrow_body_expression_canonical_value() {
+        let body = ArrowBody::Expression(Box::new(Expression::NumericLiteral(42)));
+        match body.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("expression".to_string()))
+                );
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn arrow_body_block_canonical_value() {
+        let body = ArrowBody::Block(BlockStatement {
+            body: vec![],
+            span: make_span(),
+        });
+        match body.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("block".to_string()))
+                );
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn expression_new_canonical_value() {
+        let expr = Expression::New {
+            callee: Box::new(Expression::Identifier("Foo".to_string())),
+            arguments: vec![Expression::NumericLiteral(1)],
+        };
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("new".to_string()))
+                );
+                assert!(map.contains_key("callee"));
+                if let Some(CanonicalValue::Array(args)) = map.get("arguments") {
+                    assert_eq!(args.len(), 1);
+                } else {
+                    panic!("arguments should be array");
+                }
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn expression_template_literal_canonical_value() {
+        let expr = Expression::TemplateLiteral {
+            quasis: vec!["Hello ".to_string(), "!".to_string()],
+            expressions: vec![Expression::Identifier("name".to_string())],
+        };
+        match expr.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("template_literal".to_string()))
+                );
+                if let Some(CanonicalValue::Array(q)) = map.get("quasis") {
+                    assert_eq!(q.len(), 2);
+                } else {
+                    panic!("quasis should be array");
+                }
+                if let Some(CanonicalValue::Array(e)) = map.get("expressions") {
+                    assert_eq!(e.len(), 1);
+                } else {
+                    panic!("expressions should be array");
+                }
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn complex_expression_serde_roundtrip() {
+        let expressions = vec![
+            Expression::Binary {
+                operator: BinaryOperator::StrictEqual,
+                left: Box::new(Expression::Identifier("x".to_string())),
+                right: Box::new(Expression::NumericLiteral(0)),
+            },
+            Expression::Unary {
+                operator: UnaryOperator::LogicalNot,
+                argument: Box::new(Expression::BooleanLiteral(false)),
+            },
+            Expression::Assignment {
+                operator: AssignmentOperator::Assign,
+                left: Box::new(Expression::Identifier("y".to_string())),
+                right: Box::new(Expression::NumericLiteral(10)),
+            },
+            Expression::Conditional {
+                test: Box::new(Expression::BooleanLiteral(true)),
+                consequent: Box::new(Expression::StringLiteral("a".to_string())),
+                alternate: Box::new(Expression::StringLiteral("b".to_string())),
+            },
+            Expression::Call {
+                callee: Box::new(Expression::Identifier("f".to_string())),
+                arguments: vec![],
+            },
+            Expression::Member {
+                object: Box::new(Expression::Identifier("o".to_string())),
+                property: Box::new(Expression::Identifier("p".to_string())),
+                computed: false,
+            },
+            Expression::This,
+            Expression::ArrayLiteral(vec![None, Some(Expression::NullLiteral)]),
+            Expression::ObjectLiteral(vec![]),
+            Expression::New {
+                callee: Box::new(Expression::Identifier("C".to_string())),
+                arguments: vec![],
+            },
+            Expression::TemplateLiteral {
+                quasis: vec!["a".to_string(), "b".to_string()],
+                expressions: vec![Expression::NumericLiteral(1)],
+            },
+        ];
+        for expr in expressions {
+            let json = serde_json::to_string(&expr).expect("serialize");
+            let restored: Expression = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(restored, expr);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Control-flow statement canonical values
+    // -----------------------------------------------------------------------
+
+    fn make_block_stmt(stmts: Vec<Statement>) -> BlockStatement {
+        BlockStatement {
+            body: stmts,
+            span: make_span(),
+        }
+    }
+
+    #[test]
+    fn statement_block_canonical_value() {
+        let stmt = Statement::Block(make_block_stmt(vec![make_expr_stmt(
+            Expression::NumericLiteral(1),
+        )]));
+        match stmt.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("block".to_string()))
+                );
+                assert!(map.contains_key("payload"));
+                assert!(map.contains_key("span"));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_if_canonical_value() {
+        let stmt = Statement::If(IfStatement {
+            condition: Expression::BooleanLiteral(true),
+            consequent: Box::new(make_expr_stmt(Expression::NumericLiteral(1))),
+            alternate: Some(Box::new(make_expr_stmt(Expression::NumericLiteral(2)))),
+            span: make_span(),
+        });
+        match stmt.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("if".to_string()))
+                );
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_if_without_alternate_canonical_value() {
+        let if_stmt = IfStatement {
+            condition: Expression::BooleanLiteral(true),
+            consequent: Box::new(make_expr_stmt(Expression::NullLiteral)),
+            alternate: None,
+            span: make_span(),
+        };
+        match if_stmt.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(map.get("alternate"), Some(&CanonicalValue::Null));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_for_canonical_value() {
+        let stmt = Statement::For(ForStatement {
+            init: Some(Box::new(make_var_stmt("i", Some(Expression::NumericLiteral(0))))),
+            condition: Some(Expression::Binary {
+                operator: BinaryOperator::LessThan,
+                left: Box::new(Expression::Identifier("i".to_string())),
+                right: Box::new(Expression::NumericLiteral(10)),
+            }),
+            update: Some(Expression::Assignment {
+                operator: AssignmentOperator::AddAssign,
+                left: Box::new(Expression::Identifier("i".to_string())),
+                right: Box::new(Expression::NumericLiteral(1)),
+            }),
+            body: Box::new(Statement::Block(make_block_stmt(vec![]))),
+            span: make_span(),
+        });
+        match stmt.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("for".to_string()))
+                );
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_for_infinite_loop_all_none() {
+        let for_stmt = ForStatement {
+            init: None,
+            condition: None,
+            update: None,
+            body: Box::new(Statement::Block(make_block_stmt(vec![]))),
+            span: make_span(),
+        };
+        match for_stmt.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(map.get("init"), Some(&CanonicalValue::Null));
+                assert_eq!(map.get("condition"), Some(&CanonicalValue::Null));
+                assert_eq!(map.get("update"), Some(&CanonicalValue::Null));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_for_in_canonical_value() {
+        let stmt = Statement::ForIn(ForInStatement {
+            binding: "key".to_string(),
+            binding_kind: Some(VariableDeclarationKind::Const),
+            object: Expression::Identifier("obj".to_string()),
+            body: Box::new(Statement::Block(make_block_stmt(vec![]))),
+            span: make_span(),
+        });
+        match stmt.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("for_in".to_string()))
+                );
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_for_of_canonical_value() {
+        let stmt = Statement::ForOf(ForOfStatement {
+            binding: "item".to_string(),
+            binding_kind: Some(VariableDeclarationKind::Let),
+            iterable: Expression::Identifier("arr".to_string()),
+            body: Box::new(Statement::Block(make_block_stmt(vec![]))),
+            span: make_span(),
+        });
+        match stmt.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("for_of".to_string()))
+                );
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_while_canonical_value() {
+        let stmt = Statement::While(WhileStatement {
+            condition: Expression::BooleanLiteral(true),
+            body: Box::new(Statement::Block(make_block_stmt(vec![]))),
+            span: make_span(),
+        });
+        match stmt.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("while".to_string()))
+                );
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_do_while_canonical_value() {
+        let stmt = Statement::DoWhile(DoWhileStatement {
+            body: Box::new(Statement::Block(make_block_stmt(vec![]))),
+            condition: Expression::BooleanLiteral(false),
+            span: make_span(),
+        });
+        match stmt.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("do_while".to_string()))
+                );
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_return_with_argument_canonical_value() {
+        let ret = ReturnStatement {
+            argument: Some(Expression::NumericLiteral(42)),
+            span: make_span(),
+        };
+        match ret.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert!(map.contains_key("argument"));
+                assert_ne!(map.get("argument"), Some(&CanonicalValue::Null));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_return_without_argument_canonical_value() {
+        let ret = ReturnStatement {
+            argument: None,
+            span: make_span(),
+        };
+        match ret.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(map.get("argument"), Some(&CanonicalValue::Null));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_throw_canonical_value() {
+        let stmt = Statement::Throw(ThrowStatement {
+            argument: Expression::New {
+                callee: Box::new(Expression::Identifier("Error".to_string())),
+                arguments: vec![Expression::StringLiteral("oops".to_string())],
+            },
+            span: make_span(),
+        });
+        match stmt.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("throw".to_string()))
+                );
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_try_catch_canonical_value() {
+        let stmt = Statement::TryCatch(TryCatchStatement {
+            block: make_block_stmt(vec![]),
+            handler: Some(CatchClause {
+                parameter: Some("e".to_string()),
+                body: make_block_stmt(vec![]),
+                span: make_span(),
+            }),
+            finalizer: Some(make_block_stmt(vec![])),
+            span: make_span(),
+        });
+        match stmt.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("try_catch".to_string()))
+                );
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn catch_clause_without_parameter() {
+        let clause = CatchClause {
+            parameter: None,
+            body: make_block_stmt(vec![]),
+            span: make_span(),
+        };
+        match clause.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(map.get("parameter"), Some(&CanonicalValue::Null));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_switch_canonical_value() {
+        let stmt = Statement::Switch(SwitchStatement {
+            discriminant: Expression::Identifier("x".to_string()),
+            cases: vec![
+                SwitchCase {
+                    test: Some(Expression::NumericLiteral(1)),
+                    consequent: vec![Statement::Break(BreakStatement {
+                        label: None,
+                        span: make_span(),
+                    })],
+                    span: make_span(),
+                },
+                SwitchCase {
+                    test: None, // default case
+                    consequent: vec![],
+                    span: make_span(),
+                },
+            ],
+            span: make_span(),
+        });
+        match stmt.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("switch".to_string()))
+                );
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn switch_case_default_has_null_test() {
+        let case = SwitchCase {
+            test: None,
+            consequent: vec![],
+            span: make_span(),
+        };
+        match case.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(map.get("test"), Some(&CanonicalValue::Null));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_break_with_label_canonical_value() {
+        let brk = BreakStatement {
+            label: Some("outer".to_string()),
+            span: make_span(),
+        };
+        match brk.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("label"),
+                    Some(&CanonicalValue::String("outer".to_string()))
+                );
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_continue_without_label_canonical_value() {
+        let cont = ContinueStatement {
+            label: None,
+            span: make_span(),
+        };
+        match cont.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(map.get("label"), Some(&CanonicalValue::Null));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn statement_function_declaration_canonical_value() {
+        let stmt = Statement::FunctionDeclaration(FunctionDeclaration {
+            name: Some("myFunc".to_string()),
+            params: vec![
+                FunctionParam {
+                    name: "a".to_string(),
+                    span: make_span(),
+                },
+                FunctionParam {
+                    name: "b".to_string(),
+                    span: make_span(),
+                },
+            ],
+            body: make_block_stmt(vec![Statement::Return(ReturnStatement {
+                argument: Some(Expression::Binary {
+                    operator: BinaryOperator::Add,
+                    left: Box::new(Expression::Identifier("a".to_string())),
+                    right: Box::new(Expression::Identifier("b".to_string())),
+                }),
+                span: make_span(),
+            })]),
+            is_async: false,
+            is_generator: true,
+            span: make_span(),
+        });
+        match stmt.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("kind"),
+                    Some(&CanonicalValue::String("function_declaration".to_string()))
+                );
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn function_declaration_async_generator_flags() {
+        let func = FunctionDeclaration {
+            name: None,
+            params: vec![],
+            body: make_block_stmt(vec![]),
+            is_async: true,
+            is_generator: true,
+            span: make_span(),
+        };
+        match func.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(map.get("is_async"), Some(&CanonicalValue::Bool(true)));
+                assert_eq!(map.get("is_generator"), Some(&CanonicalValue::Bool(true)));
+                assert_eq!(map.get("name"), Some(&CanonicalValue::Null));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn function_param_canonical_value() {
+        let param = FunctionParam {
+            name: "arg".to_string(),
+            span: make_span(),
+        };
+        match param.canonical_value() {
+            CanonicalValue::Map(map) => {
+                assert_eq!(
+                    map.get("name"),
+                    Some(&CanonicalValue::String("arg".to_string()))
+                );
+                assert!(map.contains_key("span"));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn all_statement_kinds_produce_unique_canonical_kinds() {
+        let span = make_span();
+        let stmts: Vec<Statement> = vec![
+            Statement::Import(ImportDeclaration {
+                binding: None,
+                source: "m".to_string(),
+                span: span.clone(),
+            }),
+            Statement::Export(ExportDeclaration {
+                kind: ExportKind::NamedClause("x".to_string()),
+                span: span.clone(),
+            }),
+            Statement::VariableDeclaration(VariableDeclaration {
+                kind: VariableDeclarationKind::Var,
+                declarations: vec![],
+                span: span.clone(),
+            }),
+            Statement::Expression(ExpressionStatement {
+                expression: Expression::NullLiteral,
+                span: span.clone(),
+            }),
+            Statement::Block(BlockStatement {
+                body: vec![],
+                span: span.clone(),
+            }),
+            Statement::If(IfStatement {
+                condition: Expression::BooleanLiteral(true),
+                consequent: Box::new(make_expr_stmt(Expression::NullLiteral)),
+                alternate: None,
+                span: span.clone(),
+            }),
+            Statement::For(ForStatement {
+                init: None,
+                condition: None,
+                update: None,
+                body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+                span: span.clone(),
+            }),
+            Statement::While(WhileStatement {
+                condition: Expression::BooleanLiteral(true),
+                body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+                span: span.clone(),
+            }),
+            Statement::DoWhile(DoWhileStatement {
+                body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+                condition: Expression::BooleanLiteral(true),
+                span: span.clone(),
+            }),
+            Statement::Return(ReturnStatement {
+                argument: None,
+                span: span.clone(),
+            }),
+            Statement::Throw(ThrowStatement {
+                argument: Expression::NullLiteral,
+                span: span.clone(),
+            }),
+            Statement::TryCatch(TryCatchStatement {
+                block: BlockStatement {
+                    body: vec![],
+                    span: span.clone(),
+                },
+                handler: None,
+                finalizer: None,
+                span: span.clone(),
+            }),
+            Statement::Switch(SwitchStatement {
+                discriminant: Expression::NullLiteral,
+                cases: vec![],
+                span: span.clone(),
+            }),
+            Statement::Break(BreakStatement {
+                label: None,
+                span: span.clone(),
+            }),
+            Statement::Continue(ContinueStatement {
+                label: None,
+                span: span.clone(),
+            }),
+            Statement::FunctionDeclaration(FunctionDeclaration {
+                name: None,
+                params: vec![],
+                body: BlockStatement {
+                    body: vec![],
+                    span: span.clone(),
+                },
+                is_async: false,
+                is_generator: false,
+                span: span.clone(),
+            }),
+            Statement::ForIn(ForInStatement {
+                binding: "k".to_string(),
+                binding_kind: None,
+                object: Expression::NullLiteral,
+                body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+                span: span.clone(),
+            }),
+            Statement::ForOf(ForOfStatement {
+                binding: "v".to_string(),
+                binding_kind: None,
+                iterable: Expression::NullLiteral,
+                body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+                span,
+            }),
+        ];
+        let mut kinds = std::collections::BTreeSet::new();
+        for stmt in &stmts {
+            match stmt.canonical_value() {
+                CanonicalValue::Map(map) => {
+                    if let Some(CanonicalValue::String(k)) = map.get("kind") {
+                        assert!(kinds.insert(k.clone()), "duplicate statement kind: {k}");
+                    } else {
+                        panic!("missing kind");
+                    }
+                }
+                _ => panic!("expected map"),
+            }
+        }
+        assert_eq!(kinds.len(), 18);
+    }
+
+    #[test]
+    fn statement_span_returns_correct_span_for_all_variants() {
+        let span = SourceSpan::new(7, 77, 3, 8, 9, 10);
+        let stmts: Vec<Statement> = vec![
+            Statement::Block(BlockStatement {
+                body: vec![],
+                span: span.clone(),
+            }),
+            Statement::If(IfStatement {
+                condition: Expression::BooleanLiteral(true),
+                consequent: Box::new(make_expr_stmt(Expression::NullLiteral)),
+                alternate: None,
+                span: span.clone(),
+            }),
+            Statement::For(ForStatement {
+                init: None,
+                condition: None,
+                update: None,
+                body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+                span: span.clone(),
+            }),
+            Statement::While(WhileStatement {
+                condition: Expression::BooleanLiteral(true),
+                body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+                span: span.clone(),
+            }),
+            Statement::DoWhile(DoWhileStatement {
+                body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+                condition: Expression::BooleanLiteral(true),
+                span: span.clone(),
+            }),
+            Statement::Return(ReturnStatement {
+                argument: None,
+                span: span.clone(),
+            }),
+            Statement::Throw(ThrowStatement {
+                argument: Expression::NullLiteral,
+                span: span.clone(),
+            }),
+            Statement::TryCatch(TryCatchStatement {
+                block: BlockStatement {
+                    body: vec![],
+                    span: make_span(),
+                },
+                handler: None,
+                finalizer: None,
+                span: span.clone(),
+            }),
+            Statement::Switch(SwitchStatement {
+                discriminant: Expression::NullLiteral,
+                cases: vec![],
+                span: span.clone(),
+            }),
+            Statement::Break(BreakStatement {
+                label: None,
+                span: span.clone(),
+            }),
+            Statement::Continue(ContinueStatement {
+                label: None,
+                span: span.clone(),
+            }),
+            Statement::FunctionDeclaration(FunctionDeclaration {
+                name: None,
+                params: vec![],
+                body: BlockStatement {
+                    body: vec![],
+                    span: make_span(),
+                },
+                is_async: false,
+                is_generator: false,
+                span: span.clone(),
+            }),
+            Statement::ForIn(ForInStatement {
+                binding: "k".to_string(),
+                binding_kind: None,
+                object: Expression::NullLiteral,
+                body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+                span: span.clone(),
+            }),
+            Statement::ForOf(ForOfStatement {
+                binding: "v".to_string(),
+                binding_kind: None,
+                iterable: Expression::NullLiteral,
+                body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+                span: span.clone(),
+            }),
+        ];
+        for stmt in &stmts {
+            assert_eq!(stmt.span(), &span, "span mismatch for {:?}", stmt);
+        }
+    }
+
+    #[test]
+    fn variable_declaration_kind_serde_roundtrip() {
+        for kind in [
+            VariableDeclarationKind::Var,
+            VariableDeclarationKind::Let,
+            VariableDeclarationKind::Const,
+        ] {
+            let json = serde_json::to_string(&kind).expect("serialize");
+            let restored: VariableDeclarationKind =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(restored, kind);
+        }
+    }
+
     #[test]
     fn syntax_tree_body_order_affects_hash() {
         let span = make_span();
@@ -2235,5 +3567,971 @@ mod tests {
             span,
         };
         assert_ne!(tree_ab.canonical_hash(), tree_ba.canonical_hash());
+    }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    // -----------------------------------------------------------------------
+    // BinaryOperator serde roundtrip (gap: only UnaryOp/AssignmentOp had it)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn binary_operator_serde_roundtrip_all() {
+        let ops = [
+            BinaryOperator::Add,
+            BinaryOperator::Subtract,
+            BinaryOperator::Multiply,
+            BinaryOperator::Divide,
+            BinaryOperator::Remainder,
+            BinaryOperator::Exponentiate,
+            BinaryOperator::Equal,
+            BinaryOperator::NotEqual,
+            BinaryOperator::StrictEqual,
+            BinaryOperator::StrictNotEqual,
+            BinaryOperator::LessThan,
+            BinaryOperator::LessThanOrEqual,
+            BinaryOperator::GreaterThan,
+            BinaryOperator::GreaterThanOrEqual,
+            BinaryOperator::LogicalAnd,
+            BinaryOperator::LogicalOr,
+            BinaryOperator::NullishCoalescing,
+            BinaryOperator::BitwiseAnd,
+            BinaryOperator::BitwiseOr,
+            BinaryOperator::BitwiseXor,
+            BinaryOperator::LeftShift,
+            BinaryOperator::RightShift,
+            BinaryOperator::UnsignedRightShift,
+            BinaryOperator::Instanceof,
+            BinaryOperator::In,
+        ];
+        for op in ops {
+            let json = serde_json::to_string(&op).expect("serialize");
+            let restored: BinaryOperator = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(restored, op);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // SourceSpan canonical_value content verification
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn source_span_canonical_value_content() {
+        let span = SourceSpan::new(10, 50, 3, 5, 7, 20);
+        if let CanonicalValue::Map(map) = span.canonical_value() {
+            assert_eq!(map["start_offset"], CanonicalValue::U64(10));
+            assert_eq!(map["end_offset"], CanonicalValue::U64(50));
+            assert_eq!(map["start_line"], CanonicalValue::U64(3));
+            assert_eq!(map["start_column"], CanonicalValue::U64(5));
+            assert_eq!(map["end_line"], CanonicalValue::U64(7));
+            assert_eq!(map["end_column"], CanonicalValue::U64(20));
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // SyntaxTree canonical_value goal content
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn syntax_tree_canonical_value_goal_string() {
+        let tree = SyntaxTree {
+            goal: ParseGoal::Module,
+            body: vec![],
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = tree.canonical_value() {
+            assert_eq!(
+                map["goal"],
+                CanonicalValue::String("module".to_string())
+            );
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // VariableDeclarator canonical_value (direct test, was only indirect)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn variable_declarator_canonical_value_with_init() {
+        let decl = VariableDeclarator {
+            name: "x".to_string(),
+            initializer: Some(Expression::NumericLiteral(42)),
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = decl.canonical_value() {
+            assert_eq!(map["name"], CanonicalValue::String("x".to_string()));
+            assert_ne!(map["initializer"], CanonicalValue::Null);
+            assert!(map.contains_key("span"));
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    #[test]
+    fn variable_declarator_canonical_value_without_init() {
+        let decl = VariableDeclarator {
+            name: "y".to_string(),
+            initializer: None,
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = decl.canonical_value() {
+            assert_eq!(map["initializer"], CanonicalValue::Null);
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ForIn/ForOf binding_kind None canonical_value
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn for_in_binding_kind_none_canonical_value() {
+        let stmt = ForInStatement {
+            binding: "k".to_string(),
+            binding_kind: None,
+            object: Expression::Identifier("obj".to_string()),
+            body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = stmt.canonical_value() {
+            assert_eq!(map["binding_kind"], CanonicalValue::Null);
+            assert_eq!(map["binding"], CanonicalValue::String("k".to_string()));
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    #[test]
+    fn for_of_binding_kind_none_canonical_value() {
+        let stmt = ForOfStatement {
+            binding: "v".to_string(),
+            binding_kind: None,
+            iterable: Expression::Identifier("arr".to_string()),
+            body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = stmt.canonical_value() {
+            assert_eq!(map["binding_kind"], CanonicalValue::Null);
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // TryCatch: no handler, no finalizer
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn try_catch_no_handler_no_finalizer_canonical_value() {
+        let tc = TryCatchStatement {
+            block: BlockStatement {
+                body: vec![],
+                span: make_span(),
+            },
+            handler: None,
+            finalizer: None,
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = tc.canonical_value() {
+            assert_eq!(map["handler"], CanonicalValue::Null);
+            assert_eq!(map["finalizer"], CanonicalValue::Null);
+            assert!(map.contains_key("block"));
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Break without label, Continue with label
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn break_without_label_canonical_value() {
+        let brk = BreakStatement {
+            label: None,
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = brk.canonical_value() {
+            assert_eq!(map["label"], CanonicalValue::Null);
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    #[test]
+    fn continue_with_label_canonical_value() {
+        let cont = ContinueStatement {
+            label: Some("loop1".to_string()),
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = cont.canonical_value() {
+            assert_eq!(
+                map["label"],
+                CanonicalValue::String("loop1".to_string())
+            );
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ArrowFunction serde roundtrip (gap: not in complex_expression_serde_roundtrip)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn expression_arrow_function_serde_roundtrip() {
+        let expr = Expression::ArrowFunction {
+            params: vec![FunctionParam {
+                name: "x".to_string(),
+                span: make_span(),
+            }],
+            body: ArrowBody::Expression(Box::new(Expression::Binary {
+                operator: BinaryOperator::Multiply,
+                left: Box::new(Expression::Identifier("x".to_string())),
+                right: Box::new(Expression::NumericLiteral(2)),
+            })),
+            is_async: true,
+        };
+        let json = serde_json::to_string(&expr).expect("serialize");
+        let restored: Expression = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(expr, restored);
+    }
+
+    #[test]
+    fn expression_arrow_function_block_body_serde_roundtrip() {
+        let expr = Expression::ArrowFunction {
+            params: vec![],
+            body: ArrowBody::Block(BlockStatement {
+                body: vec![Statement::Return(ReturnStatement {
+                    argument: Some(Expression::NumericLiteral(1)),
+                    span: make_span(),
+                })],
+                span: make_span(),
+            }),
+            is_async: false,
+        };
+        let json = serde_json::to_string(&expr).expect("serialize");
+        let restored: Expression = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(expr, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // SwitchCase with test present: verify test value is non-null
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn switch_case_with_test_canonical_value() {
+        let case = SwitchCase {
+            test: Some(Expression::NumericLiteral(42)),
+            consequent: vec![Statement::Break(BreakStatement {
+                label: None,
+                span: make_span(),
+            })],
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = case.canonical_value() {
+            assert_ne!(map["test"], CanonicalValue::Null);
+            if let CanonicalValue::Array(stmts) = &map["consequent"] {
+                assert_eq!(stmts.len(), 1);
+            } else {
+                panic!("expected array");
+            }
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // All 17 expression canonical kinds
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn all_expression_canonical_kinds_complete() {
+        let expressions: Vec<Expression> = vec![
+            Expression::Identifier("a".to_string()),
+            Expression::StringLiteral("s".to_string()),
+            Expression::NumericLiteral(0),
+            Expression::BooleanLiteral(true),
+            Expression::NullLiteral,
+            Expression::UndefinedLiteral,
+            Expression::Await(Box::new(Expression::NullLiteral)),
+            Expression::Binary {
+                operator: BinaryOperator::Add,
+                left: Box::new(Expression::NumericLiteral(1)),
+                right: Box::new(Expression::NumericLiteral(2)),
+            },
+            Expression::Unary {
+                operator: UnaryOperator::Negate,
+                argument: Box::new(Expression::NumericLiteral(1)),
+            },
+            Expression::Assignment {
+                operator: AssignmentOperator::Assign,
+                left: Box::new(Expression::Identifier("x".to_string())),
+                right: Box::new(Expression::NumericLiteral(1)),
+            },
+            Expression::Conditional {
+                test: Box::new(Expression::BooleanLiteral(true)),
+                consequent: Box::new(Expression::NumericLiteral(1)),
+                alternate: Box::new(Expression::NumericLiteral(0)),
+            },
+            Expression::Call {
+                callee: Box::new(Expression::Identifier("f".to_string())),
+                arguments: vec![],
+            },
+            Expression::Member {
+                object: Box::new(Expression::Identifier("o".to_string())),
+                property: Box::new(Expression::Identifier("p".to_string())),
+                computed: false,
+            },
+            Expression::This,
+            Expression::ArrayLiteral(vec![]),
+            Expression::ObjectLiteral(vec![]),
+            Expression::ArrowFunction {
+                params: vec![],
+                body: ArrowBody::Expression(Box::new(Expression::NullLiteral)),
+                is_async: false,
+            },
+            Expression::New {
+                callee: Box::new(Expression::Identifier("C".to_string())),
+                arguments: vec![],
+            },
+            Expression::TemplateLiteral {
+                quasis: vec!["a".to_string()],
+                expressions: vec![],
+            },
+            Expression::Raw("r".to_string()),
+        ];
+        let mut kinds = std::collections::BTreeSet::new();
+        for expr in &expressions {
+            if let CanonicalValue::Map(map) = expr.canonical_value() {
+                if let Some(CanonicalValue::String(k)) = map.get("kind") {
+                    assert!(kinds.insert(k.clone()), "duplicate kind: {k}");
+                } else {
+                    panic!("missing kind");
+                }
+            } else {
+                panic!("expected map");
+            }
+        }
+        assert_eq!(kinds.len(), 20, "all 20 expression canonical kinds must be unique");
+    }
+
+    // -----------------------------------------------------------------------
+    // Statement serde roundtrips for types not individually tested
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn control_flow_statements_serde_roundtrip() {
+        let stmts: Vec<Statement> = vec![
+            Statement::Block(BlockStatement {
+                body: vec![make_expr_stmt(Expression::NullLiteral)],
+                span: make_span(),
+            }),
+            Statement::If(IfStatement {
+                condition: Expression::BooleanLiteral(true),
+                consequent: Box::new(make_expr_stmt(Expression::NumericLiteral(1))),
+                alternate: Some(Box::new(make_expr_stmt(Expression::NumericLiteral(2)))),
+                span: make_span(),
+            }),
+            Statement::For(ForStatement {
+                init: None,
+                condition: Some(Expression::BooleanLiteral(true)),
+                update: None,
+                body: Box::new(Statement::Break(BreakStatement {
+                    label: None,
+                    span: make_span(),
+                })),
+                span: make_span(),
+            }),
+            Statement::While(WhileStatement {
+                condition: Expression::BooleanLiteral(false),
+                body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+                span: make_span(),
+            }),
+            Statement::DoWhile(DoWhileStatement {
+                body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+                condition: Expression::BooleanLiteral(true),
+                span: make_span(),
+            }),
+            Statement::Return(ReturnStatement {
+                argument: Some(Expression::NumericLiteral(0)),
+                span: make_span(),
+            }),
+            Statement::Throw(ThrowStatement {
+                argument: Expression::StringLiteral("err".to_string()),
+                span: make_span(),
+            }),
+            Statement::TryCatch(TryCatchStatement {
+                block: BlockStatement {
+                    body: vec![],
+                    span: make_span(),
+                },
+                handler: Some(CatchClause {
+                    parameter: Some("e".to_string()),
+                    body: BlockStatement {
+                        body: vec![],
+                        span: make_span(),
+                    },
+                    span: make_span(),
+                }),
+                finalizer: None,
+                span: make_span(),
+            }),
+            Statement::Switch(SwitchStatement {
+                discriminant: Expression::Identifier("x".to_string()),
+                cases: vec![SwitchCase {
+                    test: Some(Expression::NumericLiteral(1)),
+                    consequent: vec![],
+                    span: make_span(),
+                }],
+                span: make_span(),
+            }),
+            Statement::Break(BreakStatement {
+                label: Some("lbl".to_string()),
+                span: make_span(),
+            }),
+            Statement::Continue(ContinueStatement {
+                label: None,
+                span: make_span(),
+            }),
+            Statement::FunctionDeclaration(FunctionDeclaration {
+                name: Some("f".to_string()),
+                params: vec![FunctionParam {
+                    name: "a".to_string(),
+                    span: make_span(),
+                }],
+                body: BlockStatement {
+                    body: vec![],
+                    span: make_span(),
+                },
+                is_async: true,
+                is_generator: false,
+                span: make_span(),
+            }),
+            Statement::ForIn(ForInStatement {
+                binding: "k".to_string(),
+                binding_kind: Some(VariableDeclarationKind::Let),
+                object: Expression::Identifier("obj".to_string()),
+                body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+                span: make_span(),
+            }),
+            Statement::ForOf(ForOfStatement {
+                binding: "v".to_string(),
+                binding_kind: Some(VariableDeclarationKind::Const),
+                iterable: Expression::Identifier("arr".to_string()),
+                body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+                span: make_span(),
+            }),
+        ];
+        for stmt in stmts {
+            let json = serde_json::to_string(&stmt).expect("serialize");
+            let restored: Statement = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(restored, stmt);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // VariableDeclaration canonical_value content verification
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn variable_declaration_canonical_value_content() {
+        let decl = VariableDeclaration {
+            kind: VariableDeclarationKind::Const,
+            declarations: vec![
+                VariableDeclarator {
+                    name: "a".to_string(),
+                    initializer: Some(Expression::NumericLiteral(1)),
+                    span: make_span(),
+                },
+                VariableDeclarator {
+                    name: "b".to_string(),
+                    initializer: Some(Expression::NumericLiteral(2)),
+                    span: make_span(),
+                },
+            ],
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = decl.canonical_value() {
+            assert_eq!(map["kind"], CanonicalValue::String("const".to_string()));
+            if let CanonicalValue::Array(decls) = &map["declarations"] {
+                assert_eq!(decls.len(), 2);
+            } else {
+                panic!("expected array");
+            }
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // BinaryOperator precedence all levels
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn binary_operator_precedence_all_levels_covered() {
+        // Verify every operator has a non-zero precedence
+        let ops = [
+            BinaryOperator::Add,
+            BinaryOperator::Subtract,
+            BinaryOperator::Multiply,
+            BinaryOperator::Divide,
+            BinaryOperator::Remainder,
+            BinaryOperator::Exponentiate,
+            BinaryOperator::Equal,
+            BinaryOperator::NotEqual,
+            BinaryOperator::StrictEqual,
+            BinaryOperator::StrictNotEqual,
+            BinaryOperator::LessThan,
+            BinaryOperator::LessThanOrEqual,
+            BinaryOperator::GreaterThan,
+            BinaryOperator::GreaterThanOrEqual,
+            BinaryOperator::LogicalAnd,
+            BinaryOperator::LogicalOr,
+            BinaryOperator::NullishCoalescing,
+            BinaryOperator::BitwiseAnd,
+            BinaryOperator::BitwiseOr,
+            BinaryOperator::BitwiseXor,
+            BinaryOperator::LeftShift,
+            BinaryOperator::RightShift,
+            BinaryOperator::UnsignedRightShift,
+            BinaryOperator::Instanceof,
+            BinaryOperator::In,
+        ];
+        for op in ops {
+            assert!(op.precedence() > 0, "{:?} has zero precedence", op);
+        }
+        // Same-group operators have equal precedence
+        assert_eq!(
+            BinaryOperator::Add.precedence(),
+            BinaryOperator::Subtract.precedence()
+        );
+        assert_eq!(
+            BinaryOperator::Multiply.precedence(),
+            BinaryOperator::Divide.precedence()
+        );
+        assert_eq!(
+            BinaryOperator::Multiply.precedence(),
+            BinaryOperator::Remainder.precedence()
+        );
+        assert_eq!(
+            BinaryOperator::Equal.precedence(),
+            BinaryOperator::StrictNotEqual.precedence()
+        );
+        assert_eq!(
+            BinaryOperator::Instanceof.precedence(),
+            BinaryOperator::In.precedence()
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Expression empty containers canonical_value
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn expression_empty_array_canonical_value() {
+        let expr = Expression::ArrayLiteral(vec![]);
+        if let CanonicalValue::Map(map) = expr.canonical_value() {
+            if let CanonicalValue::Array(elems) = &map["elements"] {
+                assert!(elems.is_empty());
+            } else {
+                panic!("expected array");
+            }
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    #[test]
+    fn expression_empty_object_canonical_value() {
+        let expr = Expression::ObjectLiteral(vec![]);
+        if let CanonicalValue::Map(map) = expr.canonical_value() {
+            if let CanonicalValue::Array(props) = &map["properties"] {
+                assert!(props.is_empty());
+            } else {
+                panic!("expected array");
+            }
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    #[test]
+    fn expression_template_literal_no_expressions() {
+        let expr = Expression::TemplateLiteral {
+            quasis: vec!["plain text".to_string()],
+            expressions: vec![],
+        };
+        if let CanonicalValue::Map(map) = expr.canonical_value() {
+            if let CanonicalValue::Array(q) = &map["quasis"] {
+                assert_eq!(q.len(), 1);
+            } else {
+                panic!("expected array");
+            }
+            if let CanonicalValue::Array(e) = &map["expressions"] {
+                assert!(e.is_empty());
+            } else {
+                panic!("expected array");
+            }
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    #[test]
+    fn expression_call_no_args_canonical_value() {
+        let expr = Expression::Call {
+            callee: Box::new(Expression::Identifier("f".to_string())),
+            arguments: vec![],
+        };
+        if let CanonicalValue::Map(map) = expr.canonical_value() {
+            if let CanonicalValue::Array(args) = &map["arguments"] {
+                assert!(args.is_empty());
+            } else {
+                panic!("expected array");
+            }
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // CatchClause serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn catch_clause_serde_roundtrip() {
+        let clause = CatchClause {
+            parameter: Some("err".to_string()),
+            body: BlockStatement {
+                body: vec![make_expr_stmt(Expression::Identifier("err".to_string()))],
+                span: make_span(),
+            },
+            span: make_span(),
+        };
+        let json = serde_json::to_string(&clause).expect("serialize");
+        let restored: CatchClause = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(clause, restored);
+    }
+
+    // -- Enrichment: PearlTower 2026-03-02 batch 2 --
+
+    // -----------------------------------------------------------------------
+    // Standalone serde roundtrips for sub-types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn object_property_serde_roundtrip() {
+        let prop = ObjectProperty {
+            key: Expression::StringLiteral("name".to_string()),
+            value: Expression::NumericLiteral(42),
+            computed: true,
+            shorthand: false,
+        };
+        let json = serde_json::to_string(&prop).expect("serialize");
+        let restored: ObjectProperty = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(prop, restored);
+    }
+
+    #[test]
+    fn function_param_serde_roundtrip() {
+        let param = FunctionParam {
+            name: "arg".to_string(),
+            span: SourceSpan::new(5, 8, 1, 6, 1, 9),
+        };
+        let json = serde_json::to_string(&param).expect("serialize");
+        let restored: FunctionParam = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(param, restored);
+    }
+
+    #[test]
+    fn arrow_body_expression_serde_roundtrip() {
+        let body = ArrowBody::Expression(Box::new(Expression::Binary {
+            operator: BinaryOperator::Add,
+            left: Box::new(Expression::NumericLiteral(1)),
+            right: Box::new(Expression::NumericLiteral(2)),
+        }));
+        let json = serde_json::to_string(&body).expect("serialize");
+        let restored: ArrowBody = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(body, restored);
+    }
+
+    #[test]
+    fn arrow_body_block_serde_roundtrip() {
+        let body = ArrowBody::Block(BlockStatement {
+            body: vec![Statement::Return(ReturnStatement {
+                argument: Some(Expression::StringLiteral("ok".to_string())),
+                span: make_span(),
+            })],
+            span: make_span(),
+        });
+        let json = serde_json::to_string(&body).expect("serialize");
+        let restored: ArrowBody = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(body, restored);
+    }
+
+    #[test]
+    fn switch_case_serde_roundtrip() {
+        let case = SwitchCase {
+            test: Some(Expression::StringLiteral("a".to_string())),
+            consequent: vec![
+                make_expr_stmt(Expression::Identifier("doA".to_string())),
+                Statement::Break(BreakStatement {
+                    label: None,
+                    span: make_span(),
+                }),
+            ],
+            span: make_span(),
+        };
+        let json = serde_json::to_string(&case).expect("serialize");
+        let restored: SwitchCase = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(case, restored);
+    }
+
+    #[test]
+    fn export_kind_serde_roundtrip_both_variants() {
+        let default = ExportKind::Default(Expression::Identifier("main".to_string()));
+        let json_d = serde_json::to_string(&default).expect("serialize");
+        let restored_d: ExportKind = serde_json::from_str(&json_d).expect("deserialize");
+        assert_eq!(default, restored_d);
+
+        let named = ExportKind::NamedClause("{ foo, bar }".to_string());
+        let json_n = serde_json::to_string(&named).expect("serialize");
+        let restored_n: ExportKind = serde_json::from_str(&json_n).expect("deserialize");
+        assert_eq!(named, restored_n);
+    }
+
+    #[test]
+    fn import_declaration_serde_roundtrip_with_binding() {
+        let import = ImportDeclaration {
+            binding: Some("React".to_string()),
+            source: "react".to_string(),
+            span: SourceSpan::new(0, 25, 1, 1, 1, 26),
+        };
+        let json = serde_json::to_string(&import).expect("serialize");
+        let restored: ImportDeclaration = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(import, restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // Canonical value content verification for control-flow types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn for_statement_canonical_value_all_fields_present() {
+        let for_stmt = ForStatement {
+            init: Some(Box::new(make_var_stmt("i", Some(Expression::NumericLiteral(0))))),
+            condition: Some(Expression::Binary {
+                operator: BinaryOperator::LessThan,
+                left: Box::new(Expression::Identifier("i".to_string())),
+                right: Box::new(Expression::NumericLiteral(10)),
+            }),
+            update: Some(Expression::Assignment {
+                operator: AssignmentOperator::AddAssign,
+                left: Box::new(Expression::Identifier("i".to_string())),
+                right: Box::new(Expression::NumericLiteral(1)),
+            }),
+            body: Box::new(Statement::Block(make_block_stmt(vec![]))),
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = for_stmt.canonical_value() {
+            assert_ne!(map["init"], CanonicalValue::Null);
+            assert_ne!(map["condition"], CanonicalValue::Null);
+            assert_ne!(map["update"], CanonicalValue::Null);
+            assert!(map.contains_key("body"));
+            assert!(map.contains_key("span"));
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    #[test]
+    fn while_statement_canonical_value_content() {
+        let stmt = WhileStatement {
+            condition: Expression::BooleanLiteral(true),
+            body: Box::new(Statement::Block(make_block_stmt(vec![]))),
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = stmt.canonical_value() {
+            assert!(map.contains_key("condition"));
+            assert!(map.contains_key("body"));
+            assert!(map.contains_key("span"));
+            assert_ne!(map["condition"], CanonicalValue::Null);
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    #[test]
+    fn do_while_statement_canonical_value_content() {
+        let stmt = DoWhileStatement {
+            body: Box::new(Statement::Block(make_block_stmt(vec![]))),
+            condition: Expression::BooleanLiteral(false),
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = stmt.canonical_value() {
+            assert!(map.contains_key("body"));
+            assert!(map.contains_key("condition"));
+            assert!(map.contains_key("span"));
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    #[test]
+    fn catch_clause_with_parameter_canonical_value_content() {
+        let clause = CatchClause {
+            parameter: Some("err".to_string()),
+            body: make_block_stmt(vec![]),
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = clause.canonical_value() {
+            assert_eq!(
+                map["parameter"],
+                CanonicalValue::String("err".to_string())
+            );
+            assert!(map.contains_key("body"));
+            assert!(map.contains_key("span"));
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    #[test]
+    fn function_declaration_canonical_value_content() {
+        let func = FunctionDeclaration {
+            name: Some("add".to_string()),
+            params: vec![
+                FunctionParam {
+                    name: "a".to_string(),
+                    span: make_span(),
+                },
+                FunctionParam {
+                    name: "b".to_string(),
+                    span: make_span(),
+                },
+            ],
+            body: make_block_stmt(vec![Statement::Return(ReturnStatement {
+                argument: Some(Expression::Binary {
+                    operator: BinaryOperator::Add,
+                    left: Box::new(Expression::Identifier("a".to_string())),
+                    right: Box::new(Expression::Identifier("b".to_string())),
+                }),
+                span: make_span(),
+            })]),
+            is_async: false,
+            is_generator: false,
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = func.canonical_value() {
+            assert_eq!(
+                map["name"],
+                CanonicalValue::String("add".to_string())
+            );
+            assert_eq!(map["is_async"], CanonicalValue::Bool(false));
+            assert_eq!(map["is_generator"], CanonicalValue::Bool(false));
+            if let CanonicalValue::Array(params) = &map["params"] {
+                assert_eq!(params.len(), 2);
+            } else {
+                panic!("expected params array");
+            }
+            assert!(map.contains_key("body"));
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    #[test]
+    fn block_statement_canonical_value_body_content() {
+        let block = BlockStatement {
+            body: vec![
+                make_expr_stmt(Expression::NumericLiteral(1)),
+                make_expr_stmt(Expression::NumericLiteral(2)),
+            ],
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = block.canonical_value() {
+            if let CanonicalValue::Array(stmts) = &map["body"] {
+                assert_eq!(stmts.len(), 2);
+            } else {
+                panic!("expected body array");
+            }
+            assert!(map.contains_key("span"));
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Hash sensitivity to span changes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn syntax_tree_different_spans_produce_different_hashes() {
+        let body = vec![make_expr_stmt(Expression::NumericLiteral(1))];
+        let tree1 = SyntaxTree {
+            goal: ParseGoal::Script,
+            body: body.clone(),
+            span: SourceSpan::new(0, 10, 1, 1, 1, 11),
+        };
+        let tree2 = SyntaxTree {
+            goal: ParseGoal::Script,
+            body,
+            span: SourceSpan::new(0, 20, 1, 1, 2, 1),
+        };
+        assert_ne!(tree1.canonical_hash(), tree2.canonical_hash());
+    }
+
+    // -----------------------------------------------------------------------
+    // ForIn/ForOf binding_kind Some content verification
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn for_in_binding_kind_some_canonical_value_content() {
+        let stmt = ForInStatement {
+            binding: "key".to_string(),
+            binding_kind: Some(VariableDeclarationKind::Const),
+            object: Expression::Identifier("obj".to_string()),
+            body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = stmt.canonical_value() {
+            assert_eq!(
+                map["binding"],
+                CanonicalValue::String("key".to_string())
+            );
+            assert_ne!(map["binding_kind"], CanonicalValue::Null);
+            assert!(map.contains_key("object"));
+            assert!(map.contains_key("body"));
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    #[test]
+    fn for_of_binding_kind_some_canonical_value_content() {
+        let stmt = ForOfStatement {
+            binding: "val".to_string(),
+            binding_kind: Some(VariableDeclarationKind::Let),
+            iterable: Expression::Identifier("items".to_string()),
+            body: Box::new(make_expr_stmt(Expression::NullLiteral)),
+            span: make_span(),
+        };
+        if let CanonicalValue::Map(map) = stmt.canonical_value() {
+            assert_eq!(
+                map["binding"],
+                CanonicalValue::String("val".to_string())
+            );
+            assert_ne!(map["binding_kind"], CanonicalValue::Null);
+            assert!(map.contains_key("iterable"));
+            assert!(map.contains_key("body"));
+        } else {
+            panic!("expected map");
+        }
     }
 }

@@ -1924,6 +1924,16 @@ fn estimate_statement_allocation_count(statement: &Statement) -> u64 {
             .saturating_add(estimate_statement_vec_allocation_count(
                 &function_decl.body.body,
             )),
+        Statement::ForIn(for_in_stmt) => 1_u64
+            .saturating_add(estimate_expression_allocation_count(&for_in_stmt.object))
+            .saturating_add(estimate_statement_allocation_count(
+                for_in_stmt.body.as_ref(),
+            )),
+        Statement::ForOf(for_of_stmt) => 1_u64
+            .saturating_add(estimate_expression_allocation_count(&for_of_stmt.iterable))
+            .saturating_add(estimate_statement_allocation_count(
+                for_of_stmt.body.as_ref(),
+            )),
     }
 }
 

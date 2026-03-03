@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ast::SyntaxTree;
+use crate::ast::{AssignmentOperator, BinaryOperator, SyntaxTree, UnaryOperator};
 use crate::deterministic_serde::{self, CanonicalValue};
 use crate::hash_tiers::ContentHash;
 use crate::ifc_artifacts::Label;
@@ -352,6 +352,41 @@ pub enum Ir1Op {
     Await,
     /// No-op placeholder.
     Nop,
+    /// Binary operation: pop two operands, push result.
+    BinaryOp { operator: BinaryOperator },
+    /// Unary operation: pop operand, push result.
+    UnaryOp { operator: UnaryOperator },
+    /// Assignment: store top-of-stack to binding, with compound operator.
+    AssignOp {
+        binding_id: BindingId,
+        operator: AssignmentOperator,
+    },
+    /// Jump label marker (jump target in linear IR).
+    Label { id: u32 },
+    /// Unconditional jump to label.
+    Jump { label_id: u32 },
+    /// Jump if top-of-stack is falsy.
+    JumpIfFalsy { label_id: u32 },
+    /// Object property read: key on top-of-stack, object below.
+    GetProperty { key: String },
+    /// Object property write: value on top, key below, object below that.
+    SetProperty { key: String },
+    /// Create a new array from top N elements.
+    NewArray { count: u32 },
+    /// Create a new object from top N key-value pairs.
+    NewObject { count: u32 },
+    /// Throw the value on top-of-stack.
+    Throw,
+    /// Load `this` binding.
+    LoadThis,
+    /// Declare a function and bind it.
+    DeclareFunction { name: String, binding_id: BindingId },
+    /// Begin a try block; on exception, jump to catch_label.
+    BeginTry { catch_label: u32 },
+    /// End a try block.
+    EndTry,
+    /// Pop/discard top-of-stack value.
+    Pop,
 }
 
 impl Ir1Op {
@@ -427,6 +462,137 @@ impl Ir1Op {
             }
             Self::Nop => {
                 map.insert("op".to_string(), CanonicalValue::String("nop".to_string()));
+            }
+            Self::BinaryOp { operator } => {
+                map.insert(
+                    "op".to_string(),
+                    CanonicalValue::String("binary_op".to_string()),
+                );
+                map.insert(
+                    "operator".to_string(),
+                    CanonicalValue::String(operator.as_str().to_string()),
+                );
+            }
+            Self::UnaryOp { operator } => {
+                map.insert(
+                    "op".to_string(),
+                    CanonicalValue::String("unary_op".to_string()),
+                );
+                map.insert(
+                    "operator".to_string(),
+                    CanonicalValue::String(operator.as_str().to_string()),
+                );
+            }
+            Self::AssignOp {
+                binding_id,
+                operator,
+            } => {
+                map.insert(
+                    "op".to_string(),
+                    CanonicalValue::String("assign_op".to_string()),
+                );
+                map.insert(
+                    "binding_id".to_string(),
+                    CanonicalValue::U64(u64::from(*binding_id)),
+                );
+                map.insert(
+                    "operator".to_string(),
+                    CanonicalValue::String(operator.as_str().to_string()),
+                );
+            }
+            Self::Label { id } => {
+                map.insert(
+                    "op".to_string(),
+                    CanonicalValue::String("label".to_string()),
+                );
+                map.insert("id".to_string(), CanonicalValue::U64(u64::from(*id)));
+            }
+            Self::Jump { label_id } => {
+                map.insert("op".to_string(), CanonicalValue::String("jump".to_string()));
+                map.insert(
+                    "label_id".to_string(),
+                    CanonicalValue::U64(u64::from(*label_id)),
+                );
+            }
+            Self::JumpIfFalsy { label_id } => {
+                map.insert(
+                    "op".to_string(),
+                    CanonicalValue::String("jump_if_falsy".to_string()),
+                );
+                map.insert(
+                    "label_id".to_string(),
+                    CanonicalValue::U64(u64::from(*label_id)),
+                );
+            }
+            Self::GetProperty { key } => {
+                map.insert(
+                    "op".to_string(),
+                    CanonicalValue::String("get_property".to_string()),
+                );
+                map.insert("key".to_string(), CanonicalValue::String(key.clone()));
+            }
+            Self::SetProperty { key } => {
+                map.insert(
+                    "op".to_string(),
+                    CanonicalValue::String("set_property".to_string()),
+                );
+                map.insert("key".to_string(), CanonicalValue::String(key.clone()));
+            }
+            Self::NewArray { count } => {
+                map.insert(
+                    "op".to_string(),
+                    CanonicalValue::String("new_array".to_string()),
+                );
+                map.insert("count".to_string(), CanonicalValue::U64(u64::from(*count)));
+            }
+            Self::NewObject { count } => {
+                map.insert(
+                    "op".to_string(),
+                    CanonicalValue::String("new_object".to_string()),
+                );
+                map.insert("count".to_string(), CanonicalValue::U64(u64::from(*count)));
+            }
+            Self::Throw => {
+                map.insert(
+                    "op".to_string(),
+                    CanonicalValue::String("throw".to_string()),
+                );
+            }
+            Self::LoadThis => {
+                map.insert(
+                    "op".to_string(),
+                    CanonicalValue::String("load_this".to_string()),
+                );
+            }
+            Self::DeclareFunction { name, binding_id } => {
+                map.insert(
+                    "op".to_string(),
+                    CanonicalValue::String("declare_function".to_string()),
+                );
+                map.insert("name".to_string(), CanonicalValue::String(name.clone()));
+                map.insert(
+                    "binding_id".to_string(),
+                    CanonicalValue::U64(u64::from(*binding_id)),
+                );
+            }
+            Self::BeginTry { catch_label } => {
+                map.insert(
+                    "op".to_string(),
+                    CanonicalValue::String("begin_try".to_string()),
+                );
+                map.insert(
+                    "catch_label".to_string(),
+                    CanonicalValue::U64(u64::from(*catch_label)),
+                );
+            }
+            Self::EndTry => {
+                map.insert(
+                    "op".to_string(),
+                    CanonicalValue::String("end_try".to_string()),
+                );
+            }
+            Self::Pop => {
+                map.insert("op".to_string(), CanonicalValue::String("pop".to_string()));
             }
         }
         CanonicalValue::Map(map)

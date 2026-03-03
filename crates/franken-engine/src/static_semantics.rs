@@ -70,6 +70,18 @@ pub enum StaticErrorKind {
     ReservedWordBinding,
     /// Redeclaration of an import binding.
     ImportRedeclaration,
+    /// Assignment to a `const` binding.
+    AssignmentToConst,
+    /// `return` statement outside a function body.
+    ReturnOutsideFunction,
+    /// `break` statement outside a loop or switch.
+    BreakOutsideLoop,
+    /// `continue` statement outside a loop.
+    ContinueOutsideLoop,
+    /// Duplicate parameter name in strict-mode function.
+    DuplicateParameter,
+    /// `delete` applied to an identifier in strict mode.
+    DeleteOfIdentifier,
 }
 
 impl StaticErrorKind {
@@ -86,6 +98,12 @@ impl StaticErrorKind {
             Self::EmptyDeclaratorList => "empty_declarator_list",
             Self::ReservedWordBinding => "reserved_word_binding",
             Self::ImportRedeclaration => "import_redeclaration",
+            Self::AssignmentToConst => "assignment_to_const",
+            Self::ReturnOutsideFunction => "return_outside_function",
+            Self::BreakOutsideLoop => "break_outside_loop",
+            Self::ContinueOutsideLoop => "continue_outside_loop",
+            Self::DuplicateParameter => "duplicate_parameter",
+            Self::DeleteOfIdentifier => "delete_of_identifier",
         }
     }
 
@@ -103,6 +121,12 @@ impl StaticErrorKind {
             Self::EmptyDeclaratorList => "FE-STATIC-DIAG-EMPTY-DECL-0009",
             Self::ReservedWordBinding => "FE-STATIC-DIAG-RESERVED-0010",
             Self::ImportRedeclaration => "FE-STATIC-DIAG-IMPORT-REDECL-0011",
+            Self::AssignmentToConst => "FE-STATIC-DIAG-ASSIGN-CONST-0012",
+            Self::ReturnOutsideFunction => "FE-STATIC-DIAG-RETURN-OUTSIDE-0013",
+            Self::BreakOutsideLoop => "FE-STATIC-DIAG-BREAK-OUTSIDE-0014",
+            Self::ContinueOutsideLoop => "FE-STATIC-DIAG-CONTINUE-OUTSIDE-0015",
+            Self::DuplicateParameter => "FE-STATIC-DIAG-DUP-PARAM-0016",
+            Self::DeleteOfIdentifier => "FE-STATIC-DIAG-DELETE-IDENT-0017",
         }
     }
 }
@@ -300,6 +324,14 @@ struct AnalyzerState {
     export_names: BTreeSet<String>,
     /// Import bindings (name -> span) for redeclaration detection.
     import_bindings: BTreeMap<String, SourceSpan>,
+    /// Names of `const` bindings in scope (for assignment-to-const detection).
+    const_bindings: BTreeSet<String>,
+    /// Whether we are currently inside a function body.
+    in_function: bool,
+    /// Whether we are currently inside a loop body.
+    in_loop: bool,
+    /// Whether we are currently inside a switch statement.
+    in_switch: bool,
 }
 
 impl AnalyzerState {
@@ -313,6 +345,10 @@ impl AnalyzerState {
             next_scope_index: 0,
             export_names: BTreeSet::new(),
             import_bindings: BTreeMap::new(),
+            const_bindings: BTreeSet::new(),
+            in_function: false,
+            in_loop: false,
+            in_switch: false,
         }
     }
 
@@ -505,9 +541,28 @@ fn analyze_statement(
         }
 
         Statement::Block(block) => {
+            let block_scope_id = state.alloc_scope_id(scope_id.depth + 1);
+            let mut block_bindings: Vec<ResolvedBinding> = Vec::new();
+            let mut block_lex: BTreeMap<String, SourceSpan> = BTreeMap::new();
+            let mut block_var: BTreeMap<String, SourceSpan> = var_names.clone();
             for child in &block.body {
-                analyze_statement(state, child, scope_id, bindings, lexical_names, var_names);
+                analyze_statement(
+                    state,
+                    child,
+                    block_scope_id,
+                    &mut block_bindings,
+                    &mut block_lex,
+                    &mut block_var,
+                );
             }
+            let block_scope = ScopeNode {
+                scope_id: block_scope_id,
+                parent: Some(scope_id),
+                kind: ScopeKind::Block,
+                bindings: block_bindings.clone(),
+            };
+            state.scopes.push(block_scope);
+            state.bindings.extend(block_bindings);
         }
 
         Statement::If(if_stmt) => {
@@ -526,8 +581,19 @@ fn analyze_statement(
         }
 
         Statement::For(for_stmt) => {
+            let for_scope_id = state.alloc_scope_id(scope_id.depth + 1);
+            let mut for_bindings: Vec<ResolvedBinding> = Vec::new();
+            let mut for_lex: BTreeMap<String, SourceSpan> = BTreeMap::new();
+            let mut for_var: BTreeMap<String, SourceSpan> = var_names.clone();
             if let Some(ref init) = for_stmt.init {
-                analyze_statement(state, init, scope_id, bindings, lexical_names, var_names);
+                analyze_statement(
+                    state,
+                    init,
+                    for_scope_id,
+                    &mut for_bindings,
+                    &mut for_lex,
+                    &mut for_var,
+                );
             }
             if let Some(ref cond) = for_stmt.condition {
                 check_await_in_expression(state, cond, &for_stmt.span);
@@ -535,18 +601,31 @@ fn analyze_statement(
             if let Some(ref update) = for_stmt.update {
                 check_await_in_expression(state, update, &for_stmt.span);
             }
+            let prev_in_loop = state.in_loop;
+            state.in_loop = true;
             analyze_statement(
                 state,
                 &for_stmt.body,
-                scope_id,
-                bindings,
-                lexical_names,
-                var_names,
+                for_scope_id,
+                &mut for_bindings,
+                &mut for_lex,
+                &mut for_var,
             );
+            state.in_loop = prev_in_loop;
+            let for_scope = ScopeNode {
+                scope_id: for_scope_id,
+                parent: Some(scope_id),
+                kind: ScopeKind::Block,
+                bindings: for_bindings.clone(),
+            };
+            state.scopes.push(for_scope);
+            state.bindings.extend(for_bindings);
         }
 
         Statement::While(while_stmt) => {
             check_await_in_expression(state, &while_stmt.condition, &while_stmt.span);
+            let prev_in_loop = state.in_loop;
+            state.in_loop = true;
             analyze_statement(
                 state,
                 &while_stmt.body,
@@ -555,9 +634,12 @@ fn analyze_statement(
                 lexical_names,
                 var_names,
             );
+            state.in_loop = prev_in_loop;
         }
 
         Statement::DoWhile(do_while) => {
+            let prev_in_loop = state.in_loop;
+            state.in_loop = true;
             analyze_statement(
                 state,
                 &do_while.body,
@@ -566,10 +648,18 @@ fn analyze_statement(
                 lexical_names,
                 var_names,
             );
+            state.in_loop = prev_in_loop;
             check_await_in_expression(state, &do_while.condition, &do_while.span);
         }
 
         Statement::Return(ret) => {
+            if !state.in_function {
+                state.push_error(
+                    StaticErrorKind::ReturnOutsideFunction,
+                    "return statement is not allowed outside a function",
+                    ret.span.clone(),
+                );
+            }
             if let Some(ref arg) = ret.argument {
                 check_await_in_expression(state, arg, &ret.span);
             }
@@ -584,9 +674,38 @@ fn analyze_statement(
                 analyze_statement(state, child, scope_id, bindings, lexical_names, var_names);
             }
             if let Some(ref handler) = tc.handler {
-                for child in &handler.body.body {
-                    analyze_statement(state, child, scope_id, bindings, lexical_names, var_names);
+                let catch_scope_id = state.alloc_scope_id(scope_id.depth + 1);
+                let mut catch_bindings: Vec<ResolvedBinding> = Vec::new();
+                let mut catch_lex: BTreeMap<String, SourceSpan> = BTreeMap::new();
+                let mut catch_var: BTreeMap<String, SourceSpan> = var_names.clone();
+                if let Some(ref param) = handler.parameter {
+                    let bid = state.alloc_binding_id();
+                    catch_bindings.push(ResolvedBinding {
+                        name: param.clone(),
+                        binding_id: bid,
+                        scope: catch_scope_id,
+                        kind: BindingKind::Let,
+                    });
+                    catch_lex.insert(param.clone(), handler.span.clone());
                 }
+                for child in &handler.body.body {
+                    analyze_statement(
+                        state,
+                        child,
+                        catch_scope_id,
+                        &mut catch_bindings,
+                        &mut catch_lex,
+                        &mut catch_var,
+                    );
+                }
+                let catch_scope = ScopeNode {
+                    scope_id: catch_scope_id,
+                    parent: Some(scope_id),
+                    kind: ScopeKind::Block,
+                    bindings: catch_bindings.clone(),
+                };
+                state.scopes.push(catch_scope);
+                state.bindings.extend(catch_bindings);
             }
             if let Some(ref finalizer) = tc.finalizer {
                 for child in &finalizer.body {
@@ -597,6 +716,8 @@ fn analyze_statement(
 
         Statement::Switch(sw) => {
             check_await_in_expression(state, &sw.discriminant, &sw.span);
+            let prev_in_switch = state.in_switch;
+            state.in_switch = true;
             for case in &sw.cases {
                 if let Some(ref test) = case.test {
                     check_await_in_expression(state, test, &sw.span);
@@ -605,14 +726,30 @@ fn analyze_statement(
                     analyze_statement(state, child, scope_id, bindings, lexical_names, var_names);
                 }
             }
+            state.in_switch = prev_in_switch;
         }
 
-        Statement::Break(_) | Statement::Continue(_) => {
-            // Control flow only — no bindings or expressions to analyze.
+        Statement::Break(brk) => {
+            if !state.in_loop && !state.in_switch {
+                state.push_error(
+                    StaticErrorKind::BreakOutsideLoop,
+                    "break statement must be inside a loop or switch",
+                    brk.span.clone(),
+                );
+            }
+        }
+
+        Statement::Continue(cont) => {
+            if !state.in_loop {
+                state.push_error(
+                    StaticErrorKind::ContinueOutsideLoop,
+                    "continue statement must be inside a loop",
+                    cont.span.clone(),
+                );
+            }
         }
 
         Statement::FunctionDeclaration(func) => {
-            // Register function name as a binding in the current scope if present.
             if let Some(ref name) = func.name {
                 check_reserved(state, name, &func.span);
                 let bid = state.alloc_binding_id();
@@ -623,16 +760,92 @@ fn analyze_statement(
                     kind: BindingKind::Var,
                 });
                 if let Some(prev_span) = var_names.get(name) {
-                    // Var-scoped function declarations allow re-declaration in sloppy mode;
-                    // we note it without error (ES2020 sloppy-mode semantics).
                     let _ = prev_span;
                 }
                 var_names.insert(name.clone(), func.span.clone());
             }
-            // Recurse into function body for nested analysis.
-            for child in &func.body.body {
-                analyze_statement(state, child, scope_id, bindings, lexical_names, var_names);
+            let func_scope_id = state.alloc_scope_id(scope_id.depth + 1);
+            let mut func_bindings: Vec<ResolvedBinding> = Vec::new();
+            let mut func_lex: BTreeMap<String, SourceSpan> = BTreeMap::new();
+            let mut func_var: BTreeMap<String, SourceSpan> = BTreeMap::new();
+            let mut seen_params: BTreeSet<String> = BTreeSet::new();
+            for param in &func.params {
+                check_reserved(state, &param.name, &param.span);
+                if !seen_params.insert(param.name.clone()) && state.is_module {
+                    state.push_error(
+                        StaticErrorKind::DuplicateParameter,
+                        format!("duplicate parameter name '{}'", param.name),
+                        param.span.clone(),
+                    );
+                }
+                let bid = state.alloc_binding_id();
+                func_bindings.push(ResolvedBinding {
+                    name: param.name.clone(),
+                    binding_id: bid,
+                    scope: func_scope_id,
+                    kind: BindingKind::Parameter,
+                });
             }
+            let prev_in_function = state.in_function;
+            let prev_in_loop = state.in_loop;
+            let prev_in_switch = state.in_switch;
+            let prev_const_bindings = state.const_bindings.clone();
+            state.in_function = true;
+            state.in_loop = false;
+            state.in_switch = false;
+            state.const_bindings = BTreeSet::new();
+            for child in &func.body.body {
+                analyze_statement(
+                    state,
+                    child,
+                    func_scope_id,
+                    &mut func_bindings,
+                    &mut func_lex,
+                    &mut func_var,
+                );
+            }
+            state.in_function = prev_in_function;
+            state.in_loop = prev_in_loop;
+            state.in_switch = prev_in_switch;
+            state.const_bindings = prev_const_bindings;
+            let func_scope = ScopeNode {
+                scope_id: func_scope_id,
+                parent: Some(scope_id),
+                kind: ScopeKind::Function,
+                bindings: func_bindings.clone(),
+            };
+            state.scopes.push(func_scope);
+            state.bindings.extend(func_bindings);
+        }
+
+        Statement::ForIn(for_in_stmt) => {
+            check_await_in_expression(state, &for_in_stmt.object, &for_in_stmt.span);
+            let prev_in_loop = state.in_loop;
+            state.in_loop = true;
+            analyze_statement(
+                state,
+                &for_in_stmt.body,
+                scope_id,
+                bindings,
+                lexical_names,
+                var_names,
+            );
+            state.in_loop = prev_in_loop;
+        }
+
+        Statement::ForOf(for_of_stmt) => {
+            check_await_in_expression(state, &for_of_stmt.iterable, &for_of_stmt.span);
+            let prev_in_loop = state.in_loop;
+            state.in_loop = true;
+            analyze_statement(
+                state,
+                &for_of_stmt.body,
+                scope_id,
+                bindings,
+                lexical_names,
+                var_names,
+            );
+            state.in_loop = prev_in_loop;
         }
     }
 }
@@ -739,6 +952,11 @@ fn analyze_variable_declaration(
             check_await_in_expression(state, init_expr, &declarator.span);
         }
 
+        // Track const bindings for assignment-to-const detection
+        if decl.kind == VariableDeclarationKind::Const {
+            state.const_bindings.insert(name.clone());
+        }
+
         let bid = state.alloc_binding_id();
         bindings.push(ResolvedBinding {
             name: name.clone(),
@@ -762,21 +980,200 @@ fn check_reserved(state: &mut AnalyzerState, name: &str, span: &SourceSpan) {
     }
 }
 
-fn check_await_in_expression(state: &mut AnalyzerState, expr: &Expression, span: &SourceSpan) {
-    // Top-level await is valid in modules; in scripts it's an error
-    if let Expression::Await(_) = expr
-        && !state.is_module
-    {
-        state.push_error(
-            StaticErrorKind::AwaitOutsideAsync,
-            "await is only valid in async functions or module top-level",
-            span.clone(),
-        );
+/// Recursively walk an expression tree, checking for:
+/// - `await` outside module context
+/// - `delete` of a bare identifier in module (strict) mode
+/// - Assignment to const-declared bindings
+fn walk_expression(state: &mut AnalyzerState, expr: &Expression, span: &SourceSpan) {
+    match expr {
+        Expression::Await(inner) => {
+            if !state.is_module {
+                state.push_error(
+                    StaticErrorKind::AwaitOutsideAsync,
+                    "await is only valid in async functions or module top-level",
+                    span.clone(),
+                );
+            }
+            walk_expression(state, inner, span);
+        }
+        Expression::Binary { left, right, .. } => {
+            walk_expression(state, left, span);
+            walk_expression(state, right, span);
+        }
+        Expression::Unary {
+            operator, argument, ..
+        } => {
+            if *operator == crate::ast::UnaryOperator::Delete
+                && state.is_module
+                && matches!(argument.as_ref(), Expression::Identifier(_))
+            {
+                state.push_error(
+                    StaticErrorKind::DeleteOfIdentifier,
+                    "delete of a bare identifier is not allowed in strict mode",
+                    span.clone(),
+                );
+            }
+            walk_expression(state, argument, span);
+        }
+        Expression::Assignment { left, right, .. } => {
+            if let Expression::Identifier(name) = left.as_ref()
+                && state.const_bindings.contains(name.as_str())
+            {
+                state.push_error(
+                    StaticErrorKind::AssignmentToConst,
+                    format!("assignment to constant variable '{}'", name),
+                    span.clone(),
+                );
+            }
+            walk_expression(state, left, span);
+            walk_expression(state, right, span);
+        }
+        Expression::Conditional {
+            test,
+            consequent,
+            alternate,
+        } => {
+            walk_expression(state, test, span);
+            walk_expression(state, consequent, span);
+            walk_expression(state, alternate, span);
+        }
+        Expression::Call {
+            callee, arguments, ..
+        } => {
+            walk_expression(state, callee, span);
+            for arg in arguments {
+                walk_expression(state, arg, span);
+            }
+        }
+        Expression::Member {
+            object, property, ..
+        } => {
+            walk_expression(state, object, span);
+            walk_expression(state, property, span);
+        }
+        Expression::ArrayLiteral(elements) => {
+            for elem in elements.iter().flatten() {
+                walk_expression(state, elem, span);
+            }
+        }
+        Expression::ObjectLiteral(props) => {
+            for prop in props {
+                walk_expression(state, &prop.key, span);
+                walk_expression(state, &prop.value, span);
+            }
+        }
+        Expression::ArrowFunction { body, .. } => {
+            if let crate::ast::ArrowBody::Expression(inner) = body {
+                walk_expression(state, inner, span);
+            }
+        }
+        Expression::New { callee, arguments } => {
+            walk_expression(state, callee, span);
+            for arg in arguments {
+                walk_expression(state, arg, span);
+            }
+        }
+        Expression::TemplateLiteral { expressions, .. } => {
+            for expr in expressions {
+                walk_expression(state, expr, span);
+            }
+        }
+        Expression::Identifier(_)
+        | Expression::StringLiteral(_)
+        | Expression::NumericLiteral(_)
+        | Expression::BooleanLiteral(_)
+        | Expression::NullLiteral
+        | Expression::UndefinedLiteral
+        | Expression::This
+        | Expression::Raw(_) => {}
     }
+}
+
+/// Backward-compat alias used by existing call sites.
+fn check_await_in_expression(state: &mut AnalyzerState, expr: &Expression, span: &SourceSpan) {
+    walk_expression(state, expr, span);
 }
 
 /// Detect TDZ violations: identifier references that appear before `let`/`const`
 /// declarations in textual order.
+/// Collect all identifier names referenced in an expression tree.
+fn collect_identifier_refs(expr: &Expression, out: &mut Vec<String>) {
+    match expr {
+        Expression::Identifier(name) => out.push(name.clone()),
+        Expression::Binary { left, right, .. } => {
+            collect_identifier_refs(left, out);
+            collect_identifier_refs(right, out);
+        }
+        Expression::Unary { argument, .. } => {
+            collect_identifier_refs(argument, out);
+        }
+        Expression::Assignment { left, right, .. } => {
+            collect_identifier_refs(left, out);
+            collect_identifier_refs(right, out);
+        }
+        Expression::Conditional {
+            test,
+            consequent,
+            alternate,
+        } => {
+            collect_identifier_refs(test, out);
+            collect_identifier_refs(consequent, out);
+            collect_identifier_refs(alternate, out);
+        }
+        Expression::Call {
+            callee, arguments, ..
+        } => {
+            collect_identifier_refs(callee, out);
+            for arg in arguments {
+                collect_identifier_refs(arg, out);
+            }
+        }
+        Expression::Member {
+            object, property, ..
+        } => {
+            collect_identifier_refs(object, out);
+            collect_identifier_refs(property, out);
+        }
+        Expression::Await(inner) => {
+            collect_identifier_refs(inner, out);
+        }
+        Expression::ArrayLiteral(elements) => {
+            for elem in elements.iter().flatten() {
+                collect_identifier_refs(elem, out);
+            }
+        }
+        Expression::ObjectLiteral(props) => {
+            for prop in props {
+                collect_identifier_refs(&prop.key, out);
+                collect_identifier_refs(&prop.value, out);
+            }
+        }
+        Expression::ArrowFunction { body, .. } => {
+            if let crate::ast::ArrowBody::Expression(inner) = body {
+                collect_identifier_refs(inner, out);
+            }
+        }
+        Expression::New { callee, arguments } => {
+            collect_identifier_refs(callee, out);
+            for arg in arguments {
+                collect_identifier_refs(arg, out);
+            }
+        }
+        Expression::TemplateLiteral { expressions, .. } => {
+            for expr in expressions {
+                collect_identifier_refs(expr, out);
+            }
+        }
+        Expression::StringLiteral(_)
+        | Expression::NumericLiteral(_)
+        | Expression::BooleanLiteral(_)
+        | Expression::NullLiteral
+        | Expression::UndefinedLiteral
+        | Expression::This
+        | Expression::Raw(_) => {}
+    }
+}
+
 fn detect_tdz_violations(
     state: &mut AnalyzerState,
     body: &[Statement],
@@ -797,33 +1194,42 @@ fn detect_tdz_violations(
         }
     }
 
-    // Now scan expression statements for references that precede declarations
+    // Now scan expression statements for references that precede declarations.
+    // Walk into all expression types to find identifier references.
     for (idx, stmt) in body.iter().enumerate() {
-        if let Statement::Expression(expr_stmt) = stmt
-            && let Expression::Identifier(name) = &expr_stmt.expression
-            && let Some(&decl_idx) = decl_positions.get(name.as_str())
-            && idx < decl_idx
-        {
-            state.push_error(
-                StaticErrorKind::TemporalDeadZone,
-                format!("cannot access '{}' before initialization", name),
-                expr_stmt.span.clone(),
-            );
-        }
-
-        // Also check initializers of variable declarations
-        if let Statement::VariableDeclaration(decl) = stmt {
-            for declarator in &decl.declarations {
-                if let Some(init_expr) = &declarator.initializer
-                    && let Expression::Identifier(name) = init_expr
-                    && let Some(&decl_idx) = decl_positions.get(name.as_str())
+        if let Statement::Expression(expr_stmt) = stmt {
+            let mut refs = Vec::new();
+            collect_identifier_refs(&expr_stmt.expression, &mut refs);
+            for name in &refs {
+                if let Some(&decl_idx) = decl_positions.get(name.as_str())
                     && idx < decl_idx
                 {
                     state.push_error(
                         StaticErrorKind::TemporalDeadZone,
                         format!("cannot access '{}' before initialization", name),
-                        declarator.span.clone(),
+                        expr_stmt.span.clone(),
                     );
+                }
+            }
+        }
+
+        // Also check initializers of variable declarations
+        if let Statement::VariableDeclaration(decl) = stmt {
+            for declarator in &decl.declarations {
+                if let Some(ref init_expr) = declarator.initializer {
+                    let mut refs = Vec::new();
+                    collect_identifier_refs(init_expr, &mut refs);
+                    for name in &refs {
+                        if let Some(&decl_idx) = decl_positions.get(name.as_str())
+                            && idx < decl_idx
+                        {
+                            state.push_error(
+                                StaticErrorKind::TemporalDeadZone,
+                                format!("cannot access '{}' before initialization", name),
+                                declarator.span.clone(),
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -1769,6 +2175,12 @@ mod tests {
             StaticErrorKind::EmptyDeclaratorList,
             StaticErrorKind::ReservedWordBinding,
             StaticErrorKind::ImportRedeclaration,
+            StaticErrorKind::AssignmentToConst,
+            StaticErrorKind::ReturnOutsideFunction,
+            StaticErrorKind::BreakOutsideLoop,
+            StaticErrorKind::ContinueOutsideLoop,
+            StaticErrorKind::DuplicateParameter,
+            StaticErrorKind::DeleteOfIdentifier,
         ];
         for kind in kinds {
             let json = serde_json::to_string(&kind).unwrap();
@@ -1947,6 +2359,12 @@ mod tests {
             StaticErrorKind::EmptyDeclaratorList,
             StaticErrorKind::ReservedWordBinding,
             StaticErrorKind::ImportRedeclaration,
+            StaticErrorKind::AssignmentToConst,
+            StaticErrorKind::ReturnOutsideFunction,
+            StaticErrorKind::BreakOutsideLoop,
+            StaticErrorKind::ContinueOutsideLoop,
+            StaticErrorKind::DuplicateParameter,
+            StaticErrorKind::DeleteOfIdentifier,
         ];
         let codes: BTreeSet<&str> = kinds.iter().map(|k| k.diagnostic_code()).collect();
         assert_eq!(codes.len(), kinds.len(), "diagnostic codes must be unique");
@@ -2120,5 +2538,1915 @@ mod tests {
         assert_eq!(result.scopes[0].bindings.len(), 2);
         assert_eq!(result.scopes[0].bindings[0].name, "a");
         assert_eq!(result.scopes[0].bindings[1].name, "b");
+    }
+
+    // -----------------------------------------------------------------------
+    // New error kinds: AssignmentToConst
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn assignment_to_const_detected() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![
+                var_decl(
+                    VariableDeclarationKind::Const,
+                    "x",
+                    Some(Expression::NumericLiteral(1)),
+                    1,
+                ),
+                expr_stmt(
+                    Expression::Assignment {
+                        operator: crate::ast::AssignmentOperator::Assign,
+                        left: Box::new(Expression::Identifier("x".to_string())),
+                        right: Box::new(Expression::NumericLiteral(2)),
+                    },
+                    2,
+                ),
+            ],
+        );
+        let result = analyze(&tree);
+        assert!(!result.passed());
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AssignmentToConst)
+        );
+    }
+
+    #[test]
+    fn assignment_to_let_allowed() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![
+                var_decl(
+                    VariableDeclarationKind::Let,
+                    "x",
+                    Some(Expression::NumericLiteral(1)),
+                    1,
+                ),
+                expr_stmt(
+                    Expression::Assignment {
+                        operator: crate::ast::AssignmentOperator::Assign,
+                        left: Box::new(Expression::Identifier("x".to_string())),
+                        right: Box::new(Expression::NumericLiteral(2)),
+                    },
+                    2,
+                ),
+            ],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AssignmentToConst)
+        );
+    }
+
+    #[test]
+    fn compound_assignment_to_const() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![
+                var_decl(
+                    VariableDeclarationKind::Const,
+                    "x",
+                    Some(Expression::NumericLiteral(1)),
+                    1,
+                ),
+                expr_stmt(
+                    Expression::Assignment {
+                        operator: crate::ast::AssignmentOperator::AddAssign,
+                        left: Box::new(Expression::Identifier("x".to_string())),
+                        right: Box::new(Expression::NumericLiteral(5)),
+                    },
+                    2,
+                ),
+            ],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AssignmentToConst)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // New error kinds: ReturnOutsideFunction
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn return_outside_function() {
+        use crate::ast::ReturnStatement;
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::Return(ReturnStatement {
+                argument: None,
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(!result.passed());
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::ReturnOutsideFunction)
+        );
+    }
+
+    #[test]
+    fn return_inside_function_ok() {
+        use crate::ast::{BlockStatement, FunctionDeclaration, ReturnStatement};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::FunctionDeclaration(FunctionDeclaration {
+                name: Some("foo".to_string()),
+                params: vec![],
+                body: BlockStatement {
+                    body: vec![Statement::Return(ReturnStatement {
+                        argument: Some(Expression::NumericLiteral(42)),
+                        span: span(2),
+                    })],
+                    span: span(1),
+                },
+                is_async: false,
+                is_generator: false,
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::ReturnOutsideFunction)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // New error kinds: BreakOutsideLoop, ContinueOutsideLoop
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn break_outside_loop() {
+        use crate::ast::BreakStatement;
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::Break(BreakStatement {
+                label: None,
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(!result.passed());
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::BreakOutsideLoop)
+        );
+    }
+
+    #[test]
+    fn continue_outside_loop() {
+        use crate::ast::ContinueStatement;
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::Continue(ContinueStatement {
+                label: None,
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(!result.passed());
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::ContinueOutsideLoop)
+        );
+    }
+
+    #[test]
+    fn break_inside_for_ok() {
+        use crate::ast::{BreakStatement, ForStatement};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::For(ForStatement {
+                init: None,
+                condition: Some(Expression::BooleanLiteral(true)),
+                update: None,
+                body: Box::new(Statement::Break(BreakStatement {
+                    label: None,
+                    span: span(2),
+                })),
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::BreakOutsideLoop)
+        );
+    }
+
+    #[test]
+    fn continue_inside_while_ok() {
+        use crate::ast::{ContinueStatement, WhileStatement};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::While(WhileStatement {
+                condition: Expression::BooleanLiteral(true),
+                body: Box::new(Statement::Continue(ContinueStatement {
+                    label: None,
+                    span: span(2),
+                })),
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::ContinueOutsideLoop)
+        );
+    }
+
+    #[test]
+    fn break_inside_switch_ok() {
+        use crate::ast::{BreakStatement, SwitchCase, SwitchStatement};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::Switch(SwitchStatement {
+                discriminant: Expression::Identifier("x".to_string()),
+                cases: vec![SwitchCase {
+                    test: Some(Expression::NumericLiteral(1)),
+                    consequent: vec![Statement::Break(BreakStatement {
+                        label: None,
+                        span: span(3),
+                    })],
+                    span: span(2),
+                }],
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::BreakOutsideLoop)
+        );
+    }
+
+    #[test]
+    fn continue_inside_do_while_ok() {
+        use crate::ast::{ContinueStatement, DoWhileStatement};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::DoWhile(DoWhileStatement {
+                body: Box::new(Statement::Continue(ContinueStatement {
+                    label: None,
+                    span: span(2),
+                })),
+                condition: Expression::BooleanLiteral(true),
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::ContinueOutsideLoop)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // New error kinds: DuplicateParameter (module strict mode)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn duplicate_parameter_in_module() {
+        use crate::ast::{BlockStatement, FunctionDeclaration, FunctionParam};
+        let tree = make_tree(
+            ParseGoal::Module,
+            vec![Statement::FunctionDeclaration(FunctionDeclaration {
+                name: Some("foo".to_string()),
+                params: vec![
+                    FunctionParam {
+                        name: "a".to_string(),
+                        span: span(1),
+                    },
+                    FunctionParam {
+                        name: "a".to_string(),
+                        span: span(1),
+                    },
+                ],
+                body: BlockStatement {
+                    body: vec![],
+                    span: span(2),
+                },
+                is_async: false,
+                is_generator: false,
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(!result.passed());
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::DuplicateParameter)
+        );
+    }
+
+    #[test]
+    fn distinct_parameters_ok() {
+        use crate::ast::{BlockStatement, FunctionDeclaration, FunctionParam};
+        let tree = make_tree(
+            ParseGoal::Module,
+            vec![Statement::FunctionDeclaration(FunctionDeclaration {
+                name: Some("bar".to_string()),
+                params: vec![
+                    FunctionParam {
+                        name: "a".to_string(),
+                        span: span(1),
+                    },
+                    FunctionParam {
+                        name: "b".to_string(),
+                        span: span(1),
+                    },
+                ],
+                body: BlockStatement {
+                    body: vec![],
+                    span: span(2),
+                },
+                is_async: false,
+                is_generator: false,
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::DuplicateParameter)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // New error kinds: DeleteOfIdentifier
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn delete_identifier_in_module() {
+        let tree = make_tree(
+            ParseGoal::Module,
+            vec![expr_stmt(
+                Expression::Unary {
+                    operator: crate::ast::UnaryOperator::Delete,
+                    argument: Box::new(Expression::Identifier("x".to_string())),
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::DeleteOfIdentifier)
+        );
+    }
+
+    #[test]
+    fn delete_member_in_module_ok() {
+        let tree = make_tree(
+            ParseGoal::Module,
+            vec![expr_stmt(
+                Expression::Unary {
+                    operator: crate::ast::UnaryOperator::Delete,
+                    argument: Box::new(Expression::Member {
+                        object: Box::new(Expression::Identifier("obj".to_string())),
+                        property: Box::new(Expression::Identifier("prop".to_string())),
+                        computed: false,
+                    }),
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::DeleteOfIdentifier)
+        );
+    }
+
+    #[test]
+    fn delete_identifier_in_script_ok() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::Unary {
+                    operator: crate::ast::UnaryOperator::Delete,
+                    argument: Box::new(Expression::Identifier("x".to_string())),
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::DeleteOfIdentifier)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Block scoping
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn block_creates_child_scope() {
+        use crate::ast::BlockStatement;
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::Block(BlockStatement {
+                body: vec![var_decl(
+                    VariableDeclarationKind::Let,
+                    "x",
+                    Some(Expression::NumericLiteral(1)),
+                    2,
+                )],
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(result.passed());
+        // Top scope + block scope
+        assert_eq!(result.scopes.len(), 2);
+        assert_eq!(result.scopes[0].kind, ScopeKind::Block);
+        assert_eq!(result.scopes[0].parent, Some(result.scopes[1].scope_id));
+    }
+
+    #[test]
+    fn for_loop_creates_child_scope() {
+        use crate::ast::ForStatement;
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::For(ForStatement {
+                init: Some(Box::new(var_decl(
+                    VariableDeclarationKind::Let,
+                    "i",
+                    Some(Expression::NumericLiteral(0)),
+                    1,
+                ))),
+                condition: Some(Expression::BooleanLiteral(true)),
+                update: None,
+                body: Box::new(expr_stmt(Expression::Identifier("i".to_string()), 2)),
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(result.passed());
+        // Top scope + for scope
+        assert_eq!(result.scopes.len(), 2);
+    }
+
+    #[test]
+    fn function_creates_child_scope() {
+        use crate::ast::{BlockStatement, FunctionDeclaration, FunctionParam};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::FunctionDeclaration(FunctionDeclaration {
+                name: Some("foo".to_string()),
+                params: vec![FunctionParam {
+                    name: "a".to_string(),
+                    span: span(1),
+                }],
+                body: BlockStatement {
+                    body: vec![var_decl(
+                        VariableDeclarationKind::Let,
+                        "b",
+                        Some(Expression::NumericLiteral(1)),
+                        2,
+                    )],
+                    span: span(1),
+                },
+                is_async: false,
+                is_generator: false,
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(result.passed());
+        // Top scope + function scope
+        assert_eq!(result.scopes.len(), 2);
+        // Function scope has param + local binding
+        let func_scope = &result.scopes[0];
+        assert_eq!(func_scope.kind, ScopeKind::Function);
+        assert_eq!(func_scope.bindings.len(), 2); // param "a" + let "b"
+        assert_eq!(func_scope.bindings[0].name, "a");
+        assert_eq!(func_scope.bindings[0].kind, BindingKind::Parameter);
+        assert_eq!(func_scope.bindings[1].name, "b");
+        assert_eq!(func_scope.bindings[1].kind, BindingKind::Let);
+    }
+
+    // -----------------------------------------------------------------------
+    // Recursive expression walking
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn await_nested_in_binary_detected() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::Binary {
+                    operator: crate::ast::BinaryOperator::Add,
+                    left: Box::new(Expression::NumericLiteral(1)),
+                    right: Box::new(Expression::Await(Box::new(Expression::Identifier(
+                        "p".to_string(),
+                    )))),
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AwaitOutsideAsync)
+        );
+    }
+
+    #[test]
+    fn await_nested_in_call_detected() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::Call {
+                    callee: Box::new(Expression::Identifier("foo".to_string())),
+                    arguments: vec![Expression::Await(Box::new(Expression::Identifier(
+                        "p".to_string(),
+                    )))],
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AwaitOutsideAsync)
+        );
+    }
+
+    #[test]
+    fn await_nested_in_conditional_detected() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::Conditional {
+                    test: Box::new(Expression::BooleanLiteral(true)),
+                    consequent: Box::new(Expression::Await(Box::new(Expression::Identifier(
+                        "p".to_string(),
+                    )))),
+                    alternate: Box::new(Expression::NumericLiteral(0)),
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AwaitOutsideAsync)
+        );
+    }
+
+    #[test]
+    fn await_in_array_literal_detected() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::ArrayLiteral(vec![Some(Expression::Await(Box::new(
+                    Expression::Identifier("p".to_string()),
+                )))]),
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AwaitOutsideAsync)
+        );
+    }
+
+    #[test]
+    fn await_in_object_literal_detected() {
+        use crate::ast::ObjectProperty;
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::ObjectLiteral(vec![ObjectProperty {
+                    key: Expression::StringLiteral("k".to_string()),
+                    value: Expression::Await(Box::new(Expression::Identifier("p".to_string()))),
+                    computed: false,
+                    shorthand: false,
+                }]),
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AwaitOutsideAsync)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // TDZ in complex expressions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tdz_in_binary_expression() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![
+                expr_stmt(
+                    Expression::Binary {
+                        operator: crate::ast::BinaryOperator::Add,
+                        left: Box::new(Expression::Identifier("x".to_string())),
+                        right: Box::new(Expression::NumericLiteral(1)),
+                    },
+                    1,
+                ),
+                var_decl(
+                    VariableDeclarationKind::Let,
+                    "x",
+                    Some(Expression::NumericLiteral(10)),
+                    2,
+                ),
+            ],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::TemporalDeadZone)
+        );
+    }
+
+    #[test]
+    fn tdz_in_call_argument() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![
+                expr_stmt(
+                    Expression::Call {
+                        callee: Box::new(Expression::Identifier("foo".to_string())),
+                        arguments: vec![Expression::Identifier("x".to_string())],
+                    },
+                    1,
+                ),
+                var_decl(
+                    VariableDeclarationKind::Const,
+                    "x",
+                    Some(Expression::NumericLiteral(10)),
+                    2,
+                ),
+            ],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::TemporalDeadZone)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Catch clause scoping
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn catch_parameter_creates_scope() {
+        use crate::ast::{BlockStatement, CatchClause, TryCatchStatement};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::TryCatch(TryCatchStatement {
+                block: BlockStatement {
+                    body: vec![],
+                    span: span(1),
+                },
+                handler: Some(CatchClause {
+                    parameter: Some("err".to_string()),
+                    body: BlockStatement {
+                        body: vec![],
+                        span: span(3),
+                    },
+                    span: span(2),
+                }),
+                finalizer: None,
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(result.passed());
+        // Top scope + catch scope
+        assert_eq!(result.scopes.len(), 2);
+        let catch_scope = &result.scopes[0];
+        assert_eq!(catch_scope.bindings.len(), 1);
+        assert_eq!(catch_scope.bindings[0].name, "err");
+    }
+
+    // -----------------------------------------------------------------------
+    // Context flags reset correctly
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn return_inside_nested_function_ok_but_outside_not() {
+        use crate::ast::{BlockStatement, FunctionDeclaration, ReturnStatement};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![
+                Statement::FunctionDeclaration(FunctionDeclaration {
+                    name: Some("outer".to_string()),
+                    params: vec![],
+                    body: BlockStatement {
+                        body: vec![Statement::Return(ReturnStatement {
+                            argument: None,
+                            span: span(2),
+                        })],
+                        span: span(1),
+                    },
+                    is_async: false,
+                    is_generator: false,
+                    span: span(1),
+                }),
+                // This return is at top-level (outside function)
+                Statement::Return(ReturnStatement {
+                    argument: None,
+                    span: span(5),
+                }),
+            ],
+        );
+        let result = analyze(&tree);
+        assert!(!result.passed());
+        assert_eq!(
+            result
+                .errors
+                .iter()
+                .filter(|e| e.kind == StaticErrorKind::ReturnOutsideFunction)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn break_after_loop_not_in_loop() {
+        use crate::ast::{BreakStatement, WhileStatement};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![
+                Statement::While(WhileStatement {
+                    condition: Expression::BooleanLiteral(true),
+                    body: Box::new(Statement::Break(BreakStatement {
+                        label: None,
+                        span: span(2),
+                    })),
+                    span: span(1),
+                }),
+                Statement::Break(BreakStatement {
+                    label: None,
+                    span: span(4),
+                }),
+            ],
+        );
+        let result = analyze(&tree);
+        assert!(!result.passed());
+        assert_eq!(
+            result
+                .errors
+                .iter()
+                .filter(|e| e.kind == StaticErrorKind::BreakOutsideLoop)
+                .count(),
+            1
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // New error kind serde round-trips
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn new_error_kinds_as_str() {
+        assert_eq!(
+            StaticErrorKind::AssignmentToConst.as_str(),
+            "assignment_to_const"
+        );
+        assert_eq!(
+            StaticErrorKind::ReturnOutsideFunction.as_str(),
+            "return_outside_function"
+        );
+        assert_eq!(
+            StaticErrorKind::BreakOutsideLoop.as_str(),
+            "break_outside_loop"
+        );
+        assert_eq!(
+            StaticErrorKind::ContinueOutsideLoop.as_str(),
+            "continue_outside_loop"
+        );
+        assert_eq!(
+            StaticErrorKind::DuplicateParameter.as_str(),
+            "duplicate_parameter"
+        );
+        assert_eq!(
+            StaticErrorKind::DeleteOfIdentifier.as_str(),
+            "delete_of_identifier"
+        );
+    }
+
+    #[test]
+    fn new_error_kinds_diagnostic_codes_non_empty() {
+        let new_kinds = [
+            StaticErrorKind::AssignmentToConst,
+            StaticErrorKind::ReturnOutsideFunction,
+            StaticErrorKind::BreakOutsideLoop,
+            StaticErrorKind::ContinueOutsideLoop,
+            StaticErrorKind::DuplicateParameter,
+            StaticErrorKind::DeleteOfIdentifier,
+        ];
+        for kind in new_kinds {
+            assert!(!kind.diagnostic_code().is_empty());
+            assert!(kind.diagnostic_code().starts_with("FE-STATIC-DIAG-"));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // collect_identifier_refs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn collect_refs_from_binary() {
+        let expr = Expression::Binary {
+            operator: crate::ast::BinaryOperator::Add,
+            left: Box::new(Expression::Identifier("a".to_string())),
+            right: Box::new(Expression::Identifier("b".to_string())),
+        };
+        let mut refs = Vec::new();
+        collect_identifier_refs(&expr, &mut refs);
+        assert_eq!(refs, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn collect_refs_from_call() {
+        let expr = Expression::Call {
+            callee: Box::new(Expression::Identifier("fn".to_string())),
+            arguments: vec![
+                Expression::Identifier("x".to_string()),
+                Expression::NumericLiteral(1),
+            ],
+        };
+        let mut refs = Vec::new();
+        collect_identifier_refs(&expr, &mut refs);
+        assert_eq!(refs, vec!["fn", "x"]);
+    }
+
+    #[test]
+    fn collect_refs_from_nested() {
+        let expr = Expression::Conditional {
+            test: Box::new(Expression::Identifier("cond".to_string())),
+            consequent: Box::new(Expression::Identifier("a".to_string())),
+            alternate: Box::new(Expression::Binary {
+                operator: crate::ast::BinaryOperator::Multiply,
+                left: Box::new(Expression::Identifier("b".to_string())),
+                right: Box::new(Expression::Identifier("c".to_string())),
+            }),
+        };
+        let mut refs = Vec::new();
+        collect_identifier_refs(&expr, &mut refs);
+        assert_eq!(refs, vec!["cond", "a", "b", "c"]);
+    }
+
+    #[test]
+    fn collect_refs_from_terminals() {
+        let expr = Expression::NumericLiteral(42);
+        let mut refs = Vec::new();
+        collect_identifier_refs(&expr, &mut refs);
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn collect_refs_from_array_literal() {
+        let expr = Expression::ArrayLiteral(vec![
+            Some(Expression::Identifier("a".to_string())),
+            None,
+            Some(Expression::Identifier("b".to_string())),
+        ]);
+        let mut refs = Vec::new();
+        collect_identifier_refs(&expr, &mut refs);
+        assert_eq!(refs, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn collect_refs_from_object_literal() {
+        use crate::ast::ObjectProperty;
+        let expr = Expression::ObjectLiteral(vec![ObjectProperty {
+            key: Expression::StringLiteral("k".to_string()),
+            value: Expression::Identifier("v".to_string()),
+            computed: false,
+            shorthand: false,
+        }]);
+        let mut refs = Vec::new();
+        collect_identifier_refs(&expr, &mut refs);
+        assert_eq!(refs, vec!["v"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Assignment to const inside function scope is independent
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn const_in_outer_scope_not_visible_in_function() {
+        use crate::ast::{BlockStatement, FunctionDeclaration};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![
+                var_decl(
+                    VariableDeclarationKind::Const,
+                    "x",
+                    Some(Expression::NumericLiteral(1)),
+                    1,
+                ),
+                Statement::FunctionDeclaration(FunctionDeclaration {
+                    name: Some("foo".to_string()),
+                    params: vec![],
+                    body: BlockStatement {
+                        body: vec![
+                            // x = 2 inside function — const_bindings was reset,
+                            // so no AssignmentToConst here (function has its own scope)
+                            expr_stmt(
+                                Expression::Assignment {
+                                    operator: crate::ast::AssignmentOperator::Assign,
+                                    left: Box::new(Expression::Identifier("x".to_string())),
+                                    right: Box::new(Expression::NumericLiteral(2)),
+                                },
+                                3,
+                            ),
+                        ],
+                        span: span(2),
+                    },
+                    is_async: false,
+                    is_generator: false,
+                    span: span(2),
+                }),
+            ],
+        );
+        let result = analyze(&tree);
+        // The function creates a new scope, const tracking is reset
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AssignmentToConst)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Unary expression walking
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn typeof_expression_passes() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::Unary {
+                    operator: crate::ast::UnaryOperator::Typeof,
+                    argument: Box::new(Expression::Identifier("x".to_string())),
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(result.passed());
+    }
+
+    #[test]
+    fn void_expression_passes() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::Unary {
+                    operator: crate::ast::UnaryOperator::Void,
+                    argument: Box::new(Expression::NumericLiteral(0)),
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(result.passed());
+    }
+
+    // -----------------------------------------------------------------------
+    // Member expression walking
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn member_expression_passes() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::Member {
+                    object: Box::new(Expression::Identifier("obj".to_string())),
+                    property: Box::new(Expression::Identifier("prop".to_string())),
+                    computed: false,
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(result.passed());
+    }
+
+    // -----------------------------------------------------------------------
+    // This expression
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn this_expression_passes() {
+        let tree = make_tree(ParseGoal::Script, vec![expr_stmt(Expression::This, 1)]);
+        let result = analyze(&tree);
+        assert!(result.passed());
+    }
+
+    // -----------------------------------------------------------------------
+    // For-in / For-of
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn break_inside_for_in_ok() {
+        use crate::ast::{BreakStatement, ForInStatement, VariableDeclarationKind};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::ForIn(ForInStatement {
+                binding: "k".to_string(),
+                binding_kind: Some(VariableDeclarationKind::Let),
+                object: Expression::Identifier("obj".to_string()),
+                body: Box::new(Statement::Break(BreakStatement {
+                    label: None,
+                    span: span(2),
+                })),
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::BreakOutsideLoop)
+        );
+    }
+
+    #[test]
+    fn continue_inside_for_of_ok() {
+        use crate::ast::{ContinueStatement, ForOfStatement, VariableDeclarationKind};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::ForOf(ForOfStatement {
+                binding: "v".to_string(),
+                binding_kind: Some(VariableDeclarationKind::Const),
+                iterable: Expression::Identifier("arr".to_string()),
+                body: Box::new(Statement::Continue(ContinueStatement {
+                    label: None,
+                    span: span(2),
+                })),
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::ContinueOutsideLoop)
+        );
+    }
+
+    #[test]
+    fn for_in_bare_binding_passes() {
+        use crate::ast::ForInStatement;
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::ForIn(ForInStatement {
+                binding: "k".to_string(),
+                binding_kind: None,
+                object: Expression::Identifier("obj".to_string()),
+                body: Box::new(expr_stmt(Expression::Identifier("k".to_string()), 2)),
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(result.passed());
+    }
+
+    // -----------------------------------------------------------------------
+    // New expression
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn new_expression_passes() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::New {
+                    callee: Box::new(Expression::Identifier("Foo".to_string())),
+                    arguments: vec![Expression::NumericLiteral(1)],
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(result.passed());
+    }
+
+    #[test]
+    fn new_expression_no_args_passes() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::New {
+                    callee: Box::new(Expression::Identifier("Foo".to_string())),
+                    arguments: Vec::new(),
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(result.passed());
+    }
+
+    // -----------------------------------------------------------------------
+    // Template literal
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn template_literal_no_expressions_passes() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::TemplateLiteral {
+                    quasis: vec!["hello world".to_string()],
+                    expressions: Vec::new(),
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(result.passed());
+    }
+
+    #[test]
+    fn template_literal_with_expressions_passes() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::TemplateLiteral {
+                    quasis: vec!["hello ".to_string(), "!".to_string()],
+                    expressions: vec![Expression::Identifier("name".to_string())],
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(result.passed());
+    }
+
+    #[test]
+    fn template_literal_await_outside_async_flagged() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::TemplateLiteral {
+                    quasis: vec!["result: ".to_string(), "".to_string()],
+                    expressions: vec![Expression::Await(Box::new(Expression::Identifier(
+                        "p".to_string(),
+                    )))],
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AwaitOutsideAsync)
+        );
+    }
+
+    // -- Enrichment: PearlTower 2026-03-02 --
+
+    // -----------------------------------------------------------------------
+    // StaticErrorKind Display / as_str completeness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn static_error_kind_display_all_distinct() {
+        let kinds = [
+            StaticErrorKind::DuplicateBinding,
+            StaticErrorKind::ConstWithoutInitializer,
+            StaticErrorKind::ImportInScript,
+            StaticErrorKind::ExportInScript,
+            StaticErrorKind::DuplicateExport,
+            StaticErrorKind::AwaitOutsideAsync,
+            StaticErrorKind::TemporalDeadZone,
+            StaticErrorKind::LexicalVarCollision,
+            StaticErrorKind::EmptyDeclaratorList,
+            StaticErrorKind::ReservedWordBinding,
+            StaticErrorKind::ImportRedeclaration,
+            StaticErrorKind::AssignmentToConst,
+            StaticErrorKind::ReturnOutsideFunction,
+            StaticErrorKind::BreakOutsideLoop,
+            StaticErrorKind::ContinueOutsideLoop,
+            StaticErrorKind::DuplicateParameter,
+            StaticErrorKind::DeleteOfIdentifier,
+        ];
+        let strs: BTreeSet<String> = kinds.iter().map(|k| k.to_string()).collect();
+        assert_eq!(strs.len(), 17, "all 17 Display outputs must be distinct");
+    }
+
+    #[test]
+    fn static_error_kind_display_matches_as_str() {
+        let kinds = [
+            StaticErrorKind::DuplicateBinding,
+            StaticErrorKind::ConstWithoutInitializer,
+            StaticErrorKind::ImportInScript,
+            StaticErrorKind::ExportInScript,
+            StaticErrorKind::DuplicateExport,
+            StaticErrorKind::AwaitOutsideAsync,
+            StaticErrorKind::TemporalDeadZone,
+            StaticErrorKind::LexicalVarCollision,
+            StaticErrorKind::EmptyDeclaratorList,
+            StaticErrorKind::ReservedWordBinding,
+            StaticErrorKind::ImportRedeclaration,
+            StaticErrorKind::AssignmentToConst,
+            StaticErrorKind::ReturnOutsideFunction,
+            StaticErrorKind::BreakOutsideLoop,
+            StaticErrorKind::ContinueOutsideLoop,
+            StaticErrorKind::DuplicateParameter,
+            StaticErrorKind::DeleteOfIdentifier,
+        ];
+        for kind in kinds {
+            assert_eq!(kind.to_string(), kind.as_str());
+        }
+    }
+
+    #[test]
+    fn static_error_kind_as_str_original_11() {
+        assert_eq!(StaticErrorKind::DuplicateBinding.as_str(), "duplicate_binding");
+        assert_eq!(StaticErrorKind::ConstWithoutInitializer.as_str(), "const_without_initializer");
+        assert_eq!(StaticErrorKind::ImportInScript.as_str(), "import_in_script");
+        assert_eq!(StaticErrorKind::ExportInScript.as_str(), "export_in_script");
+        assert_eq!(StaticErrorKind::DuplicateExport.as_str(), "duplicate_export");
+        assert_eq!(StaticErrorKind::AwaitOutsideAsync.as_str(), "await_outside_async");
+        assert_eq!(StaticErrorKind::TemporalDeadZone.as_str(), "temporal_dead_zone");
+        assert_eq!(StaticErrorKind::LexicalVarCollision.as_str(), "lexical_var_collision");
+        assert_eq!(StaticErrorKind::EmptyDeclaratorList.as_str(), "empty_declarator_list");
+        assert_eq!(StaticErrorKind::ReservedWordBinding.as_str(), "reserved_word_binding");
+        assert_eq!(StaticErrorKind::ImportRedeclaration.as_str(), "import_redeclaration");
+    }
+
+    #[test]
+    fn all_diagnostic_codes_have_prefix() {
+        let kinds = [
+            StaticErrorKind::DuplicateBinding,
+            StaticErrorKind::ConstWithoutInitializer,
+            StaticErrorKind::ImportInScript,
+            StaticErrorKind::ExportInScript,
+            StaticErrorKind::DuplicateExport,
+            StaticErrorKind::AwaitOutsideAsync,
+            StaticErrorKind::TemporalDeadZone,
+            StaticErrorKind::LexicalVarCollision,
+            StaticErrorKind::EmptyDeclaratorList,
+            StaticErrorKind::ReservedWordBinding,
+            StaticErrorKind::ImportRedeclaration,
+            StaticErrorKind::AssignmentToConst,
+            StaticErrorKind::ReturnOutsideFunction,
+            StaticErrorKind::BreakOutsideLoop,
+            StaticErrorKind::ContinueOutsideLoop,
+            StaticErrorKind::DuplicateParameter,
+            StaticErrorKind::DeleteOfIdentifier,
+        ];
+        for kind in kinds {
+            assert!(
+                kind.diagnostic_code().starts_with("FE-STATIC-DIAG-"),
+                "{:?} code {} missing prefix",
+                kind,
+                kind.diagnostic_code()
+            );
+        }
+    }
+
+    #[test]
+    fn static_error_kind_ord_consistent() {
+        assert!(StaticErrorKind::DuplicateBinding < StaticErrorKind::ConstWithoutInitializer);
+        assert!(StaticErrorKind::ConstWithoutInitializer < StaticErrorKind::ImportInScript);
+        assert!(StaticErrorKind::DeleteOfIdentifier > StaticErrorKind::DuplicateParameter);
+    }
+
+    // -----------------------------------------------------------------------
+    // StaticError Display for additional kinds
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn static_error_display_import_in_script() {
+        let err = StaticError::new(
+            StaticErrorKind::ImportInScript,
+            "import not allowed in script",
+            span(7),
+        );
+        let s = err.to_string();
+        assert!(s.contains("FE-STATIC-DIAG-IMPORT-SCRIPT-0003"));
+        assert!(s.contains("import not allowed in script"));
+        assert!(s.contains("line 7"));
+    }
+
+    #[test]
+    fn static_error_display_tdz() {
+        let err = StaticError::new(
+            StaticErrorKind::TemporalDeadZone,
+            "cannot access 'x' before initialization",
+            span(12),
+        );
+        let s = err.to_string();
+        assert!(s.contains("FE-STATIC-DIAG-TDZ-0007"));
+        assert!(s.contains("cannot access 'x'"));
+        assert!(s.contains("line 12"));
+    }
+
+    #[test]
+    fn static_error_display_delete_of_identifier() {
+        let err = StaticError::new(
+            StaticErrorKind::DeleteOfIdentifier,
+            "delete of bare identifier in strict mode",
+            span(99),
+        );
+        let s = err.to_string();
+        assert!(s.contains("FE-STATIC-DIAG-DELETE-IDENT-0017"));
+        assert!(s.contains("line 99"));
+    }
+
+    // -----------------------------------------------------------------------
+    // StaticError canonical_value content verification
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn static_error_canonical_value_content() {
+        let err = StaticError::new(StaticErrorKind::DuplicateExport, "duplicate export 'foo'", span(5));
+        let cv = err.canonical_value();
+        if let CanonicalValue::Map(map) = cv {
+            assert_eq!(
+                map["kind"],
+                CanonicalValue::String("duplicate_export".to_string())
+            );
+            assert_eq!(
+                map["diagnostic_code"],
+                CanonicalValue::String("FE-STATIC-DIAG-DUP-EXPORT-0005".to_string())
+            );
+            assert_eq!(
+                map["message"],
+                CanonicalValue::String("duplicate export 'foo'".to_string())
+            );
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // StaticAnalysisResult edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn analysis_result_passed_zero_errors() {
+        let tree = make_tree(ParseGoal::Script, vec![]);
+        let result = analyze(&tree);
+        assert!(result.passed());
+        assert_eq!(result.error_count(), 0);
+    }
+
+    #[test]
+    fn analysis_result_serde_module_flag() {
+        let tree = make_tree(
+            ParseGoal::Module,
+            vec![import_stmt(Some("x"), "./x.js", 1)],
+        );
+        let result = analyze(&tree);
+        assert!(result.is_module);
+        let json = serde_json::to_string(&result).unwrap();
+        let back: StaticAnalysisResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, back);
+        assert!(back.is_module);
+    }
+
+    // -----------------------------------------------------------------------
+    // StaticSemanticsEvent coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn event_from_result_with_module_counts() {
+        let tree = make_tree(
+            ParseGoal::Module,
+            vec![
+                import_stmt(Some("a"), "./a.js", 1),
+                var_decl(
+                    VariableDeclarationKind::Const,
+                    "b",
+                    Some(Expression::NumericLiteral(1)),
+                    2,
+                ),
+            ],
+        );
+        let result = analyze(&tree);
+        let event = StaticSemanticsEvent::from_result(&result);
+        assert!(event.is_module);
+        assert_eq!(event.binding_count, 2); // "a" (import) + "b" (const)
+        assert_eq!(event.scope_count, 1); // top-level module scope
+        assert_eq!(event.error_count, 0);
+        assert_eq!(event.outcome, "pass");
+    }
+
+    #[test]
+    fn event_canonical_value_content() {
+        let event = StaticSemanticsEvent {
+            component: "static_semantics".to_string(),
+            event: "analysis_complete".to_string(),
+            outcome: "fail".to_string(),
+            error_count: 3,
+            binding_count: 5,
+            scope_count: 2,
+            is_module: true,
+        };
+        let cv = event.canonical_value();
+        if let CanonicalValue::Map(map) = cv {
+            assert_eq!(map["component"], CanonicalValue::String("static_semantics".to_string()));
+            assert_eq!(map["outcome"], CanonicalValue::String("fail".to_string()));
+            assert_eq!(map["error_count"], CanonicalValue::U64(3));
+            assert_eq!(map["binding_count"], CanonicalValue::U64(5));
+            assert_eq!(map["scope_count"], CanonicalValue::U64(2));
+            assert_eq!(map["is_module"], CanonicalValue::Bool(true));
+        } else {
+            panic!("expected map");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // is_reserved_binding completeness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_reserved_binding_all_strict_reserved_words() {
+        let words = ["implements", "interface", "let", "package", "private",
+                     "protected", "public", "static", "yield"];
+        for word in words {
+            assert!(
+                is_reserved_binding(word, true),
+                "'{}' should be reserved in module mode",
+                word
+            );
+            assert!(
+                !is_reserved_binding(word, false),
+                "'{}' should NOT be reserved in script mode",
+                word
+            );
+        }
+    }
+
+    #[test]
+    fn is_reserved_binding_all_keyword_bindings() {
+        let keywords = [
+            "break", "case", "catch", "class", "const", "continue", "debugger",
+            "default", "delete", "do", "else", "enum", "export", "extends",
+            "false", "finally", "for", "function", "if", "import", "in",
+            "instanceof", "new", "null", "return", "super", "switch", "this",
+            "throw", "true", "try", "typeof", "var", "void", "while", "with",
+        ];
+        for kw in keywords {
+            assert!(
+                is_reserved_binding(kw, false),
+                "'{}' should be a keyword binding",
+                kw
+            );
+            assert!(
+                is_reserved_binding(kw, true),
+                "'{}' should be a keyword binding in module mode too",
+                kw
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // collect_identifier_refs for untested expression types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn collect_refs_from_unary() {
+        let expr = Expression::Unary {
+            operator: crate::ast::UnaryOperator::Typeof,
+            argument: Box::new(Expression::Identifier("x".to_string())),
+        };
+        let mut refs = Vec::new();
+        collect_identifier_refs(&expr, &mut refs);
+        assert_eq!(refs, vec!["x"]);
+    }
+
+    #[test]
+    fn collect_refs_from_assignment() {
+        let expr = Expression::Assignment {
+            operator: crate::ast::AssignmentOperator::Assign,
+            left: Box::new(Expression::Identifier("a".to_string())),
+            right: Box::new(Expression::Identifier("b".to_string())),
+        };
+        let mut refs = Vec::new();
+        collect_identifier_refs(&expr, &mut refs);
+        assert_eq!(refs, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn collect_refs_from_await() {
+        let expr = Expression::Await(Box::new(Expression::Identifier("p".to_string())));
+        let mut refs = Vec::new();
+        collect_identifier_refs(&expr, &mut refs);
+        assert_eq!(refs, vec!["p"]);
+    }
+
+    #[test]
+    fn collect_refs_from_arrow_function_body() {
+        let expr = Expression::ArrowFunction {
+            params: vec![],
+            body: crate::ast::ArrowBody::Expression(Box::new(Expression::Identifier(
+                "x".to_string(),
+            ))),
+            is_async: false,
+        };
+        let mut refs = Vec::new();
+        collect_identifier_refs(&expr, &mut refs);
+        assert_eq!(refs, vec!["x"]);
+    }
+
+    #[test]
+    fn collect_refs_from_new_expression() {
+        let expr = Expression::New {
+            callee: Box::new(Expression::Identifier("Cls".to_string())),
+            arguments: vec![Expression::Identifier("arg".to_string())],
+        };
+        let mut refs = Vec::new();
+        collect_identifier_refs(&expr, &mut refs);
+        assert_eq!(refs, vec!["Cls", "arg"]);
+    }
+
+    #[test]
+    fn collect_refs_from_template_literal() {
+        let expr = Expression::TemplateLiteral {
+            quasis: vec!["pre ".to_string(), " post".to_string()],
+            expressions: vec![Expression::Identifier("val".to_string())],
+        };
+        let mut refs = Vec::new();
+        collect_identifier_refs(&expr, &mut refs);
+        assert_eq!(refs, vec!["val"]);
+    }
+
+    #[test]
+    fn collect_refs_from_member_expression() {
+        let expr = Expression::Member {
+            object: Box::new(Expression::Identifier("obj".to_string())),
+            property: Box::new(Expression::Identifier("prop".to_string())),
+            computed: false,
+        };
+        let mut refs = Vec::new();
+        collect_identifier_refs(&expr, &mut refs);
+        assert_eq!(refs, vec!["obj", "prop"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // walk_expression: await detection in additional expression types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn await_nested_in_new_detected() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::New {
+                    callee: Box::new(Expression::Identifier("Foo".to_string())),
+                    arguments: vec![Expression::Await(Box::new(Expression::Identifier(
+                        "p".to_string(),
+                    )))],
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AwaitOutsideAsync)
+        );
+    }
+
+    #[test]
+    fn await_nested_in_unary_detected() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::Unary {
+                    operator: crate::ast::UnaryOperator::Typeof,
+                    argument: Box::new(Expression::Await(Box::new(Expression::Identifier(
+                        "p".to_string(),
+                    )))),
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AwaitOutsideAsync)
+        );
+    }
+
+    #[test]
+    fn await_nested_in_member_detected() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::Member {
+                    object: Box::new(Expression::Await(Box::new(Expression::Identifier(
+                        "p".to_string(),
+                    )))),
+                    property: Box::new(Expression::Identifier("then".to_string())),
+                    computed: false,
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AwaitOutsideAsync)
+        );
+    }
+
+    #[test]
+    fn await_nested_in_assignment_detected() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::Assignment {
+                    operator: crate::ast::AssignmentOperator::Assign,
+                    left: Box::new(Expression::Identifier("x".to_string())),
+                    right: Box::new(Expression::Await(Box::new(Expression::Identifier(
+                        "p".to_string(),
+                    )))),
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AwaitOutsideAsync)
+        );
+    }
+
+    #[test]
+    fn await_nested_in_arrow_body_detected() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::ArrowFunction {
+                    params: vec![],
+                    body: crate::ast::ArrowBody::Expression(Box::new(Expression::Await(
+                        Box::new(Expression::Identifier("p".to_string())),
+                    ))),
+                    is_async: false,
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AwaitOutsideAsync)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Context flag edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn continue_in_switch_without_loop_errors() {
+        use crate::ast::{ContinueStatement, SwitchCase, SwitchStatement};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::Switch(SwitchStatement {
+                discriminant: Expression::Identifier("x".to_string()),
+                cases: vec![SwitchCase {
+                    test: Some(Expression::NumericLiteral(1)),
+                    consequent: vec![Statement::Continue(ContinueStatement {
+                        label: None,
+                        span: span(3),
+                    })],
+                    span: span(2),
+                }],
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::ContinueOutsideLoop),
+            "continue in switch (no enclosing loop) should error"
+        );
+    }
+
+    #[test]
+    fn duplicate_param_in_script_allowed() {
+        use crate::ast::{BlockStatement, FunctionDeclaration, FunctionParam};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::FunctionDeclaration(FunctionDeclaration {
+                name: Some("foo".to_string()),
+                params: vec![
+                    FunctionParam {
+                        name: "a".to_string(),
+                        span: span(1),
+                    },
+                    FunctionParam {
+                        name: "a".to_string(),
+                        span: span(1),
+                    },
+                ],
+                body: BlockStatement {
+                    body: vec![],
+                    span: span(2),
+                },
+                is_async: false,
+                is_generator: false,
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        // Duplicate params only flagged in module (strict) mode
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::DuplicateParameter)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // TDZ detection in additional contexts
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tdz_in_member_expression() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![
+                expr_stmt(
+                    Expression::Member {
+                        object: Box::new(Expression::Identifier("x".to_string())),
+                        property: Box::new(Expression::Identifier("prop".to_string())),
+                        computed: false,
+                    },
+                    1,
+                ),
+                var_decl(
+                    VariableDeclarationKind::Let,
+                    "x",
+                    Some(Expression::NumericLiteral(1)),
+                    2,
+                ),
+            ],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::TemporalDeadZone)
+        );
+    }
+
+    #[test]
+    fn tdz_in_template_literal() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![
+                expr_stmt(
+                    Expression::TemplateLiteral {
+                        quasis: vec!["val: ".to_string(), "".to_string()],
+                        expressions: vec![Expression::Identifier("x".to_string())],
+                    },
+                    1,
+                ),
+                var_decl(
+                    VariableDeclarationKind::Const,
+                    "x",
+                    Some(Expression::NumericLiteral(42)),
+                    2,
+                ),
+            ],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::TemporalDeadZone)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Throw and if statement analysis
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn throw_with_await_in_script_detected() {
+        use crate::ast::ThrowStatement;
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::Throw(ThrowStatement {
+                argument: Expression::Await(Box::new(Expression::Identifier("err".to_string()))),
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AwaitOutsideAsync)
+        );
+    }
+
+    #[test]
+    fn if_condition_await_detected() {
+        use crate::ast::IfStatement;
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::If(IfStatement {
+                condition: Expression::Await(Box::new(Expression::Identifier("p".to_string()))),
+                consequent: Box::new(expr_stmt(Expression::NumericLiteral(1), 2)),
+                alternate: None,
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AwaitOutsideAsync)
+        );
     }
 }

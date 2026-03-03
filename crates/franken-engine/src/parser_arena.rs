@@ -474,6 +474,8 @@ impl ParserArena {
             Statement::Block(_)
             | Statement::If(_)
             | Statement::For(_)
+            | Statement::ForIn(_)
+            | Statement::ForOf(_)
             | Statement::While(_)
             | Statement::DoWhile(_)
             | Statement::Return(_)
@@ -543,7 +545,9 @@ impl ParserArena {
             | Expression::This
             | Expression::ArrayLiteral(_)
             | Expression::ObjectLiteral(_)
-            | Expression::ArrowFunction { .. } => {
+            | Expression::ArrowFunction { .. }
+            | Expression::New { .. }
+            | Expression::TemplateLiteral { .. } => {
                 return Err(ArenaError::UnsupportedExpression {
                     kind: expression_kind_name(expression),
                 });
@@ -719,6 +723,8 @@ fn statement_kind_name(statement: &Statement) -> &'static str {
         Statement::Block(_) => "block",
         Statement::If(_) => "if",
         Statement::For(_) => "for",
+        Statement::ForIn(_) => "for_in",
+        Statement::ForOf(_) => "for_of",
         Statement::While(_) => "while",
         Statement::DoWhile(_) => "do_while",
         Statement::Return(_) => "return",
@@ -750,6 +756,8 @@ fn expression_kind_name(expression: &Expression) -> &'static str {
         Expression::ArrayLiteral(_) => "array_literal",
         Expression::ObjectLiteral(_) => "object_literal",
         Expression::ArrowFunction { .. } => "arrow_function",
+        Expression::New { .. } => "new",
+        Expression::TemplateLiteral { .. } => "template_literal",
         Expression::Raw(_) => "raw",
     }
 }
