@@ -4,9 +4,9 @@
 //! Validates that the static-semantic checks integrate correctly with the parser output.
 
 use frankenengine_engine::ast::{
-    ExportDeclaration, ExportKind, Expression, ExpressionStatement, ImportDeclaration, ParseGoal,
-    SourceSpan, Statement, SyntaxTree, VariableDeclaration, VariableDeclarationKind,
-    VariableDeclarator,
+    BindingPattern, ExportDeclaration, ExportKind, Expression, ExpressionStatement,
+    ImportDeclaration, ParseGoal, SourceSpan, Statement, SyntaxTree, VariableDeclaration,
+    VariableDeclarationKind, VariableDeclarator,
 };
 use frankenengine_engine::ir_contract::{BindingKind, ScopeKind};
 use frankenengine_engine::parser::{CanonicalEs2020Parser, ParserOptions};
@@ -49,7 +49,7 @@ fn var_decl(
     Statement::VariableDeclaration(VariableDeclaration {
         kind,
         declarations: vec![VariableDeclarator {
-            name: name.to_string(),
+            pattern: BindingPattern::Identifier(name.to_string()),
             initializer: init,
             span: span(line),
         }],
@@ -864,17 +864,17 @@ fn multi_declarator_variable_declaration() {
             kind: VariableDeclarationKind::Let,
             declarations: vec![
                 VariableDeclarator {
-                    name: "x".to_string(),
+                    pattern: BindingPattern::Identifier("x".to_string()),
                     initializer: Some(Expression::NumericLiteral(1)),
                     span: span(1),
                 },
                 VariableDeclarator {
-                    name: "y".to_string(),
+                    pattern: BindingPattern::Identifier("y".to_string()),
                     initializer: Some(Expression::NumericLiteral(2)),
                     span: span(1),
                 },
                 VariableDeclarator {
-                    name: "z".to_string(),
+                    pattern: BindingPattern::Identifier("z".to_string()),
                     initializer: Some(Expression::NumericLiteral(3)),
                     span: span(1),
                 },
@@ -895,12 +895,12 @@ fn multi_declarator_with_duplicate() {
             kind: VariableDeclarationKind::Let,
             declarations: vec![
                 VariableDeclarator {
-                    name: "x".to_string(),
+                    pattern: BindingPattern::Identifier("x".to_string()),
                     initializer: Some(Expression::NumericLiteral(1)),
                     span: span(1),
                 },
                 VariableDeclarator {
-                    name: "x".to_string(),
+                    pattern: BindingPattern::Identifier("x".to_string()),
                     initializer: Some(Expression::NumericLiteral(2)),
                     span: span(1),
                 },

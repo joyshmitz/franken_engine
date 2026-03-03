@@ -11,7 +11,8 @@ use test_flake_quarantine_workflow::{
     FLAKE_WORKFLOW_COMPONENT, FLAKE_WORKFLOW_CONTRACT_SCHEMA_VERSION,
     FLAKE_WORKFLOW_EVENT_SCHEMA_VERSION, FLAKE_WORKFLOW_FAILURE_CODE, FlakePolicy, FlakeRunRecord,
     build_quarantine_records, classify_flakes, emit_structured_events, evaluate_gate_confidence,
-    validate_quarantine_records,
+    validate_flake_linkage, validate_quarantine_records, validate_reproducer_replay_commands,
+    validate_structured_event_contract,
 };
 
 fn repo_root() -> PathBuf {
@@ -295,6 +296,11 @@ fn frx_20_5_flake_classification_is_deterministic_and_linked() {
     assert!(!flake.reproducer_bundle.bundle_id.is_empty());
     assert!(!flake.reproducer_bundle.replay_command_ci.is_empty());
     assert!(!flake.reproducer_bundle.replay_command_local.is_empty());
+    let replay_violations = validate_reproducer_replay_commands(&first);
+    assert!(
+        replay_violations.is_empty(),
+        "replay command validation should pass in CI/local mode: {replay_violations:?}"
+    );
     assert!(
         !flake.impacted_unit_suites.is_empty(),
         "flake must link to impacted unit suites"
@@ -302,6 +308,11 @@ fn frx_20_5_flake_classification_is_deterministic_and_linked() {
     assert!(
         !flake.root_cause_hypothesis_artifacts.is_empty(),
         "flake must link to root-cause artifacts"
+    );
+    let linkage_violations = validate_flake_linkage(&first);
+    assert!(
+        linkage_violations.is_empty(),
+        "linkage validation should pass for impacted suites and root-cause artifacts: {linkage_violations:?}"
     );
 }
 
@@ -385,5 +396,10 @@ fn frx_20_5_quarantine_gate_confidence_and_events_are_complete() {
     assert!(
         !flake_event.root_cause_hypothesis_artifacts.is_empty(),
         "flake event should carry root-cause artifacts"
+    );
+    let event_violations = validate_structured_event_contract(&events);
+    assert!(
+        event_violations.is_empty(),
+        "structured event contract should pass for replay commands and required linkage fields: {event_violations:?}"
     );
 }

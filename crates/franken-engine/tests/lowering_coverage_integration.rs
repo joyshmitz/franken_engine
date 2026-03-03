@@ -11,12 +11,12 @@
 #![forbid(unsafe_code)]
 
 use frankenengine_engine::ast::{
-    ArrowBody, BinaryOperator, BlockStatement, BreakStatement, CatchClause, ContinueStatement,
-    DoWhileStatement, ExportDeclaration, ExportKind, Expression, ExpressionStatement, ForStatement,
-    FunctionDeclaration, FunctionParam, IfStatement, ImportDeclaration, ObjectProperty, ParseGoal,
-    ReturnStatement, SourceSpan, Statement, SwitchCase, SwitchStatement, SyntaxTree,
-    ThrowStatement, TryCatchStatement, UnaryOperator, VariableDeclaration, VariableDeclarationKind,
-    VariableDeclarator, WhileStatement,
+    ArrowBody, BinaryOperator, BindingPattern, BlockStatement, BreakStatement, CatchClause,
+    ContinueStatement, DoWhileStatement, ExportDeclaration, ExportKind, Expression,
+    ExpressionStatement, ForStatement, FunctionDeclaration, FunctionParam, IfStatement,
+    ImportDeclaration, ObjectProperty, ParseGoal, ReturnStatement, SourceSpan, Statement,
+    SwitchCase, SwitchStatement, SyntaxTree, ThrowStatement, TryCatchStatement, UnaryOperator,
+    VariableDeclaration, VariableDeclarationKind, VariableDeclarator, WhileStatement,
 };
 use frankenengine_engine::ir_contract::{
     BindingKind, Ir0Module, Ir1Op, Ir3Instruction, IrLevel, ScopeKind,
@@ -54,7 +54,7 @@ fn make_var_decl(kind: VariableDeclarationKind, name: &str, init: Option<Express
     Statement::VariableDeclaration(VariableDeclaration {
         kind,
         declarations: vec![VariableDeclarator {
-            name: name.to_string(),
+            pattern: BindingPattern::Identifier(name.to_string()),
             initializer: init,
             span: span(),
         }],
@@ -487,17 +487,17 @@ fn multi_declarator_creates_multiple_bindings() {
                 kind: VariableDeclarationKind::Let,
                 declarations: vec![
                     VariableDeclarator {
-                        name: "a".to_string(),
+                        pattern: BindingPattern::Identifier("a".to_string()),
                         initializer: Some(Expression::NumericLiteral(1)),
                         span: span(),
                     },
                     VariableDeclarator {
-                        name: "b".to_string(),
+                        pattern: BindingPattern::Identifier("b".to_string()),
                         initializer: Some(Expression::NumericLiteral(2)),
                         span: span(),
                     },
                     VariableDeclarator {
-                        name: "c".to_string(),
+                        pattern: BindingPattern::Identifier("c".to_string()),
                         initializer: Some(Expression::NumericLiteral(3)),
                         span: span(),
                     },
@@ -1143,7 +1143,7 @@ fn make_func_decl(name: &str, params: &[&str], body: Vec<Statement>) -> Statemen
         params: params
             .iter()
             .map(|p| FunctionParam {
-                name: p.to_string(),
+                pattern: BindingPattern::Identifier(p.to_string()),
                 span: span(),
             })
             .collect(),
@@ -1882,7 +1882,7 @@ fn lowering_arrow_function_expression_body() {
         ParseGoal::Script,
         vec![make_expr_stmt(Expression::ArrowFunction {
             params: vec![FunctionParam {
-                name: "x".to_string(),
+                pattern: BindingPattern::Identifier("x".to_string()),
                 span: span(),
             }],
             body: ArrowBody::Expression(Box::new(Expression::Binary {
@@ -1906,11 +1906,11 @@ fn lowering_arrow_function_block_body() {
         vec![make_expr_stmt(Expression::ArrowFunction {
             params: vec![
                 FunctionParam {
-                    name: "a".to_string(),
+                    pattern: BindingPattern::Identifier("a".to_string()),
                     span: span(),
                 },
                 FunctionParam {
-                    name: "b".to_string(),
+                    pattern: BindingPattern::Identifier("b".to_string()),
                     span: span(),
                 },
             ],

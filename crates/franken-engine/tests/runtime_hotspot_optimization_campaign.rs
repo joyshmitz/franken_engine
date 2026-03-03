@@ -224,3 +224,21 @@ fn runtime_hotspot_gate_script_ci_mode_short_circuits_on_first_failure() {
         );
     }
 }
+
+#[test]
+fn runtime_hotspot_gate_script_emits_step_log_artifacts() {
+    let script = load_gate_script();
+    for marker in [
+        "step_logs_dir=\"${run_dir}/step_logs\"",
+        "step_logs_index_path=\"${run_dir}/step_logs.txt\"",
+        "printf '%s\\n' \"${step_logs[@]}\" >\"$step_logs_index_path\"",
+        "\"step_logs_index\": \"${step_logs_index_path}\"",
+        "\"step_logs_dir\": \"${step_logs_dir}\"",
+        "\"cat ${step_logs_index_path}\"",
+    ] {
+        assert!(
+            script.contains(marker),
+            "missing step-log artifact marker `{marker}` in gate script"
+        );
+    }
+}

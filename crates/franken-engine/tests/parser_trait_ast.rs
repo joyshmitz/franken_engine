@@ -759,7 +759,7 @@ fn parser_emits_arrow_function_single_param_no_parens() {
             .as_ref()
             .expect("should have initializer");
         assert!(matches!(init, Expression::ArrowFunction { params, .. }
-                if params.len() == 1 && params[0].name == "x"));
+                if params.len() == 1 && params[0].name() == Some("x")));
     } else {
         panic!("expected VariableDeclaration");
     }
@@ -819,7 +819,7 @@ fn parser_emits_for_in_statement() {
         .expect("parse should succeed");
     assert_eq!(tree.body.len(), 1);
     if let Statement::ForIn(stmt) = &tree.body[0] {
-        assert_eq!(stmt.binding, "key");
+        assert_eq!(stmt.binding.as_identifier(), Some("key"));
         assert_eq!(stmt.binding_kind, Some(VariableDeclarationKind::Let));
         assert!(matches!(&stmt.object, Expression::Identifier(s) if s == "obj"));
     } else {
@@ -835,7 +835,7 @@ fn parser_emits_for_of_statement() {
         .expect("parse should succeed");
     assert_eq!(tree.body.len(), 1);
     if let Statement::ForOf(stmt) = &tree.body[0] {
-        assert_eq!(stmt.binding, "item");
+        assert_eq!(stmt.binding.as_identifier(), Some("item"));
         assert_eq!(stmt.binding_kind, Some(VariableDeclarationKind::Const));
         assert!(matches!(&stmt.iterable, Expression::Identifier(s) if s == "items"));
     } else {
@@ -851,7 +851,7 @@ fn parser_emits_for_in_bare_binding() {
         .expect("parse should succeed");
     assert_eq!(tree.body.len(), 1);
     if let Statement::ForIn(stmt) = &tree.body[0] {
-        assert_eq!(stmt.binding, "k");
+        assert_eq!(stmt.binding.as_identifier(), Some("k"));
         assert!(stmt.binding_kind.is_none());
     } else {
         panic!("expected ForIn");
@@ -866,7 +866,7 @@ fn parser_emits_for_of_with_var() {
         .expect("parse should succeed");
     assert_eq!(tree.body.len(), 1);
     if let Statement::ForOf(stmt) = &tree.body[0] {
-        assert_eq!(stmt.binding, "x");
+        assert_eq!(stmt.binding.as_identifier(), Some("x"));
         assert_eq!(stmt.binding_kind, Some(VariableDeclarationKind::Var));
     } else {
         panic!("expected ForOf");

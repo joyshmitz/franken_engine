@@ -10,9 +10,9 @@
 //! `static_semantics_integration.rs`.
 
 use frankenengine_engine::ast::{
-    ExportDeclaration, ExportKind, Expression, ExpressionStatement, ImportDeclaration, ParseGoal,
-    SourceSpan, Statement, SyntaxTree, VariableDeclaration, VariableDeclarationKind,
-    VariableDeclarator,
+    BindingPattern, ExportDeclaration, ExportKind, Expression, ExpressionStatement,
+    ImportDeclaration, ParseGoal, SourceSpan, Statement, SyntaxTree, VariableDeclaration,
+    VariableDeclarationKind, VariableDeclarator,
 };
 use frankenengine_engine::ir_contract::Ir0Module;
 use frankenengine_engine::lowering_pipeline::{
@@ -42,7 +42,7 @@ fn var_decl(kind: VariableDeclarationKind, name: &str, init: Option<Expression>)
     Statement::VariableDeclaration(VariableDeclaration {
         kind,
         declarations: vec![VariableDeclarator {
-            name: name.to_string(),
+            pattern: BindingPattern::Identifier(name.to_string()),
             initializer: init,
             span: span(),
         }],
@@ -56,7 +56,7 @@ fn multi_decl(kind: VariableDeclarationKind, names: &[(&str, Option<Expression>)
         declarations: names
             .iter()
             .map(|(name, init)| VariableDeclarator {
-                name: name.to_string(),
+                pattern: BindingPattern::Identifier(name.to_string()),
                 initializer: init.clone(),
                 span: span(),
             })
@@ -840,12 +840,12 @@ fn var_hoisting_forward_reference_in_initializer() {
             kind: VariableDeclarationKind::Var,
             declarations: vec![
                 VariableDeclarator {
-                    name: "y".to_string(),
+                    pattern: BindingPattern::Identifier("y".to_string()),
                     initializer: Some(Expression::Identifier("x".to_string())),
                     span: span(),
                 },
                 VariableDeclarator {
-                    name: "x".to_string(),
+                    pattern: BindingPattern::Identifier("x".to_string()),
                     initializer: Some(Expression::NumericLiteral(1)),
                     span: span(),
                 },

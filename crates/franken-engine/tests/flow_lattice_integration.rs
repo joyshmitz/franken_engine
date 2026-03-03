@@ -948,6 +948,10 @@ fn flow_lattice_event_serde_roundtrip() {
         event: "check_flow".to_string(),
         outcome: "legal_by_lattice".to_string(),
         error_code: Some("NONE".to_string()),
+        obligation_id: None,
+        decision_contract_id: None,
+        receipt_id: None,
+        receipt_replay_command: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     let decoded: FlowLatticeEvent = serde_json::from_str(&json).unwrap();

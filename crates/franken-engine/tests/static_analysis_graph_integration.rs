@@ -8,7 +8,7 @@
 use std::collections::BTreeSet;
 
 use frankenengine_engine::hash_tiers::ContentHash;
-use frankenengine_engine::ir_contract::{CapabilityTag, EffectBoundary};
+use frankenengine_engine::ir_contract::EffectBoundary;
 use frankenengine_engine::static_analysis_graph::{
     AnalysisEdge, AnalysisEdgeId, AnalysisError, AnalysisEvent, AnalysisEventKind, AnalysisNode,
     AnalysisNodeId, AnalysisSummary, CapabilityBoundary, ComponentDescriptor, ComponentId,
@@ -43,20 +43,6 @@ fn component_node(name: &str) -> AnalysisNode {
         hook_slots: Vec::new(),
         effect_classification: None,
         capability_boundary: Some(CapabilityBoundary::pure_component()),
-    }
-}
-
-fn hook_node(name: &str, comp: &str) -> AnalysisNode {
-    AnalysisNode {
-        id: nid(name),
-        kind: NodeKind::HookSlot,
-        label: name.to_string(),
-        component_id: Some(cid(comp)),
-        source_offset: 0,
-        content_hash: ContentHash::compute(name.as_bytes()),
-        hook_slots: Vec::new(),
-        effect_classification: None,
-        capability_boundary: None,
     }
 }
 

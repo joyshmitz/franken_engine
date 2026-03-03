@@ -20,7 +20,7 @@
 #![forbid(unsafe_code)]
 
 use frankenengine_engine::ast::{
-    Expression, ExpressionStatement, ParseGoal, SourceSpan, Statement, SyntaxTree,
+    BindingPattern, Expression, ExpressionStatement, ParseGoal, SourceSpan, Statement, SyntaxTree,
     VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
 };
 use frankenengine_engine::baseline_interpreter::{LaneChoice, LaneRouter};
@@ -54,7 +54,7 @@ fn var_decl(kind: VariableDeclarationKind, name: &str, init: Option<Expression>)
     Statement::VariableDeclaration(VariableDeclaration {
         kind,
         declarations: vec![VariableDeclarator {
-            name: name.to_string(),
+            pattern: BindingPattern::Identifier(name.to_string()),
             initializer: init,
             span: span(),
         }],
