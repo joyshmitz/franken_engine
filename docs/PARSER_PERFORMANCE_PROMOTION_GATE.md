@@ -106,6 +106,15 @@ One-command replay wrapper:
 
 All heavy Rust checks/tests for this lane run through `rch`.
 
+Fail-closed `rch` policy:
+
+- local fallback signatures (`running locally`, `falling back to local`,
+  `RCH-E326`, dependency-preflight fallback) are hard failures.
+- artifact retrieval failures (`Artifact retrieval failed`, rsync code-23
+  retrieval errors) are hard failures.
+- only remote `exit=0` paired with explicit artifact-timeout signatures is
+  treated as recoverable (manifest remains fail-closed on any other ambiguity).
+
 Canonical command:
 
 ```bash
@@ -128,7 +137,8 @@ Each run emits:
 - `artifacts/parser_performance_promotion_gate/<timestamp>/commands.txt`
 
 Manifest includes gate mode, deterministic replay command, benchmark protocol
-hash, blocked pair inventory, and pass/fail outcome.
+hash, blocked pair inventory, deterministic environment fingerprint fields,
+and pass/fail outcome.
 
 ## Operator Verification
 

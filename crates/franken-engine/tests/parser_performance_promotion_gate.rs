@@ -88,6 +88,11 @@ fn load_doc() -> String {
     fs::read_to_string(path).expect("read parser performance promotion gate doc")
 }
 
+fn load_script() -> String {
+    let path = Path::new("../../scripts/run_parser_performance_promotion_gate.sh");
+    fs::read_to_string(path).expect("read parser performance promotion gate script")
+}
+
 fn pair_key(peer_id: &str, quantile: &str) -> (String, String) {
     (peer_id.to_string(), quantile.to_string())
 }
@@ -447,5 +452,59 @@ fn parser_performance_replay_scenarios_align_with_gate_outcome() {
             "scenario should expect runnable replay"
         );
         assert_eq!(scenario.expected_outcome, evaluation.outcome);
+    }
+}
+
+#[test]
+fn parser_performance_evidence_vectors_and_telemetry_paths_are_contract_shaped() {
+    let fixture = load_fixture();
+
+    for vector in &fixture.evidence_vectors {
+        assert!(
+            vector.artifact_manifest.ends_with("/run_manifest.json"),
+            "evidence manifest should end with run_manifest.json: {}",
+            vector.artifact_manifest
+        );
+        assert!(
+            vector.replay_command.starts_with("./scripts/e2e/"),
+            "evidence replay command should use e2e wrapper path: {}",
+            vector.replay_command
+        );
+    }
+
+    for artifact in &fixture.telemetry_artifacts {
+        assert!(
+            artifact.manifest_path.ends_with("/run_manifest.json"),
+            "telemetry manifest should end with run_manifest.json: {}",
+            artifact.manifest_path
+        );
+        assert!(
+            artifact.replay_command.starts_with("./scripts/e2e/"),
+            "telemetry replay command should use e2e wrapper path: {}",
+            artifact.replay_command
+        );
+    }
+}
+
+#[test]
+fn parser_performance_gate_script_contains_fail_closed_rch_markers() {
+    let script = load_script();
+    let required_markers = [
+        "policy-parser-performance-promotion-gate-v1",
+        "rch_last_remote_exit_code",
+        "rch_has_recoverable_artifact_timeout",
+        "rch_reject_artifact_retrieval_failure",
+        "running locally",
+        "RCH-E326",
+        "rsync error: .*code 23",
+        "parser_frontier_emit_manifest_environment_fields",
+        "./scripts/e2e/parser_performance_promotion_gate_replay.sh",
+    ];
+
+    for marker in required_markers {
+        assert!(
+            script.contains(marker),
+            "performance gate script missing marker: {marker}"
+        );
     }
 }
