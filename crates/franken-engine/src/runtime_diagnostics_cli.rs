@@ -1248,7 +1248,10 @@ pub fn build_onboarding_scorecard(input: &OnboardingScorecardInput) -> Onboardin
             remediation: blocker.remediation.clone(),
             reproducible_command: blocker.reproducible_command.clone(),
             evidence_links: blocker.evidence_links.clone(),
-            owner_hint: Some(default_owner_for_source("preflight_doctor", blocker.severity)),
+            owner_hint: Some(default_owner_for_source(
+                "preflight_doctor",
+                blocker.severity,
+            )),
         })
         .collect::<Vec<_>>();
     unresolved_signals.extend(input.external_signals.clone());
@@ -1280,30 +1283,27 @@ pub fn build_onboarding_scorecard(input: &OnboardingScorecardInput) -> Onboardin
             .then(left.source.cmp(&right.source))
     });
 
-    let critical_signals =
-        u64::try_from(
-            unresolved_signals
-                .iter()
-                .filter(|signal| signal.severity == EvidenceSeverity::Critical)
-                .count(),
-        )
-        .unwrap_or(u64::MAX);
-    let warning_signals =
-        u64::try_from(
-            unresolved_signals
-                .iter()
-                .filter(|signal| signal.severity == EvidenceSeverity::Warning)
-                .count(),
-        )
-        .unwrap_or(u64::MAX);
-    let info_signals =
-        u64::try_from(
-            unresolved_signals
-                .iter()
-                .filter(|signal| signal.severity == EvidenceSeverity::Info)
-                .count(),
-        )
-        .unwrap_or(u64::MAX);
+    let critical_signals = u64::try_from(
+        unresolved_signals
+            .iter()
+            .filter(|signal| signal.severity == EvidenceSeverity::Critical)
+            .count(),
+    )
+    .unwrap_or(u64::MAX);
+    let warning_signals = u64::try_from(
+        unresolved_signals
+            .iter()
+            .filter(|signal| signal.severity == EvidenceSeverity::Warning)
+            .count(),
+    )
+    .unwrap_or(u64::MAX);
+    let info_signals = u64::try_from(
+        unresolved_signals
+            .iter()
+            .filter(|signal| signal.severity == EvidenceSeverity::Info)
+            .count(),
+    )
+    .unwrap_or(u64::MAX);
 
     let baseline_risk_millionths = match input.preflight.verdict {
         PreflightVerdict::Green => 100_000,
@@ -1425,7 +1425,10 @@ pub fn render_onboarding_scorecard_summary(output: &OnboardingScorecardOutput) -
         format!("package_name: {}", output.package_name),
         format!("readiness: {}", output.readiness),
         format!("remediation_effort: {}", output.remediation_effort),
-        format!("risk_total_millionths: {}", output.score.total_risk_millionths),
+        format!(
+            "risk_total_millionths: {}",
+            output.score.total_risk_millionths
+        ),
         format!(
             "signals: critical={} warning={} info={}",
             output.score.critical_signals, output.score.warning_signals, output.score.info_signals
@@ -3416,7 +3419,10 @@ mod tests {
         });
 
         assert_eq!(scorecard.readiness, OnboardingReadinessClass::Ready);
-        assert_eq!(scorecard.remediation_effort, OnboardingRemediationEffort::Low);
+        assert_eq!(
+            scorecard.remediation_effort,
+            OnboardingRemediationEffort::Low
+        );
         assert_eq!(scorecard.score.critical_signals, 0);
         assert_eq!(scorecard.score.warning_signals, 0);
         assert_eq!(scorecard.score.info_signals, 0);

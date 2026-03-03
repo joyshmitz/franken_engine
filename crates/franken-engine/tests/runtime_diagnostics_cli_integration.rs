@@ -1544,3 +1544,120 @@ fn render_preflight_summary_includes_repro_commands() {
     assert!(summary.contains("support_bundle_id: bundle-"));
     assert!(summary.contains("runtime_diagnostics doctor --input <path> --summary"));
 }
+
+// ===================================================================
+// Section 19: Workload onboarding scorecard
+// ===================================================================
+
+#[test]
+fn onboarding_scorecard_merges_preflight_and_external_signals() {
+    let preflight = run_preflight_doctor(
+        &make_cli_input(),
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let scorecard = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/weather-ext".to_string(),
+        package_name: "weather-ext".to_string(),
+        target_platforms: vec![
+            "linux-x64".to_string(),
+            "linux-x64".to_string(),
+            "macos-arm64".to_string(),
+        ],
+        preflight,
+        external_signals: vec![OnboardingScorecardSignal {
+            signal_id: "platform:line-ending".to_string(),
+            source: "platform_matrix".to_string(),
+            severity: EvidenceSeverity::Warning,
+            summary: "windows newline normalization drift".to_string(),
+            remediation: "apply deterministic newline normalization on replay artifacts"
+                .to_string(),
+            reproducible_command: "scripts/run_rgc_cross_platform_matrix_gate.sh test".to_string(),
+            evidence_links: vec![
+                "artifacts/rgc_cross_platform_matrix/latest/drift.json".to_string(),
+            ],
+            owner_hint: Some("platform-matrix-lane".to_string()),
+        }],
+    });
+
+    assert_eq!(scorecard.workload_id, "pkg/weather-ext");
+    assert_eq!(scorecard.package_name, "weather-ext");
+    assert_eq!(scorecard.readiness, OnboardingReadinessClass::Blocked);
+    assert!(scorecard.score.critical_signals >= 1);
+    assert!(scorecard.unresolved_signals.len() >= 2);
+    assert_eq!(
+        scorecard.target_platforms,
+        vec!["linux-x64".to_string(), "macos-arm64".to_string()]
+    );
+    assert!(
+        scorecard
+            .reproducible_commands
+            .contains(&"runtime_diagnostics doctor --input <path> --summary".to_string())
+    );
+}
+
+#[test]
+fn onboarding_scorecard_ready_for_clean_inputs() {
+    let mut input = make_cli_input();
+    input.evidence_entries.clear();
+    input.containment_receipts.clear();
+    input
+        .hostcall_records
+        .retain(|record| matches!(record.record.result_status, HostcallResult::Success));
+    for sample in &mut input.runtime_state.gc_pressure {
+        sample.used_bytes = sample.used_bytes.min(sample.budget_bytes);
+    }
+    for lane in &mut input.runtime_state.scheduler_lanes {
+        lane.tasks_timed_out = 0;
+        lane.queue_depth = 0;
+    }
+
+    let preflight = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    assert_eq!(preflight.verdict, PreflightVerdict::Green);
+
+    let scorecard = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/clean-ext".to_string(),
+        package_name: "clean-ext".to_string(),
+        target_platforms: vec!["linux-x64".to_string()],
+        preflight,
+        external_signals: Vec::new(),
+    });
+
+    assert_eq!(scorecard.readiness, OnboardingReadinessClass::Ready);
+    assert_eq!(
+        scorecard.remediation_effort,
+        OnboardingRemediationEffort::Low
+    );
+    assert_eq!(scorecard.score.critical_signals, 0);
+    assert_eq!(scorecard.score.warning_signals, 0);
+    assert!(scorecard.next_steps.is_empty());
+}
+
+#[test]
+fn render_onboarding_scorecard_summary_contains_key_fields() {
+    let preflight = run_preflight_doctor(
+        &make_cli_input(),
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let scorecard = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/example".to_string(),
+        package_name: "example".to_string(),
+        target_platforms: vec!["linux-x64".to_string()],
+        preflight,
+        external_signals: Vec::new(),
+    });
+    let summary = render_onboarding_scorecard_summary(&scorecard);
+
+    assert!(
+        summary
+            .contains("schema_version: franken-engine.runtime-diagnostics.onboarding-scorecard.v1")
+    );
+    assert!(summary.contains("readiness: blocked"));
+    assert!(summary.contains("next_steps:"));
+    assert!(summary.contains("reproducible_commands:"));
+}
