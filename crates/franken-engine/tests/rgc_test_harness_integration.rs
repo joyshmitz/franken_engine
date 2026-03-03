@@ -403,8 +403,7 @@ fn baseline_scenario_outcome_serde_round_trip() {
         BaselineScenarioOutcome::CanonicalFailure,
     ] {
         let json = serde_json::to_string(&outcome).expect("serialize");
-        let recovered: BaselineScenarioOutcome =
-            serde_json::from_str(&json).expect("deserialize");
+        let recovered: BaselineScenarioOutcome = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(outcome, recovered);
     }
 }

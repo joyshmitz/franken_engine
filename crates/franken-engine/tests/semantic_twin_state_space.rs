@@ -1,6 +1,6 @@
 use frankenengine_engine::semantic_twin_state_space::{
-    SEMANTIC_TWIN_COMPONENT, SemanticTwinSpecification, TwinSpecError, TwinStateSnapshot,
-    TwinStateDomain,
+    SEMANTIC_TWIN_COMPONENT, SemanticTwinSpecification, TwinSpecError, TwinStateDomain,
+    TwinStateSnapshot,
 };
 
 #[test]
@@ -110,8 +110,7 @@ fn twin_state_snapshot_serde_round_trip() {
 fn semantic_twin_specification_serde_round_trip() {
     let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
     let json = serde_json::to_string(&spec).expect("serialize");
-    let recovered: SemanticTwinSpecification =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: SemanticTwinSpecification = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(spec, recovered);
 }
 

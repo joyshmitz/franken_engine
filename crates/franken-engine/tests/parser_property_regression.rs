@@ -139,6 +139,8 @@ fn semantic_signature(tree: &SyntaxTree) -> Vec<String> {
             Statement::Break(_) => format!("break"),
             Statement::Continue(_) => format!("continue"),
             Statement::FunctionDeclaration(_) => format!("function_decl"),
+            Statement::ForIn(_) => format!("for_in"),
+            Statement::ForOf(_) => format!("for_of"),
         })
         .collect()
 }

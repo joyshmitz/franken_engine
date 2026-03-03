@@ -242,8 +242,7 @@ fn fallback_execution_route_serde_round_trip_all_variants() {
         FallbackExecutionRoute::DeterministicSafeModeLane,
     ] {
         let json = serde_json::to_string(&route).expect("serialize");
-        let recovered: FallbackExecutionRoute =
-            serde_json::from_str(&json).expect("deserialize");
+        let recovered: FallbackExecutionRoute = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(route, recovered);
     }
 }

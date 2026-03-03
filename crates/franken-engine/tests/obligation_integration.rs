@@ -287,12 +287,18 @@ fn two_phase_category_serde_round_trip_all_variants() {
 
 #[test]
 fn two_phase_category_display_formats_are_snake_case() {
-    assert_eq!(TwoPhaseCategory::ResourceAlloc.to_string(), "resource_alloc");
+    assert_eq!(
+        TwoPhaseCategory::ResourceAlloc.to_string(),
+        "resource_alloc"
+    );
     assert_eq!(
         TwoPhaseCategory::PermissionGrant.to_string(),
         "permission_grant"
     );
-    assert_eq!(TwoPhaseCategory::StateMutation.to_string(), "state_mutation");
+    assert_eq!(
+        TwoPhaseCategory::StateMutation.to_string(),
+        "state_mutation"
+    );
     assert_eq!(
         TwoPhaseCategory::EvidenceCommit.to_string(),
         "evidence_commit"

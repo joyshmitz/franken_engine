@@ -11,12 +11,15 @@
 #![forbid(unsafe_code)]
 
 use frankenengine_engine::ast::{
-    ExportDeclaration, ExportKind, Expression, ExpressionStatement, ImportDeclaration, ParseGoal,
-    SourceSpan, Statement, SyntaxTree, VariableDeclaration, VariableDeclarationKind,
-    VariableDeclarator,
+    ArrowBody, BinaryOperator, BlockStatement, BreakStatement, CatchClause, ContinueStatement,
+    DoWhileStatement, ExportDeclaration, ExportKind, Expression, ExpressionStatement, ForStatement,
+    FunctionDeclaration, FunctionParam, IfStatement, ImportDeclaration, ObjectProperty, ParseGoal,
+    ReturnStatement, SourceSpan, Statement, SwitchCase, SwitchStatement, SyntaxTree,
+    ThrowStatement, TryCatchStatement, UnaryOperator, VariableDeclaration, VariableDeclarationKind,
+    VariableDeclarator, WhileStatement,
 };
 use frankenengine_engine::ir_contract::{
-    BindingKind, Ir0Module, Ir3Instruction, IrLevel, ScopeKind,
+    BindingKind, Ir0Module, Ir1Op, Ir3Instruction, IrLevel, ScopeKind,
 };
 use frankenengine_engine::lowering_pipeline::{
     LoweringContext, LoweringPipelineError, LoweringPipelineOutput, lower_ir0_to_ir1,
@@ -1035,4 +1038,1367 @@ fn serde_roundtrip_for_flow_proof_artifact() {
     let back: frankenengine_engine::lowering_pipeline::Ir2FlowProofArtifact =
         serde_json::from_str(&json).unwrap();
     assert_eq!(output.ir2_flow_proof_artifact, back);
+}
+
+// ===========================================================================
+// Section 11: Control Flow Statement Lowering
+// ===========================================================================
+
+fn make_block(stmts: Vec<Statement>) -> Statement {
+    Statement::Block(BlockStatement {
+        body: stmts,
+        span: span(),
+    })
+}
+
+fn make_if(cond: Expression, then: Statement, alt: Option<Statement>) -> Statement {
+    Statement::If(IfStatement {
+        condition: cond,
+        consequent: Box::new(then),
+        alternate: alt.map(Box::new),
+        span: span(),
+    })
+}
+
+fn make_while(cond: Expression, body: Statement) -> Statement {
+    Statement::While(WhileStatement {
+        condition: cond,
+        body: Box::new(body),
+        span: span(),
+    })
+}
+
+fn make_do_while(body: Statement, cond: Expression) -> Statement {
+    Statement::DoWhile(DoWhileStatement {
+        body: Box::new(body),
+        condition: cond,
+        span: span(),
+    })
+}
+
+fn make_for(
+    init: Option<Statement>,
+    cond: Option<Expression>,
+    update: Option<Expression>,
+    body: Statement,
+) -> Statement {
+    Statement::For(ForStatement {
+        init: init.map(Box::new),
+        condition: cond,
+        update,
+        body: Box::new(body),
+        span: span(),
+    })
+}
+
+fn make_return(arg: Option<Expression>) -> Statement {
+    Statement::Return(ReturnStatement {
+        argument: arg,
+        span: span(),
+    })
+}
+
+fn make_throw(arg: Expression) -> Statement {
+    Statement::Throw(ThrowStatement {
+        argument: arg,
+        span: span(),
+    })
+}
+
+fn make_try_catch(
+    body: Vec<Statement>,
+    catch_param: Option<&str>,
+    catch_body: Vec<Statement>,
+    finally_body: Option<Vec<Statement>>,
+) -> Statement {
+    Statement::TryCatch(TryCatchStatement {
+        block: BlockStatement { body, span: span() },
+        handler: Some(CatchClause {
+            parameter: catch_param.map(|s| s.to_string()),
+            body: BlockStatement {
+                body: catch_body,
+                span: span(),
+            },
+            span: span(),
+        }),
+        finalizer: finally_body.map(|stmts| BlockStatement {
+            body: stmts,
+            span: span(),
+        }),
+        span: span(),
+    })
+}
+
+fn make_switch(disc: Expression, cases: Vec<SwitchCase>) -> Statement {
+    Statement::Switch(SwitchStatement {
+        discriminant: disc,
+        cases,
+        span: span(),
+    })
+}
+
+fn make_func_decl(name: &str, params: &[&str], body: Vec<Statement>) -> Statement {
+    Statement::FunctionDeclaration(FunctionDeclaration {
+        name: Some(name.to_string()),
+        params: params
+            .iter()
+            .map(|p| FunctionParam {
+                name: p.to_string(),
+                span: span(),
+            })
+            .collect(),
+        body: BlockStatement { body, span: span() },
+        is_async: false,
+        is_generator: false,
+        span: span(),
+    })
+}
+
+#[test]
+fn lowering_block_statement() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_block(vec![make_expr_stmt(
+            Expression::NumericLiteral(1),
+        )])],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let output2 = run_full(&ir0);
+    assert_eq!(output.ir3.content_hash(), output2.ir3.content_hash());
+}
+
+#[test]
+fn lowering_if_statement_consequent_only() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_if(
+            Expression::BooleanLiteral(true),
+            make_expr_stmt(Expression::NumericLiteral(42)),
+            None,
+        )],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let output2 = run_full(&ir0);
+    assert_eq!(output.ir3.content_hash(), output2.ir3.content_hash());
+}
+
+#[test]
+fn lowering_if_statement_with_alternate() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_if(
+            Expression::BooleanLiteral(false),
+            make_expr_stmt(Expression::NumericLiteral(1)),
+            Some(make_expr_stmt(Expression::NumericLiteral(2))),
+        )],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let output2 = run_full(&ir0);
+    assert_eq!(output.ir3.content_hash(), output2.ir3.content_hash());
+}
+
+#[test]
+fn lowering_if_produces_jump_instructions() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_if(
+            Expression::BooleanLiteral(true),
+            make_expr_stmt(Expression::NumericLiteral(1)),
+            Some(make_expr_stmt(Expression::NumericLiteral(2))),
+        )],
+    );
+    let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
+    let has_jump_if_falsy = ir1
+        .module
+        .ops
+        .iter()
+        .any(|op| matches!(op, Ir1Op::JumpIfFalsy { .. }));
+    assert!(has_jump_if_falsy, "if statement should produce JumpIfFalsy");
+    let has_jump = ir1
+        .module
+        .ops
+        .iter()
+        .any(|op| matches!(op, Ir1Op::Jump { .. }));
+    assert!(has_jump, "if-else should produce unconditional Jump");
+}
+
+#[test]
+fn lowering_while_statement() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_while(
+            Expression::BooleanLiteral(false),
+            make_expr_stmt(Expression::NumericLiteral(99)),
+        )],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let output2 = run_full(&ir0);
+    assert_eq!(output.ir3.content_hash(), output2.ir3.content_hash());
+}
+
+#[test]
+fn lowering_while_produces_loop_structure() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_while(
+            Expression::BooleanLiteral(false),
+            make_expr_stmt(Expression::NumericLiteral(1)),
+        )],
+    );
+    let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
+    let label_count = ir1
+        .module
+        .ops
+        .iter()
+        .filter(|op| matches!(op, Ir1Op::Label { .. }))
+        .count();
+    assert!(label_count >= 2, "while loop needs start and end labels");
+    let has_jump = ir1
+        .module
+        .ops
+        .iter()
+        .any(|op| matches!(op, Ir1Op::Jump { .. }));
+    assert!(has_jump, "while loop needs back-edge jump");
+}
+
+#[test]
+fn lowering_do_while_statement() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_do_while(
+            make_expr_stmt(Expression::NumericLiteral(1)),
+            Expression::BooleanLiteral(false),
+        )],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let output2 = run_full(&ir0);
+    assert_eq!(output.ir3.content_hash(), output2.ir3.content_hash());
+}
+
+#[test]
+fn lowering_for_statement_full() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_for(
+            Some(make_var_decl(
+                VariableDeclarationKind::Let,
+                "i",
+                Some(Expression::NumericLiteral(0)),
+            )),
+            Some(Expression::BooleanLiteral(true)),
+            Some(Expression::NumericLiteral(1)),
+            make_expr_stmt(Expression::NumericLiteral(99)),
+        )],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let output2 = run_full(&ir0);
+    assert_eq!(output.ir3.content_hash(), output2.ir3.content_hash());
+}
+
+#[test]
+fn lowering_for_statement_no_init() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_for(
+            None,
+            Some(Expression::BooleanLiteral(false)),
+            None,
+            make_expr_stmt(Expression::NumericLiteral(0)),
+        )],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+}
+
+#[test]
+fn lowering_for_statement_infinite_skeleton() {
+    // for(;;) body — all optional parts omitted
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_for(
+            None,
+            None,
+            None,
+            make_expr_stmt(Expression::NumericLiteral(0)),
+        )],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+}
+
+#[test]
+fn lowering_return_with_argument() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_return(Some(Expression::NumericLiteral(42)))],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
+    let has_return = ir1.module.ops.iter().any(|op| matches!(op, Ir1Op::Return));
+    assert!(has_return, "return statement should produce Ir1Op::Return");
+}
+
+#[test]
+fn lowering_return_without_argument() {
+    let ir0 = make_ir0(ParseGoal::Script, vec![make_return(None)]);
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+}
+
+#[test]
+fn lowering_throw_statement() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_throw(Expression::StringLiteral("err".to_string()))],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
+    let has_throw = ir1.module.ops.iter().any(|op| matches!(op, Ir1Op::Throw));
+    assert!(has_throw, "throw statement should produce Ir1Op::Throw");
+}
+
+#[test]
+fn lowering_try_catch_basic() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_try_catch(
+            vec![make_expr_stmt(Expression::NumericLiteral(1))],
+            Some("e"),
+            vec![make_expr_stmt(Expression::NumericLiteral(2))],
+            None,
+        )],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let output2 = run_full(&ir0);
+    assert_eq!(output.ir3.content_hash(), output2.ir3.content_hash());
+}
+
+#[test]
+fn lowering_try_catch_with_finally() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_try_catch(
+            vec![make_expr_stmt(Expression::NumericLiteral(1))],
+            Some("err"),
+            vec![make_expr_stmt(Expression::NumericLiteral(2))],
+            Some(vec![make_expr_stmt(Expression::NumericLiteral(3))]),
+        )],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+}
+
+#[test]
+fn lowering_try_catch_produces_begin_end_try() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_try_catch(
+            vec![make_expr_stmt(Expression::NumericLiteral(1))],
+            Some("e"),
+            vec![make_expr_stmt(Expression::NumericLiteral(2))],
+            None,
+        )],
+    );
+    let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
+    let has_begin_try = ir1
+        .module
+        .ops
+        .iter()
+        .any(|op| matches!(op, Ir1Op::BeginTry { .. }));
+    let has_end_try = ir1.module.ops.iter().any(|op| matches!(op, Ir1Op::EndTry));
+    assert!(has_begin_try, "try-catch should produce BeginTry");
+    assert!(has_end_try, "try-catch should produce EndTry");
+}
+
+#[test]
+fn lowering_switch_statement() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_switch(
+            Expression::NumericLiteral(1),
+            vec![
+                SwitchCase {
+                    test: Some(Expression::NumericLiteral(1)),
+                    consequent: vec![make_expr_stmt(Expression::StringLiteral("one".to_string()))],
+                    span: span(),
+                },
+                SwitchCase {
+                    test: Some(Expression::NumericLiteral(2)),
+                    consequent: vec![make_expr_stmt(Expression::StringLiteral("two".to_string()))],
+                    span: span(),
+                },
+                SwitchCase {
+                    test: None, // default
+                    consequent: vec![make_expr_stmt(Expression::StringLiteral(
+                        "default".to_string(),
+                    ))],
+                    span: span(),
+                },
+            ],
+        )],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let output2 = run_full(&ir0);
+    assert_eq!(output.ir3.content_hash(), output2.ir3.content_hash());
+}
+
+#[test]
+fn lowering_break_statement() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![Statement::Break(BreakStatement {
+            label: None,
+            span: span(),
+        })],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+}
+
+#[test]
+fn lowering_continue_statement() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![Statement::Continue(ContinueStatement {
+            label: None,
+            span: span(),
+        })],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+}
+
+#[test]
+fn lowering_function_declaration() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_func_decl(
+            "greet",
+            &["name"],
+            vec![make_return(Some(Expression::StringLiteral(
+                "hello".to_string(),
+            )))],
+        )],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
+    let has_decl_func = ir1
+        .module
+        .ops
+        .iter()
+        .any(|op| matches!(op, Ir1Op::DeclareFunction { name, .. } if name == "greet"));
+    assert!(
+        has_decl_func,
+        "function declaration should produce DeclareFunction"
+    );
+}
+
+#[test]
+fn lowering_function_declaration_creates_let_binding() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_func_decl(
+            "add",
+            &["a", "b"],
+            vec![make_expr_stmt(Expression::NumericLiteral(0))],
+        )],
+    );
+    let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
+    let func_binding = ir1.module.scopes[0]
+        .bindings
+        .iter()
+        .find(|b| b.name == "add");
+    assert!(func_binding.is_some(), "function name should be bound");
+    assert_eq!(func_binding.unwrap().kind, BindingKind::Var);
+}
+
+// ===========================================================================
+// Section 12: Expression Lowering — New Syntax Types
+// ===========================================================================
+
+#[test]
+fn lowering_binary_add_expression() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::Binary {
+            operator: BinaryOperator::Add,
+            left: Box::new(Expression::NumericLiteral(1)),
+            right: Box::new(Expression::NumericLiteral(2)),
+        })],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
+    let has_binop = ir1.module.ops.iter().any(|op| {
+        matches!(
+            op,
+            Ir1Op::BinaryOp {
+                operator: BinaryOperator::Add
+            }
+        )
+    });
+    assert!(has_binop, "binary add should produce BinaryOp");
+}
+
+#[test]
+fn lowering_binary_operators_all_arithmetic() {
+    for (op, label) in [
+        (BinaryOperator::Add, "add"),
+        (BinaryOperator::Subtract, "sub"),
+        (BinaryOperator::Multiply, "mul"),
+        (BinaryOperator::Divide, "div"),
+        (BinaryOperator::Remainder, "rem"),
+    ] {
+        let ir0 = make_ir0(
+            ParseGoal::Script,
+            vec![make_expr_stmt(Expression::Binary {
+                operator: op.clone(),
+                left: Box::new(Expression::NumericLiteral(10)),
+                right: Box::new(Expression::NumericLiteral(3)),
+            })],
+        );
+        let output = run_full(&ir0);
+        assert_eq!(output.witnesses.len(), 3, "failed for {label}");
+    }
+}
+
+#[test]
+fn lowering_binary_comparison_operators() {
+    for (op, label) in [
+        (BinaryOperator::Equal, "eq"),
+        (BinaryOperator::NotEqual, "neq"),
+        (BinaryOperator::StrictEqual, "seq"),
+        (BinaryOperator::StrictNotEqual, "sneq"),
+        (BinaryOperator::LessThan, "lt"),
+        (BinaryOperator::GreaterThan, "gt"),
+    ] {
+        let ir0 = make_ir0(
+            ParseGoal::Script,
+            vec![make_expr_stmt(Expression::Binary {
+                operator: op.clone(),
+                left: Box::new(Expression::NumericLiteral(1)),
+                right: Box::new(Expression::NumericLiteral(2)),
+            })],
+        );
+        let output = run_full(&ir0);
+        assert_eq!(output.witnesses.len(), 3, "failed for {label}");
+    }
+}
+
+#[test]
+fn lowering_binary_logical_operators() {
+    for (op, label) in [
+        (BinaryOperator::LogicalAnd, "and"),
+        (BinaryOperator::LogicalOr, "or"),
+        (BinaryOperator::NullishCoalescing, "nullish"),
+    ] {
+        let ir0 = make_ir0(
+            ParseGoal::Script,
+            vec![make_expr_stmt(Expression::Binary {
+                operator: op.clone(),
+                left: Box::new(Expression::BooleanLiteral(true)),
+                right: Box::new(Expression::BooleanLiteral(false)),
+            })],
+        );
+        let output = run_full(&ir0);
+        assert_eq!(output.witnesses.len(), 3, "failed for {label}");
+    }
+}
+
+#[test]
+fn lowering_unary_expression() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::Unary {
+            operator: UnaryOperator::Negate,
+            argument: Box::new(Expression::NumericLiteral(5)),
+        })],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
+    let has_unary = ir1.module.ops.iter().any(|op| {
+        matches!(
+            op,
+            Ir1Op::UnaryOp {
+                operator: UnaryOperator::Negate
+            }
+        )
+    });
+    assert!(has_unary, "unary negate should produce UnaryOp");
+}
+
+#[test]
+fn lowering_unary_operators_all_variants() {
+    for (op, label) in [
+        (UnaryOperator::Negate, "negate"),
+        (UnaryOperator::BitwiseNot, "bitwise_not"),
+        (UnaryOperator::LogicalNot, "logical_not"),
+        (UnaryOperator::Typeof, "typeof"),
+        (UnaryOperator::Void, "void"),
+    ] {
+        let ir0 = make_ir0(
+            ParseGoal::Script,
+            vec![make_expr_stmt(Expression::Unary {
+                operator: op.clone(),
+                argument: Box::new(Expression::NumericLiteral(1)),
+            })],
+        );
+        let output = run_full(&ir0);
+        assert_eq!(output.witnesses.len(), 3, "failed for {label}");
+    }
+}
+
+#[test]
+fn lowering_conditional_expression() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::Conditional {
+            test: Box::new(Expression::BooleanLiteral(true)),
+            consequent: Box::new(Expression::NumericLiteral(1)),
+            alternate: Box::new(Expression::NumericLiteral(0)),
+        })],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let output2 = run_full(&ir0);
+    assert_eq!(output.ir3.content_hash(), output2.ir3.content_hash());
+}
+
+#[test]
+fn lowering_conditional_produces_branch_ops() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::Conditional {
+            test: Box::new(Expression::BooleanLiteral(true)),
+            consequent: Box::new(Expression::NumericLiteral(1)),
+            alternate: Box::new(Expression::NumericLiteral(0)),
+        })],
+    );
+    let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
+    // Conditional lowers as: test, consequent, Pop, alternate (both branches evaluated).
+    let has_pop = ir1.module.ops.iter().any(|op| matches!(op, Ir1Op::Pop));
+    assert!(
+        has_pop,
+        "conditional expression should produce Pop between branches"
+    );
+}
+
+#[test]
+fn lowering_call_expression() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::Call {
+            callee: Box::new(Expression::Identifier("console".to_string())),
+            arguments: vec![Expression::StringLiteral("hello".to_string())],
+        })],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
+    let has_call = ir1
+        .module
+        .ops
+        .iter()
+        .any(|op| matches!(op, Ir1Op::Call { arg_count: 1 }));
+    assert!(
+        has_call,
+        "call expression should produce Call with arg_count=1"
+    );
+}
+
+#[test]
+fn lowering_call_expression_no_args() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::Call {
+            callee: Box::new(Expression::Identifier("fn".to_string())),
+            arguments: vec![],
+        })],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+}
+
+#[test]
+fn lowering_call_expression_multiple_args() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::Call {
+            callee: Box::new(Expression::Identifier("add".to_string())),
+            arguments: vec![
+                Expression::NumericLiteral(1),
+                Expression::NumericLiteral(2),
+                Expression::NumericLiteral(3),
+            ],
+        })],
+    );
+    let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
+    let has_call = ir1
+        .module
+        .ops
+        .iter()
+        .any(|op| matches!(op, Ir1Op::Call { arg_count: 3 }));
+    assert!(has_call, "3-arg call should have arg_count=3");
+}
+
+#[test]
+fn lowering_member_expression() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::Member {
+            object: Box::new(Expression::Identifier("obj".to_string())),
+            property: Box::new(Expression::Identifier("prop".to_string())),
+            computed: false,
+        })],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
+    let has_get_prop = ir1
+        .module
+        .ops
+        .iter()
+        .any(|op| matches!(op, Ir1Op::GetProperty { key } if key == "prop"));
+    assert!(has_get_prop, "member expression should produce GetProperty");
+}
+
+#[test]
+fn lowering_this_expression() {
+    let ir0 = make_ir0(ParseGoal::Script, vec![make_expr_stmt(Expression::This)]);
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
+    let has_load_this = ir1
+        .module
+        .ops
+        .iter()
+        .any(|op| matches!(op, Ir1Op::LoadThis));
+    assert!(has_load_this, "this expression should produce LoadThis");
+}
+
+#[test]
+fn lowering_array_literal() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::ArrayLiteral(vec![
+            Some(Expression::NumericLiteral(1)),
+            Some(Expression::NumericLiteral(2)),
+            Some(Expression::NumericLiteral(3)),
+        ]))],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
+    let has_new_array = ir1
+        .module
+        .ops
+        .iter()
+        .any(|op| matches!(op, Ir1Op::NewArray { count: 3 }));
+    assert!(
+        has_new_array,
+        "array literal should produce NewArray(count=3)"
+    );
+}
+
+#[test]
+fn lowering_array_literal_with_holes() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::ArrayLiteral(vec![
+            Some(Expression::NumericLiteral(1)),
+            None,
+            Some(Expression::NumericLiteral(3)),
+        ]))],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+}
+
+#[test]
+fn lowering_object_literal() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::ObjectLiteral(vec![
+            ObjectProperty {
+                key: Expression::Identifier("x".to_string()),
+                value: Expression::NumericLiteral(1),
+                computed: false,
+                shorthand: false,
+            },
+            ObjectProperty {
+                key: Expression::Identifier("y".to_string()),
+                value: Expression::NumericLiteral(2),
+                computed: false,
+                shorthand: false,
+            },
+        ]))],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
+    let has_new_object = ir1
+        .module
+        .ops
+        .iter()
+        .any(|op| matches!(op, Ir1Op::NewObject { count: 2 }));
+    assert!(
+        has_new_object,
+        "object literal should produce NewObject(count=2)"
+    );
+}
+
+#[test]
+fn lowering_object_literal_computed_key() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::ObjectLiteral(vec![
+            ObjectProperty {
+                key: Expression::StringLiteral("dynamic-key".to_string()),
+                value: Expression::NumericLiteral(42),
+                computed: true,
+                shorthand: false,
+            },
+        ]))],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+}
+
+#[test]
+fn lowering_arrow_function_expression_body() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::ArrowFunction {
+            params: vec![FunctionParam {
+                name: "x".to_string(),
+                span: span(),
+            }],
+            body: ArrowBody::Expression(Box::new(Expression::Binary {
+                operator: BinaryOperator::Add,
+                left: Box::new(Expression::Identifier("x".to_string())),
+                right: Box::new(Expression::NumericLiteral(1)),
+            })),
+            is_async: false,
+        })],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+    let output2 = run_full(&ir0);
+    assert_eq!(output.ir3.content_hash(), output2.ir3.content_hash());
+}
+
+#[test]
+fn lowering_arrow_function_block_body() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::ArrowFunction {
+            params: vec![
+                FunctionParam {
+                    name: "a".to_string(),
+                    span: span(),
+                },
+                FunctionParam {
+                    name: "b".to_string(),
+                    span: span(),
+                },
+            ],
+            body: ArrowBody::Block(BlockStatement {
+                body: vec![make_return(Some(Expression::Binary {
+                    operator: BinaryOperator::Add,
+                    left: Box::new(Expression::Identifier("a".to_string())),
+                    right: Box::new(Expression::Identifier("b".to_string())),
+                }))],
+                span: span(),
+            }),
+            is_async: false,
+        })],
+    );
+    let output = run_full(&ir0);
+    assert_eq!(output.witnesses.len(), 3);
+}
+
+// ===========================================================================
+// Section 13: Determinism for Composite Control Flow
+// ===========================================================================
+
+#[test]
+fn determinism_nested_if_in_while() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_while(
+            Expression::BooleanLiteral(true),
+            make_if(
+                Expression::BooleanLiteral(false),
+                make_expr_stmt(Expression::NumericLiteral(1)),
+                Some(make_expr_stmt(Expression::NumericLiteral(2))),
+            ),
+        )],
+    );
+    let a = run_full(&ir0);
+    let b = run_full(&ir0);
+    assert_eq!(a.ir3.content_hash(), b.ir3.content_hash());
+}
+
+#[test]
+fn determinism_for_with_complex_body() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_for(
+            Some(make_var_decl(
+                VariableDeclarationKind::Let,
+                "i",
+                Some(Expression::NumericLiteral(0)),
+            )),
+            Some(Expression::Binary {
+                operator: BinaryOperator::LessThan,
+                left: Box::new(Expression::Identifier("i".to_string())),
+                right: Box::new(Expression::NumericLiteral(10)),
+            }),
+            Some(Expression::NumericLiteral(1)),
+            make_block(vec![make_expr_stmt(Expression::Call {
+                callee: Box::new(Expression::Identifier("log".to_string())),
+                arguments: vec![Expression::Identifier("i".to_string())],
+            })]),
+        )],
+    );
+    let a = run_full(&ir0);
+    let b = run_full(&ir0);
+    assert_eq!(a.ir3.content_hash(), b.ir3.content_hash());
+}
+
+#[test]
+fn determinism_try_catch_in_function() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_func_decl(
+            "safe",
+            &[],
+            vec![make_try_catch(
+                vec![make_throw(Expression::StringLiteral("oops".to_string()))],
+                Some("e"),
+                vec![make_expr_stmt(Expression::NumericLiteral(0))],
+                Some(vec![make_expr_stmt(Expression::NumericLiteral(99))]),
+            )],
+        )],
+    );
+    let a = run_full(&ir0);
+    let b = run_full(&ir0);
+    assert_eq!(a.ir3.content_hash(), b.ir3.content_hash());
+}
+
+#[test]
+fn determinism_complex_expression_tree() {
+    // (a + b) * (c - d) > 0 ? "pos" : "neg"
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::Conditional {
+            test: Box::new(Expression::Binary {
+                operator: BinaryOperator::GreaterThan,
+                left: Box::new(Expression::Binary {
+                    operator: BinaryOperator::Multiply,
+                    left: Box::new(Expression::Binary {
+                        operator: BinaryOperator::Add,
+                        left: Box::new(Expression::Identifier("a".to_string())),
+                        right: Box::new(Expression::Identifier("b".to_string())),
+                    }),
+                    right: Box::new(Expression::Binary {
+                        operator: BinaryOperator::Subtract,
+                        left: Box::new(Expression::Identifier("c".to_string())),
+                        right: Box::new(Expression::Identifier("d".to_string())),
+                    }),
+                }),
+                right: Box::new(Expression::NumericLiteral(0)),
+            }),
+            consequent: Box::new(Expression::StringLiteral("pos".to_string())),
+            alternate: Box::new(Expression::StringLiteral("neg".to_string())),
+        })],
+    );
+    let a = run_full(&ir0);
+    let b = run_full(&ir0);
+    assert_eq!(a.ir3.content_hash(), b.ir3.content_hash());
+}
+
+#[test]
+fn determinism_switch_with_mixed_cases() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![
+            make_var_decl(
+                VariableDeclarationKind::Let,
+                "x",
+                Some(Expression::NumericLiteral(3)),
+            ),
+            make_switch(
+                Expression::Identifier("x".to_string()),
+                vec![
+                    SwitchCase {
+                        test: Some(Expression::NumericLiteral(1)),
+                        consequent: vec![
+                            make_expr_stmt(Expression::StringLiteral("one".to_string())),
+                            Statement::Break(BreakStatement {
+                                label: None,
+                                span: span(),
+                            }),
+                        ],
+                        span: span(),
+                    },
+                    SwitchCase {
+                        test: Some(Expression::NumericLiteral(2)),
+                        consequent: vec![make_expr_stmt(Expression::StringLiteral(
+                            "two".to_string(),
+                        ))],
+                        span: span(),
+                    },
+                    SwitchCase {
+                        test: None,
+                        consequent: vec![make_expr_stmt(Expression::StringLiteral(
+                            "other".to_string(),
+                        ))],
+                        span: span(),
+                    },
+                ],
+            ),
+        ],
+    );
+    let a = run_full(&ir0);
+    let b = run_full(&ir0);
+    assert_eq!(a.ir3.content_hash(), b.ir3.content_hash());
+}
+
+// ===========================================================================
+// Section 14: Hash Discrimination — Different Syntax Families Produce Different Hashes
+// ===========================================================================
+
+#[test]
+fn hash_differs_if_vs_while() {
+    let cond = Expression::BooleanLiteral(true);
+    let body = make_expr_stmt(Expression::NumericLiteral(1));
+    let ir0_if = make_ir0(
+        ParseGoal::Script,
+        vec![make_if(cond.clone(), body.clone(), None)],
+    );
+    let ir0_while = make_ir0(ParseGoal::Script, vec![make_while(cond, body)]);
+    let out_if = run_full(&ir0_if);
+    let out_while = run_full(&ir0_while);
+    assert_ne!(out_if.ir3.content_hash(), out_while.ir3.content_hash());
+}
+
+#[test]
+fn hash_differs_while_vs_do_while() {
+    let cond = Expression::BooleanLiteral(false);
+    let body = make_expr_stmt(Expression::NumericLiteral(42));
+    let ir0_while = make_ir0(
+        ParseGoal::Script,
+        vec![make_while(cond.clone(), body.clone())],
+    );
+    let ir0_do = make_ir0(ParseGoal::Script, vec![make_do_while(body, cond)]);
+    let out_while = run_full(&ir0_while);
+    let out_do = run_full(&ir0_do);
+    assert_ne!(out_while.ir3.content_hash(), out_do.ir3.content_hash());
+}
+
+#[test]
+fn hash_differs_add_vs_subtract() {
+    let left = Box::new(Expression::NumericLiteral(10));
+    let right = Box::new(Expression::NumericLiteral(5));
+    let ir0_add = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::Binary {
+            operator: BinaryOperator::Add,
+            left: left.clone(),
+            right: right.clone(),
+        })],
+    );
+    let ir0_sub = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::Binary {
+            operator: BinaryOperator::Subtract,
+            left,
+            right,
+        })],
+    );
+    let out_add = run_full(&ir0_add);
+    let out_sub = run_full(&ir0_sub);
+    assert_ne!(out_add.ir3.content_hash(), out_sub.ir3.content_hash());
+}
+
+#[test]
+fn hash_differs_return_vs_throw() {
+    let val = Expression::StringLiteral("value".to_string());
+    let ir0_ret = make_ir0(ParseGoal::Script, vec![make_return(Some(val.clone()))]);
+    let ir0_throw = make_ir0(ParseGoal::Script, vec![make_throw(val)]);
+    let out_ret = run_full(&ir0_ret);
+    let out_throw = run_full(&ir0_throw);
+    assert_ne!(out_ret.ir3.content_hash(), out_throw.ir3.content_hash());
+}
+
+// ===========================================================================
+// Section 15: IR3 Instruction Patterns for New Ops
+// ===========================================================================
+
+#[test]
+fn ir3_binary_add_produces_add_instruction() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::Binary {
+            operator: BinaryOperator::Add,
+            left: Box::new(Expression::NumericLiteral(3)),
+            right: Box::new(Expression::NumericLiteral(4)),
+        })],
+    );
+    let output = run_full(&ir0);
+    let has_add = output
+        .ir3
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Ir3Instruction::Add { .. }));
+    assert!(has_add, "binary Add should lower to IR3 Add instruction");
+}
+
+#[test]
+fn ir3_binary_subtract_produces_sub_instruction() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::Binary {
+            operator: BinaryOperator::Subtract,
+            left: Box::new(Expression::NumericLiteral(10)),
+            right: Box::new(Expression::NumericLiteral(3)),
+        })],
+    );
+    let output = run_full(&ir0);
+    let has_sub = output
+        .ir3
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Ir3Instruction::Sub { .. }));
+    assert!(
+        has_sub,
+        "binary Subtract should lower to IR3 Sub instruction"
+    );
+}
+
+#[test]
+fn ir3_binary_multiply_produces_mul_instruction() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::Binary {
+            operator: BinaryOperator::Multiply,
+            left: Box::new(Expression::NumericLiteral(6)),
+            right: Box::new(Expression::NumericLiteral(7)),
+        })],
+    );
+    let output = run_full(&ir0);
+    let has_mul = output
+        .ir3
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Ir3Instruction::Mul { .. }));
+    assert!(
+        has_mul,
+        "binary Multiply should lower to IR3 Mul instruction"
+    );
+}
+
+#[test]
+fn ir3_if_else_produces_jump_if() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_if(
+            Expression::BooleanLiteral(true),
+            make_expr_stmt(Expression::NumericLiteral(1)),
+            Some(make_expr_stmt(Expression::NumericLiteral(2))),
+        )],
+    );
+    let output = run_full(&ir0);
+    let has_jump_if = output
+        .ir3
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Ir3Instruction::JumpIf { .. }));
+    assert!(has_jump_if, "if-else should lower to IR3 JumpIf");
+}
+
+#[test]
+fn ir3_while_loop_produces_jump() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_while(
+            Expression::BooleanLiteral(false),
+            make_expr_stmt(Expression::NumericLiteral(1)),
+        )],
+    );
+    let output = run_full(&ir0);
+    let has_jump = output
+        .ir3
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Ir3Instruction::Jump { .. }));
+    assert!(has_jump, "while loop should lower to IR3 Jump");
+}
+
+#[test]
+fn ir3_member_expression_produces_get_property() {
+    let ir0 = make_ir0(
+        ParseGoal::Script,
+        vec![make_expr_stmt(Expression::Member {
+            object: Box::new(Expression::Identifier("obj".to_string())),
+            property: Box::new(Expression::Identifier("field".to_string())),
+            computed: false,
+        })],
+    );
+    let output = run_full(&ir0);
+    let has_get_prop = output
+        .ir3
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Ir3Instruction::GetProperty { .. }));
+    assert!(
+        has_get_prop,
+        "member expression should lower to IR3 GetProperty"
+    );
+}
+
+// ===========================================================================
+// Section 16: Witness Invariants for New Syntax
+// ===========================================================================
+
+#[test]
+fn witness_invariants_pass_for_control_flow() {
+    let programs: Vec<(&str, Vec<Statement>)> = vec![
+        (
+            "if",
+            vec![make_if(
+                Expression::BooleanLiteral(true),
+                make_expr_stmt(Expression::NumericLiteral(1)),
+                None,
+            )],
+        ),
+        (
+            "while",
+            vec![make_while(
+                Expression::BooleanLiteral(false),
+                make_expr_stmt(Expression::NumericLiteral(1)),
+            )],
+        ),
+        (
+            "do-while",
+            vec![make_do_while(
+                make_expr_stmt(Expression::NumericLiteral(1)),
+                Expression::BooleanLiteral(false),
+            )],
+        ),
+        (
+            "return",
+            vec![make_return(Some(Expression::NumericLiteral(0)))],
+        ),
+        (
+            "throw",
+            vec![make_throw(Expression::StringLiteral("err".to_string()))],
+        ),
+        (
+            "try-catch",
+            vec![make_try_catch(
+                vec![make_expr_stmt(Expression::NumericLiteral(1))],
+                Some("e"),
+                vec![make_expr_stmt(Expression::NumericLiteral(2))],
+                None,
+            )],
+        ),
+    ];
+    for (label, body) in programs {
+        let ir0 = make_ir0(ParseGoal::Script, body);
+        let output = run_full(&ir0);
+        for witness in &output.witnesses {
+            for check in &witness.invariant_checks {
+                assert!(
+                    check.passed,
+                    "{label}: invariant {} failed: {}",
+                    check.name, check.detail
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn witness_invariants_pass_for_expressions() {
+    let exprs: Vec<(&str, Expression)> = vec![
+        (
+            "binary_add",
+            Expression::Binary {
+                operator: BinaryOperator::Add,
+                left: Box::new(Expression::NumericLiteral(1)),
+                right: Box::new(Expression::NumericLiteral(2)),
+            },
+        ),
+        (
+            "unary_negate",
+            Expression::Unary {
+                operator: UnaryOperator::Negate,
+                argument: Box::new(Expression::NumericLiteral(5)),
+            },
+        ),
+        (
+            "conditional",
+            Expression::Conditional {
+                test: Box::new(Expression::BooleanLiteral(true)),
+                consequent: Box::new(Expression::NumericLiteral(1)),
+                alternate: Box::new(Expression::NumericLiteral(0)),
+            },
+        ),
+        (
+            "call",
+            Expression::Call {
+                callee: Box::new(Expression::Identifier("f".to_string())),
+                arguments: vec![Expression::NumericLiteral(1)],
+            },
+        ),
+        (
+            "member",
+            Expression::Member {
+                object: Box::new(Expression::Identifier("o".to_string())),
+                property: Box::new(Expression::Identifier("p".to_string())),
+                computed: false,
+            },
+        ),
+        ("this", Expression::This),
+        (
+            "array",
+            Expression::ArrayLiteral(vec![Some(Expression::NumericLiteral(1))]),
+        ),
+        (
+            "object",
+            Expression::ObjectLiteral(vec![ObjectProperty {
+                key: Expression::Identifier("k".to_string()),
+                value: Expression::NumericLiteral(1),
+                computed: false,
+                shorthand: false,
+            }]),
+        ),
+    ];
+    for (label, expr) in exprs {
+        let ir0 = make_ir0(ParseGoal::Script, vec![make_expr_stmt(expr)]);
+        let output = run_full(&ir0);
+        for witness in &output.witnesses {
+            for check in &witness.invariant_checks {
+                assert!(
+                    check.passed,
+                    "{label}: invariant {} failed: {}",
+                    check.name, check.detail
+                );
+            }
+        }
+    }
 }

@@ -274,12 +274,7 @@ fn auth_failure_type_serde_round_trip() {
 fn multiple_events_accumulate_in_order() {
     let mut observability = RuntimeSecurityObservability::new();
 
-    observability.record_auth_failure(
-        context(1, "auth"),
-        AuthFailureType::KeyRevoked,
-        None,
-        None,
-    );
+    observability.record_auth_failure(context(1, "auth"), AuthFailureType::KeyRevoked, None, None);
     observability.record_capability_denial(
         context(2, "cap"),
         CapabilityDenialReason::AudienceMismatch,

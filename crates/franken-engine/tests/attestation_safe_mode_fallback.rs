@@ -359,13 +359,7 @@ fn autonomous_action_default_tiers() {
 
 #[test]
 fn attestation_action_request_new_constructor() {
-    let req = AttestationActionRequest::new(
-        "t1",
-        "d1",
-        "p1",
-        AutonomousAction::Terminate,
-        500,
-    );
+    let req = AttestationActionRequest::new("t1", "d1", "p1", AutonomousAction::Terminate, 500);
     assert_eq!(req.trace_id, "t1");
     assert_eq!(req.decision_id, "d1");
     assert_eq!(req.policy_id, "p1");
@@ -418,8 +412,14 @@ fn fallback_config_serde_round_trip() {
     };
     let json = serde_json::to_string(&config).expect("serialize");
     let recovered: AttestationFallbackConfig = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(config.unavailable_timeout_ns, recovered.unavailable_timeout_ns);
-    assert_eq!(config.challenge_on_fallback, recovered.challenge_on_fallback);
+    assert_eq!(
+        config.unavailable_timeout_ns,
+        recovered.unavailable_timeout_ns
+    );
+    assert_eq!(
+        config.challenge_on_fallback,
+        recovered.challenge_on_fallback
+    );
     assert_eq!(config.sandbox_on_fallback, recovered.sandbox_on_fallback);
 }
 
