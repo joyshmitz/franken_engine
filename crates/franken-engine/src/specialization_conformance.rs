@@ -2874,10 +2874,16 @@ mod tests {
     #[test]
     fn transformation_type_display_all_4_variants() {
         let expected = [
-            (TransformationType::HostcallDispatchElision, "hostcall_dispatch_elision"),
+            (
+                TransformationType::HostcallDispatchElision,
+                "hostcall_dispatch_elision",
+            ),
             (TransformationType::LabelCheckElision, "label_check_elision"),
             (TransformationType::PathRemoval, "path_removal"),
-            (TransformationType::SuperinstructionFusion, "superinstruction_fusion"),
+            (
+                TransformationType::SuperinstructionFusion,
+                "superinstruction_fusion",
+            ),
         ];
         for (tt, label) in expected {
             assert_eq!(tt.to_string(), label);
@@ -3021,7 +3027,9 @@ mod tests {
                 sample_count: 50,
             },
             timestamp_ns: 1_000_000,
-            signature: crate::signature_preimage::Signature::from_bytes(crate::signature_preimage::SIGNATURE_SENTINEL),
+            signature: crate::signature_preimage::Signature::from_bytes(
+                crate::signature_preimage::SIGNATURE_SENTINEL,
+            ),
             metadata: BTreeMap::new(),
         };
 
@@ -3072,7 +3080,9 @@ mod tests {
                 sample_count: 50,
             },
             timestamp_ns: 1_000_000,
-            signature: crate::signature_preimage::Signature::from_bytes(crate::signature_preimage::SIGNATURE_SENTINEL),
+            signature: crate::signature_preimage::Signature::from_bytes(
+                crate::signature_preimage::SIGNATURE_SENTINEL,
+            ),
             metadata: BTreeMap::new(),
         };
 
@@ -3080,7 +3090,12 @@ mod tests {
         let result = engine.validate_receipt(&receipt, &equiv_hash);
         assert!(!result.is_valid());
         assert!(!result.well_formed);
-        assert!(result.failure_reasons.iter().any(|r| r.contains("empty proof inputs")));
+        assert!(
+            result
+                .failure_reasons
+                .iter()
+                .any(|r| r.contains("empty proof inputs"))
+        );
     }
 
     #[test]
@@ -3120,14 +3135,21 @@ mod tests {
                 sample_count: 50,
             },
             timestamp_ns: 1_000_000,
-            signature: crate::signature_preimage::Signature::from_bytes(crate::signature_preimage::SIGNATURE_SENTINEL),
+            signature: crate::signature_preimage::Signature::from_bytes(
+                crate::signature_preimage::SIGNATURE_SENTINEL,
+            ),
             metadata: BTreeMap::new(),
         };
 
         let engine = SpecializationConformanceEngine::new("p", test_epoch());
         let result = engine.validate_receipt(&receipt, &equiv_hash);
         assert!(!result.is_valid());
-        assert!(result.failure_reasons.iter().any(|r| r.contains("epoch mismatch")));
+        assert!(
+            result
+                .failure_reasons
+                .iter()
+                .any(|r| r.contains("epoch mismatch"))
+        );
     }
 
     #[test]
@@ -3166,7 +3188,9 @@ mod tests {
                 sample_count: 50,
             },
             timestamp_ns: 1_000_000,
-            signature: crate::signature_preimage::Signature::from_bytes(crate::signature_preimage::SIGNATURE_SENTINEL),
+            signature: crate::signature_preimage::Signature::from_bytes(
+                crate::signature_preimage::SIGNATURE_SENTINEL,
+            ),
             metadata: BTreeMap::new(),
         };
 
@@ -3174,7 +3198,12 @@ mod tests {
         let engine = SpecializationConformanceEngine::new("p", test_epoch());
         let result = engine.validate_receipt(&receipt, &wrong_hash);
         assert!(!result.is_valid());
-        assert!(result.failure_reasons.iter().any(|r| r.contains("equivalence evidence hash mismatch")));
+        assert!(
+            result
+                .failure_reasons
+                .iter()
+                .any(|r| r.contains("equivalence evidence hash mismatch"))
+        );
     }
 
     #[test]
@@ -3214,14 +3243,21 @@ mod tests {
                 sample_count: 50,
             },
             timestamp_ns: 1_000_000,
-            signature: crate::signature_preimage::Signature::from_bytes(crate::signature_preimage::SIGNATURE_SENTINEL),
+            signature: crate::signature_preimage::Signature::from_bytes(
+                crate::signature_preimage::SIGNATURE_SENTINEL,
+            ),
             metadata: BTreeMap::new(),
         };
 
         let engine = SpecializationConformanceEngine::new("p", test_epoch());
         let result = engine.validate_receipt(&receipt, &equiv_hash);
         assert!(!result.is_valid());
-        assert!(result.failure_reasons.iter().any(|r| r.contains("rollback token not validated")));
+        assert!(
+            result
+                .failure_reasons
+                .iter()
+                .any(|r| r.contains("rollback token not validated"))
+        );
     }
 
     #[test]
@@ -3275,7 +3311,11 @@ mod tests {
         assert_eq!(evidence.len(), 2);
         assert_eq!(evidence[0].specialization_id, id_a);
         assert_eq!(evidence[1].specialization_id, id_b);
-        assert!(evidence.iter().all(|e| e.invalidation_reason == "proof_revoked"));
+        assert!(
+            evidence
+                .iter()
+                .all(|e| e.invalidation_reason == "proof_revoked")
+        );
         assert!(evidence.iter().all(|e| e.fallback_outcome.is_success()));
     }
 
@@ -3297,8 +3337,8 @@ mod tests {
         };
         let unspecialized = WorkloadOutcome {
             return_value: "200".to_string(),
-            side_effect_trace: vec![], // also different
-            exceptions: vec!["err".to_string()], // also different
+            side_effect_trace: vec![],                // also different
+            exceptions: vec!["err".to_string()],      // also different
             evidence_entries: vec!["ev".to_string()], // also different
         };
 

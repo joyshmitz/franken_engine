@@ -1820,6 +1820,7 @@ mod tests {
         let mut original = StateProbabilities::default();
         let cloned = original.clone();
         original.recoverable = 0;
+        assert_eq!(original.recoverable, 0);
         assert_eq!(cloned.recoverable, DEFAULT_PRIOR_RECOVERABLE_MILLIONTHS);
     }
 
@@ -1828,6 +1829,7 @@ mod tests {
         let mut original = LossMatrix::default();
         let cloned = original.clone();
         original.recover_recoverable = 999;
+        assert_eq!(original.recover_recoverable, 999);
         assert_eq!(cloned.recover_recoverable, 2);
     }
 
@@ -1836,6 +1838,7 @@ mod tests {
         let mut original = RecoveryConfig::default();
         let cloned = original.clone();
         original.max_attempts = 999;
+        assert_eq!(original.max_attempts, 999);
         assert_eq!(cloned.max_attempts, DEFAULT_MAX_ATTEMPTS);
     }
 

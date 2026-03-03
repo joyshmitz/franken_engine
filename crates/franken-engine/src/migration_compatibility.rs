@@ -3598,12 +3598,27 @@ mod tests {
     #[test]
     fn migration_error_code_display_all_8_variants() {
         let expected = [
-            (MigrationErrorCode::MajorVersionIncompatible, "major_version_incompatible"),
-            (MigrationErrorCode::RequiredFieldMissing, "required_field_missing"),
+            (
+                MigrationErrorCode::MajorVersionIncompatible,
+                "major_version_incompatible",
+            ),
+            (
+                MigrationErrorCode::RequiredFieldMissing,
+                "required_field_missing",
+            ),
             (MigrationErrorCode::FieldTypeChanged, "field_type_changed"),
-            (MigrationErrorCode::MigrationFunctionFailed, "migration_function_failed"),
-            (MigrationErrorCode::NonDeterministicMigration, "non_deterministic_migration"),
-            (MigrationErrorCode::PartialReplayFailure, "partial_replay_failure"),
+            (
+                MigrationErrorCode::MigrationFunctionFailed,
+                "migration_function_failed",
+            ),
+            (
+                MigrationErrorCode::NonDeterministicMigration,
+                "non_deterministic_migration",
+            ),
+            (
+                MigrationErrorCode::PartialReplayFailure,
+                "partial_replay_failure",
+            ),
             (MigrationErrorCode::NoMigrationPath, "no_migration_path"),
             (MigrationErrorCode::LossyMigration, "lossy_migration"),
         ];
@@ -3687,16 +3702,33 @@ mod tests {
     #[test]
     fn cutover_error_serde_all_10_variants() {
         let errors: Vec<CutoverError> = vec![
-            CutoverError::InvalidDeclaration { detail: "test".to_string() },
-            CutoverError::DryRunFailed { unconvertible_count: 5 },
+            CutoverError::InvalidDeclaration {
+                detail: "test".to_string(),
+            },
+            CutoverError::DryRunFailed {
+                unconvertible_count: 5,
+            },
             CutoverError::VerificationFailed { violations: 3 },
-            CutoverError::ParallelRunDiscrepancy { discrepancy_count: 2 },
-            CutoverError::OldFormatRejected { object_class: ObjectClass::KeyFormat },
-            CutoverError::TransitionWindowExpired { migration_id: "m1".to_string() },
-            CutoverError::PhaseFailed { phase: MigrationPhase::Execute, detail: "fail".to_string() },
-            CutoverError::AlreadyCommitted { migration_id: "m1".to_string() },
+            CutoverError::ParallelRunDiscrepancy {
+                discrepancy_count: 2,
+            },
+            CutoverError::OldFormatRejected {
+                object_class: ObjectClass::KeyFormat,
+            },
+            CutoverError::TransitionWindowExpired {
+                migration_id: "m1".to_string(),
+            },
+            CutoverError::PhaseFailed {
+                phase: MigrationPhase::Execute,
+                detail: "fail".to_string(),
+            },
+            CutoverError::AlreadyCommitted {
+                migration_id: "m1".to_string(),
+            },
             CutoverError::NoMigrationInProgress,
-            CutoverError::MigrationNotFound { migration_id: "m1".to_string() },
+            CutoverError::MigrationNotFound {
+                migration_id: "m1".to_string(),
+            },
         ];
         for err in &errors {
             let json = serde_json::to_string(err).unwrap();
@@ -3707,26 +3739,79 @@ mod tests {
 
     #[test]
     fn cutover_error_code_all_10_variants_exact() {
-        assert_eq!(cutover_error_code(&CutoverError::InvalidDeclaration { detail: String::new() }), "MC_INVALID_DECLARATION");
-        assert_eq!(cutover_error_code(&CutoverError::DryRunFailed { unconvertible_count: 0 }), "MC_DRY_RUN_FAILED");
-        assert_eq!(cutover_error_code(&CutoverError::VerificationFailed { violations: 0 }), "MC_VERIFICATION_FAILED");
-        assert_eq!(cutover_error_code(&CutoverError::ParallelRunDiscrepancy { discrepancy_count: 0 }), "MC_PARALLEL_DISCREPANCY");
-        assert_eq!(cutover_error_code(&CutoverError::OldFormatRejected { object_class: ObjectClass::KeyFormat }), "MC_OLD_FORMAT_REJECTED");
-        assert_eq!(cutover_error_code(&CutoverError::TransitionWindowExpired { migration_id: String::new() }), "MC_WINDOW_EXPIRED");
-        assert_eq!(cutover_error_code(&CutoverError::PhaseFailed { phase: MigrationPhase::Execute, detail: String::new() }), "MC_PHASE_FAILED");
-        assert_eq!(cutover_error_code(&CutoverError::AlreadyCommitted { migration_id: String::new() }), "MC_ALREADY_COMMITTED");
-        assert_eq!(cutover_error_code(&CutoverError::NoMigrationInProgress), "MC_NO_MIGRATION");
-        assert_eq!(cutover_error_code(&CutoverError::MigrationNotFound { migration_id: String::new() }), "MC_NOT_FOUND");
+        assert_eq!(
+            cutover_error_code(&CutoverError::InvalidDeclaration {
+                detail: String::new()
+            }),
+            "MC_INVALID_DECLARATION"
+        );
+        assert_eq!(
+            cutover_error_code(&CutoverError::DryRunFailed {
+                unconvertible_count: 0
+            }),
+            "MC_DRY_RUN_FAILED"
+        );
+        assert_eq!(
+            cutover_error_code(&CutoverError::VerificationFailed { violations: 0 }),
+            "MC_VERIFICATION_FAILED"
+        );
+        assert_eq!(
+            cutover_error_code(&CutoverError::ParallelRunDiscrepancy {
+                discrepancy_count: 0
+            }),
+            "MC_PARALLEL_DISCREPANCY"
+        );
+        assert_eq!(
+            cutover_error_code(&CutoverError::OldFormatRejected {
+                object_class: ObjectClass::KeyFormat
+            }),
+            "MC_OLD_FORMAT_REJECTED"
+        );
+        assert_eq!(
+            cutover_error_code(&CutoverError::TransitionWindowExpired {
+                migration_id: String::new()
+            }),
+            "MC_WINDOW_EXPIRED"
+        );
+        assert_eq!(
+            cutover_error_code(&CutoverError::PhaseFailed {
+                phase: MigrationPhase::Execute,
+                detail: String::new()
+            }),
+            "MC_PHASE_FAILED"
+        );
+        assert_eq!(
+            cutover_error_code(&CutoverError::AlreadyCommitted {
+                migration_id: String::new()
+            }),
+            "MC_ALREADY_COMMITTED"
+        );
+        assert_eq!(
+            cutover_error_code(&CutoverError::NoMigrationInProgress),
+            "MC_NO_MIGRATION"
+        );
+        assert_eq!(
+            cutover_error_code(&CutoverError::MigrationNotFound {
+                migration_id: String::new()
+            }),
+            "MC_NOT_FOUND"
+        );
     }
 
     #[test]
     fn cutover_error_display_exact_content() {
         assert_eq!(
-            CutoverError::InvalidDeclaration { detail: "bad input".to_string() }.to_string(),
+            CutoverError::InvalidDeclaration {
+                detail: "bad input".to_string()
+            }
+            .to_string(),
             "invalid migration declaration: bad input"
         );
         assert_eq!(
-            CutoverError::DryRunFailed { unconvertible_count: 7 }.to_string(),
+            CutoverError::DryRunFailed {
+                unconvertible_count: 7
+            }
+            .to_string(),
             "pre-migration dry run failed: 7 unconvertible objects"
         );
         assert_eq!(
@@ -3734,11 +3819,17 @@ mod tests {
             "post-migration verification failed: 3 violations"
         );
         assert_eq!(
-            CutoverError::ParallelRunDiscrepancy { discrepancy_count: 2 }.to_string(),
+            CutoverError::ParallelRunDiscrepancy {
+                discrepancy_count: 2
+            }
+            .to_string(),
             "parallel run discrepancy: 2 mismatches"
         );
         assert_eq!(
-            CutoverError::OldFormatRejected { object_class: ObjectClass::TokenFormat }.to_string(),
+            CutoverError::OldFormatRejected {
+                object_class: ObjectClass::TokenFormat
+            }
+            .to_string(),
             "old-format object rejected after hard cutover: token_format"
         );
         assert_eq!(
@@ -3749,7 +3840,11 @@ mod tests {
 
     #[test]
     fn phase_outcome_serde_roundtrip() {
-        for po in [PhaseOutcome::Success, PhaseOutcome::Failed, PhaseOutcome::Skipped] {
+        for po in [
+            PhaseOutcome::Success,
+            PhaseOutcome::Failed,
+            PhaseOutcome::Skipped,
+        ] {
             let json = serde_json::to_string(&po).unwrap();
             let deser: PhaseOutcome = serde_json::from_str(&json).unwrap();
             assert_eq!(po, deser);
@@ -3825,7 +3920,9 @@ mod tests {
     #[test]
     fn golden_ledger_metadata_preserved_in_serde() {
         let mut ledger = GoldenLedger::freeze("test", "v1", Vec::new(), 0);
-        ledger.metadata.insert("key".to_string(), "value".to_string());
+        ledger
+            .metadata
+            .insert("key".to_string(), "value".to_string());
         let json = serde_json::to_string(&ledger).unwrap();
         let deser: GoldenLedger = serde_json::from_str(&json).unwrap();
         assert_eq!(deser.metadata.get("key").map(String::as_str), Some("value"));
@@ -3889,8 +3986,14 @@ mod tests {
         let _ = checker.run_all();
 
         let events = checker.events();
-        let no_path_event = events.iter().find(|e| e.event == "no_migration_path").unwrap();
-        assert_eq!(no_path_event.error_code.as_deref(), Some("no_migration_path"));
+        let no_path_event = events
+            .iter()
+            .find(|e| e.event == "no_migration_path")
+            .unwrap();
+        assert_eq!(
+            no_path_event.error_code.as_deref(),
+            Some("no_migration_path")
+        );
     }
 
     #[test]
@@ -3911,8 +4014,14 @@ mod tests {
         let _ = checker.run_all();
 
         let events = checker.events();
-        let fail_event = events.iter().find(|e| e.event == "migration_apply").unwrap();
-        assert_eq!(fail_event.error_code.as_deref(), Some("migration_function_failed"));
+        let fail_event = events
+            .iter()
+            .find(|e| e.event == "migration_apply")
+            .unwrap();
+        assert_eq!(
+            fail_event.error_code.as_deref(),
+            Some("migration_function_failed")
+        );
         assert_eq!(fail_event.outcome, "fail");
     }
 

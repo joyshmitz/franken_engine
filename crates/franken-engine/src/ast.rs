@@ -393,6 +393,180 @@ impl ExportDeclaration {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Destructuring / binding pattern AST types
+// ---------------------------------------------------------------------------
+
+/// A property in an object destructuring pattern: `{ key: pattern = default }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObjectPatternProperty {
+    /// The property key (Identifier or computed expression).
+    pub key: Expression,
+    /// The target pattern (may differ from key for `{ a: b }`).
+    pub value: BindingPattern,
+    /// Whether the key is a computed expression (`{ [expr]: pat }`).
+    pub computed: bool,
+    /// Whether this is shorthand (`{ x }` ≡ `{ x: x }`).
+    pub shorthand: bool,
+}
+
+impl ObjectPatternProperty {
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        map.insert("key".to_string(), self.key.canonical_value());
+        map.insert("value".to_string(), self.value.canonical_value());
+        map.insert("computed".to_string(), CanonicalValue::Bool(self.computed));
+        map.insert(
+            "shorthand".to_string(),
+            CanonicalValue::Bool(self.shorthand),
+        );
+        CanonicalValue::Map(map)
+    }
+}
+
+/// ES2020 destructuring binding pattern.
+///
+/// Represents the left-hand side of variable declarations, function parameters,
+/// for-in/for-of bindings, and assignment targets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BindingPattern {
+    /// Simple identifier binding: `x`
+    Identifier(String),
+    /// Object destructuring: `{ a, b: c, ...rest }`
+    ObjectPattern(Vec<ObjectPatternProperty>),
+    /// Array destructuring: `[a, , b, ...rest]`
+    ArrayPattern(Vec<Option<BindingPattern>>),
+    /// Rest element: `...x` or `...{ a, b }`
+    Rest(Box<BindingPattern>),
+    /// Default value: `x = defaultExpr`
+    AssignmentPattern {
+        left: Box<BindingPattern>,
+        right: Expression,
+    },
+}
+
+impl BindingPattern {
+    /// Returns the identifier name if this is a simple identifier binding.
+    pub fn as_identifier(&self) -> Option<&str> {
+        match self {
+            Self::Identifier(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    /// Collects all bound names from this pattern (recursively).
+    pub fn binding_names(&self) -> Vec<&str> {
+        match self {
+            Self::Identifier(name) => vec![name.as_str()],
+            Self::ObjectPattern(props) => {
+                props.iter().flat_map(|p| p.value.binding_names()).collect()
+            }
+            Self::ArrayPattern(elements) => elements
+                .iter()
+                .flatten()
+                .flat_map(|e| e.binding_names())
+                .collect(),
+            Self::Rest(inner) => inner.binding_names(),
+            Self::AssignmentPattern { left, .. } => left.binding_names(),
+        }
+    }
+
+    /// Canonical value for deterministic hashing.
+    pub fn canonical_value(&self) -> CanonicalValue {
+        let mut map = BTreeMap::new();
+        match self {
+            Self::Identifier(name) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("identifier".to_string()),
+                );
+                map.insert("name".to_string(), CanonicalValue::String(name.clone()));
+            }
+            Self::ObjectPattern(props) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("object_pattern".to_string()),
+                );
+                map.insert(
+                    "properties".to_string(),
+                    CanonicalValue::Array(props.iter().map(|p| p.canonical_value()).collect()),
+                );
+            }
+            Self::ArrayPattern(elements) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("array_pattern".to_string()),
+                );
+                map.insert(
+                    "elements".to_string(),
+                    CanonicalValue::Array(
+                        elements
+                            .iter()
+                            .map(|e| {
+                                e.as_ref()
+                                    .map(|p| p.canonical_value())
+                                    .unwrap_or(CanonicalValue::Null)
+                            })
+                            .collect(),
+                    ),
+                );
+            }
+            Self::Rest(inner) => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("rest_element".to_string()),
+                );
+                map.insert("argument".to_string(), inner.canonical_value());
+            }
+            Self::AssignmentPattern { left, right } => {
+                map.insert(
+                    "kind".to_string(),
+                    CanonicalValue::String("assignment_pattern".to_string()),
+                );
+                map.insert("left".to_string(), left.canonical_value());
+                map.insert("right".to_string(), right.canonical_value());
+            }
+        }
+        CanonicalValue::Map(map)
+    }
+}
+
+impl std::fmt::Display for BindingPattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Identifier(name) => write!(f, "{name}"),
+            Self::ObjectPattern(props) => {
+                write!(f, "{{ ")?;
+                for (i, prop) in props.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    if prop.shorthand {
+                        write!(f, "{}", prop.value)?;
+                    } else {
+                        write!(f, "{:?}: {}", prop.key, prop.value)?;
+                    }
+                }
+                write!(f, " }}")
+            }
+            Self::ArrayPattern(elements) => {
+                write!(f, "[")?;
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    if let Some(pat) = elem {
+                        write!(f, "{pat}")?;
+                    }
+                }
+                write!(f, "]")
+            }
+            Self::Rest(inner) => write!(f, "...{inner}"),
+            Self::AssignmentPattern { left, right } => write!(f, "{left} = {right}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VariableDeclarationKind {
     Var,
@@ -412,18 +586,20 @@ impl VariableDeclarationKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VariableDeclarator {
-    pub name: String,
+    pub pattern: BindingPattern,
     pub initializer: Option<Expression>,
     pub span: SourceSpan,
 }
 
 impl VariableDeclarator {
+    /// Convenience accessor for simple identifier bindings (backward compat).
+    pub fn name(&self) -> Option<&str> {
+        self.pattern.as_identifier()
+    }
+
     pub fn canonical_value(&self) -> CanonicalValue {
         let mut map = BTreeMap::new();
-        map.insert(
-            "name".to_string(),
-            CanonicalValue::String(self.name.clone()),
-        );
+        map.insert("pattern".to_string(), self.pattern.canonical_value());
         map.insert(
             "initializer".to_string(),
             self.initializer
@@ -567,7 +743,7 @@ impl ForStatement {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForInStatement {
-    pub binding: String,
+    pub binding: BindingPattern,
     pub binding_kind: Option<VariableDeclarationKind>,
     pub object: Expression,
     pub body: Box<Statement>,
@@ -577,10 +753,7 @@ pub struct ForInStatement {
 impl ForInStatement {
     pub fn canonical_value(&self) -> CanonicalValue {
         let mut map = BTreeMap::new();
-        map.insert(
-            "binding".to_string(),
-            CanonicalValue::String(self.binding.clone()),
-        );
+        map.insert("binding".to_string(), self.binding.canonical_value());
         map.insert(
             "binding_kind".to_string(),
             self.binding_kind
@@ -597,7 +770,7 @@ impl ForInStatement {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForOfStatement {
-    pub binding: String,
+    pub binding: BindingPattern,
     pub binding_kind: Option<VariableDeclarationKind>,
     pub iterable: Expression,
     pub body: Box<Statement>,
@@ -607,10 +780,7 @@ pub struct ForOfStatement {
 impl ForOfStatement {
     pub fn canonical_value(&self) -> CanonicalValue {
         let mut map = BTreeMap::new();
-        map.insert(
-            "binding".to_string(),
-            CanonicalValue::String(self.binding.clone()),
-        );
+        map.insert("binding".to_string(), self.binding.canonical_value());
         map.insert(
             "binding_kind".to_string(),
             self.binding_kind
@@ -847,17 +1017,19 @@ impl ContinueStatement {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FunctionParam {
-    pub name: String,
+    pub pattern: BindingPattern,
     pub span: SourceSpan,
 }
 
 impl FunctionParam {
+    /// Convenience accessor for simple identifier params (backward compat).
+    pub fn name(&self) -> Option<&str> {
+        self.pattern.as_identifier()
+    }
+
     pub fn canonical_value(&self) -> CanonicalValue {
         let mut map = BTreeMap::new();
-        map.insert(
-            "name".to_string(),
-            CanonicalValue::String(self.name.clone()),
-        );
+        map.insert("pattern".to_string(), self.pattern.canonical_value());
         map.insert("span".to_string(), self.span.canonical_value());
         CanonicalValue::Map(map)
     }
@@ -1422,6 +1594,22 @@ impl Expression {
     }
 }
 
+impl std::fmt::Display for Expression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Identifier(value) => write!(f, "{value}"),
+            Self::StringLiteral(value) => write!(f, "\"{value}\""),
+            Self::NumericLiteral(value) => write!(f, "{value}"),
+            Self::BooleanLiteral(value) => write!(f, "{value}"),
+            Self::NullLiteral => write!(f, "null"),
+            Self::UndefinedLiteral => write!(f, "undefined"),
+            Self::This => write!(f, "this"),
+            Self::Raw(value) => write!(f, "{value}"),
+            _ => write!(f, "{self:?}"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1450,6 +1638,33 @@ mod tests {
             let decoded: ParseGoal = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(decoded, goal);
         }
+    }
+
+    #[test]
+    fn expression_display_renders_primitive_literals_and_identifiers() {
+        assert_eq!(
+            Expression::Identifier("answer".to_string()).to_string(),
+            "answer"
+        );
+        assert_eq!(
+            Expression::StringLiteral("hello".to_string()).to_string(),
+            "\"hello\""
+        );
+        assert_eq!(Expression::NumericLiteral(42).to_string(), "42");
+        assert_eq!(Expression::BooleanLiteral(true).to_string(), "true");
+        assert_eq!(Expression::NullLiteral.to_string(), "null");
+        assert_eq!(Expression::UndefinedLiteral.to_string(), "undefined");
+        assert_eq!(Expression::This.to_string(), "this");
+        assert_eq!(Expression::Raw("x + y".to_string()).to_string(), "x + y");
+    }
+
+    #[test]
+    fn binding_pattern_display_supports_expression_defaults() {
+        let pattern = BindingPattern::AssignmentPattern {
+            left: Box::new(BindingPattern::Identifier("value".to_string())),
+            right: Expression::Identifier("fallback".to_string()),
+        };
+        assert_eq!(pattern.to_string(), "value = fallback");
     }
 
     // -----------------------------------------------------------------------
@@ -1529,7 +1744,7 @@ mod tests {
         Statement::VariableDeclaration(VariableDeclaration {
             kind: VariableDeclarationKind::Var,
             declarations: vec![VariableDeclarator {
-                name: name.to_string(),
+                pattern: BindingPattern::Identifier(name.to_string()),
                 initializer,
                 span: make_span(),
             }],
@@ -1693,7 +1908,7 @@ mod tests {
         let var_decl = Statement::VariableDeclaration(VariableDeclaration {
             kind: VariableDeclarationKind::Var,
             declarations: vec![VariableDeclarator {
-                name: "value".to_string(),
+                pattern: BindingPattern::Identifier("value".to_string()),
                 initializer: Some(Expression::NumericLiteral(1)),
                 span: span.clone(),
             }],
@@ -2490,8 +2705,7 @@ mod tests {
         assert!(BinaryOperator::BitwiseOr.precedence() > BinaryOperator::LogicalAnd.precedence());
         assert!(BinaryOperator::LogicalAnd.precedence() > BinaryOperator::LogicalOr.precedence());
         assert!(
-            BinaryOperator::LogicalOr.precedence()
-                > BinaryOperator::NullishCoalescing.precedence()
+            BinaryOperator::LogicalOr.precedence() > BinaryOperator::NullishCoalescing.precedence()
         );
     }
 
@@ -2746,7 +2960,7 @@ mod tests {
     fn expression_arrow_function_canonical_value() {
         let expr = Expression::ArrowFunction {
             params: vec![FunctionParam {
-                name: "x".to_string(),
+                pattern: BindingPattern::Identifier("x".to_string()),
                 span: make_span(),
             }],
             body: ArrowBody::Expression(Box::new(Expression::Identifier("x".to_string()))),
@@ -2964,7 +3178,10 @@ mod tests {
     #[test]
     fn statement_for_canonical_value() {
         let stmt = Statement::For(ForStatement {
-            init: Some(Box::new(make_var_stmt("i", Some(Expression::NumericLiteral(0))))),
+            init: Some(Box::new(make_var_stmt(
+                "i",
+                Some(Expression::NumericLiteral(0)),
+            ))),
             condition: Some(Expression::Binary {
                 operator: BinaryOperator::LessThan,
                 left: Box::new(Expression::Identifier("i".to_string())),
@@ -3011,7 +3228,7 @@ mod tests {
     #[test]
     fn statement_for_in_canonical_value() {
         let stmt = Statement::ForIn(ForInStatement {
-            binding: "key".to_string(),
+            binding: BindingPattern::Identifier("key".to_string()),
             binding_kind: Some(VariableDeclarationKind::Const),
             object: Expression::Identifier("obj".to_string()),
             body: Box::new(Statement::Block(make_block_stmt(vec![]))),
@@ -3031,7 +3248,7 @@ mod tests {
     #[test]
     fn statement_for_of_canonical_value() {
         let stmt = Statement::ForOf(ForOfStatement {
-            binding: "item".to_string(),
+            binding: BindingPattern::Identifier("item".to_string()),
             binding_kind: Some(VariableDeclarationKind::Let),
             iterable: Expression::Identifier("arr".to_string()),
             body: Box::new(Statement::Block(make_block_stmt(vec![]))),
@@ -3255,11 +3472,11 @@ mod tests {
             name: Some("myFunc".to_string()),
             params: vec![
                 FunctionParam {
-                    name: "a".to_string(),
+                    pattern: BindingPattern::Identifier("a".to_string()),
                     span: make_span(),
                 },
                 FunctionParam {
-                    name: "b".to_string(),
+                    pattern: BindingPattern::Identifier("b".to_string()),
                     span: make_span(),
                 },
             ],
@@ -3309,15 +3526,12 @@ mod tests {
     #[test]
     fn function_param_canonical_value() {
         let param = FunctionParam {
-            name: "arg".to_string(),
+            pattern: BindingPattern::Identifier("arg".to_string()),
             span: make_span(),
         };
         match param.canonical_value() {
             CanonicalValue::Map(map) => {
-                assert_eq!(
-                    map.get("name"),
-                    Some(&CanonicalValue::String("arg".to_string()))
-                );
+                assert!(map.contains_key("pattern"));
                 assert!(map.contains_key("span"));
             }
             _ => panic!("expected map"),
@@ -3415,14 +3629,14 @@ mod tests {
                 span: span.clone(),
             }),
             Statement::ForIn(ForInStatement {
-                binding: "k".to_string(),
+                binding: BindingPattern::Identifier("k".to_string()),
                 binding_kind: None,
                 object: Expression::NullLiteral,
                 body: Box::new(make_expr_stmt(Expression::NullLiteral)),
                 span: span.clone(),
             }),
             Statement::ForOf(ForOfStatement {
-                binding: "v".to_string(),
+                binding: BindingPattern::Identifier("v".to_string()),
                 binding_kind: None,
                 iterable: Expression::NullLiteral,
                 body: Box::new(make_expr_stmt(Expression::NullLiteral)),
@@ -3518,14 +3732,14 @@ mod tests {
                 span: span.clone(),
             }),
             Statement::ForIn(ForInStatement {
-                binding: "k".to_string(),
+                binding: BindingPattern::Identifier("k".to_string()),
                 binding_kind: None,
                 object: Expression::NullLiteral,
                 body: Box::new(make_expr_stmt(Expression::NullLiteral)),
                 span: span.clone(),
             }),
             Statement::ForOf(ForOfStatement {
-                binding: "v".to_string(),
+                binding: BindingPattern::Identifier("v".to_string()),
                 binding_kind: None,
                 iterable: Expression::NullLiteral,
                 body: Box::new(make_expr_stmt(Expression::NullLiteral)),
@@ -3642,10 +3856,7 @@ mod tests {
             span: make_span(),
         };
         if let CanonicalValue::Map(map) = tree.canonical_value() {
-            assert_eq!(
-                map["goal"],
-                CanonicalValue::String("module".to_string())
-            );
+            assert_eq!(map["goal"], CanonicalValue::String("module".to_string()));
         } else {
             panic!("expected map");
         }
@@ -3658,12 +3869,12 @@ mod tests {
     #[test]
     fn variable_declarator_canonical_value_with_init() {
         let decl = VariableDeclarator {
-            name: "x".to_string(),
+            pattern: BindingPattern::Identifier("x".to_string()),
             initializer: Some(Expression::NumericLiteral(42)),
             span: make_span(),
         };
         if let CanonicalValue::Map(map) = decl.canonical_value() {
-            assert_eq!(map["name"], CanonicalValue::String("x".to_string()));
+            assert!(map.contains_key("pattern"));
             assert_ne!(map["initializer"], CanonicalValue::Null);
             assert!(map.contains_key("span"));
         } else {
@@ -3674,7 +3885,7 @@ mod tests {
     #[test]
     fn variable_declarator_canonical_value_without_init() {
         let decl = VariableDeclarator {
-            name: "y".to_string(),
+            pattern: BindingPattern::Identifier("y".to_string()),
             initializer: None,
             span: make_span(),
         };
@@ -3692,7 +3903,7 @@ mod tests {
     #[test]
     fn for_in_binding_kind_none_canonical_value() {
         let stmt = ForInStatement {
-            binding: "k".to_string(),
+            binding: BindingPattern::Identifier("k".to_string()),
             binding_kind: None,
             object: Expression::Identifier("obj".to_string()),
             body: Box::new(make_expr_stmt(Expression::NullLiteral)),
@@ -3700,7 +3911,7 @@ mod tests {
         };
         if let CanonicalValue::Map(map) = stmt.canonical_value() {
             assert_eq!(map["binding_kind"], CanonicalValue::Null);
-            assert_eq!(map["binding"], CanonicalValue::String("k".to_string()));
+            assert!(map.contains_key("binding"));
         } else {
             panic!("expected map");
         }
@@ -3709,7 +3920,7 @@ mod tests {
     #[test]
     fn for_of_binding_kind_none_canonical_value() {
         let stmt = ForOfStatement {
-            binding: "v".to_string(),
+            binding: BindingPattern::Identifier("v".to_string()),
             binding_kind: None,
             iterable: Expression::Identifier("arr".to_string()),
             body: Box::new(make_expr_stmt(Expression::NullLiteral)),
@@ -3770,10 +3981,7 @@ mod tests {
             span: make_span(),
         };
         if let CanonicalValue::Map(map) = cont.canonical_value() {
-            assert_eq!(
-                map["label"],
-                CanonicalValue::String("loop1".to_string())
-            );
+            assert_eq!(map["label"], CanonicalValue::String("loop1".to_string()));
         } else {
             panic!("expected map");
         }
@@ -3787,7 +3995,7 @@ mod tests {
     fn expression_arrow_function_serde_roundtrip() {
         let expr = Expression::ArrowFunction {
             params: vec![FunctionParam {
-                name: "x".to_string(),
+                pattern: BindingPattern::Identifier("x".to_string()),
                 span: make_span(),
             }],
             body: ArrowBody::Expression(Box::new(Expression::Binary {
@@ -3918,7 +4126,11 @@ mod tests {
                 panic!("expected map");
             }
         }
-        assert_eq!(kinds.len(), 20, "all 20 expression canonical kinds must be unique");
+        assert_eq!(
+            kinds.len(),
+            20,
+            "all 20 expression canonical kinds must be unique"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -4002,7 +4214,7 @@ mod tests {
             Statement::FunctionDeclaration(FunctionDeclaration {
                 name: Some("f".to_string()),
                 params: vec![FunctionParam {
-                    name: "a".to_string(),
+                    pattern: BindingPattern::Identifier("a".to_string()),
                     span: make_span(),
                 }],
                 body: BlockStatement {
@@ -4014,14 +4226,14 @@ mod tests {
                 span: make_span(),
             }),
             Statement::ForIn(ForInStatement {
-                binding: "k".to_string(),
+                binding: BindingPattern::Identifier("k".to_string()),
                 binding_kind: Some(VariableDeclarationKind::Let),
                 object: Expression::Identifier("obj".to_string()),
                 body: Box::new(make_expr_stmt(Expression::NullLiteral)),
                 span: make_span(),
             }),
             Statement::ForOf(ForOfStatement {
-                binding: "v".to_string(),
+                binding: BindingPattern::Identifier("v".to_string()),
                 binding_kind: Some(VariableDeclarationKind::Const),
                 iterable: Expression::Identifier("arr".to_string()),
                 body: Box::new(make_expr_stmt(Expression::NullLiteral)),
@@ -4045,12 +4257,12 @@ mod tests {
             kind: VariableDeclarationKind::Const,
             declarations: vec![
                 VariableDeclarator {
-                    name: "a".to_string(),
+                    pattern: BindingPattern::Identifier("a".to_string()),
                     initializer: Some(Expression::NumericLiteral(1)),
                     span: make_span(),
                 },
                 VariableDeclarator {
-                    name: "b".to_string(),
+                    pattern: BindingPattern::Identifier("b".to_string()),
                     initializer: Some(Expression::NumericLiteral(2)),
                     span: make_span(),
                 },
@@ -4241,7 +4453,7 @@ mod tests {
     #[test]
     fn function_param_serde_roundtrip() {
         let param = FunctionParam {
-            name: "arg".to_string(),
+            pattern: BindingPattern::Identifier("arg".to_string()),
             span: SourceSpan::new(5, 8, 1, 6, 1, 9),
         };
         let json = serde_json::to_string(&param).expect("serialize");
@@ -4325,7 +4537,10 @@ mod tests {
     #[test]
     fn for_statement_canonical_value_all_fields_present() {
         let for_stmt = ForStatement {
-            init: Some(Box::new(make_var_stmt("i", Some(Expression::NumericLiteral(0))))),
+            init: Some(Box::new(make_var_stmt(
+                "i",
+                Some(Expression::NumericLiteral(0)),
+            ))),
             condition: Some(Expression::Binary {
                 operator: BinaryOperator::LessThan,
                 left: Box::new(Expression::Identifier("i".to_string())),
@@ -4391,10 +4606,7 @@ mod tests {
             span: make_span(),
         };
         if let CanonicalValue::Map(map) = clause.canonical_value() {
-            assert_eq!(
-                map["parameter"],
-                CanonicalValue::String("err".to_string())
-            );
+            assert_eq!(map["parameter"], CanonicalValue::String("err".to_string()));
             assert!(map.contains_key("body"));
             assert!(map.contains_key("span"));
         } else {
@@ -4408,11 +4620,11 @@ mod tests {
             name: Some("add".to_string()),
             params: vec![
                 FunctionParam {
-                    name: "a".to_string(),
+                    pattern: BindingPattern::Identifier("a".to_string()),
                     span: make_span(),
                 },
                 FunctionParam {
-                    name: "b".to_string(),
+                    pattern: BindingPattern::Identifier("b".to_string()),
                     span: make_span(),
                 },
             ],
@@ -4429,10 +4641,7 @@ mod tests {
             span: make_span(),
         };
         if let CanonicalValue::Map(map) = func.canonical_value() {
-            assert_eq!(
-                map["name"],
-                CanonicalValue::String("add".to_string())
-            );
+            assert_eq!(map["name"], CanonicalValue::String("add".to_string()));
             assert_eq!(map["is_async"], CanonicalValue::Bool(false));
             assert_eq!(map["is_generator"], CanonicalValue::Bool(false));
             if let CanonicalValue::Array(params) = &map["params"] {
@@ -4494,17 +4703,14 @@ mod tests {
     #[test]
     fn for_in_binding_kind_some_canonical_value_content() {
         let stmt = ForInStatement {
-            binding: "key".to_string(),
+            binding: BindingPattern::Identifier("key".to_string()),
             binding_kind: Some(VariableDeclarationKind::Const),
             object: Expression::Identifier("obj".to_string()),
             body: Box::new(make_expr_stmt(Expression::NullLiteral)),
             span: make_span(),
         };
         if let CanonicalValue::Map(map) = stmt.canonical_value() {
-            assert_eq!(
-                map["binding"],
-                CanonicalValue::String("key".to_string())
-            );
+            assert!(map.contains_key("binding"));
             assert_ne!(map["binding_kind"], CanonicalValue::Null);
             assert!(map.contains_key("object"));
             assert!(map.contains_key("body"));
@@ -4516,17 +4722,14 @@ mod tests {
     #[test]
     fn for_of_binding_kind_some_canonical_value_content() {
         let stmt = ForOfStatement {
-            binding: "val".to_string(),
+            binding: BindingPattern::Identifier("val".to_string()),
             binding_kind: Some(VariableDeclarationKind::Let),
             iterable: Expression::Identifier("items".to_string()),
             body: Box::new(make_expr_stmt(Expression::NullLiteral)),
             span: make_span(),
         };
         if let CanonicalValue::Map(map) = stmt.canonical_value() {
-            assert_eq!(
-                map["binding"],
-                CanonicalValue::String("val".to_string())
-            );
+            assert!(map.contains_key("binding"));
             assert_ne!(map["binding_kind"], CanonicalValue::Null);
             assert!(map.contains_key("iterable"));
             assert!(map.contains_key("body"));

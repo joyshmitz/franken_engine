@@ -3,9 +3,9 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::ast::{
-    ExportDeclaration, ExportKind, Expression, ExpressionStatement, ImportDeclaration, ParseGoal,
-    SourceSpan, Statement, SyntaxTree, VariableDeclaration, VariableDeclarationKind,
-    VariableDeclarator,
+    BindingPattern, ExportDeclaration, ExportKind, Expression, ExpressionStatement,
+    ImportDeclaration, ParseGoal, SourceSpan, Statement, SyntaxTree, VariableDeclaration,
+    VariableDeclarationKind, VariableDeclarator,
 };
 
 const HANDLE_GENERATION: u32 = 1;
@@ -453,13 +453,14 @@ impl ParserArena {
                 for declarator in &variable_declaration.declarations {
                     let declarator_span = self.alloc_span(&declarator.span)?;
                     self.charge_bytes(NODE_BASE_ESTIMATED_BYTES)?;
-                    self.charge_bytes(string_bytes(&declarator.name))?;
+                    let declarator_name = declarator.name().unwrap_or("_");
+                    self.charge_bytes(string_bytes(declarator_name))?;
                     let initializer = match &declarator.initializer {
                         Some(expression) => Some(self.alloc_expression(expression)?),
                         None => None,
                     };
                     declarations.push(ArenaVariableDeclarator {
-                        name: declarator.name.clone(),
+                        name: declarator_name.to_string(),
                         initializer,
                         span: declarator_span,
                     });
@@ -667,7 +668,7 @@ impl ParserArena {
                         None => None,
                     };
                     materialized.push(VariableDeclarator {
-                        name: declarator.name,
+                        pattern: BindingPattern::Identifier(declarator.name),
                         initializer,
                         span: self.span(declarator.span)?.clone(),
                     });
@@ -889,17 +890,17 @@ mod tests {
                 kind: VariableDeclarationKind::Const,
                 declarations: vec![
                     VariableDeclarator {
-                        name: "answer".to_string(),
+                        pattern: BindingPattern::Identifier("answer".to_string()),
                         initializer: Some(Expression::NumericLiteral(42)),
                         span: test_span(),
                     },
                     VariableDeclarator {
-                        name: "label".to_string(),
+                        pattern: BindingPattern::Identifier("label".to_string()),
                         initializer: Some(Expression::StringLiteral("ready".to_string())),
                         span: test_span(),
                     },
                     VariableDeclarator {
-                        name: "empty".to_string(),
+                        pattern: BindingPattern::Identifier("empty".to_string()),
                         initializer: None,
                         span: test_span(),
                     },

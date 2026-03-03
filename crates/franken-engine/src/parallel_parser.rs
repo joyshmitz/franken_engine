@@ -3950,7 +3950,10 @@ mod tests {
     #[test]
     fn fallback_cause_display_resource_limit() {
         let cause = FallbackCause::ResourceLimit(SerialReason::BudgetExhausted { budget_us: 100 });
-        assert_eq!(cause.to_string(), "resource limit: budget exhausted (100us)");
+        assert_eq!(
+            cause.to_string(),
+            "resource limit: budget exhausted (100us)"
+        );
     }
 
     #[test]
@@ -4169,10 +4172,7 @@ mod tests {
 
     #[test]
     fn classify_backpressure_level_critical() {
-        assert_eq!(
-            classify_backpressure_level(12),
-            BackpressureLevel::Critical
-        );
+        assert_eq!(classify_backpressure_level(12), BackpressureLevel::Critical);
         assert_eq!(
             classify_backpressure_level(100),
             BackpressureLevel::Critical

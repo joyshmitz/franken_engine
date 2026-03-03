@@ -169,6 +169,14 @@ pub struct RequiredDeclassificationArtifactEntry {
     pub sink_clearance: Label,
     pub capability: Option<String>,
     pub obligation_id: String,
+    #[serde(default)]
+    pub decision_contract_id: String,
+    #[serde(default)]
+    pub requires_operator_approval: bool,
+    #[serde(default)]
+    pub receipt_linkage_required: bool,
+    #[serde(default)]
+    pub replay_command_hint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -340,25 +348,32 @@ pub fn validate_ir0_static_semantics(ir0: &Ir0Module) -> SemanticValidationResul
                     if variable_declaration.kind == VariableDeclarationKind::Const
                         && declarator.initializer.is_none()
                     {
+                        let primary_name = declarator
+                            .pattern
+                            .binding_names()
+                            .first()
+                            .map(|s| (*s).to_string());
                         result.add_error(SemanticError::new(
                             SemanticErrorCode::ConstWithoutInitializer,
-                            Some(declarator.name.clone()),
+                            primary_name,
                             Some(declarator.span.clone()),
                         ));
                     }
 
-                    // Check binding conflicts.
-                    if let Some(existing_kind) = seen_bindings.get(&declarator.name) {
-                        let conflict = check_binding_conflict(*existing_kind, binding_kind);
-                        if let BindingConflict::Error(code) = conflict {
-                            result.add_error(SemanticError::new(
-                                code,
-                                Some(declarator.name.clone()),
-                                Some(declarator.span.clone()),
-                            ));
+                    // Check binding conflicts for all bound names.
+                    for bound_name in declarator.pattern.binding_names() {
+                        if let Some(existing_kind) = seen_bindings.get(bound_name) {
+                            let conflict = check_binding_conflict(*existing_kind, binding_kind);
+                            if let BindingConflict::Error(code) = conflict {
+                                result.add_error(SemanticError::new(
+                                    code,
+                                    Some(bound_name.to_string()),
+                                    Some(declarator.span.clone()),
+                                ));
+                            }
                         }
+                        seen_bindings.insert(bound_name.to_string(), binding_kind);
                     }
-                    seen_bindings.insert(declarator.name.clone(), binding_kind);
                 }
             }
             Statement::Expression(_) => {
@@ -484,10 +499,15 @@ pub fn lower_ir0_to_ir1(
                 if variable_declaration.kind == VariableDeclarationKind::Const {
                     for declarator in &variable_declaration.declarations {
                         if declarator.initializer.is_none() {
+                            let primary_name = declarator
+                                .pattern
+                                .binding_names()
+                                .first()
+                                .map(|s| (*s).to_string());
                             return Err(LoweringPipelineError::SemanticViolation(
                                 SemanticError::new(
                                     SemanticErrorCode::ConstWithoutInitializer,
-                                    Some(declarator.name.clone()),
+                                    primary_name,
                                     Some(declarator.span.clone()),
                                 ),
                             ));
@@ -497,15 +517,30 @@ pub fn lower_ir0_to_ir1(
 
                 let mut binding_ids = Vec::with_capacity(variable_declaration.declarations.len());
                 for declarator in &variable_declaration.declarations {
+                    // For each bound name in the pattern, allocate a binding.
+                    let names = declarator.pattern.binding_names();
+                    let primary_name = names.first().copied().unwrap_or("_");
                     let binding_id = alloc_binding(
                         &mut bindings,
                         &mut binding_lookup,
                         &mut binding_index,
                         root_scope_id,
-                        &declarator.name,
+                        primary_name,
                         binding_kind,
                     )
                     .map_err(LoweringPipelineError::SemanticViolation)?;
+                    // Allocate additional bindings for destructured names.
+                    for extra_name in names.iter().skip(1) {
+                        let _ = alloc_binding(
+                            &mut bindings,
+                            &mut binding_lookup,
+                            &mut binding_index,
+                            root_scope_id,
+                            extra_name,
+                            binding_kind,
+                        )
+                        .map_err(LoweringPipelineError::SemanticViolation)?;
+                    }
                     binding_ids.push(binding_id);
                 }
 
@@ -665,12 +700,18 @@ pub fn lower_ir0_to_ir1(
                     .binding_kind
                     .map(binding_kind_for_variable_declaration)
                     .unwrap_or(BindingKind::Var);
+                let primary_name = for_in_stmt
+                    .binding
+                    .binding_names()
+                    .first()
+                    .copied()
+                    .unwrap_or("_");
                 let binding_id = alloc_binding(
                     &mut bindings,
                     &mut binding_lookup,
                     &mut binding_index,
                     root_scope_id,
-                    &for_in_stmt.binding,
+                    primary_name,
                     binding_kind,
                 )
                 .map_err(LoweringPipelineError::SemanticViolation)?;
@@ -706,12 +747,18 @@ pub fn lower_ir0_to_ir1(
                     .binding_kind
                     .map(binding_kind_for_variable_declaration)
                     .unwrap_or(BindingKind::Var);
+                let primary_name = for_of_stmt
+                    .binding
+                    .binding_names()
+                    .first()
+                    .copied()
+                    .unwrap_or("_");
                 let binding_id = alloc_binding(
                     &mut bindings,
                     &mut binding_lookup,
                     &mut binding_index,
                     root_scope_id,
-                    &for_of_stmt.binding,
+                    primary_name,
                     binding_kind,
                 )
                 .map_err(LoweringPipelineError::SemanticViolation)?;
@@ -1040,10 +1087,12 @@ fn lower_statement_to_ir1(
             if vd.kind == VariableDeclarationKind::Const {
                 for d in &vd.declarations {
                     if d.initializer.is_none() {
+                        let primary_name =
+                            d.pattern.binding_names().first().map(|s| (*s).to_string());
                         return Err(LoweringPipelineError::SemanticViolation(
                             SemanticError::new(
                                 SemanticErrorCode::ConstWithoutInitializer,
-                                Some(d.name.clone()),
+                                primary_name,
                                 Some(d.span.clone()),
                             ),
                         ));
@@ -1051,12 +1100,13 @@ fn lower_statement_to_ir1(
                 }
             }
             for d in &vd.declarations {
+                let d_primary = d.pattern.binding_names().first().copied().unwrap_or("_");
                 let bid = alloc_binding(
                     bindings,
                     binding_lookup,
                     binding_index,
                     scope_id,
-                    &d.name,
+                    d_primary,
                     binding_kind,
                 )
                 .map_err(LoweringPipelineError::SemanticViolation)?;
@@ -1200,12 +1250,18 @@ fn lower_statement_to_ir1(
                 .binding_kind
                 .map(binding_kind_for_variable_declaration)
                 .unwrap_or(BindingKind::Var);
+            let for_in_primary = for_in_stmt
+                .binding
+                .binding_names()
+                .first()
+                .copied()
+                .unwrap_or("_");
             let bid = alloc_binding(
                 bindings,
                 binding_lookup,
                 binding_index,
                 scope_id,
-                &for_in_stmt.binding,
+                for_in_primary,
                 binding_kind,
             )
             .map_err(LoweringPipelineError::SemanticViolation)?;
@@ -1241,12 +1297,18 @@ fn lower_statement_to_ir1(
                 .binding_kind
                 .map(binding_kind_for_variable_declaration)
                 .unwrap_or(BindingKind::Var);
+            let for_of_primary = for_of_stmt
+                .binding
+                .binding_names()
+                .first()
+                .copied()
+                .unwrap_or("_");
             let bid = alloc_binding(
                 bindings,
                 binding_lookup,
                 binding_index,
                 scope_id,
-                &for_of_stmt.binding,
+                for_of_primary,
                 binding_kind,
             )
             .map_err(LoweringPipelineError::SemanticViolation)?;
@@ -1967,6 +2029,13 @@ fn build_ir2_flow_proof_artifact(
                 });
             }
             LatticeFlowCheckResult::RequiresDeclassification { obligation_id } => {
+                let obligation = lattice.obligations().get(&obligation_id).ok_or_else(|| {
+                    LoweringPipelineError::FlowLatticeFailure {
+                        detail: format!(
+                            "missing declassification obligation metadata for {obligation_id}"
+                        ),
+                    }
+                })?;
                 artifact
                     .required_declassifications
                     .push(RequiredDeclassificationArtifactEntry {
@@ -1975,6 +2044,13 @@ fn build_ir2_flow_proof_artifact(
                         sink_clearance: sink_clearance_label,
                         capability,
                         obligation_id,
+                        decision_contract_id: obligation.decision_contract_id.clone(),
+                        requires_operator_approval: obligation.requires_operator_approval,
+                        receipt_linkage_required: true,
+                        replay_command_hint: format!(
+                            "frankenctl replay run --trace {} --obligation {}",
+                            context.trace_id, obligation.obligation_id
+                        ),
                     });
             }
             LatticeFlowCheckResult::Blocked { .. } => {
@@ -2451,7 +2527,12 @@ fn lower_expression_to_ir1(
                     binding_lookup,
                     binding_index,
                     root_scope_id,
-                    &param.name,
+                    param
+                        .pattern
+                        .binding_names()
+                        .first()
+                        .copied()
+                        .unwrap_or("_"),
                     BindingKind::Let,
                 )
                 .map_err(LoweringPipelineError::SemanticViolation)?;
@@ -2879,13 +2960,13 @@ fn failure_event(context: &LoweringContext, event: &str, error_code: &str) -> Lo
 mod tests {
     use super::*;
     use crate::ast::{
-        ArrowBody, AssignmentOperator, BinaryOperator, BlockStatement, BreakStatement, CatchClause,
-        ContinueStatement, DoWhileStatement, ExportDeclaration, ExportKind, Expression,
-        ExpressionStatement, ForInStatement, ForOfStatement, ForStatement, FunctionDeclaration,
-        FunctionParam, IfStatement, ImportDeclaration, ObjectProperty, ParseGoal, ReturnStatement,
-        SourceSpan, Statement, SwitchCase, SwitchStatement, SyntaxTree, ThrowStatement,
-        TryCatchStatement, UnaryOperator, VariableDeclaration, VariableDeclarationKind,
-        VariableDeclarator, WhileStatement,
+        ArrowBody, AssignmentOperator, BinaryOperator, BindingPattern, BlockStatement,
+        BreakStatement, CatchClause, ContinueStatement, DoWhileStatement, ExportDeclaration,
+        ExportKind, Expression, ExpressionStatement, ForInStatement, ForOfStatement, ForStatement,
+        FunctionDeclaration, FunctionParam, IfStatement, ImportDeclaration, ObjectProperty,
+        ParseGoal, ReturnStatement, SourceSpan, Statement, SwitchCase, SwitchStatement, SyntaxTree,
+        ThrowStatement, TryCatchStatement, UnaryOperator, VariableDeclaration,
+        VariableDeclarationKind, VariableDeclarator, WhileStatement,
     };
 
     fn span() -> SourceSpan {
@@ -3153,6 +3234,16 @@ mod tests {
         assert_eq!(
             artifact.required_declassifications[0].obligation_id,
             "declass-op-0"
+        );
+        assert_eq!(
+            artifact.required_declassifications[0].decision_contract_id,
+            "decision-declass"
+        );
+        assert!(artifact.required_declassifications[0].requires_operator_approval);
+        assert!(artifact.required_declassifications[0].receipt_linkage_required);
+        assert_eq!(
+            artifact.required_declassifications[0].replay_command_hint,
+            "frankenctl replay run --trace trace-declass --obligation declass-op-0"
         );
     }
 
@@ -3968,7 +4059,7 @@ mod tests {
             body: vec![Statement::VariableDeclaration(VariableDeclaration {
                 kind: VariableDeclarationKind::Var,
                 declarations: vec![VariableDeclarator {
-                    name: "counter".to_string(),
+                    pattern: BindingPattern::Identifier("counter".to_string()),
                     initializer: None,
                     span: span(),
                 }],
@@ -4005,12 +4096,12 @@ mod tests {
                 kind: VariableDeclarationKind::Var,
                 declarations: vec![
                     VariableDeclarator {
-                        name: "y".to_string(),
+                        pattern: BindingPattern::Identifier("y".to_string()),
                         initializer: Some(Expression::Identifier("x".to_string())),
                         span: span(),
                     },
                     VariableDeclarator {
-                        name: "x".to_string(),
+                        pattern: BindingPattern::Identifier("x".to_string()),
                         initializer: Some(Expression::NumericLiteral(1)),
                         span: span(),
                     },
@@ -4065,7 +4156,7 @@ mod tests {
             body: vec![Statement::VariableDeclaration(VariableDeclaration {
                 kind: VariableDeclarationKind::Let,
                 declarations: vec![VariableDeclarator {
-                    name: "value".to_string(),
+                    pattern: BindingPattern::Identifier("value".to_string()),
                     initializer: Some(Expression::NumericLiteral(7)),
                     span: span(),
                 }],
@@ -4091,7 +4182,7 @@ mod tests {
             body: vec![Statement::VariableDeclaration(VariableDeclaration {
                 kind: VariableDeclarationKind::Const,
                 declarations: vec![VariableDeclarator {
-                    name: "answer".to_string(),
+                    pattern: BindingPattern::Identifier("answer".to_string()),
                     initializer: Some(Expression::NumericLiteral(42)),
                     span: span(),
                 }],
@@ -4808,7 +4899,7 @@ mod tests {
     fn lower_arrow_function_expression_body() {
         let ir0 = expr_ir0(Expression::ArrowFunction {
             params: vec![FunctionParam {
-                name: "x".into(),
+                pattern: BindingPattern::Identifier("x".into()),
                 span: span(),
             }],
             body: ArrowBody::Expression(Box::new(Expression::Identifier("x".into()))),
@@ -4962,7 +5053,7 @@ mod tests {
                 VariableDeclaration {
                     kind: VariableDeclarationKind::Let,
                     declarations: vec![VariableDeclarator {
-                        name: "i".into(),
+                        pattern: BindingPattern::Identifier("i".into()),
                         initializer: Some(Expression::NumericLiteral(0)),
                         span: span(),
                     }],
@@ -4990,7 +5081,7 @@ mod tests {
     #[test]
     fn lower_for_in_statement() {
         let ir0 = stmt_ir0(vec![Statement::ForIn(ForInStatement {
-            binding: "k".into(),
+            binding: BindingPattern::Identifier("k".into()),
             binding_kind: Some(VariableDeclarationKind::Let),
             object: Expression::Identifier("obj".into()),
             body: Box::new(Statement::Expression(ExpressionStatement {
@@ -5015,7 +5106,7 @@ mod tests {
     #[test]
     fn lower_for_of_statement() {
         let ir0 = stmt_ir0(vec![Statement::ForOf(ForOfStatement {
-            binding: "v".into(),
+            binding: BindingPattern::Identifier("v".into()),
             binding_kind: Some(VariableDeclarationKind::Const),
             iterable: Expression::Identifier("arr".into()),
             body: Box::new(Statement::Expression(ExpressionStatement {
@@ -5269,7 +5360,7 @@ mod tests {
         let ir0 = stmt_ir0(vec![Statement::FunctionDeclaration(FunctionDeclaration {
             name: Some("myFunc".into()),
             params: vec![FunctionParam {
-                name: "a".into(),
+                pattern: BindingPattern::Identifier("a".into()),
                 span: span(),
             }],
             body: BlockStatement {
@@ -5437,7 +5528,7 @@ mod tests {
         let ir0 = stmt_ir0(vec![Statement::VariableDeclaration(VariableDeclaration {
             kind: VariableDeclarationKind::Const,
             declarations: vec![VariableDeclarator {
-                name: "x".into(),
+                pattern: BindingPattern::Identifier("x".into()),
                 initializer: None,
                 span: span(),
             }],
@@ -5451,7 +5542,7 @@ mod tests {
     fn validate_static_semantics_for_in_for_of_noop() {
         let ir0 = stmt_ir0(vec![
             Statement::ForIn(ForInStatement {
-                binding: "k".into(),
+                binding: BindingPattern::Identifier("k".into()),
                 binding_kind: Some(VariableDeclarationKind::Let),
                 object: Expression::Identifier("obj".into()),
                 body: Box::new(Statement::Expression(ExpressionStatement {
@@ -5461,7 +5552,7 @@ mod tests {
                 span: span(),
             }),
             Statement::ForOf(ForOfStatement {
-                binding: "v".into(),
+                binding: BindingPattern::Identifier("v".into()),
                 binding_kind: Some(VariableDeclarationKind::Const),
                 iterable: Expression::Identifier("arr".into()),
                 body: Box::new(Statement::Expression(ExpressionStatement {
@@ -5524,7 +5615,7 @@ mod tests {
     #[test]
     fn for_in_without_binding_kind_defaults_to_var() {
         let ir0 = stmt_ir0(vec![Statement::ForIn(ForInStatement {
-            binding: "k".into(),
+            binding: BindingPattern::Identifier("k".into()),
             binding_kind: None,
             object: Expression::Identifier("obj".into()),
             body: Box::new(Statement::Expression(ExpressionStatement {
@@ -5580,7 +5671,10 @@ mod tests {
 
     #[test]
     fn sink_label_to_clearance_public_is_never_sink() {
-        assert_eq!(sink_label_to_clearance(&Label::Public), Clearance::NeverSink);
+        assert_eq!(
+            sink_label_to_clearance(&Label::Public),
+            Clearance::NeverSink
+        );
     }
 
     #[test]
@@ -5792,6 +5886,11 @@ mod tests {
             sink_clearance: Label::Public,
             capability: Some("ifc.declassify".to_string()),
             obligation_id: "obl-42".to_string(),
+            decision_contract_id: "decision-42".to_string(),
+            requires_operator_approval: true,
+            receipt_linkage_required: true,
+            replay_command_hint: "frankenctl replay run --trace trace-42 --obligation obl-42"
+                .to_string(),
         };
         let json = serde_json::to_string(&entry).unwrap();
         let back: RequiredDeclassificationArtifactEntry = serde_json::from_str(&json).unwrap();

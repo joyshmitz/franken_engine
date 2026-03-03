@@ -770,21 +770,23 @@ fn analyze_statement(
             let mut func_var: BTreeMap<String, SourceSpan> = BTreeMap::new();
             let mut seen_params: BTreeSet<String> = BTreeSet::new();
             for param in &func.params {
-                check_reserved(state, &param.name, &param.span);
-                if !seen_params.insert(param.name.clone()) && state.is_module {
-                    state.push_error(
-                        StaticErrorKind::DuplicateParameter,
-                        format!("duplicate parameter name '{}'", param.name),
-                        param.span.clone(),
-                    );
+                for bound_name in param.pattern.binding_names() {
+                    check_reserved(state, bound_name, &param.span);
+                    if !seen_params.insert(bound_name.to_string()) && state.is_module {
+                        state.push_error(
+                            StaticErrorKind::DuplicateParameter,
+                            format!("duplicate parameter name '{}'", bound_name),
+                            param.span.clone(),
+                        );
+                    }
+                    let bid = state.alloc_binding_id();
+                    func_bindings.push(ResolvedBinding {
+                        name: bound_name.to_string(),
+                        binding_id: bid,
+                        scope: func_scope_id,
+                        kind: BindingKind::Parameter,
+                    });
                 }
-                let bid = state.alloc_binding_id();
-                func_bindings.push(ResolvedBinding {
-                    name: param.name.clone(),
-                    binding_id: bid,
-                    scope: func_scope_id,
-                    kind: BindingKind::Parameter,
-                });
             }
             let prev_in_function = state.in_function;
             let prev_in_loop = state.in_loop;
@@ -880,90 +882,98 @@ fn analyze_variable_declaration(
     );
 
     for declarator in &decl.declarations {
-        let name = &declarator.name;
+        let names = declarator.pattern.binding_names();
+        let primary_name = names.first().copied().unwrap_or("_").to_string();
 
-        // Reserved word check
-        check_reserved(state, name, &declarator.span);
+        // Reserved word check for all bound names
+        for bound_name in &names {
+            check_reserved(state, bound_name, &declarator.span);
+        }
 
         // const without initializer
         if decl.kind == VariableDeclarationKind::Const && declarator.initializer.is_none() {
             state.push_error(
                 StaticErrorKind::ConstWithoutInitializer,
-                format!("const declaration '{}' must have an initializer", name),
+                format!(
+                    "const declaration '{}' must have an initializer",
+                    primary_name
+                ),
                 declarator.span.clone(),
             );
         }
 
-        if is_lexical {
-            // Check duplicate lexical binding
-            if let Some(prev_span) = lexical_names.get(name) {
-                state.push_error(
-                    StaticErrorKind::DuplicateBinding,
-                    format!(
-                        "identifier '{}' has already been declared at line {}",
-                        name, prev_span.start_line
-                    ),
-                    declarator.span.clone(),
-                );
+        for name in &names {
+            if is_lexical {
+                // Check duplicate lexical binding
+                if let Some(prev_span) = lexical_names.get(*name) {
+                    state.push_error(
+                        StaticErrorKind::DuplicateBinding,
+                        format!(
+                            "identifier '{}' has already been declared at line {}",
+                            name, prev_span.start_line
+                        ),
+                        declarator.span.clone(),
+                    );
+                } else {
+                    lexical_names.insert((*name).to_string(), declarator.span.clone());
+                }
+
+                // Check collision with var
+                if let Some(prev_span) = var_names.get(*name) {
+                    state.push_error(
+                        StaticErrorKind::LexicalVarCollision,
+                        format!(
+                            "lexical binding '{}' collides with var declaration at line {}",
+                            name, prev_span.start_line
+                        ),
+                        declarator.span.clone(),
+                    );
+                }
+
+                // Check collision with import
+                if let Some(prev_span) = state.import_bindings.get(*name) {
+                    state.push_error(
+                        StaticErrorKind::DuplicateBinding,
+                        format!(
+                            "identifier '{}' already declared as import binding at line {}",
+                            name, prev_span.start_line
+                        ),
+                        declarator.span.clone(),
+                    );
+                }
             } else {
-                lexical_names.insert(name.clone(), declarator.span.clone());
+                // var declaration
+                if let Some(prev_span) = lexical_names.get(*name) {
+                    state.push_error(
+                        StaticErrorKind::LexicalVarCollision,
+                        format!(
+                            "var '{}' collides with lexical declaration at line {}",
+                            name, prev_span.start_line
+                        ),
+                        declarator.span.clone(),
+                    );
+                }
+                var_names.insert((*name).to_string(), declarator.span.clone());
             }
 
-            // Check collision with var
-            if let Some(prev_span) = var_names.get(name) {
-                state.push_error(
-                    StaticErrorKind::LexicalVarCollision,
-                    format!(
-                        "lexical binding '{}' collides with var declaration at line {}",
-                        name, prev_span.start_line
-                    ),
-                    declarator.span.clone(),
-                );
+            // Track const bindings for assignment-to-const detection
+            if decl.kind == VariableDeclarationKind::Const {
+                state.const_bindings.insert((*name).to_string());
             }
 
-            // Check collision with import
-            if let Some(prev_span) = state.import_bindings.get(name) {
-                state.push_error(
-                    StaticErrorKind::DuplicateBinding,
-                    format!(
-                        "identifier '{}' already declared as import binding at line {}",
-                        name, prev_span.start_line
-                    ),
-                    declarator.span.clone(),
-                );
-            }
-        } else {
-            // var declaration
-            if let Some(prev_span) = lexical_names.get(name) {
-                state.push_error(
-                    StaticErrorKind::LexicalVarCollision,
-                    format!(
-                        "var '{}' collides with lexical declaration at line {}",
-                        name, prev_span.start_line
-                    ),
-                    declarator.span.clone(),
-                );
-            }
-            var_names.insert(name.clone(), declarator.span.clone());
-        }
+            let bid = state.alloc_binding_id();
+            bindings.push(ResolvedBinding {
+                name: (*name).to_string(),
+                binding_id: bid,
+                scope: scope_id,
+                kind: binding_kind,
+            });
+        } // end for name in &names
 
         // Check await in initializer
         if let Some(ref init_expr) = declarator.initializer {
             check_await_in_expression(state, init_expr, &declarator.span);
         }
-
-        // Track const bindings for assignment-to-const detection
-        if decl.kind == VariableDeclarationKind::Const {
-            state.const_bindings.insert(name.clone());
-        }
-
-        let bid = state.alloc_binding_id();
-        bindings.push(ResolvedBinding {
-            name: name.clone(),
-            binding_id: bid,
-            scope: scope_id,
-            kind: binding_kind,
-        });
     }
 }
 
@@ -1189,7 +1199,9 @@ fn detect_tdz_violations(
             )
         {
             for declarator in &decl.declarations {
-                decl_positions.entry(declarator.name.clone()).or_insert(idx);
+                for bound_name in declarator.pattern.binding_names() {
+                    decl_positions.entry(bound_name.to_string()).or_insert(idx);
+                }
             }
         }
     }
@@ -1311,8 +1323,8 @@ impl StaticSemanticsEvent {
 mod tests {
     use super::*;
     use crate::ast::{
-        ExportDeclaration, ExportKind, ExpressionStatement, ImportDeclaration, ParseGoal,
-        SourceSpan, Statement, SyntaxTree, VariableDeclaration, VariableDeclarationKind,
+        BindingPattern, ExportDeclaration, ExportKind, ExpressionStatement, ImportDeclaration,
+        ParseGoal, SourceSpan, Statement, SyntaxTree, VariableDeclaration, VariableDeclarationKind,
         VariableDeclarator,
     };
 
@@ -1337,7 +1349,7 @@ mod tests {
         Statement::VariableDeclaration(VariableDeclaration {
             kind,
             declarations: vec![VariableDeclarator {
-                name: name.to_string(),
+                pattern: BindingPattern::Identifier(name.to_string()),
                 initializer: init,
                 span: span(line),
             }],
@@ -2836,18 +2848,18 @@ mod tests {
 
     #[test]
     fn duplicate_parameter_in_module() {
-        use crate::ast::{BlockStatement, FunctionDeclaration, FunctionParam};
+        use crate::ast::{BindingPattern, BlockStatement, FunctionDeclaration, FunctionParam};
         let tree = make_tree(
             ParseGoal::Module,
             vec![Statement::FunctionDeclaration(FunctionDeclaration {
                 name: Some("foo".to_string()),
                 params: vec![
                     FunctionParam {
-                        name: "a".to_string(),
+                        pattern: BindingPattern::Identifier("a".to_string()),
                         span: span(1),
                     },
                     FunctionParam {
-                        name: "a".to_string(),
+                        pattern: BindingPattern::Identifier("a".to_string()),
                         span: span(1),
                     },
                 ],
@@ -2872,18 +2884,18 @@ mod tests {
 
     #[test]
     fn distinct_parameters_ok() {
-        use crate::ast::{BlockStatement, FunctionDeclaration, FunctionParam};
+        use crate::ast::{BindingPattern, BlockStatement, FunctionDeclaration, FunctionParam};
         let tree = make_tree(
             ParseGoal::Module,
             vec![Statement::FunctionDeclaration(FunctionDeclaration {
                 name: Some("bar".to_string()),
                 params: vec![
                     FunctionParam {
-                        name: "a".to_string(),
+                        pattern: BindingPattern::Identifier("a".to_string()),
                         span: span(1),
                     },
                     FunctionParam {
-                        name: "b".to_string(),
+                        pattern: BindingPattern::Identifier("b".to_string()),
                         span: span(1),
                     },
                 ],
@@ -3029,13 +3041,13 @@ mod tests {
 
     #[test]
     fn function_creates_child_scope() {
-        use crate::ast::{BlockStatement, FunctionDeclaration, FunctionParam};
+        use crate::ast::{BindingPattern, BlockStatement, FunctionDeclaration, FunctionParam};
         let tree = make_tree(
             ParseGoal::Script,
             vec![Statement::FunctionDeclaration(FunctionDeclaration {
                 name: Some("foo".to_string()),
                 params: vec![FunctionParam {
-                    name: "a".to_string(),
+                    pattern: BindingPattern::Identifier("a".to_string()),
                     span: span(1),
                 }],
                 body: BlockStatement {
@@ -3610,11 +3622,11 @@ mod tests {
 
     #[test]
     fn break_inside_for_in_ok() {
-        use crate::ast::{BreakStatement, ForInStatement, VariableDeclarationKind};
+        use crate::ast::{BindingPattern, BreakStatement, ForInStatement, VariableDeclarationKind};
         let tree = make_tree(
             ParseGoal::Script,
             vec![Statement::ForIn(ForInStatement {
-                binding: "k".to_string(),
+                binding: BindingPattern::Identifier("k".to_string()),
                 binding_kind: Some(VariableDeclarationKind::Let),
                 object: Expression::Identifier("obj".to_string()),
                 body: Box::new(Statement::Break(BreakStatement {
@@ -3635,11 +3647,13 @@ mod tests {
 
     #[test]
     fn continue_inside_for_of_ok() {
-        use crate::ast::{ContinueStatement, ForOfStatement, VariableDeclarationKind};
+        use crate::ast::{
+            BindingPattern, ContinueStatement, ForOfStatement, VariableDeclarationKind,
+        };
         let tree = make_tree(
             ParseGoal::Script,
             vec![Statement::ForOf(ForOfStatement {
-                binding: "v".to_string(),
+                binding: BindingPattern::Identifier("v".to_string()),
                 binding_kind: Some(VariableDeclarationKind::Const),
                 iterable: Expression::Identifier("arr".to_string()),
                 body: Box::new(Statement::Continue(ContinueStatement {
@@ -3660,11 +3674,11 @@ mod tests {
 
     #[test]
     fn for_in_bare_binding_passes() {
-        use crate::ast::ForInStatement;
+        use crate::ast::{BindingPattern, ForInStatement};
         let tree = make_tree(
             ParseGoal::Script,
             vec![Statement::ForIn(ForInStatement {
-                binding: "k".to_string(),
+                binding: BindingPattern::Identifier("k".to_string()),
                 binding_kind: None,
                 object: Expression::Identifier("obj".to_string()),
                 body: Box::new(expr_stmt(Expression::Identifier("k".to_string()), 2)),
@@ -3829,17 +3843,44 @@ mod tests {
 
     #[test]
     fn static_error_kind_as_str_original_11() {
-        assert_eq!(StaticErrorKind::DuplicateBinding.as_str(), "duplicate_binding");
-        assert_eq!(StaticErrorKind::ConstWithoutInitializer.as_str(), "const_without_initializer");
+        assert_eq!(
+            StaticErrorKind::DuplicateBinding.as_str(),
+            "duplicate_binding"
+        );
+        assert_eq!(
+            StaticErrorKind::ConstWithoutInitializer.as_str(),
+            "const_without_initializer"
+        );
         assert_eq!(StaticErrorKind::ImportInScript.as_str(), "import_in_script");
         assert_eq!(StaticErrorKind::ExportInScript.as_str(), "export_in_script");
-        assert_eq!(StaticErrorKind::DuplicateExport.as_str(), "duplicate_export");
-        assert_eq!(StaticErrorKind::AwaitOutsideAsync.as_str(), "await_outside_async");
-        assert_eq!(StaticErrorKind::TemporalDeadZone.as_str(), "temporal_dead_zone");
-        assert_eq!(StaticErrorKind::LexicalVarCollision.as_str(), "lexical_var_collision");
-        assert_eq!(StaticErrorKind::EmptyDeclaratorList.as_str(), "empty_declarator_list");
-        assert_eq!(StaticErrorKind::ReservedWordBinding.as_str(), "reserved_word_binding");
-        assert_eq!(StaticErrorKind::ImportRedeclaration.as_str(), "import_redeclaration");
+        assert_eq!(
+            StaticErrorKind::DuplicateExport.as_str(),
+            "duplicate_export"
+        );
+        assert_eq!(
+            StaticErrorKind::AwaitOutsideAsync.as_str(),
+            "await_outside_async"
+        );
+        assert_eq!(
+            StaticErrorKind::TemporalDeadZone.as_str(),
+            "temporal_dead_zone"
+        );
+        assert_eq!(
+            StaticErrorKind::LexicalVarCollision.as_str(),
+            "lexical_var_collision"
+        );
+        assert_eq!(
+            StaticErrorKind::EmptyDeclaratorList.as_str(),
+            "empty_declarator_list"
+        );
+        assert_eq!(
+            StaticErrorKind::ReservedWordBinding.as_str(),
+            "reserved_word_binding"
+        );
+        assert_eq!(
+            StaticErrorKind::ImportRedeclaration.as_str(),
+            "import_redeclaration"
+        );
     }
 
     #[test]
@@ -3928,7 +3969,11 @@ mod tests {
 
     #[test]
     fn static_error_canonical_value_content() {
-        let err = StaticError::new(StaticErrorKind::DuplicateExport, "duplicate export 'foo'", span(5));
+        let err = StaticError::new(
+            StaticErrorKind::DuplicateExport,
+            "duplicate export 'foo'",
+            span(5),
+        );
         let cv = err.canonical_value();
         if let CanonicalValue::Map(map) = cv {
             assert_eq!(
@@ -3962,10 +4007,7 @@ mod tests {
 
     #[test]
     fn analysis_result_serde_module_flag() {
-        let tree = make_tree(
-            ParseGoal::Module,
-            vec![import_stmt(Some("x"), "./x.js", 1)],
-        );
+        let tree = make_tree(ParseGoal::Module, vec![import_stmt(Some("x"), "./x.js", 1)]);
         let result = analyze(&tree);
         assert!(result.is_module);
         let json = serde_json::to_string(&result).unwrap();
@@ -4014,7 +4056,10 @@ mod tests {
         };
         let cv = event.canonical_value();
         if let CanonicalValue::Map(map) = cv {
-            assert_eq!(map["component"], CanonicalValue::String("static_semantics".to_string()));
+            assert_eq!(
+                map["component"],
+                CanonicalValue::String("static_semantics".to_string())
+            );
             assert_eq!(map["outcome"], CanonicalValue::String("fail".to_string()));
             assert_eq!(map["error_count"], CanonicalValue::U64(3));
             assert_eq!(map["binding_count"], CanonicalValue::U64(5));
@@ -4031,8 +4076,17 @@ mod tests {
 
     #[test]
     fn is_reserved_binding_all_strict_reserved_words() {
-        let words = ["implements", "interface", "let", "package", "private",
-                     "protected", "public", "static", "yield"];
+        let words = [
+            "implements",
+            "interface",
+            "let",
+            "package",
+            "private",
+            "protected",
+            "public",
+            "static",
+            "yield",
+        ];
         for word in words {
             assert!(
                 is_reserved_binding(word, true),
@@ -4050,11 +4104,42 @@ mod tests {
     #[test]
     fn is_reserved_binding_all_keyword_bindings() {
         let keywords = [
-            "break", "case", "catch", "class", "const", "continue", "debugger",
-            "default", "delete", "do", "else", "enum", "export", "extends",
-            "false", "finally", "for", "function", "if", "import", "in",
-            "instanceof", "new", "null", "return", "super", "switch", "this",
-            "throw", "true", "try", "typeof", "var", "void", "while", "with",
+            "break",
+            "case",
+            "catch",
+            "class",
+            "const",
+            "continue",
+            "debugger",
+            "default",
+            "delete",
+            "do",
+            "else",
+            "enum",
+            "export",
+            "extends",
+            "false",
+            "finally",
+            "for",
+            "function",
+            "if",
+            "import",
+            "in",
+            "instanceof",
+            "new",
+            "null",
+            "return",
+            "super",
+            "switch",
+            "this",
+            "throw",
+            "true",
+            "try",
+            "typeof",
+            "var",
+            "void",
+            "while",
+            "with",
         ];
         for kw in keywords {
             assert!(
@@ -4258,9 +4343,9 @@ mod tests {
             vec![expr_stmt(
                 Expression::ArrowFunction {
                     params: vec![],
-                    body: crate::ast::ArrowBody::Expression(Box::new(Expression::Await(
-                        Box::new(Expression::Identifier("p".to_string())),
-                    ))),
+                    body: crate::ast::ArrowBody::Expression(Box::new(Expression::Await(Box::new(
+                        Expression::Identifier("p".to_string()),
+                    )))),
                     is_async: false,
                 },
                 1,
@@ -4309,18 +4394,18 @@ mod tests {
 
     #[test]
     fn duplicate_param_in_script_allowed() {
-        use crate::ast::{BlockStatement, FunctionDeclaration, FunctionParam};
+        use crate::ast::{BindingPattern, BlockStatement, FunctionDeclaration, FunctionParam};
         let tree = make_tree(
             ParseGoal::Script,
             vec![Statement::FunctionDeclaration(FunctionDeclaration {
                 name: Some("foo".to_string()),
                 params: vec![
                     FunctionParam {
-                        name: "a".to_string(),
+                        pattern: BindingPattern::Identifier("a".to_string()),
                         span: span(1),
                     },
                     FunctionParam {
-                        name: "a".to_string(),
+                        pattern: BindingPattern::Identifier("a".to_string()),
                         span: span(1),
                     },
                 ],

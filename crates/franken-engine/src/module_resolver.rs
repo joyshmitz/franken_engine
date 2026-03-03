@@ -1163,6 +1163,8 @@ mod tests {
                 "utils",
                 "utils.mjs",
                 "utils.js",
+                "utils/index.mjs",
+                "utils/index.js",
                 "/app/utils",
                 "/app/utils.mjs",
                 "/app/utils.js"

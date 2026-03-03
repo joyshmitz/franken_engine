@@ -13,12 +13,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::ast::{
-    ArrowBody, AssignmentOperator, BinaryOperator, BlockStatement, BreakStatement, CatchClause,
-    ContinueStatement, DoWhileStatement, ExportDeclaration, ExportKind, Expression,
+    ArrowBody, AssignmentOperator, BinaryOperator, BindingPattern, BlockStatement, BreakStatement,
+    CatchClause, ContinueStatement, DoWhileStatement, ExportDeclaration, ExportKind, Expression,
     ExpressionStatement, ForInStatement, ForOfStatement, ForStatement, FunctionDeclaration,
-    FunctionParam, IfStatement, ImportDeclaration, ObjectProperty, ParseGoal, ReturnStatement,
-    SourceSpan, Statement, SwitchCase, SwitchStatement, SyntaxTree, ThrowStatement,
-    TryCatchStatement, UnaryOperator, VariableDeclaration, VariableDeclarationKind,
+    FunctionParam, IfStatement, ImportDeclaration, ObjectPatternProperty, ObjectProperty,
+    ParseGoal, ReturnStatement, SourceSpan, Statement, SwitchCase, SwitchStatement, SyntaxTree,
+    ThrowStatement, TryCatchStatement, UnaryOperator, VariableDeclaration, VariableDeclarationKind,
     VariableDeclarator, WhileStatement,
 };
 use crate::deterministic_serde::{self, CanonicalValue};
@@ -2677,6 +2677,289 @@ fn parse_export(
     Ok(ExportDeclaration { kind, span })
 }
 
+// ---------------------------------------------------------------------------
+// Binding pattern parser (destructuring)
+// ---------------------------------------------------------------------------
+
+/// Parse a binding pattern: identifier, `{ ... }` object, or `[ ... ]` array.
+fn parse_binding_pattern(
+    source: &str,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<BindingPattern> {
+    let trimmed = source.trim();
+    if trimmed.is_empty() {
+        return Err(ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "empty binding pattern",
+            context.source_label.to_string(),
+            Some(span.clone()),
+        ));
+    }
+
+    // Rest element: `...pattern`
+    if let Some(rest_source) = trimmed.strip_prefix("...") {
+        let inner = parse_binding_pattern(rest_source, span, context)?;
+        return Ok(BindingPattern::Rest(Box::new(inner)));
+    }
+
+    // Object pattern: `{ ... }`
+    if trimmed.starts_with('{') && trimmed.ends_with('}') {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        return parse_object_binding_pattern(inner.trim(), span, context);
+    }
+
+    // Array pattern: `[ ... ]`
+    if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        return parse_array_binding_pattern(inner.trim(), span, context);
+    }
+
+    // Default value: `pattern = expr` (only at top level of a pattern element)
+    // We need to be careful not to match `=` inside nested patterns.
+    if let Some(eq_pos) = find_top_level_eq(trimmed) {
+        let left_src = trimmed[..eq_pos].trim();
+        let right_src = trimmed[eq_pos + 1..].trim();
+        if !left_src.is_empty() && !right_src.is_empty() {
+            let left = parse_binding_pattern(left_src, span, context)?;
+            let right = parse_expression(right_src, span, context, 1)?;
+            return Ok(BindingPattern::AssignmentPattern {
+                left: Box::new(left),
+                right,
+            });
+        }
+    }
+
+    // Simple identifier binding
+    if is_identifier(trimmed) {
+        return Ok(BindingPattern::Identifier(trimmed.to_string()));
+    }
+
+    Err(ParseError::new(
+        ParseErrorCode::UnsupportedSyntax,
+        format!("unsupported binding pattern: `{trimmed}`"),
+        context.source_label.to_string(),
+        Some(span.clone()),
+    ))
+}
+
+/// Find `=` at the top level (not inside brackets, parens, braces, or strings).
+fn find_top_level_eq(source: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut in_quote: Option<char> = None;
+    let mut escaped = false;
+
+    for (i, ch) in source.char_indices() {
+        if let Some(q) = in_quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == q {
+                in_quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' | '`' => in_quote = Some(ch),
+            '(' | '[' | '{' => depth = depth.saturating_add(1),
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '=' if depth == 0 => {
+                // Skip `==` and `=>`
+                let next = source.as_bytes().get(i + 1).copied();
+                if next != Some(b'=') && next != Some(b'>') {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Parse object destructuring pattern contents (inside `{ ... }`).
+fn parse_object_binding_pattern(
+    inner: &str,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<BindingPattern> {
+    if inner.is_empty() {
+        return Ok(BindingPattern::ObjectPattern(Vec::new()));
+    }
+
+    let segments = split_pattern_elements(inner);
+    let mut properties = Vec::with_capacity(segments.len());
+
+    for segment in &segments {
+        let seg = segment.trim();
+        if seg.is_empty() {
+            continue;
+        }
+
+        // Rest element in object pattern: `...rest`
+        if let Some(rest_src) = seg.strip_prefix("...") {
+            let inner_pat = parse_binding_pattern(rest_src.trim(), span, context)?;
+            properties.push(ObjectPatternProperty {
+                key: Expression::Identifier(rest_src.trim().to_string()),
+                value: BindingPattern::Rest(Box::new(inner_pat)),
+                computed: false,
+                shorthand: false,
+            });
+            continue;
+        }
+
+        // Computed key: `[expr]: pattern`
+        if seg.starts_with('[')
+            && let Some(bracket_end) = seg.find(']')
+        {
+            let key_src = &seg[1..bracket_end];
+            let after_bracket = seg[bracket_end + 1..].trim();
+            if let Some(value_src) = after_bracket.strip_prefix(':') {
+                let key = parse_expression(key_src.trim(), span, context, 1)?;
+                let value = parse_binding_pattern(value_src.trim(), span, context)?;
+                properties.push(ObjectPatternProperty {
+                    key,
+                    value,
+                    computed: true,
+                    shorthand: false,
+                });
+                continue;
+            }
+        }
+
+        // Key-value: `key: pattern` or shorthand: `key` or `key = default`
+        if let Some(colon_pos) = find_top_level_colon_in_pattern(seg) {
+            let key_src = seg[..colon_pos].trim();
+            let value_src = seg[colon_pos + 1..].trim();
+            let key = Expression::Identifier(key_src.to_string());
+            let value = parse_binding_pattern(value_src, span, context)?;
+            properties.push(ObjectPatternProperty {
+                key,
+                value,
+                computed: false,
+                shorthand: false,
+            });
+        } else {
+            // Shorthand: `x` or `x = default`
+            let value = parse_binding_pattern(seg, span, context)?;
+            let key_name = match &value {
+                BindingPattern::Identifier(n) => n.clone(),
+                BindingPattern::AssignmentPattern { left, .. } => {
+                    left.as_identifier().unwrap_or("").to_string()
+                }
+                _ => seg.to_string(),
+            };
+            properties.push(ObjectPatternProperty {
+                key: Expression::Identifier(key_name),
+                value,
+                computed: false,
+                shorthand: true,
+            });
+        }
+    }
+
+    Ok(BindingPattern::ObjectPattern(properties))
+}
+
+/// Find `:` at the top level of a pattern element.
+fn find_top_level_colon_in_pattern(source: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut in_quote: Option<char> = None;
+    let mut escaped = false;
+
+    for (i, ch) in source.char_indices() {
+        if let Some(q) = in_quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == q {
+                in_quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' | '`' => in_quote = Some(ch),
+            '(' | '[' | '{' => depth = depth.saturating_add(1),
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ':' if depth == 0 => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Parse array destructuring pattern contents (inside `[ ... ]`).
+fn parse_array_binding_pattern(
+    inner: &str,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<BindingPattern> {
+    if inner.is_empty() {
+        return Ok(BindingPattern::ArrayPattern(Vec::new()));
+    }
+
+    let segments = split_pattern_elements(inner);
+    let mut elements = Vec::with_capacity(segments.len());
+
+    for segment in &segments {
+        let seg = segment.trim();
+        if seg.is_empty() {
+            elements.push(None); // hole
+        } else {
+            elements.push(Some(parse_binding_pattern(seg, span, context)?));
+        }
+    }
+
+    Ok(BindingPattern::ArrayPattern(elements))
+}
+
+/// Split pattern elements on commas at the top level.
+fn split_pattern_elements(source: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut depth = 0usize;
+    let mut in_quote: Option<char> = None;
+    let mut escaped = false;
+
+    for (i, ch) in source.char_indices() {
+        if let Some(q) = in_quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == q {
+                in_quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' | '`' => in_quote = Some(ch),
+            '(' | '[' | '{' => depth = depth.saturating_add(1),
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                out.push(&source[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&source[start..]);
+    out
+}
+
 fn parse_variable_declaration_kind(statement: &str) -> Option<VariableDeclarationKind> {
     for kind in [
         VariableDeclarationKind::Var,
@@ -2727,14 +3010,7 @@ fn parse_variable_declaration(
     for declarator in declarator_segments {
         let (name_raw, initializer_raw) = split_var_declarator_assignment(declarator);
         let name = name_raw.trim();
-        if !is_identifier(name) {
-            return Err(ParseError::new(
-                ParseErrorCode::UnsupportedSyntax,
-                format!("{keyword} declaration bindings must be identifiers in parser scaffold"),
-                context.source_label.to_string(),
-                Some(span.clone()),
-            ));
-        }
+        let pattern = parse_binding_pattern(name, &span, context)?;
 
         let initializer = match initializer_raw {
             Some(initializer_source) => {
@@ -2761,7 +3037,7 @@ fn parse_variable_declaration(
         };
 
         declarations.push(VariableDeclarator {
-            name: name.to_string(),
+            pattern,
             initializer,
             span: span.clone(),
         });
@@ -3079,7 +3355,10 @@ fn try_parse_arrow_function(
         let body_src = after.strip_prefix("=>")?;
         let body_src = body_src.trim();
 
-        let params = parse_arrow_params(params_src, span);
+        let params = match parse_arrow_params(params_src, span, context) {
+            Ok(p) => p,
+            Err(e) => return Some(Err(e)),
+        };
         Some(parse_arrow_body(
             body_src,
             params,
@@ -3098,7 +3377,7 @@ fn try_parse_arrow_function(
         }
         let body_src = rest[arrow_pos + 2..].trim();
         let params = vec![FunctionParam {
-            name: param_name.to_string(),
+            pattern: BindingPattern::Identifier(param_name.to_string()),
             span: span.clone(),
         }];
         Some(parse_arrow_body(
@@ -3112,18 +3391,29 @@ fn try_parse_arrow_function(
     }
 }
 
-/// Parse comma-separated arrow function parameters.
-fn parse_arrow_params(params_src: &str, span: &SourceSpan) -> Vec<FunctionParam> {
+/// Parse comma-separated arrow function parameters (supports destructuring).
+fn parse_arrow_params(
+    params_src: &str,
+    span: &SourceSpan,
+    context: &mut ParseExecutionContext<'_>,
+) -> ParseResult<Vec<FunctionParam>> {
     if params_src.trim().is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    params_src
-        .split(',')
-        .map(|p| FunctionParam {
-            name: p.trim().to_string(),
+    let segments = split_pattern_elements(params_src);
+    let mut params = Vec::with_capacity(segments.len());
+    for segment in &segments {
+        let seg = segment.trim();
+        if seg.is_empty() {
+            continue;
+        }
+        let pattern = parse_binding_pattern(seg, span, context)?;
+        params.push(FunctionParam {
+            pattern,
             span: span.clone(),
-        })
-        .collect()
+        });
+    }
+    Ok(params)
 }
 
 /// Parse the body of an arrow function — either `{ block }` or expression.
@@ -3228,22 +3518,22 @@ fn parse_new_expression(
 ) -> ParseResult<Expression> {
     // `rest` is everything after `new `, e.g. `Foo(a, b)` or `Foo` or `Foo.Bar()`
     // Find the arguments list at the end, if any.
-    if rest.ends_with(')') {
-        if let Some((callee_src, args_inner)) = {
+    if rest.ends_with(')')
+        && let Some((callee_src, args_inner)) = {
             let open = find_matching_open_paren(rest);
             open.map(|pos| (rest[..pos].trim(), &rest[pos + 1..rest.len() - 1]))
-        } {
-            let callee = parse_expression(callee_src, span, context, recursion_depth + 1)?;
-            let arguments = if args_inner.trim().is_empty() {
-                Vec::new()
-            } else {
-                parse_comma_separated_exprs(args_inner, span, context, recursion_depth + 1)?
-            };
-            return Ok(Expression::New {
-                callee: Box::new(callee),
-                arguments,
-            });
         }
+    {
+        let callee = parse_expression(callee_src, span, context, recursion_depth + 1)?;
+        let arguments = if args_inner.trim().is_empty() {
+            Vec::new()
+        } else {
+            parse_comma_separated_exprs(args_inner, span, context, recursion_depth + 1)?
+        };
+        return Ok(Expression::New {
+            callee: Box::new(callee),
+            arguments,
+        });
     }
     // `new Foo` without arguments.
     let callee = parse_expression(rest, span, context, recursion_depth + 1)?;
@@ -5521,31 +5811,29 @@ fn try_parse_for_in_of(
     let rhs = header[split_pos + keyword.len() + 2..].trim();
 
     // Parse binding: optionally `let x`, `const x`, `var x`, or bare `x`.
-    let (binding_kind, binding_name) = if let Some(after) = lhs
+    let (binding_kind, binding_src) = if let Some(after) = lhs
         .strip_prefix("let ")
         .or_else(|| lhs.strip_prefix("let\t"))
     {
-        (Some(VariableDeclarationKind::Let), after.trim().to_string())
+        (Some(VariableDeclarationKind::Let), after.trim())
     } else if let Some(after) = lhs
         .strip_prefix("const ")
         .or_else(|| lhs.strip_prefix("const\t"))
     {
-        (
-            Some(VariableDeclarationKind::Const),
-            after.trim().to_string(),
-        )
+        (Some(VariableDeclarationKind::Const), after.trim())
     } else if let Some(after) = lhs
         .strip_prefix("var ")
         .or_else(|| lhs.strip_prefix("var\t"))
     {
-        (Some(VariableDeclarationKind::Var), after.trim().to_string())
+        (Some(VariableDeclarationKind::Var), after.trim())
     } else {
-        (None, lhs.to_string())
+        (None, lhs)
     };
 
-    if !is_identifier(&binding_name) {
-        return Ok(None);
-    }
+    let binding = match parse_binding_pattern(binding_src, span, context) {
+        Ok(pat) => pat,
+        Err(_) => return Ok(None),
+    };
 
     let body_src = rest.trim();
     let body = parse_statement(body_src, goal, span.clone(), context)?;
@@ -5553,7 +5841,7 @@ fn try_parse_for_in_of(
     if keyword == "in" {
         let object = parse_expression(rhs, span, context, 1)?;
         Ok(Some(Statement::ForIn(ForInStatement {
-            binding: binding_name,
+            binding,
             binding_kind,
             object,
             body: Box::new(body),
@@ -5562,7 +5850,7 @@ fn try_parse_for_in_of(
     } else {
         let iterable = parse_expression(rhs, span, context, 1)?;
         Ok(Some(Statement::ForOf(ForOfStatement {
-            binding: binding_name,
+            binding,
             binding_kind,
             iterable,
             body: Box::new(body),
@@ -6083,20 +6371,7 @@ fn parse_function_declaration(
         )
     })?;
 
-    let params: Vec<FunctionParam> = if params_src.trim().is_empty() {
-        Vec::new()
-    } else {
-        params_src
-            .split(',')
-            .map(|p| {
-                let name = p.trim().to_string();
-                FunctionParam {
-                    name,
-                    span: span.clone(),
-                }
-            })
-            .collect()
-    };
+    let params = parse_arrow_params(params_src, &span, context)?;
 
     // Parse body.
     let rest = rest.trim_start();
@@ -6455,7 +6730,7 @@ mod tests {
                 assert_eq!(variable_declaration.kind, VariableDeclarationKind::Var);
                 assert_eq!(variable_declaration.declarations.len(), 1);
                 let declarator = &variable_declaration.declarations[0];
-                assert_eq!(declarator.name, "counter");
+                assert_eq!(declarator.name(), Some("counter"));
                 assert_eq!(declarator.initializer, Some(Expression::NumericLiteral(1)));
             }
             _ => panic!("expected variable declaration statement"),
@@ -6471,7 +6746,7 @@ mod tests {
                 assert_eq!(variable_declaration.kind, VariableDeclarationKind::Var);
                 assert_eq!(variable_declaration.declarations.len(), 1);
                 let declarator = &variable_declaration.declarations[0];
-                assert_eq!(declarator.name, "ready");
+                assert_eq!(declarator.name(), Some("ready"));
                 assert_eq!(declarator.initializer, None);
             }
             _ => panic!("expected variable declaration statement"),
@@ -6488,13 +6763,13 @@ mod tests {
             Statement::VariableDeclaration(variable_declaration) => {
                 assert_eq!(variable_declaration.declarations.len(), 2);
                 let first = &variable_declaration.declarations[0];
-                assert_eq!(first.name, "first");
+                assert_eq!(first.name(), Some("first"));
                 assert_eq!(
                     first.initializer,
                     Some(Expression::StringLiteral("a,b".to_string()))
                 );
                 let second = &variable_declaration.declarations[1];
-                assert_eq!(second.name, "second");
+                assert_eq!(second.name(), Some("second"));
                 assert_eq!(second.initializer, Some(Expression::NumericLiteral(2)));
             }
             _ => panic!("expected variable declaration statement"),
@@ -6512,7 +6787,7 @@ mod tests {
                 assert_eq!(variable_declaration.kind, VariableDeclarationKind::Let);
                 assert_eq!(variable_declaration.declarations.len(), 1);
                 let declarator = &variable_declaration.declarations[0];
-                assert_eq!(declarator.name, "counter");
+                assert_eq!(declarator.name(), Some("counter"));
                 assert_eq!(declarator.initializer, Some(Expression::NumericLiteral(1)));
             }
             _ => panic!("expected variable declaration statement"),
@@ -6530,7 +6805,7 @@ mod tests {
                 assert_eq!(variable_declaration.kind, VariableDeclarationKind::Const);
                 assert_eq!(variable_declaration.declarations.len(), 1);
                 let declarator = &variable_declaration.declarations[0];
-                assert_eq!(declarator.name, "answer");
+                assert_eq!(declarator.name(), Some("answer"));
                 assert_eq!(declarator.initializer, Some(Expression::NumericLiteral(42)));
             }
             _ => panic!("expected variable declaration statement"),
@@ -6560,12 +6835,22 @@ mod tests {
     }
 
     #[test]
-    fn var_declaration_non_identifier_binding_is_rejected() {
+    fn var_declaration_object_destructuring_accepted() {
         let parser = CanonicalEs2020Parser;
-        let err = parser
+        let tree = parser
             .parse("var {x} = source", ParseGoal::Script)
-            .expect_err("destructuring binding should fail in scaffold");
-        assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
+            .expect("destructuring binding should succeed");
+        assert_eq!(tree.body.len(), 1);
+        if let Statement::VariableDeclaration(decl) = &tree.body[0] {
+            assert_eq!(decl.declarations.len(), 1);
+            let pat = &decl.declarations[0].pattern;
+            assert!(
+                matches!(pat, BindingPattern::ObjectPattern(props) if props.len() == 1),
+                "expected object pattern, got {pat:?}"
+            );
+        } else {
+            panic!("expected variable declaration");
+        }
     }
 
     #[test]
@@ -8705,7 +8990,7 @@ mod tests {
             statement_kind_label(&Statement::VariableDeclaration(VariableDeclaration {
                 kind: VariableDeclarationKind::Var,
                 declarations: vec![VariableDeclarator {
-                    name: "x".to_string(),
+                    pattern: BindingPattern::Identifier("x".to_string()),
                     initializer: Some(Expression::NumericLiteral(1)),
                     span: span.clone(),
                 }],
@@ -9566,7 +9851,7 @@ mod tests {
         let tree = parse_script("for (let key in obj) { x }");
         match &tree.body[0] {
             Statement::ForIn(s) => {
-                assert_eq!(s.binding, "key");
+                assert_eq!(s.binding.as_identifier(), Some("key"));
                 assert_eq!(s.binding_kind, Some(VariableDeclarationKind::Let));
             }
             other => panic!("expected ForIn, got {other:?}"),
@@ -9578,7 +9863,7 @@ mod tests {
         let tree = parse_script("for (const item of items) { x }");
         match &tree.body[0] {
             Statement::ForOf(s) => {
-                assert_eq!(s.binding, "item");
+                assert_eq!(s.binding.as_identifier(), Some("item"));
                 assert_eq!(s.binding_kind, Some(VariableDeclarationKind::Const));
             }
             other => panic!("expected ForOf, got {other:?}"),
@@ -9590,7 +9875,7 @@ mod tests {
         let tree = parse_script("for (k in obj) { x }");
         match &tree.body[0] {
             Statement::ForIn(s) => {
-                assert_eq!(s.binding, "k");
+                assert_eq!(s.binding.as_identifier(), Some("k"));
                 assert!(s.binding_kind.is_none());
             }
             other => panic!("expected ForIn, got {other:?}"),
@@ -9602,7 +9887,7 @@ mod tests {
         let tree = parse_script("for (var x of arr) { x }");
         match &tree.body[0] {
             Statement::ForOf(s) => {
-                assert_eq!(s.binding, "x");
+                assert_eq!(s.binding.as_identifier(), Some("x"));
                 assert_eq!(s.binding_kind, Some(VariableDeclarationKind::Var));
             }
             other => panic!("expected ForOf, got {other:?}"),
@@ -9614,7 +9899,7 @@ mod tests {
         let tree = parse_script("for (let k in \"hello\") { x }");
         match &tree.body[0] {
             Statement::ForIn(s) => {
-                assert_eq!(s.binding, "k");
+                assert_eq!(s.binding.as_identifier(), Some("k"));
                 assert!(matches!(&s.object, Expression::StringLiteral(v) if v == "hello"));
             }
             other => panic!("expected ForIn, got {other:?}"),
