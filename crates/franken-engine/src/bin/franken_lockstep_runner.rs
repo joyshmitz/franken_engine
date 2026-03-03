@@ -15,13 +15,15 @@ use std::{
 };
 
 use frankenengine_engine::parser_multi_engine_harness::{
-    DEFAULT_MULTI_ENGINE_FIXTURE_CATALOG_PATH, HarnessEngineKind, HarnessEngineSpec,
-    MultiEngineHarnessConfig, MultiEngineHarnessReport, run_multi_engine_harness,
+    DEFAULT_MULTI_ENGINE_FIXTURE_CATALOG_PATH, DriftGovernanceAction, HarnessEngineKind,
+    HarnessEngineSpec, MultiEngineHarnessConfig, MultiEngineHarnessReport,
+    build_drift_governance_action_report, has_critical_drift, run_multi_engine_harness,
 };
 use serde::{Deserialize, Serialize};
 
 const LOCKSTEP_RUNTIME_SPECS_SCHEMA_VERSION: &str = "franken-engine.lockstep-runtimes.v1";
 const LOCKSTEP_EVIDENCE_SCHEMA_VERSION: &str = "franken-engine.lockstep-evidence.v1";
+const LOCKSTEP_GOVERNANCE_SCHEMA_VERSION: &str = "franken-engine.lockstep-governance.v1";
 const DEFAULT_LOCKSTEP_RUNTIME_SPECS_PATH: &str =
     "crates/franken-engine/tests/fixtures/lockstep_runtimes.toml";
 
@@ -30,7 +32,11 @@ struct CliArgs {
     config: MultiEngineHarnessConfig,
     out_path: Option<PathBuf>,
     evidence_jsonl_path: Option<PathBuf>,
+    governance_actions_out_path: Option<PathBuf>,
     fail_on_divergence: bool,
+    allow_critical_drift: bool,
+    max_retries: u32,
+    quarantine_flaky_fixtures: bool,
     preflight_only: bool,
     print_help: bool,
 }
@@ -90,9 +96,39 @@ struct LockstepEvidenceRecord {
     equivalent_fixtures: u64,
     divergent_fixtures: u64,
     nondeterministic_fixtures: u64,
+    drift_minor_fixtures: u64,
+    drift_critical_fixtures: u64,
+    retry_attempts: u32,
+    max_retries: u32,
+    observed_flaky_fixture_ids: Vec<String>,
+    quarantined_fixture_ids: Vec<String>,
+    governance_action_count: u64,
     divergence_class_distribution: BTreeMap<String, u64>,
     runtime_versions: Vec<LockstepRuntimeVersion>,
     category_match_rates: BTreeMap<String, LockstepCategoryMatchRate>,
+}
+
+#[derive(Debug, Serialize)]
+struct LockstepGovernanceRecord {
+    schema_version: String,
+    generated_at_utc: String,
+    run_id: String,
+    trace_id: String,
+    decision_id: String,
+    policy_id: String,
+    retry_attempts: u32,
+    max_retries: u32,
+    observed_flaky_fixture_ids: Vec<String>,
+    quarantined_fixture_ids: Vec<String>,
+    critical_drift_detected: bool,
+    actions: Vec<DriftGovernanceAction>,
+}
+
+#[derive(Debug)]
+struct HarnessRunWithRetries {
+    report: MultiEngineHarnessReport,
+    retry_attempts: u32,
+    observed_flaky_fixture_ids: Vec<String>,
 }
 
 fn default_runtime_enabled() -> bool {
@@ -126,10 +162,40 @@ fn run() -> Result<i32, Box<dyn Error>> {
         return Ok(0);
     }
 
-    let mut report = run_multi_engine_harness(&args.config)?;
+    let harness = run_harness_with_retries(&args.config, args.max_retries)?;
+    let mut report = harness.report;
+    let final_flaky_fixture_ids = collect_flaky_fixture_ids(&report);
+    let quarantined_fixture_ids = if args.quarantine_flaky_fixtures {
+        final_flaky_fixture_ids.clone()
+    } else {
+        Vec::new()
+    };
+    let governance_action_count = if let Some(governance_actions_out_path) =
+        args.governance_actions_out_path.as_ref()
+    {
+        write_lockstep_governance_report(
+            governance_actions_out_path,
+            &report,
+            harness.retry_attempts,
+            args.max_retries,
+            harness.observed_flaky_fixture_ids.as_slice(),
+            quarantined_fixture_ids.as_slice(),
+        )?
+    } else {
+        build_drift_governance_action_report(&report).actions.len() as u64
+    };
+
     rewrite_replay_commands_for_lockstep_runner(&mut report);
     if let Some(evidence_jsonl_path) = &args.evidence_jsonl_path {
-        append_lockstep_evidence_jsonl(evidence_jsonl_path, &report)?;
+        append_lockstep_evidence_jsonl(
+            evidence_jsonl_path,
+            &report,
+            harness.retry_attempts,
+            args.max_retries,
+            harness.observed_flaky_fixture_ids.as_slice(),
+            quarantined_fixture_ids.as_slice(),
+            governance_action_count,
+        )?;
     }
     let json = serde_json::to_string_pretty(&report)?;
 
@@ -142,14 +208,75 @@ fn run() -> Result<i32, Box<dyn Error>> {
 
     println!("{json}");
 
+    if !args.allow_critical_drift && has_critical_drift(&report) {
+        return Ok(3);
+    }
+
+    let (gate_divergent_fixtures, gate_nondeterministic_fixtures) =
+        effective_gate_summary_counts(&report, args.quarantine_flaky_fixtures);
     if args.fail_on_divergence
-        && (report.summary.divergent_fixtures > 0
-            || report.summary.fixtures_with_nondeterminism > 0)
+        && (gate_divergent_fixtures > 0 || gate_nondeterministic_fixtures > 0)
     {
         Ok(2)
     } else {
         Ok(0)
     }
+}
+
+fn run_harness_with_retries(
+    config: &MultiEngineHarnessConfig,
+    max_retries: u32,
+) -> Result<HarnessRunWithRetries, Box<dyn Error>> {
+    let mut retry_attempts = 0_u32;
+    let mut observed_flaky_fixture_ids = BTreeSet::new();
+    loop {
+        let report = run_multi_engine_harness(config)?;
+        let flaky_fixture_ids = collect_flaky_fixture_ids(&report);
+        for fixture_id in &flaky_fixture_ids {
+            observed_flaky_fixture_ids.insert(fixture_id.clone());
+        }
+        if flaky_fixture_ids.is_empty() || retry_attempts >= max_retries {
+            return Ok(HarnessRunWithRetries {
+                report,
+                retry_attempts,
+                observed_flaky_fixture_ids: observed_flaky_fixture_ids.into_iter().collect(),
+            });
+        }
+        retry_attempts = retry_attempts.saturating_add(1);
+    }
+}
+
+fn collect_flaky_fixture_ids(report: &MultiEngineHarnessReport) -> Vec<String> {
+    let mut fixture_ids = report
+        .fixture_results
+        .iter()
+        .filter(|result| result.nondeterministic_engine_count > 0)
+        .map(|result| result.fixture_id.clone())
+        .collect::<Vec<_>>();
+    fixture_ids.sort();
+    fixture_ids.dedup();
+    fixture_ids
+}
+
+fn effective_gate_summary_counts(
+    report: &MultiEngineHarnessReport,
+    quarantine_flaky_fixtures: bool,
+) -> (u64, u64) {
+    if !quarantine_flaky_fixtures {
+        return (
+            report.summary.divergent_fixtures,
+            report.summary.fixtures_with_nondeterminism,
+        );
+    }
+    let quarantined = report
+        .fixture_results
+        .iter()
+        .filter(|result| result.nondeterministic_engine_count > 0)
+        .count() as u64;
+    (
+        report.summary.divergent_fixtures.saturating_sub(quarantined),
+        0,
+    )
 }
 
 fn rewrite_replay_commands_for_lockstep_runner(report: &mut MultiEngineHarnessReport) {
@@ -178,7 +305,11 @@ where
     let mut runtime_specs_path = None::<PathBuf>;
     let mut out_path = None::<PathBuf>;
     let mut evidence_jsonl_path = None::<PathBuf>;
+    let mut governance_actions_out_path = None::<PathBuf>;
     let mut fail_on_divergence = false;
+    let mut allow_critical_drift = false;
+    let mut max_retries = 0_u32;
+    let mut quarantine_flaky_fixtures = false;
     let mut preflight_only = false;
     let mut print_help_flag = false;
 
@@ -269,9 +400,27 @@ where
                     .ok_or_else(|| "missing value for --evidence-jsonl".to_string())?;
                 evidence_jsonl_path = Some(PathBuf::from(value));
             }
+            "--governance-actions-out" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "missing value for --governance-actions-out".to_string())?;
+                governance_actions_out_path = Some(PathBuf::from(value));
+            }
             "--help" | "-h" => {
                 print_help();
                 print_help_flag = true;
+            }
+            "--allow-critical-drift" => {
+                allow_critical_drift = true;
+            }
+            "--max-retries" => {
+                let value = iter
+                    .next()
+                    .ok_or_else(|| "missing value for --max-retries".to_string())?;
+                max_retries = value.parse::<u32>()?;
+            }
+            "--quarantine-flaky" => {
+                quarantine_flaky_fixtures = true;
             }
             other => {
                 return Err(format!("unknown argument `{other}`").into());
@@ -313,7 +462,11 @@ where
         config,
         out_path,
         evidence_jsonl_path,
+        governance_actions_out_path,
         fail_on_divergence,
+        allow_critical_drift,
+        max_retries,
+        quarantine_flaky_fixtures,
         preflight_only,
         print_help: print_help_flag,
     })
@@ -392,12 +545,24 @@ fn looks_like_script_path(value: &str) -> bool {
 fn append_lockstep_evidence_jsonl(
     path: &Path,
     report: &MultiEngineHarnessReport,
+    retry_attempts: u32,
+    max_retries: u32,
+    observed_flaky_fixture_ids: &[String],
+    quarantined_fixture_ids: &[String],
+    governance_action_count: u64,
 ) -> Result<(), Box<dyn Error>> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    let evidence = build_lockstep_evidence_record(report);
+    let evidence = build_lockstep_evidence_record(
+        report,
+        retry_attempts,
+        max_retries,
+        observed_flaky_fixture_ids,
+        quarantined_fixture_ids,
+        governance_action_count,
+    );
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -407,7 +572,14 @@ fn append_lockstep_evidence_jsonl(
     Ok(())
 }
 
-fn build_lockstep_evidence_record(report: &MultiEngineHarnessReport) -> LockstepEvidenceRecord {
+fn build_lockstep_evidence_record(
+    report: &MultiEngineHarnessReport,
+    retry_attempts: u32,
+    max_retries: u32,
+    observed_flaky_fixture_ids: &[String],
+    quarantined_fixture_ids: &[String],
+    governance_action_count: u64,
+) -> LockstepEvidenceRecord {
     let runtime_versions = collect_runtime_versions(report);
     let category_match_rates = collect_category_match_rates(report);
     LockstepEvidenceRecord {
@@ -426,10 +598,48 @@ fn build_lockstep_evidence_record(report: &MultiEngineHarnessReport) -> Lockstep
         equivalent_fixtures: report.summary.equivalent_fixtures,
         divergent_fixtures: report.summary.divergent_fixtures,
         nondeterministic_fixtures: report.summary.fixtures_with_nondeterminism,
+        drift_minor_fixtures: report.summary.drift_minor_fixtures,
+        drift_critical_fixtures: report.summary.drift_critical_fixtures,
+        retry_attempts,
+        max_retries,
+        observed_flaky_fixture_ids: observed_flaky_fixture_ids.to_vec(),
+        quarantined_fixture_ids: quarantined_fixture_ids.to_vec(),
+        governance_action_count,
         divergence_class_distribution: report.summary.drift_counts_by_category.clone(),
         runtime_versions,
         category_match_rates,
     }
+}
+
+fn write_lockstep_governance_report(
+    path: &Path,
+    report: &MultiEngineHarnessReport,
+    retry_attempts: u32,
+    max_retries: u32,
+    observed_flaky_fixture_ids: &[String],
+    quarantined_fixture_ids: &[String],
+) -> Result<u64, Box<dyn Error>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let governance = build_drift_governance_action_report(report);
+    let action_count = governance.actions.len() as u64;
+    let envelope = LockstepGovernanceRecord {
+        schema_version: LOCKSTEP_GOVERNANCE_SCHEMA_VERSION.to_string(),
+        generated_at_utc: governance.generated_at_utc,
+        run_id: governance.run_id,
+        trace_id: governance.trace_id,
+        decision_id: governance.decision_id,
+        policy_id: governance.policy_id,
+        retry_attempts,
+        max_retries,
+        observed_flaky_fixture_ids: observed_flaky_fixture_ids.to_vec(),
+        quarantined_fixture_ids: quarantined_fixture_ids.to_vec(),
+        critical_drift_detected: has_critical_drift(report),
+        actions: governance.actions,
+    };
+    fs::write(path, serde_json::to_vec_pretty(&envelope)?)?;
+    Ok(action_count)
 }
 
 fn collect_runtime_versions(report: &MultiEngineHarnessReport) -> Vec<LockstepRuntimeVersion> {
@@ -623,8 +833,12 @@ fn print_help() {
     println!("  --engine-specs <path>");
     println!("  --runtime-specs <path>");
     println!("  --fail-on-divergence");
+    println!("  --allow-critical-drift");
+    println!("  --max-retries <count>");
+    println!("  --quarantine-flaky");
     println!("  --preflight-only");
     println!("  --out <path>");
     println!("  --evidence-jsonl <path>");
+    println!("  --governance-actions-out <path>");
     println!("  default runtime-specs path: {DEFAULT_LOCKSTEP_RUNTIME_SPECS_PATH}");
 }

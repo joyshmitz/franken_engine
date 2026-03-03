@@ -4,6 +4,9 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use frankenengine_engine::ast::ParseGoal;
 use frankenengine_engine::parser::{CanonicalEs2020Parser, Es2020Parser};
 
@@ -64,6 +67,11 @@ fn write_runtime_specs(path: &Path, expected_hash: &str) {
     write_runtime_specs_content(path, toml.as_str());
 }
 
+fn write_runtime_specs_with_expected_hash(path: &Path, hash: &str) {
+    let toml = runtime_specs_content(hash, &["node", "bun"]);
+    write_runtime_specs_content(path, toml.as_str());
+}
+
 fn write_runtime_specs_with_runtime_ids(path: &Path, expected_hash: &str, runtime_ids: &[&str]) {
     let toml = runtime_specs_content(expected_hash, runtime_ids);
     write_runtime_specs_content(path, toml.as_str());
@@ -71,6 +79,32 @@ fn write_runtime_specs_with_runtime_ids(path: &Path, expected_hash: &str, runtim
 
 fn write_runtime_specs_content(path: &Path, content: &str) {
     fs::write(path, content).expect("runtime spec file should be written");
+}
+
+fn write_runtime_specs_using_script(path: &Path, script_path: &Path) {
+    let script = script_path
+        .to_str()
+        .expect("script path should be valid utf8")
+        .replace('\\', "\\\\");
+    let toml = format!(
+        r#"schema_version = "franken-engine.lockstep-runtimes.v1"
+
+[[runtimes]]
+runtime_id = "node"
+display_name = "node flaky adapter"
+version_pin = "node@test"
+command = "{script}"
+args = []
+
+[[runtimes]]
+runtime_id = "bun"
+display_name = "bun flaky adapter"
+version_pin = "bun@test"
+command = "{script}"
+args = []
+"#
+    );
+    write_runtime_specs_content(path, toml.as_str());
 }
 
 fn runtime_specs_content(expected_hash: &str, runtime_ids: &[&str]) -> String {
@@ -91,6 +125,78 @@ args = ['-c', 'cat >/dev/null; echo \"{{\\\"hash\\\":\\\"{expected_hash}\\\"}}\"
         );
     }
     toml
+}
+
+fn write_script(path: &Path, content: &str) {
+    fs::write(path, content).expect("script should be written");
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(path)
+            .expect("script metadata should be available")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).expect("script should be executable");
+    }
+}
+
+fn write_flaky_once_script(path: &Path, counter_path: &Path, expected_hash: &str) {
+    let bad_hash = format!("sha256:{:064x}", 0_u8);
+    let script = format!(
+        r#"#!/bin/sh
+set -eu
+cat >/dev/null
+counter_file='{counter}'
+count=0
+if [ -f "$counter_file" ]; then
+  count=$(cat "$counter_file")
+fi
+count=$((count + 1))
+printf "%s" "$count" > "$counter_file"
+if [ "$count" -eq 1 ]; then
+  hash="{bad_hash}"
+else
+  hash="{expected_hash}"
+fi
+printf '{{"hash":"%s"}}' "$hash"
+"#,
+        counter = counter_path
+            .to_str()
+            .expect("counter path should be valid utf8")
+            .replace('\'', "'\"'\"'"),
+        bad_hash = bad_hash,
+        expected_hash = expected_hash,
+    );
+    write_script(path, script.as_str());
+}
+
+fn write_always_flaky_script(path: &Path, counter_path: &Path, expected_hash: &str) {
+    let bad_hash = format!("sha256:{:064x}", 1_u8);
+    let script = format!(
+        r#"#!/bin/sh
+set -eu
+cat >/dev/null
+counter_file='{counter}'
+count=0
+if [ -f "$counter_file" ]; then
+  count=$(cat "$counter_file")
+fi
+count=$((count + 1))
+printf "%s" "$count" > "$counter_file"
+if [ $((count % 2)) -eq 0 ]; then
+  hash="{expected_hash}"
+else
+  hash="{bad_hash}"
+fi
+printf '{{"hash":"%s"}}' "$hash"
+"#,
+        counter = counter_path
+            .to_str()
+            .expect("counter path should be valid utf8")
+            .replace('\'', "'\"'\"'"),
+        expected_hash = expected_hash,
+        bad_hash = bad_hash,
+    );
+    write_script(path, script.as_str());
 }
 
 fn write_invalid_schema_runtime_specs(path: &Path) {
@@ -715,4 +821,223 @@ fn lockstep_runner_preflight_only_rejects_missing_script_path() {
 
     let _ = fs::remove_file(catalog_path);
     let _ = fs::remove_file(runtime_specs_path);
+}
+
+#[test]
+fn lockstep_runner_fails_closed_on_critical_drift_by_default() {
+    let catalog_path = temp_path("franken_lockstep_runner_critical_gate_catalog", "json");
+    let runtime_specs_path = temp_path("franken_lockstep_runner_critical_gate_specs", "toml");
+    write_fixture_catalog(&catalog_path);
+    write_runtime_specs_with_expected_hash(
+        &runtime_specs_path,
+        "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken_lockstep_runner"))
+        .args([
+            "--fixture-catalog",
+            catalog_path
+                .to_str()
+                .expect("fixture path should be valid utf8"),
+            "--runtime-specs",
+            runtime_specs_path
+                .to_str()
+                .expect("runtime specs path should be valid utf8"),
+        ])
+        .output()
+        .expect("lockstep runner should execute");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(3));
+
+    let _ = fs::remove_file(catalog_path);
+    let _ = fs::remove_file(runtime_specs_path);
+}
+
+#[test]
+fn lockstep_runner_allows_critical_drift_with_explicit_override() {
+    let catalog_path = temp_path("franken_lockstep_runner_allow_critical_catalog", "json");
+    let runtime_specs_path = temp_path("franken_lockstep_runner_allow_critical_specs", "toml");
+    let report_path = temp_path("franken_lockstep_runner_allow_critical_report", "json");
+    let governance_path = temp_path("franken_lockstep_runner_allow_critical_governance", "json");
+    write_fixture_catalog(&catalog_path);
+    write_runtime_specs_with_expected_hash(
+        &runtime_specs_path,
+        "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken_lockstep_runner"))
+        .args([
+            "--fixture-catalog",
+            catalog_path
+                .to_str()
+                .expect("fixture path should be valid utf8"),
+            "--runtime-specs",
+            runtime_specs_path
+                .to_str()
+                .expect("runtime specs path should be valid utf8"),
+            "--allow-critical-drift",
+            "--governance-actions-out",
+            governance_path
+                .to_str()
+                .expect("governance path should be valid utf8"),
+            "--out",
+            report_path
+                .to_str()
+                .expect("report path should be valid utf8"),
+        ])
+        .output()
+        .expect("lockstep runner should execute");
+
+    assert!(
+        output.status.success(),
+        "command failed with stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(&report_path).expect("report should exist"))
+            .expect("report should parse");
+    assert_eq!(report["summary"]["divergent_fixtures"].as_u64(), Some(1));
+    assert_eq!(report["summary"]["drift_critical_fixtures"].as_u64(), Some(1));
+
+    let governance: serde_json::Value =
+        serde_json::from_slice(&fs::read(&governance_path).expect("governance report should exist"))
+            .expect("governance report should parse");
+    let actions = governance["actions"]
+        .as_array()
+        .expect("governance actions should be an array");
+    assert!(!actions.is_empty());
+    assert_eq!(
+        actions[0]["severity"].as_str(),
+        Some("critical"),
+        "critical drift should be routed as critical governance action"
+    );
+    assert!(actions[0]["owner_hint"].as_str().is_some());
+
+    let _ = fs::remove_file(catalog_path);
+    let _ = fs::remove_file(runtime_specs_path);
+    let _ = fs::remove_file(report_path);
+    let _ = fs::remove_file(governance_path);
+}
+
+#[test]
+fn lockstep_runner_retries_flaky_runtime_and_records_retry_metadata() {
+    let catalog_path = temp_path("franken_lockstep_runner_retry_catalog", "json");
+    let runtime_specs_path = temp_path("franken_lockstep_runner_retry_specs", "toml");
+    let report_path = temp_path("franken_lockstep_runner_retry_report", "json");
+    let evidence_path = temp_path("franken_lockstep_runner_retry_evidence", "jsonl");
+    let script_path = temp_path("franken_lockstep_runner_retry_adapter", "sh");
+    let counter_path = temp_path("franken_lockstep_runner_retry_counter", "txt");
+    let expected_hash = write_fixture_catalog(&catalog_path);
+    write_flaky_once_script(&script_path, &counter_path, expected_hash.as_str());
+    write_runtime_specs_using_script(&runtime_specs_path, &script_path);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken_lockstep_runner"))
+        .args([
+            "--fixture-catalog",
+            catalog_path
+                .to_str()
+                .expect("fixture path should be valid utf8"),
+            "--runtime-specs",
+            runtime_specs_path
+                .to_str()
+                .expect("runtime specs path should be valid utf8"),
+            "--max-retries",
+            "1",
+            "--out",
+            report_path
+                .to_str()
+                .expect("report path should be valid utf8"),
+            "--evidence-jsonl",
+            evidence_path
+                .to_str()
+                .expect("evidence path should be valid utf8"),
+        ])
+        .output()
+        .expect("lockstep runner should execute");
+
+    assert!(
+        output.status.success(),
+        "command failed with stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(&report_path).expect("report should exist"))
+            .expect("report should parse");
+    assert_eq!(report["summary"]["fixtures_with_nondeterminism"].as_u64(), Some(0));
+    assert_eq!(report["summary"]["equivalent_fixtures"].as_u64(), Some(1));
+
+    let evidence_records = read_jsonl(&evidence_path);
+    assert_eq!(evidence_records.len(), 1);
+    let evidence = &evidence_records[0];
+    assert_eq!(evidence["retry_attempts"].as_u64(), Some(1));
+    assert_eq!(evidence["max_retries"].as_u64(), Some(1));
+    let observed_flaky_fixture_ids = evidence["observed_flaky_fixture_ids"]
+        .as_array()
+        .expect("observed_flaky_fixture_ids should be an array");
+    assert_eq!(observed_flaky_fixture_ids.len(), 1);
+    assert_eq!(
+        observed_flaky_fixture_ids[0].as_str(),
+        Some("lockstep-fixture-1")
+    );
+
+    let _ = fs::remove_file(catalog_path);
+    let _ = fs::remove_file(runtime_specs_path);
+    let _ = fs::remove_file(report_path);
+    let _ = fs::remove_file(evidence_path);
+    let _ = fs::remove_file(script_path);
+    let _ = fs::remove_file(counter_path);
+}
+
+#[test]
+fn lockstep_runner_quarantines_flaky_fixtures_for_divergence_gate() {
+    let catalog_path = temp_path("franken_lockstep_runner_quarantine_catalog", "json");
+    let runtime_specs_path = temp_path("franken_lockstep_runner_quarantine_specs", "toml");
+    let report_path = temp_path("franken_lockstep_runner_quarantine_report", "json");
+    let script_path = temp_path("franken_lockstep_runner_quarantine_adapter", "sh");
+    let counter_path = temp_path("franken_lockstep_runner_quarantine_counter", "txt");
+    let expected_hash = write_fixture_catalog(&catalog_path);
+    write_always_flaky_script(&script_path, &counter_path, expected_hash.as_str());
+    write_runtime_specs_using_script(&runtime_specs_path, &script_path);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken_lockstep_runner"))
+        .args([
+            "--fixture-catalog",
+            catalog_path
+                .to_str()
+                .expect("fixture path should be valid utf8"),
+            "--runtime-specs",
+            runtime_specs_path
+                .to_str()
+                .expect("runtime specs path should be valid utf8"),
+            "--fail-on-divergence",
+            "--quarantine-flaky",
+            "--allow-critical-drift",
+            "--out",
+            report_path
+                .to_str()
+                .expect("report path should be valid utf8"),
+        ])
+        .output()
+        .expect("lockstep runner should execute");
+
+    assert!(
+        output.status.success(),
+        "command failed with stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(&report_path).expect("report should exist"))
+            .expect("report should parse");
+    assert_eq!(report["summary"]["fixtures_with_nondeterminism"].as_u64(), Some(1));
+    assert_eq!(report["summary"]["divergent_fixtures"].as_u64(), Some(1));
+
+    let _ = fs::remove_file(catalog_path);
+    let _ = fs::remove_file(runtime_specs_path);
+    let _ = fs::remove_file(report_path);
+    let _ = fs::remove_file(script_path);
+    let _ = fs::remove_file(counter_path);
 }
