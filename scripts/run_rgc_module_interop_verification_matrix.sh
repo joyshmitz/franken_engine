@@ -129,23 +129,29 @@ run_mode() {
   case "$mode" in
     check)
       run_step "cargo check -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration" \
-        cargo check -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration
+        cargo check -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration \
+        || return $?
       ;;
     test)
       run_step "cargo test -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration" \
-        cargo test -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration
+        cargo test -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration \
+        || return $?
       ;;
     clippy)
       run_step "cargo clippy -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration -- -D warnings
+        cargo clippy -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration -- -D warnings \
+        || return $?
       ;;
     ci)
       run_step "cargo check -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration" \
-        cargo check -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration
+        cargo check -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration \
+        || return $?
       run_step "cargo test -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration" \
-        cargo test -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration
+        cargo test -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration \
+        || return $?
       run_step "cargo clippy -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration -- -D warnings
+        cargo clippy -p frankenengine-engine --test module_compatibility_matrix --test module_compatibility_matrix_integration --test module_resolver_integration -- -D warnings \
+        || return $?
       ;;
     *)
       echo "usage: $0 [check|test|clippy|ci]" >&2

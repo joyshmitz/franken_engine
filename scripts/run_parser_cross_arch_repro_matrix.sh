@@ -88,6 +88,7 @@ manifest_written=false
 matrix_complete=false
 critical_delta_count=0
 matrix_eval_error=""
+matrix_input_status="pending_upstream_matrix"
 matrix_mode_strict=false
 
 if [[ "$mode" == "matrix" || "$require_matrix" == "1" ]]; then
@@ -397,6 +398,24 @@ evaluate_matrix() {
   return 0
 }
 
+classify_matrix_input_status() {
+  if [[ "$matrix_complete" != true ]]; then
+    if [[ "$matrix_mode_strict" == true ]]; then
+      matrix_input_status="incomplete_matrix"
+    else
+      matrix_input_status="pending_upstream_matrix"
+    fi
+    return
+  fi
+
+  if [[ "$critical_delta_count" =~ ^[0-9]+$ && "$critical_delta_count" -gt 0 ]]; then
+    matrix_input_status="blocked_critical_deltas"
+    return
+  fi
+
+  matrix_input_status="ready_for_external_rerun"
+}
+
 write_matrix_summary() {
   local lane_deltas_json
   lane_deltas_json="$(jq -s '.' "$matrix_deltas_path")"
@@ -409,6 +428,7 @@ write_matrix_summary() {
     --arg generated_at_utc "$timestamp" \
     --arg mode "$mode" \
     --arg scenario_id "$scenario_id" \
+    --arg matrix_input_status "$matrix_input_status" \
     --arg host_arch "$PARSER_FRONTIER_RUST_HOST" \
     --arg toolchain_fingerprint "$PARSER_FRONTIER_TOOLCHAIN_FINGERPRINT" \
     --arg replay_command "$replay_command" \
@@ -424,6 +444,7 @@ write_matrix_summary() {
       generated_at_utc: $generated_at_utc,
       mode: $mode,
       scenario_id: $scenario_id,
+      matrix_input_status: $matrix_input_status,
       matrix_complete: $matrix_complete,
       critical_delta_count: $critical_delta_count,
       host_arch_profile: $host_arch,
@@ -461,7 +482,7 @@ write_manifest() {
   printf '%s\n' "${commands_run[@]}" >"$commands_path"
 
   {
-    echo "{\"schema_version\":\"franken-engine.parser-cross-arch-repro-matrix.event.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"${component}\",\"event\":\"gate_completed\",\"scenario_id\":\"${scenario_id}\",\"replay_command\":\"${replay_command}\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
+    echo "{\"schema_version\":\"franken-engine.parser-cross-arch-repro-matrix.event.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"${component}\",\"event\":\"gate_completed\",\"scenario_id\":\"${scenario_id}\",\"matrix_input_status\":\"${matrix_input_status}\",\"replay_command\":\"${replay_command}\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
 
     while IFS= read -r row || [[ -n "$row" ]]; do
       [[ -z "${row// }" ]] && continue
@@ -506,6 +527,7 @@ write_manifest() {
     if [[ -n "$matrix_eval_error" ]]; then
       echo "  \"matrix_eval_error\": \"$(parser_frontier_json_escape "${matrix_eval_error}")\","
     fi
+    echo "  \"matrix_input_status\": \"${matrix_input_status}\","
     echo '  "matrix_dimensions": {'
     echo '    "architectures": ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"],'
     echo '    "required_lanes": ["parser_event_ast_equivalence", "parser_parallel_interference"]'
@@ -561,6 +583,7 @@ if ! evaluate_matrix; then
     failed_command="evaluate_matrix"
   fi
 fi
+classify_matrix_input_status
 write_matrix_summary
 write_manifest "$main_exit"
 

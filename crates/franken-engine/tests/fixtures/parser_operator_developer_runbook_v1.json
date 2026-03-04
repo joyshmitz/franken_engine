@@ -68,6 +68,13 @@
       "replay_command": "./scripts/e2e/parser_user_impact_regression_alarms_replay.sh"
     },
     {
+      "scenario_id": "rch_artifact_retrieval_failure",
+      "symptom": "artifact retrieval failure",
+      "severity": "high",
+      "expected_triage": "fail_closed_and_retry_rch_remote",
+      "replay_command": "./scripts/run_parser_operator_developer_runbook.sh check"
+    },
+    {
       "scenario_id": "failover_nondeterminism",
       "symptom": "fallback nondeterminism",
       "severity": "critical",

@@ -60,10 +60,23 @@ rch_remote_exit_code() {
   printf '%s\n' "$remote_exit_code"
 }
 
+rch_has_recoverable_artifact_timeout() {
+  local log_path="$1"
+  grep -Eiq 'artifact retrieval timed out|artifact transfer timed out|timed out waiting for artifacts|failed to retrieve artifacts|failed to download artifacts' "$log_path"
+}
+
 rch_reject_local_fallback() {
   local log_path="$1"
-  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|\[RCH\] local \(' "$log_path"; then
+  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|\[RCH\] local \(|Remote execution failed.*running locally|running locally|Dependency preflight blocked remote execution|RCH-E326' "$log_path"; then
     echo "rch reported local fallback; refusing local execution for heavy command" >&2
+    return 1
+  fi
+}
+
+rch_reject_artifact_retrieval_failure() {
+  local log_path="$1"
+  if grep -Eiq 'Artifact retrieval failed|Failed to retrieve artifacts:|rsync artifact retrieval failed|rsync error: .*code 23' "$log_path"; then
+    echo "rch artifact retrieval failed; refusing to mark heavy command as successful" >&2
     return 1
   fi
 }
@@ -82,7 +95,8 @@ run_step() {
   log_path="$(mktemp)"
 
   if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
-    if rg -q "Remote command finished: exit=0" "$log_path"; then
+    remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
+    if [[ "$remote_exit_code" == "0" ]] && rch_has_recoverable_artifact_timeout "$log_path"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" \
         | tee -a "$log_path"
     else
@@ -95,6 +109,12 @@ run_step() {
   if ! rch_reject_local_fallback "$log_path"; then
     rm -f "$log_path"
     failed_command="${command_text} (rch-local-fallback-detected)"
+    return 1
+  fi
+
+  if ! rch_reject_artifact_retrieval_failure "$log_path"; then
+    rm -f "$log_path"
+    failed_command="${command_text} (rch-artifact-retrieval-failed)"
     return 1
   fi
 
@@ -124,29 +144,29 @@ run_mode() {
   case "$mode" in
     check)
       run_step "cargo check -p frankenengine-engine --test parser_operator_developer_runbook" \
-        cargo check -p frankenengine-engine --test parser_operator_developer_runbook
+        cargo check -p frankenengine-engine --test parser_operator_developer_runbook || return 1
       ;;
     test)
       run_step "cargo test -p frankenengine-engine --test parser_operator_developer_runbook" \
-        cargo test -p frankenengine-engine --test parser_operator_developer_runbook
+        cargo test -p frankenengine-engine --test parser_operator_developer_runbook || return 1
       ;;
     clippy)
       run_step "cargo clippy -p frankenengine-engine --test parser_operator_developer_runbook -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test parser_operator_developer_runbook -- -D warnings
+        cargo clippy -p frankenengine-engine --test parser_operator_developer_runbook -- -D warnings || return 1
       ;;
     ci)
       run_step "cargo check -p frankenengine-engine --test parser_operator_developer_runbook" \
-        cargo check -p frankenengine-engine --test parser_operator_developer_runbook
+        cargo check -p frankenengine-engine --test parser_operator_developer_runbook || return 1
       run_step "cargo test -p frankenengine-engine --test parser_operator_developer_runbook" \
-        cargo test -p frankenengine-engine --test parser_operator_developer_runbook
+        cargo test -p frankenengine-engine --test parser_operator_developer_runbook || return 1
       run_step "cargo clippy -p frankenengine-engine --test parser_operator_developer_runbook -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test parser_operator_developer_runbook -- -D warnings
+        cargo clippy -p frankenengine-engine --test parser_operator_developer_runbook -- -D warnings || return 1
       ;;
     drill)
       run_step "cargo test -p frankenengine-engine --test parser_operator_developer_runbook -- --exact parser_operator_runbook_replay_drills_cover_required_paths" \
-        cargo test -p frankenengine-engine --test parser_operator_developer_runbook -- --exact parser_operator_runbook_replay_drills_cover_required_paths
-      run_local_step "${drill_replay_a}" "${root_dir}/${drill_replay_a}"
-      run_local_step "${drill_replay_b}" "${root_dir}/${drill_replay_b}"
+        cargo test -p frankenengine-engine --test parser_operator_developer_runbook -- --exact parser_operator_runbook_replay_drills_cover_required_paths || return 1
+      run_local_step "${drill_replay_a}" "${root_dir}/${drill_replay_a}" || return 1
+      run_local_step "${drill_replay_b}" "${root_dir}/${drill_replay_b}" || return 1
       ;;
     *)
       echo "usage: $0 [check|test|clippy|ci|drill]" >&2

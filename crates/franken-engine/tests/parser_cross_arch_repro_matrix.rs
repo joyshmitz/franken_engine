@@ -17,6 +17,7 @@ struct ParserCrossArchReproMatrixFixture {
     architecture_targets: Vec<String>,
     required_lanes: Vec<RequiredLane>,
     delta_classes: Vec<DeltaClass>,
+    matrix_input_statuses: Vec<String>,
     replay_command: String,
 }
 
@@ -110,6 +111,25 @@ fn explain_delta(
     }
 }
 
+fn classify_matrix_input_status(
+    matrix_complete: bool,
+    strict_mode: bool,
+    critical_delta_count: u64,
+) -> &'static str {
+    if !matrix_complete {
+        if strict_mode {
+            return "incomplete_matrix";
+        }
+        return "pending_upstream_matrix";
+    }
+
+    if critical_delta_count > 0 {
+        return "blocked_critical_deltas";
+    }
+
+    "ready_for_external_rerun"
+}
+
 fn build_lane_delta_event(
     fixture: &ParserCrossArchReproMatrixFixture,
     lane_id: &str,
@@ -199,6 +219,16 @@ fn parser_cross_arch_matrix_fixture_covers_required_architectures_and_lanes() {
         fixture.replay_command,
         "./scripts/e2e/parser_cross_arch_repro_matrix_replay.sh"
     );
+    let expected_statuses: BTreeSet<_> = [
+        "pending_upstream_matrix".to_string(),
+        "incomplete_matrix".to_string(),
+        "blocked_critical_deltas".to_string(),
+        "ready_for_external_rerun".to_string(),
+    ]
+    .into_iter()
+    .collect();
+    let actual_statuses: BTreeSet<_> = fixture.matrix_input_statuses.iter().cloned().collect();
+    assert_eq!(actual_statuses, expected_statuses);
 
     let expected_arches: BTreeSet<_> = [
         "x86_64-unknown-linux-gnu".to_string(),
@@ -235,6 +265,26 @@ fn parser_cross_arch_matrix_fixture_covers_required_architectures_and_lanes() {
             lane.replay_command
         );
     }
+}
+
+#[test]
+fn parser_cross_arch_matrix_input_status_classifier_is_deterministic() {
+    assert_eq!(
+        classify_matrix_input_status(false, false, 0),
+        "pending_upstream_matrix"
+    );
+    assert_eq!(
+        classify_matrix_input_status(false, true, 0),
+        "incomplete_matrix"
+    );
+    assert_eq!(
+        classify_matrix_input_status(true, false, 1),
+        "blocked_critical_deltas"
+    );
+    assert_eq!(
+        classify_matrix_input_status(true, true, 0),
+        "ready_for_external_rerun"
+    );
 }
 
 #[test]

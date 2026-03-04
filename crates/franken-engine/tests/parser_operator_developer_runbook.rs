@@ -60,6 +60,9 @@ fn triage_action(scenario: &IncidentScenario) -> &'static str {
     if severity == "critical" && symptom.contains("fallback") {
         return "fail_closed_and_rerun_failover_controls";
     }
+    if symptom.contains("artifact retrieval") || symptom.contains("rsync artifact") {
+        return "fail_closed_and_retry_rch_remote";
+    }
     if symptom.contains("diagnostic") {
         return "rerun_diagnostics_rubric";
     }
@@ -196,7 +199,7 @@ fn parser_operator_runbook_replay_drills_cover_required_paths() {
 #[test]
 fn parser_operator_runbook_incident_matrix_triage_is_stable() {
     let fixture = load_fixture();
-    assert_eq!(fixture.incident_matrix.len(), 5);
+    assert_eq!(fixture.incident_matrix.len(), 6);
     for scenario in &fixture.incident_matrix {
         let derived = triage_action(scenario);
         assert_eq!(
@@ -235,6 +238,8 @@ fn parser_operator_runbook_script_contains_required_markers() {
         "source \"${root_dir}/scripts/e2e/parser_deterministic_env.sh\"",
         "parser_frontier_bootstrap_env",
         "policy-parser-operator-developer-runbook-v1",
+        "rch_reject_artifact_retrieval_failure",
+        "rch-artifact-retrieval-failed",
         "./scripts/e2e/parser_operator_developer_runbook_replay.sh",
         "parser_frontier_emit_manifest_environment_fields",
         "validate_parser_log_schema.sh --events",

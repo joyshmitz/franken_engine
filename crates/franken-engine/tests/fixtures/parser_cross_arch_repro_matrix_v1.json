@@ -56,5 +56,11 @@
       "description": "Required architecture-lane manifest input is missing."
     }
   ],
+  "matrix_input_statuses": [
+    "pending_upstream_matrix",
+    "incomplete_matrix",
+    "blocked_critical_deltas",
+    "ready_for_external_rerun"
+  ],
   "replay_command": "./scripts/e2e/parser_cross_arch_repro_matrix_replay.sh"
 }
