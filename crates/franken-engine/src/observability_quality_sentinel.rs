@@ -1695,7 +1695,10 @@ mod tests {
         let json = serde_json::to_string(&rule).unwrap();
         let back: DemotionRule = serde_json::from_str(&json).unwrap();
         assert_eq!(back.rule_id, "test-rule-42");
-        assert_eq!(back.trigger_dimension, QualityDimension::ReconstructionAmbiguity);
+        assert_eq!(
+            back.trigger_dimension,
+            QualityDimension::ReconstructionAmbiguity
+        );
         assert_eq!(back.trigger_regime, DegradationRegime::Emergency);
         assert_eq!(back.target, DemotionTarget::EmergencyRingBuffer);
         assert_eq!(back.cooldown_epochs, 5);
@@ -1787,6 +1790,8 @@ mod tests {
         let cloned = ds.clone();
         ds.degradation_count = 99;
         ds.last_value_millionths = Some(0);
+        assert_eq!(ds.degradation_count, 99);
+        assert_eq!(ds.last_value_millionths, Some(0));
         // Clone is independent of original mutations
         assert_eq!(cloned.degradation_count, 7);
         assert_eq!(cloned.last_value_millionths, Some(42_000));

@@ -24,6 +24,9 @@ const DEFAULT_SUPPORT_BUNDLE_REDACTION_MARKER: &str = "sha256:REDACTED";
 const PREFLIGHT_DOCTOR_FAILURE_CODE: &str = "FE-RUNTIME-DIAGNOSTICS-DOCTOR-0001";
 const ONBOARDING_SCORECARD_SCHEMA_VERSION: &str =
     "franken-engine.runtime-diagnostics.onboarding-scorecard.v1";
+const ROLLOUT_DECISION_ARTIFACT_SCHEMA_VERSION: &str =
+    "franken-engine.runtime-diagnostics.rollout-decision-artifact.v1";
+const ROLLOUT_DECISION_FAILURE_CODE: &str = "FE-RUNTIME-DIAGNOSTICS-ROLLOUT-0001";
 
 /// Stable log envelope required by plan acceptance criteria.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -678,6 +681,63 @@ pub struct OnboardingScorecardOutput {
     pub logs: Vec<StructuredLogEvent>,
 }
 
+/// Recommended rollout action produced from consolidated advisory evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RolloutRecommendation {
+    Promote,
+    CanaryHold,
+    Rollback,
+    Defer,
+}
+
+impl fmt::Display for RolloutRecommendation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Promote => f.write_str("promote"),
+            Self::CanaryHold => f.write_str("canary_hold"),
+            Self::Rollback => f.write_str("rollback"),
+            Self::Defer => f.write_str("defer"),
+        }
+    }
+}
+
+/// Deterministic input for rollout-decision artifact consolidation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RolloutDecisionArtifactInput {
+    pub onboarding_scorecard: OnboardingScorecardOutput,
+    pub compatibility_advisories: Vec<OnboardingScorecardSignal>,
+    pub platform_matrix_signals: Vec<OnboardingScorecardSignal>,
+}
+
+/// Mandatory field validation status for rollout-decision gate consumption.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RolloutDecisionMandatoryFieldStatus {
+    pub valid: bool,
+    pub missing_fields: Vec<String>,
+    pub inconsistent_fields: Vec<String>,
+}
+
+/// Consolidated deterministic rollout artifact consumed by pilot/GA gates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RolloutDecisionArtifactOutput {
+    pub schema_version: String,
+    pub workload_id: String,
+    pub package_name: String,
+    pub recommendation: RolloutRecommendation,
+    pub readiness: OnboardingReadinessClass,
+    pub remediation_effort: OnboardingRemediationEffort,
+    pub score: OnboardingScoreBreakdown,
+    pub mandatory_field_status: RolloutDecisionMandatoryFieldStatus,
+    pub ga_gate_consumable: bool,
+    pub pilot_gate_consumable: bool,
+    pub rationale: String,
+    pub merged_signals: Vec<OnboardingScorecardSignal>,
+    pub evidence_links: Vec<String>,
+    pub reproducible_commands: Vec<String>,
+    pub logs: Vec<StructuredLogEvent>,
+}
+
 /// Export deterministic evidence records from all supported sources.
 pub fn export_evidence_bundle(
     input: &RuntimeDiagnosticsCliInput,
@@ -1257,22 +1317,7 @@ pub fn build_onboarding_scorecard(input: &OnboardingScorecardInput) -> Onboardin
     unresolved_signals.extend(input.external_signals.clone());
 
     for signal in &mut unresolved_signals {
-        signal.signal_id = normalize_or_default(&signal.signal_id, "signal");
-        signal.source = normalize_or_default(&signal.source, "external");
-        signal.summary = normalize_or_default(&signal.summary, "unspecified signal");
-        signal.remediation = normalize_or_default(&signal.remediation, "investigate signal");
-        signal.reproducible_command = normalize_or_default(
-            &signal.reproducible_command,
-            "runtime_diagnostics doctor --input <path> --summary",
-        );
-        signal.evidence_links.sort();
-        signal.evidence_links.dedup();
-        signal.owner_hint = signal
-            .owner_hint
-            .as_deref()
-            .map(str::trim)
-            .filter(|owner| !owner.is_empty())
-            .map(std::string::ToString::to_string);
+        normalize_onboarding_signal(signal);
     }
 
     unresolved_signals.sort_by(|left, right| {
@@ -1458,6 +1503,282 @@ pub fn render_onboarding_scorecard_summary(output: &OnboardingScorecardOutput) -
     lines.join("\n")
 }
 
+/// Build a deterministic consolidated rollout decision artifact.
+pub fn build_rollout_decision_artifact(
+    input: &RolloutDecisionArtifactInput,
+) -> RolloutDecisionArtifactOutput {
+    let mut merged_by_key = BTreeMap::<String, OnboardingScorecardSignal>::new();
+    for mut signal in input
+        .onboarding_scorecard
+        .unresolved_signals
+        .iter()
+        .cloned()
+        .chain(input.compatibility_advisories.iter().cloned())
+        .chain(input.platform_matrix_signals.iter().cloned())
+    {
+        normalize_onboarding_signal(&mut signal);
+        let key = rollout_signal_key(&signal);
+        if let Some(existing) = merged_by_key.get_mut(&key) {
+            merge_rollout_signal(existing, signal);
+        } else {
+            merged_by_key.insert(key, signal);
+        }
+    }
+
+    let mut merged_signals = merged_by_key.into_values().collect::<Vec<_>>();
+    merged_signals.sort_by(|left, right| {
+        right
+            .severity
+            .cmp(&left.severity)
+            .then(left.source.cmp(&right.source))
+            .then(left.signal_id.cmp(&right.signal_id))
+    });
+
+    let critical_signals = merged_signals
+        .iter()
+        .filter(|signal| signal.severity == EvidenceSeverity::Critical)
+        .count();
+    let warning_signals = merged_signals
+        .iter()
+        .filter(|signal| signal.severity == EvidenceSeverity::Warning)
+        .count();
+    let has_compatibility_critical = merged_signals.iter().any(|signal| {
+        signal.source == "compatibility_advisory" && signal.severity == EvidenceSeverity::Critical
+    });
+    let has_platform_critical = merged_signals.iter().any(|signal| {
+        signal.source == "platform_matrix" && signal.severity == EvidenceSeverity::Critical
+    });
+
+    let mut evidence_links = merged_signals
+        .iter()
+        .flat_map(|signal| signal.evidence_links.iter().cloned())
+        .collect::<Vec<_>>();
+    evidence_links.sort();
+    evidence_links.dedup();
+    if evidence_links.is_empty() {
+        evidence_links.push("support_bundle/preflight_report.json".to_string());
+    }
+
+    let mut reproducible_commands = input.onboarding_scorecard.reproducible_commands.clone();
+    reproducible_commands.extend(
+        merged_signals
+            .iter()
+            .map(|signal| signal.reproducible_command.clone()),
+    );
+    reproducible_commands.sort();
+    reproducible_commands.dedup();
+    if reproducible_commands.is_empty() {
+        reproducible_commands
+            .push("runtime_diagnostics doctor --input <path> --summary".to_string());
+    }
+
+    let mandatory_field_status = validate_rollout_decision_mandatory_fields(
+        &input.onboarding_scorecard,
+        &merged_signals,
+        &evidence_links,
+        &reproducible_commands,
+    );
+    let recommendation = choose_rollout_recommendation(
+        input.onboarding_scorecard.readiness,
+        critical_signals,
+        warning_signals,
+        has_compatibility_critical,
+        has_platform_critical,
+        mandatory_field_status.valid,
+    );
+    let gate_consumable = mandatory_field_status.valid;
+
+    let rationale = format!(
+        "recommendation={} readiness={} critical_signals={} warning_signals={} mandatory_fields_valid={}",
+        recommendation,
+        input.onboarding_scorecard.readiness,
+        critical_signals,
+        warning_signals,
+        mandatory_field_status.valid
+    );
+
+    let logs = vec![StructuredLogEvent {
+        trace_id: input
+            .onboarding_scorecard
+            .logs
+            .first()
+            .map(|log| log.trace_id.clone())
+            .unwrap_or_else(|| "unknown-trace".to_string()),
+        decision_id: input
+            .onboarding_scorecard
+            .logs
+            .first()
+            .map(|log| log.decision_id.clone())
+            .unwrap_or_else(|| "unknown-decision".to_string()),
+        policy_id: input
+            .onboarding_scorecard
+            .logs
+            .first()
+            .map(|log| log.policy_id.clone())
+            .unwrap_or_else(|| "unknown-policy".to_string()),
+        component: COMPONENT.to_string(),
+        event: "rollout_decision_artifact".to_string(),
+        outcome: if gate_consumable {
+            "pass".to_string()
+        } else {
+            "fail".to_string()
+        },
+        error_code: if gate_consumable {
+            None
+        } else {
+            Some(ROLLOUT_DECISION_FAILURE_CODE.to_string())
+        },
+    }];
+
+    RolloutDecisionArtifactOutput {
+        schema_version: ROLLOUT_DECISION_ARTIFACT_SCHEMA_VERSION.to_string(),
+        workload_id: input.onboarding_scorecard.workload_id.clone(),
+        package_name: input.onboarding_scorecard.package_name.clone(),
+        recommendation,
+        readiness: input.onboarding_scorecard.readiness,
+        remediation_effort: input.onboarding_scorecard.remediation_effort,
+        score: input.onboarding_scorecard.score.clone(),
+        mandatory_field_status,
+        ga_gate_consumable: gate_consumable,
+        pilot_gate_consumable: gate_consumable,
+        rationale,
+        merged_signals,
+        evidence_links,
+        reproducible_commands,
+        logs,
+    }
+}
+
+/// Render rollout-decision artifact output in deterministic human-readable form.
+pub fn render_rollout_decision_artifact_summary(output: &RolloutDecisionArtifactOutput) -> String {
+    let mut lines = vec![
+        format!("schema_version: {}", output.schema_version),
+        format!("workload_id: {}", output.workload_id),
+        format!("package_name: {}", output.package_name),
+        format!("recommendation: {}", output.recommendation),
+        format!("readiness: {}", output.readiness),
+        format!(
+            "mandatory_fields_valid: {}",
+            output.mandatory_field_status.valid
+        ),
+        format!("ga_gate_consumable: {}", output.ga_gate_consumable),
+        format!("pilot_gate_consumable: {}", output.pilot_gate_consumable),
+        format!("rationale: {}", output.rationale),
+        format!("merged_signals: {}", output.merged_signals.len()),
+    ];
+
+    if !output.mandatory_field_status.missing_fields.is_empty() {
+        lines.push("missing_fields:".to_string());
+        for field in &output.mandatory_field_status.missing_fields {
+            lines.push(format!("  - {field}"));
+        }
+    }
+
+    if !output.mandatory_field_status.inconsistent_fields.is_empty() {
+        lines.push("inconsistent_fields:".to_string());
+        for field in &output.mandatory_field_status.inconsistent_fields {
+            lines.push(format!("  - {field}"));
+        }
+    }
+
+    lines.push("reproducible_commands:".to_string());
+    for command in &output.reproducible_commands {
+        lines.push(format!("  - {command}"));
+    }
+
+    lines.push("evidence_links:".to_string());
+    for link in &output.evidence_links {
+        lines.push(format!("  - {link}"));
+    }
+
+    lines.join("\n")
+}
+
+fn choose_rollout_recommendation(
+    readiness: OnboardingReadinessClass,
+    critical_signals: usize,
+    warning_signals: usize,
+    has_compatibility_critical: bool,
+    has_platform_critical: bool,
+    mandatory_fields_valid: bool,
+) -> RolloutRecommendation {
+    if !mandatory_fields_valid {
+        return RolloutRecommendation::Defer;
+    }
+    if has_compatibility_critical || has_platform_critical {
+        return RolloutRecommendation::Rollback;
+    }
+
+    match readiness {
+        OnboardingReadinessClass::Ready => {
+            if critical_signals > 0 {
+                RolloutRecommendation::Defer
+            } else if warning_signals > 0 {
+                RolloutRecommendation::CanaryHold
+            } else {
+                RolloutRecommendation::Promote
+            }
+        }
+        OnboardingReadinessClass::Conditional => {
+            if critical_signals > 0 {
+                RolloutRecommendation::Defer
+            } else {
+                RolloutRecommendation::CanaryHold
+            }
+        }
+        OnboardingReadinessClass::Blocked => {
+            if critical_signals > 0 {
+                RolloutRecommendation::Rollback
+            } else {
+                RolloutRecommendation::Defer
+            }
+        }
+    }
+}
+
+fn rollout_signal_key(signal: &OnboardingScorecardSignal) -> String {
+    format!("{}::{}", signal.source, signal.signal_id)
+}
+
+fn merge_rollout_signal(
+    existing: &mut OnboardingScorecardSignal,
+    incoming: OnboardingScorecardSignal,
+) {
+    let incoming_owner = incoming.owner_hint.clone();
+    if incoming.severity > existing.severity {
+        existing.severity = incoming.severity;
+        existing.summary = incoming.summary.clone();
+        existing.remediation = incoming.remediation.clone();
+        existing.reproducible_command = incoming.reproducible_command.clone();
+        existing.owner_hint = incoming_owner.clone();
+    } else if incoming.severity == existing.severity {
+        let incoming_rank = (
+            incoming.summary.as_str(),
+            incoming.remediation.as_str(),
+            incoming.reproducible_command.as_str(),
+        );
+        let existing_rank = (
+            existing.summary.as_str(),
+            existing.remediation.as_str(),
+            existing.reproducible_command.as_str(),
+        );
+        if incoming_rank < existing_rank {
+            existing.summary = incoming.summary.clone();
+            existing.remediation = incoming.remediation.clone();
+            existing.reproducible_command = incoming.reproducible_command.clone();
+        }
+        if existing.owner_hint.is_none() {
+            existing.owner_hint = incoming_owner;
+        }
+    } else if existing.owner_hint.is_none() {
+        existing.owner_hint = incoming_owner;
+    }
+
+    existing.evidence_links.extend(incoming.evidence_links);
+    existing.evidence_links.sort();
+    existing.evidence_links.dedup();
+}
+
 fn normalize_or_default(value: &str, fallback: &str) -> String {
     let normalized = value.trim();
     if normalized.is_empty() {
@@ -1465,6 +1786,25 @@ fn normalize_or_default(value: &str, fallback: &str) -> String {
     } else {
         normalized.to_string()
     }
+}
+
+fn normalize_onboarding_signal(signal: &mut OnboardingScorecardSignal) {
+    signal.signal_id = normalize_or_default(&signal.signal_id, "signal");
+    signal.source = normalize_or_default(&signal.source, "external");
+    signal.summary = normalize_or_default(&signal.summary, "unspecified signal");
+    signal.remediation = normalize_or_default(&signal.remediation, "investigate signal");
+    signal.reproducible_command = normalize_or_default(
+        &signal.reproducible_command,
+        "runtime_diagnostics doctor --input <path> --summary",
+    );
+    signal.evidence_links.sort();
+    signal.evidence_links.dedup();
+    signal.owner_hint = signal
+        .owner_hint
+        .as_deref()
+        .map(str::trim)
+        .filter(|owner| !owner.is_empty())
+        .map(std::string::ToString::to_string);
 }
 
 fn default_owner_for_source(source: &str, severity: EvidenceSeverity) -> String {
@@ -1477,6 +1817,70 @@ fn default_owner_for_source(source: &str, severity: EvidenceSeverity) -> String 
         "compatibility_advisory" => "compatibility-lane".to_string(),
         "platform_matrix" => "platform-matrix-lane".to_string(),
         _ => "workload-onboarding".to_string(),
+    }
+}
+
+fn validate_rollout_decision_mandatory_fields(
+    onboarding_scorecard: &OnboardingScorecardOutput,
+    merged_signals: &[OnboardingScorecardSignal],
+    evidence_links: &[String],
+    reproducible_commands: &[String],
+) -> RolloutDecisionMandatoryFieldStatus {
+    let mut missing_fields = Vec::new();
+    let mut inconsistent_fields = Vec::new();
+
+    if onboarding_scorecard.schema_version.trim().is_empty() {
+        missing_fields.push("onboarding_scorecard.schema_version".to_string());
+    }
+    if onboarding_scorecard.workload_id.trim().is_empty() {
+        missing_fields.push("workload_id".to_string());
+    }
+    if onboarding_scorecard.package_name.trim().is_empty() {
+        missing_fields.push("package_name".to_string());
+    }
+    if onboarding_scorecard.logs.is_empty() {
+        missing_fields.push("onboarding_scorecard.logs".to_string());
+    }
+    if reproducible_commands.is_empty() {
+        missing_fields.push("reproducible_commands".to_string());
+    }
+    if evidence_links.is_empty() {
+        missing_fields.push("evidence_links".to_string());
+    }
+
+    if onboarding_scorecard.reproducible_commands.is_empty() {
+        inconsistent_fields.push("onboarding_scorecard.reproducible_commands".to_string());
+    }
+
+    let allowed_sources = [
+        "preflight_doctor",
+        "compatibility_advisory",
+        "platform_matrix",
+        "external",
+    ];
+    for signal in merged_signals {
+        if !allowed_sources.contains(&signal.source.as_str()) {
+            inconsistent_fields.push(format!("signal_source:{}", signal.source));
+        }
+    }
+
+    if onboarding_scorecard.target_platforms.is_empty()
+        && merged_signals
+            .iter()
+            .any(|signal| signal.source == "platform_matrix")
+    {
+        inconsistent_fields.push("target_platforms".to_string());
+    }
+
+    missing_fields.sort();
+    missing_fields.dedup();
+    inconsistent_fields.sort();
+    inconsistent_fields.dedup();
+
+    RolloutDecisionMandatoryFieldStatus {
+        valid: missing_fields.is_empty() && inconsistent_fields.is_empty(),
+        missing_fields,
+        inconsistent_fields,
     }
 }
 
@@ -3366,17 +3770,43 @@ mod tests {
             package_name: "weather-ext".to_string(),
             target_platforms: vec!["linux-x64".to_string(), "linux-x64".to_string()],
             preflight: preflight.clone(),
-            external_signals: vec![OnboardingScorecardSignal {
-                signal_id: "compat:001".to_string(),
-                source: "compatibility_advisory".to_string(),
-                severity: EvidenceSeverity::Warning,
-                summary: "node parity drift in fs module".to_string(),
-                remediation: "apply deterministic shim for fs edge behavior".to_string(),
-                reproducible_command: "runtime_diagnostics doctor --input <path> --summary"
-                    .to_string(),
-                evidence_links: vec!["artifacts/lockstep/report.json".to_string()],
-                owner_hint: Some("compatibility-lane".to_string()),
-            }],
+            external_signals: vec![
+                OnboardingScorecardSignal {
+                    signal_id: "compat:001".to_string(),
+                    source: "compatibility_advisory".to_string(),
+                    severity: EvidenceSeverity::Warning,
+                    summary: "node parity drift in fs module".to_string(),
+                    remediation: "apply deterministic shim for fs edge behavior".to_string(),
+                    reproducible_command: "runtime_diagnostics doctor --input <path> --summary"
+                        .to_string(),
+                    evidence_links: vec!["artifacts/lockstep/report.json".to_string()],
+                    owner_hint: Some("compatibility-lane".to_string()),
+                },
+                OnboardingScorecardSignal {
+                    signal_id: "platform:002".to_string(),
+                    source: "platform_matrix".to_string(),
+                    severity: EvidenceSeverity::Critical,
+                    summary: "arm64 rollout gap blocks parity".to_string(),
+                    remediation: "close arm64 matrix gaps before enablement".to_string(),
+                    reproducible_command:
+                        "runtime_diagnostics rollout-decision-artifact --input <path> --summary"
+                            .to_string(),
+                    evidence_links: vec!["artifacts/platform/matrix-arm64.json".to_string()],
+                    owner_hint: Some("platform-matrix-lane".to_string()),
+                },
+                OnboardingScorecardSignal {
+                    signal_id: "platform:003".to_string(),
+                    source: "platform_matrix".to_string(),
+                    severity: EvidenceSeverity::Critical,
+                    summary: "windows-x64 smoke lane missing deterministic replay".to_string(),
+                    remediation: "publish replay receipts for windows-x64 lane".to_string(),
+                    reproducible_command:
+                        "runtime_diagnostics rollout-decision-artifact --input <path> --summary"
+                            .to_string(),
+                    evidence_links: vec!["artifacts/platform/matrix-windows.json".to_string()],
+                    owner_hint: Some("platform-matrix-lane".to_string()),
+                },
+            ],
         };
 
         let left = build_onboarding_scorecard(&input);
@@ -3449,5 +3879,204 @@ mod tests {
         assert!(rendered.contains("readiness: blocked"));
         assert!(rendered.contains("reproducible_commands:"));
         assert!(rendered.contains("runtime_diagnostics doctor --input <path> --summary"));
+    }
+
+    #[test]
+    fn rollout_decision_artifact_promotes_clean_workloads() {
+        let mut input = sample_input();
+        input.evidence_entries.clear();
+        input.containment_receipts.clear();
+        input
+            .hostcall_records
+            .retain(|record| matches!(record.record.result_status, HostcallResult::Success));
+        for sample in &mut input.runtime_state.gc_pressure {
+            sample.used_bytes = sample.used_bytes.min(sample.budget_bytes);
+        }
+        for lane in &mut input.runtime_state.scheduler_lanes {
+            lane.tasks_timed_out = 0;
+            lane.queue_depth = 0;
+        }
+
+        let preflight = run_preflight_doctor(
+            &input,
+            EvidenceExportFilter::default(),
+            SupportBundleRedactionPolicy::default(),
+        );
+        let onboarding = build_onboarding_scorecard(&OnboardingScorecardInput {
+            workload_id: "pkg/clean-ext".to_string(),
+            package_name: "clean-ext".to_string(),
+            target_platforms: vec!["linux-x64".to_string()],
+            preflight,
+            external_signals: Vec::new(),
+        });
+
+        let artifact = build_rollout_decision_artifact(&RolloutDecisionArtifactInput {
+            onboarding_scorecard: onboarding,
+            compatibility_advisories: Vec::new(),
+            platform_matrix_signals: Vec::new(),
+        });
+
+        assert_eq!(artifact.recommendation, RolloutRecommendation::Promote);
+        assert!(artifact.mandatory_field_status.valid);
+        assert!(artifact.ga_gate_consumable);
+        assert!(artifact.pilot_gate_consumable);
+        assert!(!artifact.evidence_links.is_empty());
+    }
+
+    #[test]
+    fn rollout_decision_artifact_prefers_rollback_for_platform_critical_signal() {
+        let mut input = sample_input();
+        input.evidence_entries.clear();
+        input.containment_receipts.clear();
+        input
+            .hostcall_records
+            .retain(|record| matches!(record.record.result_status, HostcallResult::Success));
+        for sample in &mut input.runtime_state.gc_pressure {
+            sample.used_bytes = sample.used_bytes.min(sample.budget_bytes);
+        }
+        for lane in &mut input.runtime_state.scheduler_lanes {
+            lane.tasks_timed_out = 0;
+            lane.queue_depth = 0;
+        }
+
+        let preflight = run_preflight_doctor(
+            &input,
+            EvidenceExportFilter::default(),
+            SupportBundleRedactionPolicy::default(),
+        );
+        let onboarding = build_onboarding_scorecard(&OnboardingScorecardInput {
+            workload_id: "pkg/clean-ext".to_string(),
+            package_name: "clean-ext".to_string(),
+            target_platforms: vec!["linux-x64".to_string()],
+            preflight,
+            external_signals: Vec::new(),
+        });
+
+        let artifact = build_rollout_decision_artifact(&RolloutDecisionArtifactInput {
+            onboarding_scorecard: onboarding,
+            compatibility_advisories: Vec::new(),
+            platform_matrix_signals: vec![OnboardingScorecardSignal {
+                signal_id: "matrix:linux-x64".to_string(),
+                source: "platform_matrix".to_string(),
+                severity: EvidenceSeverity::Critical,
+                summary: "critical drift in linux-x64 lockstep output".to_string(),
+                remediation: "rollback linux-x64 promotion and re-run matrix".to_string(),
+                reproducible_command: "scripts/run_rgc_cross_platform_matrix_gate.sh ci"
+                    .to_string(),
+                evidence_links: vec![
+                    "artifacts/rgc_cross_platform_matrix/latest/report.json".to_string(),
+                ],
+                owner_hint: Some("platform-matrix-lane".to_string()),
+            }],
+        });
+
+        assert_eq!(artifact.recommendation, RolloutRecommendation::Rollback);
+        assert!(
+            artifact
+                .merged_signals
+                .iter()
+                .any(|signal| signal.source == "platform_matrix"
+                    && signal.severity == EvidenceSeverity::Critical)
+        );
+    }
+
+    #[test]
+    fn rollout_decision_artifact_conflict_resolution_prefers_higher_severity() {
+        let mut input = sample_input();
+        input.evidence_entries.clear();
+        input.containment_receipts.clear();
+        input
+            .hostcall_records
+            .retain(|record| matches!(record.record.result_status, HostcallResult::Success));
+        for sample in &mut input.runtime_state.gc_pressure {
+            sample.used_bytes = sample.used_bytes.min(sample.budget_bytes);
+        }
+        for lane in &mut input.runtime_state.scheduler_lanes {
+            lane.tasks_timed_out = 0;
+            lane.queue_depth = 0;
+        }
+
+        let preflight = run_preflight_doctor(
+            &input,
+            EvidenceExportFilter::default(),
+            SupportBundleRedactionPolicy::default(),
+        );
+        let onboarding = build_onboarding_scorecard(&OnboardingScorecardInput {
+            workload_id: "pkg/clean-ext".to_string(),
+            package_name: "clean-ext".to_string(),
+            target_platforms: vec!["linux-x64".to_string()],
+            preflight,
+            external_signals: vec![OnboardingScorecardSignal {
+                signal_id: "compat:fs".to_string(),
+                source: "compatibility_advisory".to_string(),
+                severity: EvidenceSeverity::Warning,
+                summary: "warning-level parity drift".to_string(),
+                remediation: "review shim behavior".to_string(),
+                reproducible_command: "scripts/run_frx_lockstep_oracle_suite.sh ci".to_string(),
+                evidence_links: vec![
+                    "artifacts/frx_lockstep_oracle/latest/report.json".to_string(),
+                ],
+                owner_hint: Some("compatibility-lane".to_string()),
+            }],
+        });
+
+        let artifact = build_rollout_decision_artifact(&RolloutDecisionArtifactInput {
+            onboarding_scorecard: onboarding,
+            compatibility_advisories: vec![OnboardingScorecardSignal {
+                signal_id: "compat:fs".to_string(),
+                source: "compatibility_advisory".to_string(),
+                severity: EvidenceSeverity::Critical,
+                summary: "critical parity drift".to_string(),
+                remediation: "block promotion until drift is resolved".to_string(),
+                reproducible_command: "scripts/run_frx_lockstep_oracle_suite.sh ci".to_string(),
+                evidence_links: vec![
+                    "artifacts/frx_lockstep_oracle/latest/report.json".to_string(),
+                ],
+                owner_hint: Some("compatibility-lane".to_string()),
+            }],
+            platform_matrix_signals: Vec::new(),
+        });
+
+        assert!(
+            artifact
+                .merged_signals
+                .iter()
+                .any(|signal| signal.signal_id == "compat:fs"
+                    && signal.severity == EvidenceSeverity::Critical
+                    && signal.summary == "critical parity drift")
+        );
+    }
+
+    #[test]
+    fn rollout_decision_artifact_fails_closed_when_required_fields_missing() {
+        let preflight = run_preflight_doctor(
+            &sample_input(),
+            EvidenceExportFilter::default(),
+            SupportBundleRedactionPolicy::default(),
+        );
+        let mut onboarding = build_onboarding_scorecard(&OnboardingScorecardInput {
+            workload_id: "pkg/example".to_string(),
+            package_name: "example".to_string(),
+            target_platforms: vec!["linux-x64".to_string()],
+            preflight,
+            external_signals: Vec::new(),
+        });
+        onboarding.workload_id.clear();
+        onboarding.logs.clear();
+
+        let artifact = build_rollout_decision_artifact(&RolloutDecisionArtifactInput {
+            onboarding_scorecard: onboarding,
+            compatibility_advisories: Vec::new(),
+            platform_matrix_signals: Vec::new(),
+        });
+
+        assert_eq!(artifact.recommendation, RolloutRecommendation::Defer);
+        assert!(!artifact.mandatory_field_status.valid);
+        assert!(!artifact.ga_gate_consumable);
+        assert!(!artifact.pilot_gate_consumable);
+
+        let summary = render_rollout_decision_artifact_summary(&artifact);
+        assert!(summary.contains("missing_fields:"));
+        assert!(summary.contains("mandatory_fields_valid: false"));
     }
 }

@@ -1203,6 +1203,7 @@ mod tests {
     fn object_domain_copy_independence() {
         let original = ObjectDomain::EvidenceRecord;
         let mut copy = original;
+        assert_eq!(copy, ObjectDomain::EvidenceRecord);
         copy = ObjectDomain::Revocation;
         assert_eq!(original, ObjectDomain::EvidenceRecord);
         assert_eq!(copy, ObjectDomain::Revocation);

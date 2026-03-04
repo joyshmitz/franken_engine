@@ -1748,7 +1748,10 @@ mod tests {
         // Ord should compare index first, then generation
         let a = NodeHandle::from_parts(0, 2);
         let b = NodeHandle::from_parts(1, 1);
-        assert!(a < b, "lower index should sort before higher index regardless of generation");
+        assert!(
+            a < b,
+            "lower index should sort before higher index regardless of generation"
+        );
     }
 
     #[test]

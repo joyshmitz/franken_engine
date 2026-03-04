@@ -1465,9 +1465,7 @@ pub fn exec_date_method(
             // Simplified ISO-like string for deterministic output.
             let secs = ts / 1000;
             let ms = (ts % 1000).abs();
-            Ok(JsValue::Str(format!(
-                "Date({secs}.{ms:03})"
-            )))
+            Ok(JsValue::Str(format!("Date({secs}.{ms:03})")))
         }
         BuiltinId::DatePrototypeToISOString => {
             let ts = this_timestamp.unwrap_or(0) / FP_SCALE;
@@ -1535,10 +1533,7 @@ pub fn exec_error_constructor(
 /// Symbol.for(key) returns a globally-registered symbol for the given key.
 /// Symbol.keyFor(sym) returns the key for a globally-registered symbol.
 /// In our fixed-point system, symbols are represented by SymbolId.
-pub fn exec_symbol_static(
-    builtin: BuiltinId,
-    args: &[JsValue],
-) -> Result<JsValue, StdlibError> {
+pub fn exec_symbol_static(builtin: BuiltinId, args: &[JsValue]) -> Result<JsValue, StdlibError> {
     match builtin {
         BuiltinId::SymbolFor => {
             let key = require_str("Symbol.for", args, 0)?;
@@ -1745,8 +1740,8 @@ fn fp_ln(x: i64) -> i64 {
     let mut normalized = x;
     let mut k: i64 = 0;
 
-    // Scale down if above e
-    while normalized > e_fp {
+    // Scale down if at or above e
+    while normalized >= e_fp {
         normalized = normalized * FP_SCALE / e_fp;
         k += 1;
     }
@@ -1931,7 +1926,9 @@ fn install_ctor_proto_link(heap: &mut ObjectHeap, ctor: ObjectHandle, proto: Obj
 }
 
 fn set_class_tag(heap: &mut ObjectHeap, handle: ObjectHandle, tag: &str) {
-    if let Ok(obj) = heap.get_mut(handle) && let Some(ordinary) = obj.as_ordinary_mut() {
+    if let Ok(obj) = heap.get_mut(handle)
+        && let Some(ordinary) = obj.as_ordinary_mut()
+    {
         ordinary.class_tag = Some(tag.to_string());
     }
 }
@@ -4085,5 +4082,401 @@ mod tests {
             .get_property(env.global_object, &PropertyKey::from("parseInt"))
             .unwrap();
         assert!(matches!(parse_int, JsValue::Function(_)));
+    }
+
+    // -- String.prototype.replace tests --------------------------------------
+
+    #[test]
+    fn test_string_replace_basic() {
+        let result = exec_string_method(
+            BuiltinId::StringPrototypeReplace,
+            "hello world",
+            &[JsValue::Str("world".into()), JsValue::Str("rust".into())],
+        )
+        .unwrap();
+        assert_eq!(result, JsValue::Str("hello rust".into()));
+    }
+
+    #[test]
+    fn test_string_replace_first_only() {
+        let result = exec_string_method(
+            BuiltinId::StringPrototypeReplace,
+            "aaa",
+            &[JsValue::Str("a".into()), JsValue::Str("b".into())],
+        )
+        .unwrap();
+        assert_eq!(result, JsValue::Str("baa".into()));
+    }
+
+    #[test]
+    fn test_string_replace_not_found() {
+        let result = exec_string_method(
+            BuiltinId::StringPrototypeReplace,
+            "hello",
+            &[JsValue::Str("xyz".into()), JsValue::Str("!".into())],
+        )
+        .unwrap();
+        assert_eq!(result, JsValue::Str("hello".into()));
+    }
+
+    // -- String.prototype.search tests ---------------------------------------
+
+    #[test]
+    fn test_string_search_found() {
+        let result = exec_string_method(
+            BuiltinId::StringPrototypeSearch,
+            "hello world",
+            &[JsValue::Str("world".into())],
+        )
+        .unwrap();
+        assert_eq!(result, JsValue::Int(6 * FP_SCALE));
+    }
+
+    #[test]
+    fn test_string_search_not_found() {
+        let result = exec_string_method(
+            BuiltinId::StringPrototypeSearch,
+            "hello",
+            &[JsValue::Str("xyz".into())],
+        )
+        .unwrap();
+        assert_eq!(result, JsValue::Int(-FP_SCALE));
+    }
+
+    // -- String.prototype.match tests ----------------------------------------
+
+    #[test]
+    fn test_string_match_found() {
+        let result = exec_string_method(
+            BuiltinId::StringPrototypeMatch,
+            "hello world",
+            &[JsValue::Str("world".into())],
+        )
+        .unwrap();
+        assert_eq!(result, JsValue::Str("world".into()));
+    }
+
+    #[test]
+    fn test_string_match_not_found() {
+        let result = exec_string_method(
+            BuiltinId::StringPrototypeMatch,
+            "hello",
+            &[JsValue::Str("xyz".into())],
+        )
+        .unwrap();
+        assert_eq!(result, JsValue::Null);
+    }
+
+    // -- String.prototype.normalize tests ------------------------------------
+
+    #[test]
+    fn test_string_normalize_ascii() {
+        let result = exec_string_method(BuiltinId::StringPrototypeNormalize, "hello", &[]).unwrap();
+        assert_eq!(result, JsValue::Str("hello".into()));
+    }
+
+    // -- Date method tests ---------------------------------------------------
+
+    #[test]
+    fn test_date_now_deterministic() {
+        let r1 = exec_date_method(BuiltinId::DateNow, None).unwrap();
+        let r2 = exec_date_method(BuiltinId::DateNow, None).unwrap();
+        assert_eq!(r1, r2, "Date.now() must be deterministic");
+        if let JsValue::Int(n) = r1 {
+            assert!(n > 0, "Date.now() must be positive");
+        } else {
+            panic!("Date.now() must return Int");
+        }
+    }
+
+    #[test]
+    fn test_date_get_time() {
+        let ts = 1_000_000 * FP_SCALE; // 1 second in ms, scaled
+        let result = exec_date_method(BuiltinId::DatePrototypeGetTime, Some(ts)).unwrap();
+        assert_eq!(result, JsValue::Int(ts));
+    }
+
+    #[test]
+    fn test_date_value_of() {
+        let ts = 42 * FP_SCALE;
+        let result = exec_date_method(BuiltinId::DatePrototypeValueOf, Some(ts)).unwrap();
+        assert_eq!(result, JsValue::Int(ts));
+    }
+
+    #[test]
+    fn test_date_to_string() {
+        let ts = 1_500_000 * FP_SCALE; // 1500 seconds = 1.500s
+        let result = exec_date_method(BuiltinId::DatePrototypeToString, Some(ts)).unwrap();
+        if let JsValue::Str(s) = result {
+            assert!(s.starts_with("Date("), "should start with Date(");
+        } else {
+            panic!("expected string");
+        }
+    }
+
+    #[test]
+    fn test_date_to_iso_string() {
+        let result = exec_date_method(BuiltinId::DatePrototypeToISOString, Some(0)).unwrap();
+        if let JsValue::Str(s) = result {
+            assert!(s.contains('T'), "ISO string should contain T");
+            assert!(s.ends_with('Z'), "ISO string should end with Z");
+        } else {
+            panic!("expected string");
+        }
+    }
+
+    // -- Error constructor tests ---------------------------------------------
+
+    #[test]
+    fn test_error_constructor_message() {
+        let result =
+            exec_error_constructor(BuiltinId::ErrorConstructor, &[JsValue::Str("oops".into())])
+                .unwrap();
+        assert_eq!(result, JsValue::Str("Error: oops".into()));
+    }
+
+    #[test]
+    fn test_type_error_constructor() {
+        let result = exec_error_constructor(
+            BuiltinId::TypeErrorConstructor,
+            &[JsValue::Str("not a function".into())],
+        )
+        .unwrap();
+        assert_eq!(result, JsValue::Str("TypeError: not a function".into()));
+    }
+
+    #[test]
+    fn test_range_error_constructor() {
+        let result = exec_error_constructor(
+            BuiltinId::RangeErrorConstructor,
+            &[JsValue::Str("out of bounds".into())],
+        )
+        .unwrap();
+        assert_eq!(result, JsValue::Str("RangeError: out of bounds".into()));
+    }
+
+    #[test]
+    fn test_reference_error_constructor() {
+        let result = exec_error_constructor(
+            BuiltinId::ReferenceErrorConstructor,
+            &[JsValue::Str("x is not defined".into())],
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            JsValue::Str("ReferenceError: x is not defined".into())
+        );
+    }
+
+    #[test]
+    fn test_syntax_error_constructor() {
+        let result = exec_error_constructor(
+            BuiltinId::SyntaxErrorConstructor,
+            &[JsValue::Str("unexpected token".into())],
+        )
+        .unwrap();
+        assert_eq!(result, JsValue::Str("SyntaxError: unexpected token".into()));
+    }
+
+    #[test]
+    fn test_error_constructor_no_message() {
+        let result = exec_error_constructor(BuiltinId::ErrorConstructor, &[]).unwrap();
+        assert_eq!(result, JsValue::Str("Error: ".into()));
+    }
+
+    #[test]
+    fn test_error_constructor_non_string_arg() {
+        let result = exec_error_constructor(
+            BuiltinId::TypeErrorConstructor,
+            &[JsValue::Int(42 * FP_SCALE)],
+        )
+        .unwrap();
+        assert_eq!(result, JsValue::Str("TypeError: 42".into()));
+    }
+
+    // -- Symbol static method tests ------------------------------------------
+
+    #[test]
+    fn test_symbol_for_deterministic() {
+        let r1 = exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("test".into())]).unwrap();
+        let r2 = exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("test".into())]).unwrap();
+        assert_eq!(r1, r2, "Symbol.for must be deterministic");
+        assert!(matches!(r1, JsValue::Symbol(_)));
+    }
+
+    #[test]
+    fn test_symbol_for_distinct_keys() {
+        let r1 = exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("alpha".into())]).unwrap();
+        let r2 = exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("beta".into())]).unwrap();
+        assert_ne!(r1, r2, "Different keys should produce different symbols");
+    }
+
+    #[test]
+    fn test_symbol_key_for_returns_undefined() {
+        let result =
+            exec_symbol_static(BuiltinId::SymbolKeyFor, &[JsValue::Symbol(SymbolId(42))]).unwrap();
+        assert_eq!(result, JsValue::Undefined);
+    }
+
+    // -- Boolean method tests ------------------------------------------------
+
+    #[test]
+    fn test_boolean_to_string_true() {
+        assert_eq!(
+            exec_boolean_method(BuiltinId::BooleanPrototypeToString, true).unwrap(),
+            JsValue::Str("true".into())
+        );
+    }
+
+    #[test]
+    fn test_boolean_to_string_false() {
+        assert_eq!(
+            exec_boolean_method(BuiltinId::BooleanPrototypeToString, false).unwrap(),
+            JsValue::Str("false".into())
+        );
+    }
+
+    // -- Object.is tests ----------------------------------------------------
+
+    #[test]
+    fn test_object_is_same_int() {
+        let result = exec_object_static(
+            BuiltinId::ObjectIs,
+            &[JsValue::Int(5 * FP_SCALE), JsValue::Int(5 * FP_SCALE)],
+        )
+        .unwrap();
+        assert_eq!(result, JsValue::Bool(true));
+    }
+
+    #[test]
+    fn test_object_is_different() {
+        let result = exec_object_static(
+            BuiltinId::ObjectIs,
+            &[JsValue::Int(1 * FP_SCALE), JsValue::Int(2 * FP_SCALE)],
+        )
+        .unwrap();
+        assert_eq!(result, JsValue::Bool(false));
+    }
+
+    #[test]
+    fn test_object_is_null_null() {
+        let result =
+            exec_object_static(BuiltinId::ObjectIs, &[JsValue::Null, JsValue::Null]).unwrap();
+        assert_eq!(result, JsValue::Bool(true));
+    }
+
+    // -- Math.sqrt tests ----------------------------------------------------
+
+    #[test]
+    fn test_math_sqrt_perfect() {
+        let result = exec_math(BuiltinId::MathSqrt, &[JsValue::Int(4 * FP_SCALE)]).unwrap();
+        // sqrt(4) = 2 in fixed-point
+        if let JsValue::Int(n) = result {
+            assert!(
+                (n - 2 * FP_SCALE).abs() < FP_SCALE / 100,
+                "sqrt(4) should be ~2"
+            );
+        } else {
+            panic!("expected Int");
+        }
+    }
+
+    #[test]
+    fn test_math_sqrt_negative_error() {
+        let result = exec_math(BuiltinId::MathSqrt, &[JsValue::Int(-1 * FP_SCALE)]);
+        assert!(result.is_err());
+    }
+
+    // -- Math.log tests -----------------------------------------------------
+
+    #[test]
+    fn test_math_log_e() {
+        // ln(e) should be ~1.0
+        let e_fp = 2_718_282_i64; // e in FP_SCALE
+        let result = exec_math(BuiltinId::MathLog, &[JsValue::Int(e_fp)]).unwrap();
+        if let JsValue::Int(n) = result {
+            assert!(
+                (n - FP_SCALE).abs() < FP_SCALE / 10,
+                "ln(e) should be ~1.0, got {}",
+                n
+            );
+        } else {
+            panic!("expected Int");
+        }
+    }
+
+    #[test]
+    fn test_math_log_negative_error() {
+        let result = exec_math(BuiltinId::MathLog, &[JsValue::Int(-FP_SCALE)]);
+        assert!(result.is_err());
+    }
+
+    // -- Math.hypot tests ---------------------------------------------------
+
+    #[test]
+    fn test_math_hypot_3_4() {
+        // hypot(3, 4) = 5
+        let result = exec_math(
+            BuiltinId::MathHypot,
+            &[JsValue::Int(3 * FP_SCALE), JsValue::Int(4 * FP_SCALE)],
+        )
+        .unwrap();
+        if let JsValue::Int(n) = result {
+            assert_eq!(n, 5 * FP_SCALE, "hypot(3,4) should be 5");
+        } else {
+            panic!("expected Int");
+        }
+    }
+
+    // -- Global function tests (hook-added) ----------------------------------
+
+    #[test]
+    fn test_global_parse_int_radix_16() {
+        let result = exec_global_function(
+            BuiltinId::GlobalParseInt,
+            &[JsValue::Str("ff".into()), JsValue::Int(16 * FP_SCALE)],
+        )
+        .unwrap();
+        assert_eq!(result, JsValue::Int(255 * FP_SCALE));
+    }
+
+    // -- Number static method tests ------------------------------------------
+
+    #[test]
+    fn test_number_is_safe_integer() {
+        assert_eq!(
+            exec_number_method(BuiltinId::NumberIsSafeInteger, 100 * FP_SCALE, &[]).unwrap(),
+            JsValue::Bool(true)
+        );
+        // Non-integer (has fractional part)
+        assert_eq!(
+            exec_number_method(BuiltinId::NumberIsSafeInteger, FP_SCALE / 2, &[]).unwrap(),
+            JsValue::Bool(false)
+        );
+    }
+
+    // -- String.fromCharCode (hook-added) ------------------------------------
+
+    #[test]
+    fn test_string_from_char_code_multiple() {
+        let result = exec_string_static(
+            BuiltinId::StringFromCharCode,
+            &[JsValue::Int(72 * FP_SCALE), JsValue::Int(105 * FP_SCALE)],
+        )
+        .unwrap();
+        assert_eq!(result, JsValue::Str("Hi".into()));
+    }
+
+    // -- String.prototype.codePointAt (hook-added) ---------------------------
+
+    #[test]
+    fn test_string_code_point_at_out_of_bounds() {
+        let result = exec_string_method(
+            BuiltinId::StringPrototypeCodePointAt,
+            "A",
+            &[JsValue::Int(5 * FP_SCALE)],
+        )
+        .unwrap();
+        assert_eq!(result, JsValue::Undefined);
     }
 }

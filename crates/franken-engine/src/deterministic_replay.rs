@@ -225,6 +225,34 @@ pub enum ReplayError {
     TraceNotFinalised,
 }
 
+impl std::fmt::Display for ReplayError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TraceExhausted { cursor, total } => {
+                write!(f, "trace exhausted at cursor {cursor} of {total}")
+            }
+            Self::CriticalDivergence { sequence, source } => {
+                write!(
+                    f,
+                    "critical replay divergence at sequence {sequence} ({})",
+                    source.as_str()
+                )
+            }
+            Self::SourceMismatch {
+                sequence,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "replay source mismatch at sequence {sequence}: expected {}, got {}",
+                expected.as_str(),
+                actual.as_str()
+            ),
+            Self::TraceNotFinalised => f.write_str("trace is not finalised"),
+        }
+    }
+}
+
 impl ReplayEngine {
     /// Create a replay engine from a captured trace.
     pub fn new(trace: NondeterminismTrace, mode: ReplayMode) -> Self {

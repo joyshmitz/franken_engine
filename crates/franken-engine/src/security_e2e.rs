@@ -1817,11 +1817,7 @@ mod tests {
         // Every as_str result should be all-lowercase with hyphens only (no underscores)
         for cat in AttackCategory::all() {
             let s = cat.as_str();
-            assert_eq!(
-                s,
-                s.to_lowercase(),
-                "as_str should be lowercase: {s}"
-            );
+            assert_eq!(s, s.to_lowercase(), "as_str should be lowercase: {s}");
             assert!(
                 !s.contains('_'),
                 "as_str should use hyphens not underscores: {s}"
@@ -1833,8 +1829,14 @@ mod tests {
     fn enrichment_attack_scenario_result_debug_format_includes_scenario_name() {
         let r = AttackScenarioResult::new(AttackCategory::ForkDetection, "debug-test");
         let dbg = format!("{r:?}");
-        assert!(dbg.contains("debug-test"), "Debug should include scenario_name");
-        assert!(dbg.contains("ForkDetection"), "Debug should include category");
+        assert!(
+            dbg.contains("debug-test"),
+            "Debug should include scenario_name"
+        );
+        assert!(
+            dbg.contains("ForkDetection"),
+            "Debug should include category"
+        );
     }
 
     #[test]
@@ -1862,7 +1864,10 @@ mod tests {
         };
         assert_eq!(evt.error_code.as_deref(), Some("FE-TEST-ERR"));
         let dbg = format!("{evt:?}");
-        assert!(dbg.contains("FE-TEST-ERR"), "Debug should include error code");
+        assert!(
+            dbg.contains("FE-TEST-ERR"),
+            "Debug should include error code"
+        );
     }
 
     #[test]
@@ -1884,7 +1889,10 @@ mod tests {
         };
         let result = run_security_suite(&config);
         let dbg = format!("{result:?}");
-        assert!(dbg.contains("scenarios"), "Debug should contain 'scenarios'");
+        assert!(
+            dbg.contains("scenarios"),
+            "Debug should contain 'scenarios'"
+        );
         assert!(dbg.contains("blocked"), "Debug should contain 'blocked'");
     }
 
@@ -1960,7 +1968,10 @@ mod tests {
         let malicious = &results[1];
         assert_eq!(malicious.scenario_name, "malicious-convergence");
         assert!(malicious.attack_blocked, "should detect malicious behavior");
-        assert!(malicious.security_events > 0, "should flag risky extensions");
+        assert!(
+            malicious.security_events > 0,
+            "should flag risky extensions"
+        );
     }
 
     #[test]

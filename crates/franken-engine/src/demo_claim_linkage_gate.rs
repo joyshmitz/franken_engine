@@ -1822,6 +1822,8 @@ mod tests {
         let mut cloned = cfg.clone();
         cloned.min_completeness_millionths = 0;
         cloned.require_evidence = false;
+        assert_eq!(cloned.min_completeness_millionths, 0);
+        assert!(!cloned.require_evidence);
         assert_eq!(cfg.min_completeness_millionths, MILLION);
         assert!(cfg.require_evidence);
     }

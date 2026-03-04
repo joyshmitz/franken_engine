@@ -11,6 +11,7 @@
 //!   5. adversarial-noise-under-load — budget exhaustion injection during sustained load
 
 use std::collections::BTreeMap;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -20,6 +21,7 @@ use crate::extension_lifecycle_manager::{
     CancellationConfig, ExtensionLifecycleManager, ExtensionState, LifecycleTransition,
     ResourceBudget,
 };
+use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -27,7 +29,12 @@ use crate::extension_lifecycle_manager::{
 
 pub const BENCHMARK_E2E_COMPONENT: &str = "benchmark_e2e";
 pub const BENCHMARK_E2E_SCHEMA_VERSION: &str = "franken-engine.benchmark-e2e.v1";
+pub const BENCHMARK_ENV_SCHEMA_VERSION: &str = "franken-engine.benchmark-env-manifest.v1";
 pub const MIN_START_BUDGET_MILLIONTHS: u64 = 1_000;
+
+const MIN_WARMUP_RUNS: u32 = 1;
+const MIN_SAMPLE_COUNT: u32 = 3;
+const MIN_CASE_TIMEOUT_MS: u64 = 1;
 
 // ---------------------------------------------------------------------------
 // Scale profiles
@@ -784,6 +791,114 @@ pub fn run_benchmark(
 // Suite runner
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BenchmarkRuntimePins {
+    pub franken_engine: String,
+    pub node_lts: String,
+    pub bun_stable: String,
+}
+
+impl Default for BenchmarkRuntimePins {
+    fn default() -> Self {
+        Self {
+            franken_engine: format!("franken-engine-{}", env!("CARGO_PKG_VERSION")),
+            node_lts: "22.13.1".to_string(),
+            bun_stable: "1.1.43".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BenchmarkFairnessPolicy {
+    pub warmup_runs: u32,
+    pub sample_count: u32,
+    pub case_timeout_ms: u64,
+}
+
+impl Default for BenchmarkFairnessPolicy {
+    fn default() -> Self {
+        Self {
+            warmup_runs: 2,
+            sample_count: 7,
+            case_timeout_ms: 30_000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct BenchmarkHarnessContract {
+    pub runtime_pins: BenchmarkRuntimePins,
+    pub fairness_policy: BenchmarkFairnessPolicy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BenchmarkHarnessContractError {
+    EmptyRuntimePin { runtime: &'static str },
+    InvalidWarmupRuns { min: u32, actual: u32 },
+    InvalidSampleCount { min: u32, actual: u32 },
+    InvalidCaseTimeoutMs { min: u64, actual: u64 },
+}
+
+impl std::fmt::Display for BenchmarkHarnessContractError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyRuntimePin { runtime } => {
+                write!(f, "runtime pin for `{runtime}` must be non-empty")
+            }
+            Self::InvalidWarmupRuns { min, actual } => {
+                write!(f, "warmup_runs must be >= {min}, got {actual}")
+            }
+            Self::InvalidSampleCount { min, actual } => {
+                write!(f, "sample_count must be >= {min}, got {actual}")
+            }
+            Self::InvalidCaseTimeoutMs { min, actual } => {
+                write!(f, "case_timeout_ms must be >= {min}, got {actual}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for BenchmarkHarnessContractError {}
+
+pub fn validate_harness_contract(
+    contract: &BenchmarkHarnessContract,
+) -> Result<(), BenchmarkHarnessContractError> {
+    if contract.runtime_pins.franken_engine.trim().is_empty() {
+        return Err(BenchmarkHarnessContractError::EmptyRuntimePin {
+            runtime: "franken_engine",
+        });
+    }
+    if contract.runtime_pins.node_lts.trim().is_empty() {
+        return Err(BenchmarkHarnessContractError::EmptyRuntimePin {
+            runtime: "node_lts",
+        });
+    }
+    if contract.runtime_pins.bun_stable.trim().is_empty() {
+        return Err(BenchmarkHarnessContractError::EmptyRuntimePin {
+            runtime: "bun_stable",
+        });
+    }
+    if contract.fairness_policy.warmup_runs < MIN_WARMUP_RUNS {
+        return Err(BenchmarkHarnessContractError::InvalidWarmupRuns {
+            min: MIN_WARMUP_RUNS,
+            actual: contract.fairness_policy.warmup_runs,
+        });
+    }
+    if contract.fairness_policy.sample_count < MIN_SAMPLE_COUNT {
+        return Err(BenchmarkHarnessContractError::InvalidSampleCount {
+            min: MIN_SAMPLE_COUNT,
+            actual: contract.fairness_policy.sample_count,
+        });
+    }
+    if contract.fairness_policy.case_timeout_ms < MIN_CASE_TIMEOUT_MS {
+        return Err(BenchmarkHarnessContractError::InvalidCaseTimeoutMs {
+            min: MIN_CASE_TIMEOUT_MS,
+            actual: contract.fairness_policy.case_timeout_ms,
+        });
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct BenchmarkSuiteConfig {
     pub seed: u64,
@@ -952,7 +1067,48 @@ pub fn measurements_to_cases(
 pub struct BenchmarkEvidenceArtifacts {
     pub run_manifest_path: PathBuf,
     pub evidence_path: PathBuf,
+    pub events_path: PathBuf,
+    pub commands_path: PathBuf,
+    pub benchmark_env_manifest_path: PathBuf,
+    pub raw_results_archive_path: PathBuf,
     pub summary_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BenchmarkEnvironmentManifest {
+    pub schema_version: String,
+    pub run_id: String,
+    pub run_date: String,
+    pub seed: u64,
+    pub locale: String,
+    pub timezone: String,
+    pub os: String,
+    pub arch: String,
+    pub runtime_pins: BenchmarkRuntimePins,
+    pub fairness_policy: BenchmarkFairnessPolicy,
+}
+
+fn build_environment_manifest(
+    result: &BenchmarkSuiteResult,
+    contract: &BenchmarkHarnessContract,
+) -> BenchmarkEnvironmentManifest {
+    let locale = env::var("LC_ALL")
+        .or_else(|_| env::var("LANG"))
+        .unwrap_or_else(|_| "C".to_string());
+    let timezone = env::var("TZ").unwrap_or_else(|_| "UTC".to_string());
+
+    BenchmarkEnvironmentManifest {
+        schema_version: BENCHMARK_ENV_SCHEMA_VERSION.to_string(),
+        run_id: result.config.run_id.clone(),
+        run_date: result.config.run_date.clone(),
+        seed: result.config.seed,
+        locale,
+        timezone,
+        os: env::consts::OS.to_string(),
+        arch: env::consts::ARCH.to_string(),
+        runtime_pins: contract.runtime_pins.clone(),
+        fairness_policy: contract.fairness_policy,
+    }
 }
 
 /// Write evidence artifacts to the given directory.
@@ -961,6 +1117,87 @@ pub fn write_evidence_artifacts(
     output_dir: &Path,
 ) -> std::io::Result<BenchmarkEvidenceArtifacts> {
     fs::create_dir_all(output_dir)?;
+
+    let contract = BenchmarkHarnessContract::default();
+    validate_harness_contract(&contract).map_err(|error| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, error.to_string())
+    })?;
+
+    let commands_path = output_dir.join("commands.txt");
+    let events_path = output_dir.join("events.jsonl");
+    let env_manifest_path = output_dir.join("benchmark_env_manifest.json");
+    let raw_results_archive_path = output_dir.join("raw_results_archive.json");
+
+    let commands = [
+        "cargo test -p frankenengine-engine --test benchmark_e2e --test benchmark_e2e_integration",
+        "cargo run -p frankenengine-engine --bin franken_lockstep_runner -- --preflight-only",
+        "scripts/run_benchmark_e2e_suite.sh report",
+    ];
+    fs::write(&commands_path, commands.join("\n") + "\n")?;
+
+    let env_manifest = build_environment_manifest(result, &contract);
+    fs::write(
+        &env_manifest_path,
+        serde_json::to_string_pretty(&env_manifest).unwrap(),
+    )?;
+
+    let raw_results = serde_json::json!({
+        "schema_version": "franken-engine.benchmark-e2e.raw-results.v1",
+        "run_id": result.config.run_id,
+        "run_date": result.config.run_date,
+        "seed": result.config.seed,
+        "families": result.config.families.iter().map(|f| f.as_str()).collect::<Vec<_>>(),
+        "profiles": result.config.profiles.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
+        "measurements": result.measurements.iter().map(|m| {
+            serde_json::json!({
+                "family": m.family.as_str(),
+                "profile": m.profile.as_str(),
+                "throughput_ops_per_sec": m.throughput_ops_per_sec,
+                "latency": {
+                    "p50_us": m.latency.p50_us,
+                    "p95_us": m.latency.p95_us,
+                    "p99_us": m.latency.p99_us,
+                    "min_us": m.latency.min_us,
+                    "max_us": m.latency.max_us,
+                    "sample_count": m.latency.sample_count,
+                },
+                "total_operations": m.total_operations,
+                "duration_us": m.duration_us,
+                "correctness_digest": m.correctness_digest,
+                "invariant_violations": m.invariant_violations,
+                "security_events": m.security_events,
+                "peak_extensions_alive": m.peak_extensions_alive,
+            })
+        }).collect::<Vec<_>>(),
+        "regressions": result.regressions.iter().map(|r| {
+            serde_json::json!({
+                "family": r.family.as_str(),
+                "profile": r.profile.as_str(),
+                "throughput_delta_pct": r.throughput_delta_pct,
+                "p95_delta_pct": r.p95_delta_pct,
+                "p99_delta_pct": r.p99_delta_pct,
+                "blocked": r.blocked,
+                "blockers": r.blockers,
+            })
+        }).collect::<Vec<_>>(),
+        "events": result.events.iter().map(|evt| {
+            serde_json::json!({
+                "trace_id": evt.trace_id,
+                "decision_id": evt.decision_id,
+                "policy_id": evt.policy_id,
+                "component": evt.component,
+                "event": evt.event,
+                "outcome": evt.outcome,
+                "error_code": evt.error_code,
+                "family": evt.family,
+                "profile": evt.profile,
+            })
+        }).collect::<Vec<_>>(),
+    });
+    fs::write(
+        &raw_results_archive_path,
+        serde_json::to_string_pretty(&raw_results).unwrap(),
+    )?;
 
     // Run manifest
     let manifest_path = output_dir.join("run_manifest.json");
@@ -975,6 +1212,17 @@ pub fn write_evidence_artifacts(
         "total_duration_us": result.total_duration_us,
         "blocked": result.blocked,
         "invariant_violations": result.invariant_violations,
+        "runtime_pins": contract.runtime_pins,
+        "fairness_policy": contract.fairness_policy,
+        "artifacts": {
+            "manifest": manifest_path,
+            "benchmark_evidence": output_dir.join("benchmark_evidence.jsonl"),
+            "events": events_path,
+            "commands": commands_path,
+            "benchmark_env_manifest": env_manifest_path,
+            "raw_results_archive": raw_results_archive_path,
+            "summary": output_dir.join("benchmark_summary.json"),
+        },
     });
     fs::write(
         &manifest_path,
@@ -1017,17 +1265,37 @@ pub fn write_evidence_artifacts(
     }
     for evt in &result.events {
         let entry = serde_json::json!({
+            "trace_id": evt.trace_id,
+            "decision_id": evt.decision_id,
+            "policy_id": evt.policy_id,
             "event": evt.event,
             "component": evt.component,
             "outcome": evt.outcome,
+            "error_code": evt.error_code,
             "family": evt.family,
             "profile": evt.profile,
-            "trace_id": evt.trace_id,
-            "decision_id": evt.decision_id,
         });
         evidence_lines.push(serde_json::to_string(&entry).unwrap());
     }
     fs::write(&evidence_path, evidence_lines.join("\n") + "\n")?;
+
+    let event_lines = result
+        .events
+        .iter()
+        .map(|evt| {
+            serde_json::json!({
+                "trace_id": evt.trace_id,
+                "decision_id": evt.decision_id,
+                "policy_id": evt.policy_id,
+                "component": evt.component,
+                "event": evt.event,
+                "outcome": evt.outcome,
+                "error_code": evt.error_code,
+            })
+        })
+        .map(|entry| serde_json::to_string(&entry).unwrap())
+        .collect::<Vec<_>>();
+    fs::write(&events_path, event_lines.join("\n") + "\n")?;
 
     // Summary
     let summary_path = output_dir.join("benchmark_summary.json");
@@ -1069,6 +1337,10 @@ pub fn write_evidence_artifacts(
     Ok(BenchmarkEvidenceArtifacts {
         run_manifest_path: manifest_path,
         evidence_path,
+        events_path,
+        commands_path,
+        benchmark_env_manifest_path: env_manifest_path,
+        raw_results_archive_path,
         summary_path,
     })
 }
@@ -1687,6 +1959,55 @@ mod tests {
         assert_eq!(result.regressions.len(), 1);
     }
 
+    #[test]
+    fn harness_contract_default_is_valid() {
+        let contract = BenchmarkHarnessContract::default();
+        validate_harness_contract(&contract).expect("default harness contract should be valid");
+    }
+
+    #[test]
+    fn harness_contract_rejects_empty_runtime_pin() {
+        let mut contract = BenchmarkHarnessContract::default();
+        contract.runtime_pins.node_lts = "   ".to_string();
+        let error = validate_harness_contract(&contract).expect_err("empty runtime pin must fail");
+        assert!(matches!(
+            error,
+            BenchmarkHarnessContractError::EmptyRuntimePin {
+                runtime: "node_lts"
+            }
+        ));
+    }
+
+    #[test]
+    fn harness_contract_rejects_invalid_fairness_guardrails() {
+        let mut contract = BenchmarkHarnessContract::default();
+        contract.fairness_policy.warmup_runs = 0;
+        let warmup_error =
+            validate_harness_contract(&contract).expect_err("warmup guardrail must fail");
+        assert!(matches!(
+            warmup_error,
+            BenchmarkHarnessContractError::InvalidWarmupRuns { .. }
+        ));
+
+        contract.fairness_policy.warmup_runs = MIN_WARMUP_RUNS;
+        contract.fairness_policy.sample_count = 0;
+        let sample_error =
+            validate_harness_contract(&contract).expect_err("sample count guardrail must fail");
+        assert!(matches!(
+            sample_error,
+            BenchmarkHarnessContractError::InvalidSampleCount { .. }
+        ));
+
+        contract.fairness_policy.sample_count = MIN_SAMPLE_COUNT;
+        contract.fairness_policy.case_timeout_ms = 0;
+        let timeout_error =
+            validate_harness_contract(&contract).expect_err("timeout guardrail must fail");
+        assert!(matches!(
+            timeout_error,
+            BenchmarkHarnessContractError::InvalidCaseTimeoutMs { .. }
+        ));
+    }
+
     // ── write_evidence_artifacts ─────────────────────────────────────
     #[test]
     fn write_evidence_artifacts_creates_files() {
@@ -1704,6 +2025,10 @@ mod tests {
         let artifacts = write_evidence_artifacts(&result, &dir).unwrap();
         assert!(artifacts.run_manifest_path.exists());
         assert!(artifacts.evidence_path.exists());
+        assert!(artifacts.events_path.exists());
+        assert!(artifacts.commands_path.exists());
+        assert!(artifacts.benchmark_env_manifest_path.exists());
+        assert!(artifacts.raw_results_archive_path.exists());
         assert!(artifacts.summary_path.exists());
 
         // Verify manifest is valid JSON
@@ -1724,11 +2049,56 @@ mod tests {
             let _: serde_json::Value = serde_json::from_str(line).unwrap();
         }
 
+        // Verify benchmark env manifest
+        let env_manifest: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&artifacts.benchmark_env_manifest_path).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(env_manifest["schema_version"], BENCHMARK_ENV_SCHEMA_VERSION);
+        assert_eq!(
+            env_manifest["runtime_pins"]["franken_engine"]
+                .as_str()
+                .unwrap()
+                .starts_with("franken-engine-"),
+            true
+        );
+        assert_eq!(env_manifest["fairness_policy"]["warmup_runs"], 2);
+        assert_eq!(env_manifest["fairness_policy"]["sample_count"], 7);
+        assert_eq!(env_manifest["fairness_policy"]["case_timeout_ms"], 30_000);
+
+        // Verify raw archive has full measurement payload
+        let raw_archive: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&artifacts.raw_results_archive_path).unwrap())
+                .unwrap();
+        assert_eq!(
+            raw_archive["schema_version"],
+            "franken-engine.benchmark-e2e.raw-results.v1"
+        );
+        assert!(
+            raw_archive["measurements"]
+                .as_array()
+                .is_some_and(|entries| !entries.is_empty())
+        );
+
         // Verify summary is valid JSON
         let summary: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&artifacts.summary_path).unwrap()).unwrap();
         assert_eq!(summary["schema_version"], BENCHMARK_E2E_SCHEMA_VERSION);
         assert_eq!(summary["run_id"], "test-evidence");
+
+        // Verify structured events and command transcript were emitted
+        let events = fs::read_to_string(&artifacts.events_path).unwrap();
+        assert!(
+            events.lines().all(|line| {
+                serde_json::from_str::<serde_json::Value>(line)
+                    .ok()
+                    .and_then(|value| value.get("trace_id").cloned())
+                    .is_some()
+            }),
+            "all events must be valid structured JSON with trace_id"
+        );
+        let commands = fs::read_to_string(&artifacts.commands_path).unwrap();
+        assert!(commands.contains("scripts/run_benchmark_e2e_suite.sh report"));
 
         let _ = fs::remove_dir_all(&dir);
     }

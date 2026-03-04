@@ -1944,9 +1944,15 @@ mod tests {
 
     #[test]
     fn enrichment_failure_code_debug_format() {
-        let dbg = format!("{:?}", PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing);
+        let dbg = format!(
+            "{:?}",
+            PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing
+        );
         assert_eq!(dbg, "EscrowReplayEvidenceMissing");
-        let dbg2 = format!("{:?}", PlasReleaseGateFailureCode::RevocationEscrowEventMissing);
+        let dbg2 = format!(
+            "{:?}",
+            PlasReleaseGateFailureCode::RevocationEscrowEventMissing
+        );
         assert_eq!(dbg2, "RevocationEscrowEventMissing");
     }
 
@@ -1965,7 +1971,10 @@ mod tests {
             format!("{original}"),
             "invalid PLAS release gate input: original"
         );
-        assert_eq!(format!("{cloned}"), "invalid PLAS release gate input: mutated");
+        assert_eq!(
+            format!("{cloned}"),
+            "invalid PLAS release gate input: mutated"
+        );
     }
 
     #[test]

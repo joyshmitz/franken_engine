@@ -1639,6 +1639,7 @@ mod tests {
         let mut cloned = stats.clone();
         cloned.p50_ns = 999_999;
         assert_ne!(stats.p50_ns, 999_999);
+        assert_eq!(cloned.p50_ns, 999_999);
     }
 
     #[test]
@@ -1654,6 +1655,7 @@ mod tests {
         let mut cloned = snap.clone();
         cloned.heap_bytes = 0;
         assert_eq!(snap.heap_bytes, 1024);
+        assert_eq!(cloned.heap_bytes, 0);
     }
 
     #[test]

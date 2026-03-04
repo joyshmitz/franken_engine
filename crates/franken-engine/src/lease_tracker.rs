@@ -1633,7 +1633,11 @@ mod tests {
         use std::collections::BTreeSet;
         let ids: BTreeSet<LeaseId> = (0..5).rev().map(LeaseId::from_raw).collect();
         let ordered: Vec<u64> = ids.iter().map(|id| id.as_u64()).collect();
-        assert_eq!(ordered, vec![0, 1, 2, 3, 4], "LeaseId Ord must sort by raw u64");
+        assert_eq!(
+            ordered,
+            vec![0, 1, 2, 3, 4],
+            "LeaseId Ord must sort by raw u64"
+        );
     }
 
     #[test]
@@ -1714,8 +1718,15 @@ mod tests {
         };
         let json = serde_json::to_string(&lease).unwrap();
         for field in [
-            "lease_id", "holder", "lease_type", "granted_at",
-            "expires_at", "ttl", "epoch", "renewal_count", "status",
+            "lease_id",
+            "holder",
+            "lease_type",
+            "granted_at",
+            "expires_at",
+            "ttl",
+            "epoch",
+            "renewal_count",
+            "status",
         ] {
             assert!(json.contains(field), "JSON must contain field '{field}'");
         }
@@ -1736,10 +1747,20 @@ mod tests {
         };
         let json = serde_json::to_string(&event).unwrap();
         for field in [
-            "lease_id", "holder", "epoch_id", "ttl", "status",
-            "escalation_action", "trace_id", "event", "renewal_count",
+            "lease_id",
+            "holder",
+            "epoch_id",
+            "ttl",
+            "status",
+            "escalation_action",
+            "trace_id",
+            "event",
+            "renewal_count",
         ] {
-            assert!(json.contains(field), "LeaseEvent JSON must contain field '{field}'");
+            assert!(
+                json.contains(field),
+                "LeaseEvent JSON must contain field '{field}'"
+            );
         }
     }
 
@@ -1777,15 +1798,24 @@ mod tests {
     #[test]
     fn enrichment_escalation_action_display_exact_format() {
         assert_eq!(
-            EscalationAction::MarkEndpointUnreachable { holder: "n1".to_string() }.to_string(),
+            EscalationAction::MarkEndpointUnreachable {
+                holder: "n1".to_string()
+            }
+            .to_string(),
             "mark_endpoint_unreachable(n1)"
         );
         assert_eq!(
-            EscalationAction::CancelOperation { holder: "op".to_string() }.to_string(),
+            EscalationAction::CancelOperation {
+                holder: "op".to_string()
+            }
+            .to_string(),
             "cancel_operation(op)"
         );
         assert_eq!(
-            EscalationAction::TerminateSession { holder: "s".to_string() }.to_string(),
+            EscalationAction::TerminateSession {
+                holder: "s".to_string()
+            }
+            .to_string(),
             "terminate_session(s)"
         );
     }
@@ -1797,7 +1827,11 @@ mod tests {
             "lease 42 not found"
         );
         assert_eq!(
-            LeaseError::LeaseExpired { lease_id: 5, expired_at: 300 }.to_string(),
+            LeaseError::LeaseExpired {
+                lease_id: 5,
+                expired_at: 300
+            }
+            .to_string(),
             "lease 5 expired at tick 300"
         );
         assert_eq!(
@@ -1805,7 +1839,10 @@ mod tests {
             "lease 9 already released"
         );
         assert_eq!(LeaseError::ZeroTtl.to_string(), "TTL must be non-zero");
-        assert_eq!(LeaseError::EmptyHolder.to_string(), "holder must be non-empty");
+        assert_eq!(
+            LeaseError::EmptyHolder.to_string(),
+            "holder must be non-empty"
+        );
     }
 
     #[test]
@@ -1819,7 +1856,10 @@ mod tests {
         store.drain_events();
         // Scan well past the original expiration.
         let actions = store.scan_expired(500, "trace-scan");
-        assert!(actions.is_empty(), "released leases must not trigger escalation");
+        assert!(
+            actions.is_empty(),
+            "released leases must not trigger escalation"
+        );
     }
 
     #[test]
@@ -1903,7 +1943,13 @@ mod tests {
             .unwrap();
         // Renew at exactly expires_at (100) should fail — the lease is expired.
         let err = store.renew(&id, 100, "t-renew").unwrap_err();
-        assert!(matches!(err, LeaseError::LeaseExpired { lease_id: 1, expired_at: 100 }));
+        assert!(matches!(
+            err,
+            LeaseError::LeaseExpired {
+                lease_id: 1,
+                expired_at: 100
+            }
+        ));
         // Status should now be Expired.
         let lease = store.get(&id).unwrap();
         assert_eq!(lease.status, LeaseStatus::Expired);
@@ -1918,9 +1964,7 @@ mod tests {
         store
             .grant("b", LeaseType::Operation, 1000, 0, "t")
             .unwrap();
-        store
-            .grant("c", LeaseType::Session, 1000, 0, "t")
-            .unwrap();
+        store.grant("c", LeaseType::Session, 1000, 0, "t").unwrap();
         store.advance_epoch(SecurityEpoch::from_raw(2), "t-adv");
         assert_eq!(
             store.event_counts().get("epoch_invalidation"),

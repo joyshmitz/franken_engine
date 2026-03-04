@@ -3194,7 +3194,7 @@ impl CapabilityEscrowGateway {
             replay_seed,
             context.decision_id,
             context.policy_id,
-            trace_ref.to_string(),
+            context.policy_id.to_string(),
             contract_chain,
             conditions,
             outcome,
@@ -4425,6 +4425,8 @@ const GUARDPLANE_SANDBOX_THRESHOLD_MICROS: u64 = 400_000;
 const GUARDPLANE_SUSPEND_THRESHOLD_MICROS: u64 = 550_000;
 const GUARDPLANE_TERMINATE_THRESHOLD_MICROS: u64 = 700_000;
 const GUARDPLANE_QUARANTINE_THRESHOLD_MICROS: u64 = 850_000;
+const GUARDPLANE_DECISION_LOG_SCHEMA_VERSION: &str = "franken-engine.guardplane-decision-log.v1";
+const CONTAINMENT_WORKFLOW_LOG_SCHEMA_VERSION: &str = "franken-engine.containment-workflow-log.v1";
 
 impl Default for DelegateCellPolicy {
     fn default() -> Self {
@@ -4493,10 +4495,14 @@ impl fmt::Display for GuardplanePolicyAction {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GuardplaneDecisionLogEntry {
+    pub schema_version: String,
     pub trace_id: String,
     pub decision_id: String,
     pub policy_id: String,
     pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
     pub source_event: String,
     pub delegate_id: String,
     pub timestamp_ns: u64,
@@ -4509,10 +4515,14 @@ pub struct GuardplaneDecisionLogEntry {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContainmentWorkflowLogEntry {
+    pub schema_version: String,
     pub trace_id: String,
     pub decision_id: String,
     pub policy_id: String,
     pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: Option<String>,
     pub source_event: String,
     pub delegate_id: String,
     pub timestamp_ns: u64,
@@ -5385,10 +5395,14 @@ impl DelegateCell {
         );
         self.guardplane_decision_log
             .push(GuardplaneDecisionLogEntry {
+                schema_version: GUARDPLANE_DECISION_LOG_SCHEMA_VERSION.to_string(),
                 trace_id: flow_context.trace_id.to_string(),
                 decision_id: flow_context.decision_id.to_string(),
                 policy_id: flow_context.policy_id.to_string(),
                 component: DELEGATE_COMPONENT.to_string(),
+                event: "delegate_guardplane_action".to_string(),
+                outcome: action.as_str().to_string(),
+                error_code: None,
                 source_event: source_event.to_string(),
                 delegate_id: self.delegate_id.clone(),
                 timestamp_ns,
@@ -5496,10 +5510,14 @@ impl DelegateCell {
         });
         self.containment_workflow_log
             .push(ContainmentWorkflowLogEntry {
+                schema_version: CONTAINMENT_WORKFLOW_LOG_SCHEMA_VERSION.to_string(),
                 trace_id: flow_context.trace_id.to_string(),
                 decision_id: flow_context.decision_id.to_string(),
                 policy_id: flow_context.policy_id.to_string(),
                 component: DELEGATE_COMPONENT.to_string(),
+                event: event_name.to_string(),
+                outcome: "ok".to_string(),
+                error_code: None,
                 source_event: source_event.to_string(),
                 delegate_id: self.delegate_id.clone(),
                 timestamp_ns,
@@ -7228,6 +7246,13 @@ mod delegate_cell_tests {
                 decision.posterior_micros,
                 310_000 + (index as u64 * 110_000)
             );
+            assert_eq!(
+                decision.schema_version,
+                GUARDPLANE_DECISION_LOG_SCHEMA_VERSION
+            );
+            assert_eq!(decision.event, "delegate_guardplane_action");
+            assert_eq!(decision.outcome, expected_action.as_str());
+            assert!(decision.error_code.is_none());
         }
 
         assert_eq!(delegate.state(), ExtensionState::Quarantined);
@@ -7263,6 +7288,12 @@ mod delegate_cell_tests {
             .containment_workflow_log()
             .last()
             .expect("quarantine containment record");
+        assert_eq!(
+            last_containment.schema_version,
+            CONTAINMENT_WORKFLOW_LOG_SCHEMA_VERSION
+        );
+        assert_eq!(last_containment.outcome, "ok");
+        assert!(last_containment.error_code.is_none());
         assert!(last_containment.mesh_targets.is_empty());
         assert!(!last_containment.mesh_propagated);
     }
@@ -7328,6 +7359,16 @@ mod delegate_cell_tests {
             Some(LifecycleTransition::Quarantine)
         );
         assert_eq!(quarantine_record.source_event, "delegate_declassification");
+        assert_eq!(
+            quarantine_record.schema_version,
+            CONTAINMENT_WORKFLOW_LOG_SCHEMA_VERSION
+        );
+        assert_eq!(
+            quarantine_record.event,
+            "delegate_quarantine_mesh_propagated"
+        );
+        assert_eq!(quarantine_record.outcome, "ok");
+        assert!(quarantine_record.error_code.is_none());
         assert!(delegate
             .events()
             .iter()
@@ -7384,10 +7425,131 @@ mod delegate_cell_tests {
             .last()
             .expect("guardplane decision");
         assert_eq!(decision.action, GuardplanePolicyAction::Sandbox);
+        assert_eq!(
+            decision.schema_version,
+            GUARDPLANE_DECISION_LOG_SCHEMA_VERSION
+        );
+        assert_eq!(decision.event, "delegate_guardplane_action");
+        assert_eq!(decision.outcome, "sandbox");
+        assert!(decision.error_code.is_none());
         assert!(decision.safe_mode_fallback);
         assert_eq!(decision.lifecycle_transition, None);
         assert_eq!(decision.resulting_state, ExtensionState::Running);
         assert_eq!(decision.source_event, "delegate_hostcall");
+    }
+
+    #[test]
+    fn guardplane_policy_action_logs_can_emit_jsonl_artifacts() {
+        let factory = DelegateCellFactory::default();
+        let mut delegate = factory
+            .create_delegate_cell(
+                "delegate-artifacts",
+                delegate_manifest(&[Capability::FsRead, Capability::NetClient], 1_000_000),
+                ResourceBudget::new(1_000_000_000, 64 * 1024 * 1024, 100),
+                BudgetExhaustionPolicy::Suspend,
+                900,
+                &lifecycle_context(),
+            )
+            .expect("delegate created");
+        delegate.set_quarantine_mesh_peers(["peer-z", "peer-a", "peer-m"]);
+
+        for index in 0..6 {
+            let outcome = delegate
+                .request_declassification(
+                    DeclassificationRequest {
+                        request_id: format!("delegate-artifacts-denied-{index}"),
+                        requester: "delegate-artifacts".to_string(),
+                        data_ref: DataRef::new("memory", "token"),
+                        current_label: FlowLabel::new(
+                            SecrecyLevel::Secret,
+                            IntegrityLevel::Validated,
+                        ),
+                        target_label: FlowLabel::new(
+                            SecrecyLevel::Internal,
+                            IntegrityLevel::Validated,
+                        ),
+                        purpose: DeclassificationPurpose::DiagnosticExport,
+                        justification: "expected denial".to_string(),
+                        timestamp_ns: 901 + index as u64,
+                    },
+                    &flow_context(),
+                    &lifecycle_context(),
+                )
+                .expect("declassification outcome");
+            assert!(matches!(
+                outcome,
+                DeclassificationOutcome::Denied {
+                    reason: DeclassificationDenialReason::MissingCapability { .. },
+                    ..
+                }
+            ));
+        }
+
+        assert_eq!(delegate.state(), ExtensionState::Quarantined);
+        assert!(!delegate.guardplane_decision_log().is_empty());
+        assert!(!delegate.containment_workflow_log().is_empty());
+
+        let replay_command = std::env::var("FE_GUARDPLANE_REPLAY_COMMAND")
+            .unwrap_or_else(|_| "./scripts/run_guardplane_policy_actions_suite.sh ci".to_string());
+
+        let mut guardplane_lines = Vec::new();
+        for entry in delegate.guardplane_decision_log() {
+            let mut value = serde_json::to_value(entry).expect("serialize guardplane entry");
+            value
+                .as_object_mut()
+                .expect("guardplane entry object")
+                .insert(
+                    "replay_command".to_string(),
+                    serde_json::Value::String(replay_command.clone()),
+                );
+            guardplane_lines
+                .push(serde_json::to_string(&value).expect("encode guardplane json line"));
+        }
+
+        let mut containment_lines = Vec::new();
+        for entry in delegate.containment_workflow_log() {
+            let mut value = serde_json::to_value(entry).expect("serialize containment entry");
+            value
+                .as_object_mut()
+                .expect("containment entry object")
+                .insert(
+                    "replay_command".to_string(),
+                    serde_json::Value::String(replay_command.clone()),
+                );
+            containment_lines
+                .push(serde_json::to_string(&value).expect("encode containment json line"));
+        }
+
+        if std::env::var_os("FE_GUARDPLANE_EMIT_STDOUT_MARKERS").is_some() {
+            println!("__FE_GUARDPLANE_DECISION_LOG_BEGIN__");
+            for line in &guardplane_lines {
+                println!("{line}");
+            }
+            println!("__FE_GUARDPLANE_DECISION_LOG_END__");
+            println!("__FE_CONTAINMENT_WORKFLOW_LOG_BEGIN__");
+            for line in &containment_lines {
+                println!("{line}");
+            }
+            println!("__FE_CONTAINMENT_WORKFLOW_LOG_END__");
+        }
+
+        if let Ok(path) = std::env::var("FE_GUARDPLANE_DECISION_LOG_PATH") {
+            let path = std::path::PathBuf::from(path);
+            if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent).expect("create guardplane decision log parent");
+            }
+            std::fs::write(&path, guardplane_lines.join("\n") + "\n")
+                .expect("write guardplane decision log");
+        }
+
+        if let Ok(path) = std::env::var("FE_CONTAINMENT_WORKFLOW_LOG_PATH") {
+            let path = std::path::PathBuf::from(path);
+            if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent).expect("create containment workflow log parent");
+            }
+            std::fs::write(&path, containment_lines.join("\n") + "\n")
+                .expect("write containment workflow log");
+        }
     }
 }
 

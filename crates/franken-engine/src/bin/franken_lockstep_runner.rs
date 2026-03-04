@@ -630,12 +630,98 @@ fn command_exists(command: &str) -> bool {
         || command.contains('/')
         || command.contains('\\')
     {
-        return command_path.is_file();
+        return command_path.is_file()
+            || candidate_paths_with_suffixes(command_path)
+                .iter()
+                .any(|path| path.is_file());
     }
 
+    let command_candidates = command_name_candidates(command);
     std::env::var_os("PATH").is_some_and(|path_value| {
-        std::env::split_paths(&path_value).any(|entry| entry.join(command).is_file())
+        std::env::split_paths(&path_value).any(|entry| {
+            command_candidates
+                .iter()
+                .any(|candidate| entry.join(candidate).is_file())
+        })
     })
+}
+
+fn command_name_candidates(command: &str) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut candidates = Vec::new();
+    let command_lower = command.to_ascii_lowercase();
+
+    if seen.insert(command_lower.clone()) {
+        candidates.push(command.to_string());
+    }
+
+    for suffix in executable_suffixes() {
+        let suffix_lower = suffix.to_ascii_lowercase();
+        if suffix_lower.is_empty() || command_lower.ends_with(&suffix_lower) {
+            continue;
+        }
+        let candidate = format!("{command}{suffix}");
+        if seen.insert(candidate.to_ascii_lowercase()) {
+            candidates.push(candidate);
+        }
+    }
+
+    candidates
+}
+
+fn candidate_paths_with_suffixes(command_path: &Path) -> Vec<PathBuf> {
+    let mut seen = BTreeSet::new();
+    let mut candidates = Vec::new();
+    let command = command_path.as_os_str().to_string_lossy().to_string();
+    let command_lower = command.to_ascii_lowercase();
+
+    for suffix in executable_suffixes() {
+        let suffix_lower = suffix.to_ascii_lowercase();
+        if suffix_lower.is_empty() || command_lower.ends_with(&suffix_lower) {
+            continue;
+        }
+        let candidate = PathBuf::from(format!("{command}{suffix}"));
+        if seen.insert(candidate.as_os_str().to_string_lossy().to_ascii_lowercase()) {
+            candidates.push(candidate);
+        }
+    }
+
+    candidates
+}
+
+fn executable_suffixes() -> Vec<String> {
+    if let Some(path_ext) = std::env::var_os("PATHEXT") {
+        let mut suffixes = Vec::new();
+        for value in path_ext.to_string_lossy().split(';') {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let normalized = if trimmed.starts_with('.') {
+                trimmed.to_string()
+            } else {
+                format!(".{trimmed}")
+            };
+            if !suffixes
+                .iter()
+                .any(|existing: &String| existing.eq_ignore_ascii_case(&normalized))
+            {
+                suffixes.push(normalized);
+            }
+        }
+        return suffixes;
+    }
+
+    if cfg!(windows) {
+        return vec![
+            ".exe".to_string(),
+            ".cmd".to_string(),
+            ".bat".to_string(),
+            ".com".to_string(),
+        ];
+    }
+
+    Vec::new()
 }
 
 fn looks_like_script_path(value: &str) -> bool {

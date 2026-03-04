@@ -2029,7 +2029,11 @@ mod tests {
         set.insert(RegressionClass::Behavioral);
         set.insert(RegressionClass::Observability);
         set.insert(RegressionClass::Performance);
-        assert_eq!(set.len(), 4, "BTreeSet should deduplicate identical variants");
+        assert_eq!(
+            set.len(),
+            4,
+            "BTreeSet should deduplicate identical variants"
+        );
     }
 
     #[test]
@@ -2043,7 +2047,11 @@ mod tests {
         set.insert(FieldType::Array);
         set.insert(FieldType::Object);
         set.insert(FieldType::Null);
-        assert_eq!(set.len(), 6, "BTreeSet should deduplicate identical FieldType variants");
+        assert_eq!(
+            set.len(),
+            6,
+            "BTreeSet should deduplicate identical FieldType variants"
+        );
     }
 
     // ── enrichment: Display exact format ────────────────────────────────
@@ -2123,7 +2131,10 @@ mod tests {
         };
         let json = serde_json::json!({"optional_field": null});
         let violations = contract.verify(&json);
-        assert!(violations.is_empty(), "null field should not trigger type mismatch");
+        assert!(
+            violations.is_empty(),
+            "null field should not trigger type mismatch"
+        );
     }
 
     #[test]
@@ -2132,7 +2143,11 @@ mod tests {
         // Empty object => all 6 required fields missing
         let json = serde_json::json!({});
         let violations = contract.verify(&json);
-        assert_eq!(violations.len(), 6, "should report all 6 missing required fields");
+        assert_eq!(
+            violations.len(),
+            6,
+            "should report all 6 missing required fields"
+        );
         for v in &violations {
             assert_eq!(v.regression_class, RegressionClass::Breaking);
             assert!(v.detail.starts_with("missing required field"));
@@ -2151,7 +2166,10 @@ mod tests {
             "extra_field": "should not cause a violation"
         });
         let violations = contract.verify(&json);
-        assert!(violations.is_empty(), "extra fields should not cause violations");
+        assert!(
+            violations.is_empty(),
+            "extra fields should not cause violations"
+        );
     }
 
     // ── enrichment: verify_structured_log non-object ────────────────────
@@ -2160,7 +2178,10 @@ mod tests {
     fn enrichment_verify_structured_log_non_object_input() {
         let violations = verify_structured_log(&serde_json::json!(42), "test_boundary");
         assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].regression_class, RegressionClass::Observability);
+        assert_eq!(
+            violations[0].regression_class,
+            RegressionClass::Observability
+        );
         assert!(violations[0].detail.contains("must be a JSON object"));
     }
 
@@ -2180,7 +2201,10 @@ mod tests {
             }],
             boundaries_covered: BTreeSet::new(),
         };
-        assert!(!result.is_passing(), "should not be passing when violations exist");
+        assert!(
+            !result.is_passing(),
+            "should not be passing when violations exist"
+        );
     }
 
     // ── enrichment: FieldType negative matches ──────────────────────────
@@ -2197,10 +2221,7 @@ mod tests {
             (FieldType::Null, serde_json::json!("not null")),
         ];
         for (ft, val) in &pairs {
-            assert!(
-                !ft.matches(val),
-                "{ft} should not match {val}"
-            );
+            assert!(!ft.matches(val), "{ft} should not match {val}");
         }
     }
 
@@ -2218,7 +2239,10 @@ mod tests {
         b.reverse();
         a.sort();
         b.sort();
-        assert_eq!(a, b, "sort must be deterministic regardless of initial order");
+        assert_eq!(
+            a, b,
+            "sort must be deterministic regardless of initial order"
+        );
         assert_eq!(a[0], RegressionClass::Breaking);
         assert_eq!(a[3], RegressionClass::Performance);
     }
@@ -2261,10 +2285,22 @@ mod tests {
     #[test]
     fn enrichment_contract_builders_return_correct_boundary_names() {
         assert_eq!(frankentui_envelope_contract().boundary, "frankentui");
-        assert_eq!(frankensqlite_store_record_contract().boundary, "frankensqlite");
-        assert_eq!(fastapi_endpoint_response_contract().boundary, "fastapi_rust");
-        assert_eq!(frankensqlite_storage_event_contract().boundary, "frankensqlite");
-        assert_eq!(frankensqlite_migration_receipt_contract().boundary, "frankensqlite");
+        assert_eq!(
+            frankensqlite_store_record_contract().boundary,
+            "frankensqlite"
+        );
+        assert_eq!(
+            fastapi_endpoint_response_contract().boundary,
+            "fastapi_rust"
+        );
+        assert_eq!(
+            frankensqlite_storage_event_contract().boundary,
+            "frankensqlite"
+        );
+        assert_eq!(
+            frankensqlite_migration_receipt_contract().boundary,
+            "frankensqlite"
+        );
     }
 
     // ── enrichment: integration point inventory uniqueness ──────────────
@@ -2318,9 +2354,16 @@ mod tests {
             "revision": "bad_type"
         });
         let violations = contract.verify(&json);
-        assert!(violations.len() >= 2, "expect at least missing + type mismatch violations");
-        let has_missing = violations.iter().any(|v| v.detail.contains("missing required field"));
-        let has_type = violations.iter().any(|v| v.detail.contains("expected type"));
+        assert!(
+            violations.len() >= 2,
+            "expect at least missing + type mismatch violations"
+        );
+        let has_missing = violations
+            .iter()
+            .any(|v| v.detail.contains("missing required field"));
+        let has_type = violations
+            .iter()
+            .any(|v| v.detail.contains("expected type"));
         assert!(has_missing, "should report missing field");
         assert!(has_type, "should report type mismatch");
     }

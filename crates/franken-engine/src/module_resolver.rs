@@ -288,6 +288,392 @@ pub struct ResolutionOutcome {
     pub event: ResolutionEvent,
 }
 
+pub type HostApiAuthorizationResult<T> = Result<T, Box<HostApiAuthorizationError>>;
+
+const HOST_API_COMPONENT: &str = "host_api_surface";
+const HOST_API_EVENT: &str = "host_api_authorization";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostApiErrorCode {
+    UnsupportedModule,
+    UnsupportedOperation,
+    PolicyDenied,
+}
+
+impl HostApiErrorCode {
+    pub fn stable_code(self) -> &'static str {
+        match self {
+            Self::UnsupportedModule => "FE-HOSTAPI-0001",
+            Self::UnsupportedOperation => "FE-HOSTAPI-0002",
+            Self::PolicyDenied => "FE-HOSTAPI-0003",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostApiRequest {
+    pub module_specifier: String,
+    pub operation: String,
+}
+
+impl HostApiRequest {
+    pub fn new(module_specifier: impl Into<String>, operation: impl Into<String>) -> Self {
+        Self {
+            module_specifier: module_specifier.into(),
+            operation: operation.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostApiPermissionDescriptor {
+    pub descriptor_id: String,
+    pub module_specifier: String,
+    pub operation: String,
+    pub required_capabilities: BTreeSet<RuntimeCapability>,
+    pub remediation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostApiDecisionEvent {
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub event: String,
+    pub outcome: String,
+    pub error_code: String,
+    pub decision_stable_id: String,
+    pub descriptor_id: Option<String>,
+    pub module_specifier: String,
+    pub operation: String,
+    pub required_capabilities: BTreeSet<RuntimeCapability>,
+    pub remediation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostApiAuthorizationOutcome {
+    pub descriptor: HostApiPermissionDescriptor,
+    pub event: HostApiDecisionEvent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostApiAuthorizationError {
+    pub code: HostApiErrorCode,
+    pub message: String,
+    pub event: HostApiDecisionEvent,
+}
+
+impl HostApiAuthorizationError {
+    fn new(
+        code: HostApiErrorCode,
+        message: impl Into<String>,
+        context: &ResolutionContext,
+        descriptor: Option<&HostApiPermissionDescriptor>,
+        module_specifier: &str,
+        operation: &str,
+        remediation: impl Into<String>,
+    ) -> Self {
+        let message = message.into();
+        let remediation = remediation.into();
+        let required_capabilities = descriptor
+            .map(|value| value.required_capabilities.clone())
+            .unwrap_or_default();
+        let descriptor_id = descriptor.map(|value| value.descriptor_id.clone());
+        let decision_stable_id = host_api_decision_stable_id(
+            context,
+            descriptor_id.as_deref(),
+            module_specifier,
+            operation,
+            "deny",
+            code.stable_code(),
+        );
+        let event = HostApiDecisionEvent {
+            trace_id: context.trace_id.clone(),
+            decision_id: context.decision_id.clone(),
+            policy_id: context.policy_id.clone(),
+            component: HOST_API_COMPONENT.to_string(),
+            event: HOST_API_EVENT.to_string(),
+            outcome: "deny".to_string(),
+            error_code: code.stable_code().to_string(),
+            decision_stable_id,
+            descriptor_id,
+            module_specifier: module_specifier.to_string(),
+            operation: operation.to_string(),
+            required_capabilities,
+            remediation,
+        };
+        Self {
+            code,
+            message,
+            event,
+        }
+    }
+}
+
+impl fmt::Display for HostApiAuthorizationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}: {} (trace_id={}, decision_id={}, policy_id={})",
+            self.code.stable_code(),
+            self.message,
+            self.event.trace_id,
+            self.event.decision_id,
+            self.event.policy_id
+        )
+    }
+}
+
+impl std::error::Error for HostApiAuthorizationError {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilitySafeHostApiSurface {
+    descriptors: BTreeMap<String, BTreeMap<String, HostApiPermissionDescriptor>>,
+}
+
+impl Default for CapabilitySafeHostApiSurface {
+    fn default() -> Self {
+        Self::standard()
+    }
+}
+
+impl CapabilitySafeHostApiSurface {
+    pub fn standard() -> Self {
+        let mut surface = Self {
+            descriptors: BTreeMap::new(),
+        };
+
+        surface.insert_descriptor(
+            "hostapi.node-fs.read-file.v1",
+            "node:fs",
+            "read_file",
+            &[RuntimeCapability::FsRead],
+            "Grant `fs_read` capability (or a profile that includes it) before calling node:fs.read_file.",
+        );
+        surface.insert_descriptor(
+            "hostapi.node-fs.write-file.v1",
+            "node:fs",
+            "write_file",
+            &[RuntimeCapability::FsWrite],
+            "Grant `fs_write` capability (and `fs_read` for read/modify/write flows) before calling node:fs.write_file.",
+        );
+        surface.insert_descriptor(
+            "hostapi.node-net.connect.v1",
+            "node:net",
+            "connect",
+            &[RuntimeCapability::NetworkEgress],
+            "Grant `network_egress` capability before calling node:net.connect.",
+        );
+        surface.insert_descriptor(
+            "hostapi.node-process.spawn.v1",
+            "node:process",
+            "spawn",
+            &[RuntimeCapability::ProcessSpawn],
+            "Grant `process_spawn` capability before calling node:process.spawn.",
+        );
+        surface.insert_descriptor(
+            "hostapi.node-crypto.random-bytes.v1",
+            "node:crypto",
+            "random_bytes",
+            &[RuntimeCapability::IdempotencyDerive],
+            "Grant `idempotency_derive` capability before calling node:crypto.random_bytes.",
+        );
+        surface.insert_descriptor(
+            "hostapi.node-crypto.sha256.v1",
+            "node:crypto",
+            "sha256",
+            &[RuntimeCapability::IdempotencyDerive],
+            "Grant `idempotency_derive` capability before calling node:crypto.sha256.",
+        );
+
+        surface
+    }
+
+    pub fn authorize(
+        &self,
+        request: &HostApiRequest,
+        context: &ResolutionContext,
+        policy: &CapabilityPolicyHook,
+    ) -> HostApiAuthorizationResult<HostApiAuthorizationOutcome> {
+        let module_specifier = canonicalize_host_api_module(&request.module_specifier);
+        let operation = canonicalize_host_api_operation(&request.operation);
+
+        let module_descriptors = self.descriptors.get(&module_specifier).ok_or_else(|| {
+            let supported_modules = self.supported_modules().join(", ");
+            Box::new(HostApiAuthorizationError::new(
+                HostApiErrorCode::UnsupportedModule,
+                format!(
+                    "unsupported host API module '{}' for operation '{}'",
+                    request.module_specifier.trim(),
+                    request.operation.trim()
+                ),
+                context,
+                None,
+                &module_specifier,
+                &operation,
+                format!("Use one of [{supported_modules}] and an explicit capability descriptor."),
+            ))
+        })?;
+
+        let descriptor = module_descriptors.get(&operation).ok_or_else(|| {
+            let supported_ops = module_descriptors
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            Box::new(HostApiAuthorizationError::new(
+                HostApiErrorCode::UnsupportedOperation,
+                format!(
+                    "unsupported host API operation '{}' for module '{}'",
+                    request.operation.trim(),
+                    request.module_specifier.trim()
+                ),
+                context,
+                None,
+                &module_specifier,
+                &operation,
+                format!(
+                    "Use one of [{supported_ops}] for module '{module_specifier}' or register a new descriptor."
+                ),
+            ))
+        })?;
+
+        policy.authorize_host_api(descriptor, context)?;
+
+        let decision_stable_id = host_api_decision_stable_id(
+            context,
+            Some(descriptor.descriptor_id.as_str()),
+            &module_specifier,
+            &operation,
+            "allow",
+            "none",
+        );
+        let event = HostApiDecisionEvent {
+            trace_id: context.trace_id.clone(),
+            decision_id: context.decision_id.clone(),
+            policy_id: context.policy_id.clone(),
+            component: HOST_API_COMPONENT.to_string(),
+            event: HOST_API_EVENT.to_string(),
+            outcome: "allow".to_string(),
+            error_code: "none".to_string(),
+            decision_stable_id,
+            descriptor_id: Some(descriptor.descriptor_id.clone()),
+            module_specifier,
+            operation,
+            required_capabilities: descriptor.required_capabilities.clone(),
+            remediation: descriptor.remediation.clone(),
+        };
+
+        Ok(HostApiAuthorizationOutcome {
+            descriptor: descriptor.clone(),
+            event,
+        })
+    }
+
+    pub fn descriptor(
+        &self,
+        module_specifier: &str,
+        operation: &str,
+    ) -> Option<&HostApiPermissionDescriptor> {
+        let module_specifier = canonicalize_host_api_module(module_specifier);
+        let operation = canonicalize_host_api_operation(operation);
+        self.descriptors
+            .get(&module_specifier)
+            .and_then(|ops| ops.get(&operation))
+    }
+
+    pub fn supported_modules(&self) -> Vec<String> {
+        self.descriptors.keys().cloned().collect()
+    }
+
+    fn insert_descriptor(
+        &mut self,
+        descriptor_id: &str,
+        module_specifier: &str,
+        operation: &str,
+        required_capabilities: &[RuntimeCapability],
+        remediation: &str,
+    ) {
+        let module_specifier = canonicalize_host_api_module(module_specifier);
+        let operation = canonicalize_host_api_operation(operation);
+        let descriptor = HostApiPermissionDescriptor {
+            descriptor_id: descriptor_id.to_string(),
+            module_specifier: module_specifier.clone(),
+            operation: operation.clone(),
+            required_capabilities: required_capabilities.iter().copied().collect(),
+            remediation: remediation.to_string(),
+        };
+        self.descriptors
+            .entry(module_specifier)
+            .or_default()
+            .insert(operation, descriptor);
+    }
+}
+
+fn canonicalize_host_api_module(module_specifier: &str) -> String {
+    let normalized = module_specifier.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "fs" | "node:fs" => "node:fs".to_string(),
+        "net" | "node:net" => "node:net".to_string(),
+        "process" | "node:process" => "node:process".to_string(),
+        "crypto" | "node:crypto" => "node:crypto".to_string(),
+        _ => normalized,
+    }
+}
+
+fn canonicalize_host_api_operation(operation: &str) -> String {
+    operation.trim().to_ascii_lowercase()
+}
+
+fn host_api_decision_stable_id(
+    context: &ResolutionContext,
+    descriptor_id: Option<&str>,
+    module_specifier: &str,
+    operation: &str,
+    outcome: &str,
+    error_code: &str,
+) -> String {
+    let mut map = BTreeMap::new();
+    map.insert(
+        "decision_id".to_string(),
+        CanonicalValue::String(context.decision_id.clone()),
+    );
+    map.insert(
+        "descriptor_id".to_string(),
+        descriptor_id
+            .map(|value| CanonicalValue::String(value.to_string()))
+            .unwrap_or(CanonicalValue::Null),
+    );
+    map.insert(
+        "error_code".to_string(),
+        CanonicalValue::String(error_code.to_string()),
+    );
+    map.insert(
+        "module_specifier".to_string(),
+        CanonicalValue::String(module_specifier.to_string()),
+    );
+    map.insert(
+        "operation".to_string(),
+        CanonicalValue::String(operation.to_string()),
+    );
+    map.insert(
+        "outcome".to_string(),
+        CanonicalValue::String(outcome.to_string()),
+    );
+    map.insert(
+        "policy_id".to_string(),
+        CanonicalValue::String(context.policy_id.clone()),
+    );
+    map.insert(
+        "trace_id".to_string(),
+        CanonicalValue::String(context.trace_id.clone()),
+    );
+    let digest = ContentHash::compute(&encode_value(&CanonicalValue::Map(map))).to_hex();
+    format!("hostapi-dec-{}", &digest[..16])
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResolutionErrorCode {
@@ -409,8 +795,12 @@ impl ModulePolicyHook for AllowAllPolicy {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityPolicyHook {
+    #[serde(default)]
     pub granted_capabilities: BTreeSet<RuntimeCapability>,
+    #[serde(default)]
     pub denied_specifiers: BTreeSet<String>,
+    #[serde(default)]
+    pub denied_host_api_descriptors: BTreeSet<String>,
 }
 
 impl CapabilityPolicyHook {
@@ -418,12 +808,70 @@ impl CapabilityPolicyHook {
         Self {
             granted_capabilities,
             denied_specifiers: BTreeSet::new(),
+            denied_host_api_descriptors: BTreeSet::new(),
         }
     }
 
     pub fn deny_specifier(mut self, specifier: impl Into<String>) -> Self {
         self.denied_specifiers.insert(specifier.into());
         self
+    }
+
+    pub fn deny_host_api_descriptor(mut self, descriptor_id: impl Into<String>) -> Self {
+        self.denied_host_api_descriptors
+            .insert(descriptor_id.into());
+        self
+    }
+
+    pub fn authorize_host_api(
+        &self,
+        descriptor: &HostApiPermissionDescriptor,
+        context: &ResolutionContext,
+    ) -> HostApiAuthorizationResult<()> {
+        if self
+            .denied_host_api_descriptors
+            .contains(&descriptor.descriptor_id)
+        {
+            return Err(Box::new(HostApiAuthorizationError::new(
+                HostApiErrorCode::PolicyDenied,
+                format!(
+                    "host API descriptor '{}' denied by policy",
+                    descriptor.descriptor_id
+                ),
+                context,
+                Some(descriptor),
+                &descriptor.module_specifier,
+                &descriptor.operation,
+                "Remove descriptor deny-list entry or request an approved policy override.",
+            )));
+        }
+
+        let missing: Vec<RuntimeCapability> = descriptor
+            .required_capabilities
+            .difference(&self.granted_capabilities)
+            .copied()
+            .collect();
+        if missing.is_empty() {
+            return Ok(());
+        }
+
+        let missing_list = missing
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        Err(Box::new(HostApiAuthorizationError::new(
+            HostApiErrorCode::PolicyDenied,
+            format!(
+                "host API '{}' operation '{}' denied due to missing capabilities [{}]",
+                descriptor.module_specifier, descriptor.operation, missing_list
+            ),
+            context,
+            Some(descriptor),
+            &descriptor.module_specifier,
+            &descriptor.operation,
+            descriptor.remediation.clone(),
+        )))
     }
 }
 
@@ -2358,5 +2806,97 @@ mod tests {
             .resolve(&request, &context(), &AllowAllPolicy)
             .expect_err("unregistered absolute path should fail");
         assert_eq!(err.code, ResolutionErrorCode::ModuleNotFound);
+    }
+
+    // ── Enrichment: capability-safe host API surface ────────────
+
+    #[test]
+    fn host_api_surface_exposes_expected_descriptors() {
+        let surface = CapabilitySafeHostApiSurface::standard();
+        assert!(surface.descriptor("node:fs", "read_file").is_some());
+        assert!(surface.descriptor("node:fs", "write_file").is_some());
+        assert!(surface.descriptor("node:net", "connect").is_some());
+        assert!(surface.descriptor("node:process", "spawn").is_some());
+        assert!(surface.descriptor("node:crypto", "random_bytes").is_some());
+        assert!(surface.descriptor("node:crypto", "sha256").is_some());
+    }
+
+    #[test]
+    fn host_api_authorization_allows_granted_operation() {
+        let surface = CapabilitySafeHostApiSurface::standard();
+        let mut granted = BTreeSet::new();
+        granted.insert(RuntimeCapability::FsRead);
+        let policy = CapabilityPolicyHook::new(granted);
+        let request = HostApiRequest::new("node:fs", "read_file");
+        let outcome = surface.authorize(&request, &context(), &policy).unwrap();
+        assert_eq!(outcome.event.outcome, "allow");
+        assert_eq!(outcome.event.error_code, "none");
+        assert!(outcome.event.decision_stable_id.starts_with("hostapi-dec-"));
+        assert_eq!(outcome.event.module_specifier, "node:fs");
+        assert_eq!(outcome.event.operation, "read_file");
+    }
+
+    #[test]
+    fn host_api_authorization_denies_missing_capability_deterministically() {
+        let surface = CapabilitySafeHostApiSurface::standard();
+        let policy = CapabilityPolicyHook::new(BTreeSet::new());
+        let request = HostApiRequest::new(" node:process ", " spawn ");
+        let err1 = surface
+            .authorize(&request, &context(), &policy)
+            .expect_err("process spawn should be denied without capability");
+        let err2 = surface
+            .authorize(&request, &context(), &policy)
+            .expect_err("repeat denial should be stable");
+        assert_eq!(err1.code, HostApiErrorCode::PolicyDenied);
+        assert_eq!(err1.event.error_code, "FE-HOSTAPI-0003");
+        assert_eq!(err1.event.module_specifier, "node:process");
+        assert_eq!(err1.event.operation, "spawn");
+        assert_eq!(err1.event.decision_stable_id, err2.event.decision_stable_id);
+    }
+
+    #[test]
+    fn host_api_authorization_rejects_unsupported_module_with_guidance() {
+        let surface = CapabilitySafeHostApiSurface::standard();
+        let policy = CapabilityPolicyHook::new(BTreeSet::new());
+        let request = HostApiRequest::new("node:dgram", "send");
+        let err = surface
+            .authorize(&request, &context(), &policy)
+            .expect_err("unsupported module should deny");
+        assert_eq!(err.code, HostApiErrorCode::UnsupportedModule);
+        assert_eq!(err.event.error_code, "FE-HOSTAPI-0001");
+        assert!(err.event.remediation.contains("node:fs"));
+        assert!(err.event.remediation.contains("node:crypto"));
+    }
+
+    #[test]
+    fn host_api_authorization_rejects_unsupported_operation_with_guidance() {
+        let surface = CapabilitySafeHostApiSurface::standard();
+        let policy = CapabilityPolicyHook::new(BTreeSet::new());
+        let request = HostApiRequest::new("node:fs", "delete_tree");
+        let err = surface
+            .authorize(&request, &context(), &policy)
+            .expect_err("unsupported operation should deny");
+        assert_eq!(err.code, HostApiErrorCode::UnsupportedOperation);
+        assert_eq!(err.event.error_code, "FE-HOSTAPI-0002");
+        assert!(err.event.remediation.contains("read_file"));
+        assert!(err.event.remediation.contains("write_file"));
+    }
+
+    #[test]
+    fn host_api_authorization_policy_can_block_descriptor() {
+        let surface = CapabilitySafeHostApiSurface::standard();
+        let descriptor = surface
+            .descriptor("node:fs", "read_file")
+            .expect("descriptor exists");
+        let mut granted = BTreeSet::new();
+        granted.insert(RuntimeCapability::FsRead);
+        let policy = CapabilityPolicyHook::new(granted)
+            .deny_host_api_descriptor(descriptor.descriptor_id.clone());
+        let request = HostApiRequest::new("node:fs", "read_file");
+        let err = surface
+            .authorize(&request, &context(), &policy)
+            .expect_err("descriptor deny-list should fail closed");
+        assert_eq!(err.code, HostApiErrorCode::PolicyDenied);
+        assert!(err.message.contains(&descriptor.descriptor_id));
     }
 }

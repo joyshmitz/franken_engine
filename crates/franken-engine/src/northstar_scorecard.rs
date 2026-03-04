@@ -1715,6 +1715,8 @@ mod tests {
         cloned.min = 0;
         assert_eq!(original.count, 10);
         assert_eq!(original.min, 100);
+        assert_eq!(cloned.count, 999);
+        assert_eq!(cloned.min, 0);
     }
 
     #[test]

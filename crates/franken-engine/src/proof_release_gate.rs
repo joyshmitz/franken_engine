@@ -1776,8 +1776,7 @@ mod tests {
         let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
         // Should trigger both TestEvidenceBelowThreshold (required fields)
         // and LoggingArtifactsMissing
-        let codes: BTreeSet<GateFailureCode> =
-            decision.findings.iter().map(|f| f.code).collect();
+        let codes: BTreeSet<GateFailureCode> = decision.findings.iter().map(|f| f.code).collect();
         assert!(codes.contains(&GateFailureCode::TestEvidenceBelowThreshold));
         assert!(codes.contains(&GateFailureCode::LoggingArtifactsMissing));
     }
@@ -1861,7 +1860,11 @@ mod tests {
     fn enrichment_duplicate_artifact_pass_names_only_counted_once() {
         let mut input = base_input();
         // Two artifacts with same pass name "inline"
-        input.bundle.artifacts = vec![ok_artifact("inline"), ok_artifact("inline"), ok_artifact("dce")];
+        input.bundle.artifacts = vec![
+            ok_artifact("inline"),
+            ok_artifact("inline"),
+            ok_artifact("dce"),
+        ];
         let decision = evaluate_release_gate(&input, &ReleaseGateThresholds::default());
         // Both expected passes are covered, so no MissingProofArtifact
         assert!(

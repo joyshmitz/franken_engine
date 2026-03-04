@@ -1954,9 +1954,15 @@ mod tests {
             },
         };
         let json = serde_json::to_string(&pkg).unwrap();
-        assert!(json.contains("\"extension_id\""), "missing extension_id field");
+        assert!(
+            json.contains("\"extension_id\""),
+            "missing extension_id field"
+        );
         assert!(json.contains("\"source\""), "missing source field");
-        assert!(json.contains("\"capabilities\""), "missing capabilities field");
+        assert!(
+            json.contains("\"capabilities\""),
+            "missing capabilities field"
+        );
         assert!(json.contains("\"version\""), "missing version field");
         assert!(json.contains("\"metadata\""), "missing metadata field");
     }
@@ -2140,7 +2146,10 @@ mod tests {
     fn enrichment_orchestrator_error_debug_format() {
         let err = OrchestratorError::EmptySource;
         let dbg = format!("{err:?}");
-        assert!(dbg.contains("EmptySource"), "Debug should name variant: {dbg}");
+        assert!(
+            dbg.contains("EmptySource"),
+            "Debug should name variant: {dbg}"
+        );
 
         let err2 = OrchestratorError::EmptyExtensionId;
         let dbg2 = format!("{err2:?}");

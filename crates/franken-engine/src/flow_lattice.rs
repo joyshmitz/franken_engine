@@ -1770,9 +1770,7 @@ mod tests {
             FlowLatticeError::DuplicateObligation {
                 obligation_id: "z".into(),
             },
-            FlowLatticeError::FlowBlocked {
-                detail: "d".into(),
-            },
+            FlowLatticeError::FlowBlocked { detail: "d".into() },
         ];
         for v in &variants {
             let json = serde_json::to_string(v).unwrap();

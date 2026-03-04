@@ -218,6 +218,107 @@ fn percentile_value(sorted: &[u64], pct: u32) -> u64 {
 }
 
 // ---------------------------------------------------------------------------
+// Pause distribution report and policy transitions
+// ---------------------------------------------------------------------------
+
+/// Stable schema identifier for pause-distribution report artifacts.
+pub const PAUSE_DISTRIBUTION_REPORT_SCHEMA: &str = "franken-engine.gc-pause-distribution-report.v1";
+
+/// Budget-enforcement policy state derived from observed pause data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PauseBudgetPolicyState {
+    WithinBudget,
+    Violated,
+}
+
+impl fmt::Display for PauseBudgetPolicyState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::WithinBudget => f.write_str("within_budget"),
+            Self::Violated => f.write_str("violated"),
+        }
+    }
+}
+
+/// Captures a deterministic transition between two policy states.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PauseBudgetPolicyTransition {
+    pub from_state: PauseBudgetPolicyState,
+    pub to_state: PauseBudgetPolicyState,
+    pub transitioned: bool,
+    pub violation_count: u64,
+}
+
+impl PauseBudgetPolicyTransition {
+    fn from_states(
+        from_state: PauseBudgetPolicyState,
+        to_state: PauseBudgetPolicyState,
+        violation_count: usize,
+    ) -> Self {
+        Self {
+            from_state,
+            to_state,
+            transitioned: from_state != to_state,
+            violation_count: violation_count as u64,
+        }
+    }
+}
+
+/// One deterministic histogram bucket in a pause-distribution report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PauseDistributionBucket {
+    pub lower_bound_ns: u64,
+    pub upper_bound_ns: u64,
+    pub count: u64,
+}
+
+/// Deterministic pause-distribution report for artifact emission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PauseDistributionReport {
+    pub schema_version: String,
+    pub sample_count: u64,
+    pub budget: PauseBudget,
+    pub policy_state: PauseBudgetPolicyState,
+    pub policy_transition: PauseBudgetPolicyTransition,
+    pub global_percentiles: PercentileSnapshot,
+    pub per_extension_percentiles: BTreeMap<String, PercentileSnapshot>,
+    pub histogram: Vec<PauseDistributionBucket>,
+    pub budget_violations: Vec<BudgetViolation>,
+}
+
+fn build_pause_histogram(sorted: &[u64]) -> Vec<PauseDistributionBucket> {
+    if sorted.is_empty() {
+        return Vec::new();
+    }
+    let min = sorted[0];
+    let max = sorted[sorted.len() - 1];
+    let bucket_count = sorted.len().clamp(1, 10);
+    let width = ((max.saturating_sub(min) + 1) / bucket_count as u64).max(1);
+
+    let mut buckets = Vec::with_capacity(bucket_count);
+    let mut idx = 0usize;
+    for bucket_index in 0..bucket_count {
+        let lower = min + width * bucket_index as u64;
+        let upper = if bucket_index + 1 == bucket_count {
+            max
+        } else {
+            lower.saturating_add(width - 1)
+        };
+        let mut count = 0u64;
+        while idx < sorted.len() && sorted[idx] <= upper {
+            count += 1;
+            idx += 1;
+        }
+        buckets.push(PauseDistributionBucket {
+            lower_bound_ns: lower,
+            upper_bound_ns: upper,
+            count,
+        });
+    }
+    buckets
+}
+
+// ---------------------------------------------------------------------------
 // PauseTracker — aggregates pause records and computes statistics
 // ---------------------------------------------------------------------------
 
@@ -317,6 +418,80 @@ impl PauseTracker {
         }
 
         violations
+    }
+
+    /// Current policy state derived from budget checks.
+    pub fn budget_policy_state(&self) -> PauseBudgetPolicyState {
+        if self.within_budget() {
+            PauseBudgetPolicyState::WithinBudget
+        } else {
+            PauseBudgetPolicyState::Violated
+        }
+    }
+
+    /// Compute a policy transition from a previous state to the current state.
+    pub fn budget_policy_transition(
+        &self,
+        previous_state: PauseBudgetPolicyState,
+    ) -> PauseBudgetPolicyTransition {
+        let violations = self.check_budget();
+        PauseBudgetPolicyTransition::from_states(
+            previous_state,
+            if violations.is_empty() {
+                PauseBudgetPolicyState::WithinBudget
+            } else {
+                PauseBudgetPolicyState::Violated
+            },
+            violations.len(),
+        )
+    }
+
+    /// Build a deterministic pause-distribution report using current state.
+    pub fn pause_distribution_report(&self) -> PauseDistributionReport {
+        self.pause_distribution_report_with_transition(self.budget_policy_state())
+    }
+
+    /// Build a deterministic pause-distribution report with explicit transition.
+    pub fn pause_distribution_report_with_transition(
+        &self,
+        previous_state: PauseBudgetPolicyState,
+    ) -> PauseDistributionReport {
+        let mut global_sorted: Vec<u64> = self.records.iter().map(|r| r.pause_ns).collect();
+        global_sorted.sort_unstable();
+        let global_percentiles = PercentileSnapshot::from_sorted(&global_sorted);
+
+        let mut per_extension_percentiles = BTreeMap::new();
+        for (extension_id, pauses) in &self.per_extension {
+            let mut sorted = pauses.clone();
+            sorted.sort_unstable();
+            per_extension_percentiles.insert(
+                extension_id.clone(),
+                PercentileSnapshot::from_sorted(&sorted),
+            );
+        }
+
+        let budget_violations = self.check_budget();
+        let policy_state = if budget_violations.is_empty() {
+            PauseBudgetPolicyState::WithinBudget
+        } else {
+            PauseBudgetPolicyState::Violated
+        };
+
+        PauseDistributionReport {
+            schema_version: PAUSE_DISTRIBUTION_REPORT_SCHEMA.to_string(),
+            sample_count: self.records.len() as u64,
+            budget: self.budget,
+            policy_state,
+            policy_transition: PauseBudgetPolicyTransition::from_states(
+                previous_state,
+                policy_state,
+                budget_violations.len(),
+            ),
+            global_percentiles,
+            per_extension_percentiles,
+            histogram: build_pause_histogram(&global_sorted),
+            budget_violations,
+        }
     }
 
     /// Returns true if all pauses are within budget.
@@ -1432,5 +1607,60 @@ mod tests {
         tracker.record(&make_event(3, "ext-middle", 100, 0, 0));
         let exts = tracker.extensions();
         assert_eq!(exts, vec!["ext-alpha", "ext-middle", "ext-zebra"]);
+    }
+
+    #[test]
+    fn pause_distribution_report_empty_tracker_is_deterministic() {
+        let tracker = PauseTracker::new(PauseBudget::new(100, 200, 300));
+        let report = tracker.pause_distribution_report();
+        assert_eq!(
+            report.schema_version,
+            PAUSE_DISTRIBUTION_REPORT_SCHEMA.to_string()
+        );
+        assert_eq!(report.sample_count, 0);
+        assert_eq!(report.global_percentiles.count, 0);
+        assert!(report.histogram.is_empty());
+        assert!(report.per_extension_percentiles.is_empty());
+        assert!(report.budget_violations.is_empty());
+        assert_eq!(report.policy_state, PauseBudgetPolicyState::WithinBudget);
+        assert!(!report.policy_transition.transitioned);
+    }
+
+    #[test]
+    fn pause_distribution_report_histogram_counts_match_samples() {
+        let mut tracker = PauseTracker::new(PauseBudget::new(10_000, 20_000, 30_000));
+        for i in 1..=25 {
+            let ext = if i % 2 == 0 { "ext-a" } else { "ext-b" };
+            tracker.record(&make_event(i, ext, i * 100, 0, 0));
+        }
+
+        let report = tracker.pause_distribution_report();
+        let histogram_total: u64 = report.histogram.iter().map(|bucket| bucket.count).sum();
+        assert_eq!(histogram_total, report.sample_count);
+        assert_eq!(report.sample_count, 25);
+        assert!(report.per_extension_percentiles.contains_key("ext-a"));
+        assert!(report.per_extension_percentiles.contains_key("ext-b"));
+    }
+
+    #[test]
+    fn pause_distribution_report_tracks_policy_transition_from_within_to_violated() {
+        let mut tracker = PauseTracker::new(PauseBudget::new(5_000, 8_000, 9_000));
+        tracker.record(&make_event(1, "ext-a", 2_000, 0, 0));
+        let baseline_state = tracker.budget_policy_state();
+        assert_eq!(baseline_state, PauseBudgetPolicyState::WithinBudget);
+
+        tracker.set_budget(PauseBudget::new(500, 500, 500));
+        let report = tracker.pause_distribution_report_with_transition(baseline_state);
+        assert_eq!(report.policy_state, PauseBudgetPolicyState::Violated);
+        assert!(report.policy_transition.transitioned);
+        assert_eq!(
+            report.policy_transition.from_state,
+            PauseBudgetPolicyState::WithinBudget
+        );
+        assert_eq!(
+            report.policy_transition.to_state,
+            PauseBudgetPolicyState::Violated
+        );
+        assert!(!report.budget_violations.is_empty());
     }
 }
