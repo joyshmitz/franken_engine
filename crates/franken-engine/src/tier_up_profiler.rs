@@ -377,3 +377,450 @@ fn sha256_hex<T: Serialize>(value: &T) -> String {
     let digest = Sha256::digest(payload);
     hex::encode(digest)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytecode_vm::{ExecutionReport, InlineCacheStats, Value, VmEvent};
+
+    fn make_vm_event(
+        ip: u32,
+        opcode: &str,
+        cache_hit: Option<bool>,
+    ) -> VmEvent {
+        VmEvent {
+            trace_id: "test-trace".to_string(),
+            component: "bytecode_vm".to_string(),
+            step: 0,
+            ip,
+            opcode: opcode.to_string(),
+            event: "instruction".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            cache_hit,
+        }
+    }
+
+    fn make_report(steps: u64, events: Vec<VmEvent>) -> ExecutionReport {
+        ExecutionReport {
+            trace_id: "test-trace".to_string(),
+            result: Value::Int(0),
+            steps,
+            cache_stats: InlineCacheStats {
+                entries: 0,
+                hits: 0,
+                misses: 0,
+            },
+            state_hash: String::new(),
+            events,
+        }
+    }
+
+    // -- TierUpPolicy tests --------------------------------------------------
+
+    #[test]
+    fn policy_default_has_sensible_values() {
+        let policy = TierUpPolicy::default();
+        assert_eq!(policy.min_total_steps, 64);
+        assert_eq!(policy.min_invocations_per_path, 16);
+        assert_eq!(policy.min_cache_hit_rate_millionths, 600_000);
+        assert_eq!(policy.max_candidates, 4);
+        assert_eq!(policy.profile_top_k, 16);
+        assert!(policy.require_cache_signal);
+    }
+
+    #[test]
+    fn policy_hash_is_deterministic() {
+        let a = TierUpPolicy::default().policy_hash();
+        let b = TierUpPolicy::default().policy_hash();
+        assert_eq!(a, b);
+        assert!(!a.is_empty());
+    }
+
+    #[test]
+    fn policy_hash_changes_with_config() {
+        let mut policy = TierUpPolicy::default();
+        let h1 = policy.policy_hash();
+        policy.min_total_steps = 128;
+        let h2 = policy.policy_hash();
+        assert_ne!(h1, h2);
+    }
+
+    // -- cache_hit_rate_millionths tests --------------------------------------
+
+    #[test]
+    fn cache_hit_rate_zero_observations() {
+        assert_eq!(cache_hit_rate_millionths(0, 0), 0);
+    }
+
+    #[test]
+    fn cache_hit_rate_all_hits() {
+        assert_eq!(cache_hit_rate_millionths(100, 0), 1_000_000);
+    }
+
+    #[test]
+    fn cache_hit_rate_all_misses() {
+        assert_eq!(cache_hit_rate_millionths(0, 100), 0);
+    }
+
+    #[test]
+    fn cache_hit_rate_half() {
+        assert_eq!(cache_hit_rate_millionths(50, 50), 500_000);
+    }
+
+    // -- is_tiering_candidate_event tests ------------------------------------
+
+    #[test]
+    fn tiering_candidate_event_normal_instruction() {
+        let event = make_vm_event(0, "load_const", None);
+        assert!(is_tiering_candidate_event(&event));
+    }
+
+    #[test]
+    fn tiering_candidate_event_budget_excluded() {
+        let mut event = make_vm_event(0, "budget", None);
+        event.event = "instruction".to_string();
+        assert!(!is_tiering_candidate_event(&event));
+    }
+
+    #[test]
+    fn tiering_candidate_event_eof_excluded() {
+        let event = make_vm_event(0, "eof", None);
+        assert!(!is_tiering_candidate_event(&event));
+    }
+
+    #[test]
+    fn tiering_candidate_event_non_instruction_excluded() {
+        let mut event = make_vm_event(0, "add", None);
+        event.event = "error".to_string();
+        assert!(!is_tiering_candidate_event(&event));
+    }
+
+    #[test]
+    fn tiering_candidate_event_non_ok_excluded() {
+        let mut event = make_vm_event(0, "add", None);
+        event.outcome = "error".to_string();
+        assert!(!is_tiering_candidate_event(&event));
+    }
+
+    // -- build_hot_path_profile tests ----------------------------------------
+
+    #[test]
+    fn profile_empty_report() {
+        let report = make_report(0, vec![]);
+        let profile = build_hot_path_profile(&report, 10);
+        assert_eq!(profile.total_steps, 0);
+        assert_eq!(profile.observed_instruction_events, 0);
+        assert!(profile.top_paths.is_empty());
+        assert!(!profile.profile_hash.is_empty());
+    }
+
+    #[test]
+    fn profile_aggregates_invocations() {
+        let events = vec![
+            make_vm_event(0, "add", Some(true)),
+            make_vm_event(0, "add", Some(true)),
+            make_vm_event(0, "add", Some(false)),
+            make_vm_event(1, "mul", Some(true)),
+        ];
+        let report = make_report(100, events);
+        let profile = build_hot_path_profile(&report, 10);
+
+        assert_eq!(profile.observed_instruction_events, 4);
+        assert_eq!(profile.top_paths.len(), 2);
+        // add@0 has 3 invocations, mul@1 has 1
+        assert_eq!(profile.top_paths[0].ip, 0);
+        assert_eq!(profile.top_paths[0].opcode, "add");
+        assert_eq!(profile.top_paths[0].invocations, 3);
+        assert_eq!(profile.top_paths[0].cache_hits, 2);
+        assert_eq!(profile.top_paths[0].cache_misses, 1);
+    }
+
+    #[test]
+    fn profile_sorts_by_invocation_count_desc() {
+        let mut events = vec![];
+        for _ in 0..5 {
+            events.push(make_vm_event(0, "load", Some(true)));
+        }
+        for _ in 0..10 {
+            events.push(make_vm_event(1, "add", Some(true)));
+        }
+        let report = make_report(100, events);
+        let profile = build_hot_path_profile(&report, 10);
+
+        assert_eq!(profile.top_paths[0].ip, 1); // add@1 has 10
+        assert_eq!(profile.top_paths[1].ip, 0); // load@0 has 5
+    }
+
+    #[test]
+    fn profile_truncates_to_top_k() {
+        let mut events = vec![];
+        for ip in 0..20u32 {
+            events.push(make_vm_event(ip, "load", Some(true)));
+        }
+        let report = make_report(100, events);
+        let profile = build_hot_path_profile(&report, 3);
+        assert_eq!(profile.top_paths.len(), 3);
+    }
+
+    #[test]
+    fn profile_hash_is_deterministic() {
+        let events = vec![
+            make_vm_event(0, "add", Some(true)),
+            make_vm_event(1, "mul", None),
+        ];
+        let r1 = make_report(50, events.clone());
+        let r2 = make_report(50, events);
+        let p1 = build_hot_path_profile(&r1, 10);
+        let p2 = build_hot_path_profile(&r2, 10);
+        assert_eq!(p1.profile_hash, p2.profile_hash);
+    }
+
+    #[test]
+    fn profile_cache_hit_rate_computed() {
+        let events = vec![
+            make_vm_event(0, "load_prop", Some(true)),
+            make_vm_event(0, "load_prop", Some(true)),
+            make_vm_event(0, "load_prop", Some(false)),
+        ];
+        let report = make_report(50, events);
+        let profile = build_hot_path_profile(&report, 10);
+        // 2 hits / 3 total = 666666 millionths
+        assert_eq!(profile.top_paths[0].cache_hit_rate_millionths, 666_666);
+    }
+
+    // -- evaluate_tier_up_eligibility tests ----------------------------------
+
+    #[test]
+    fn eligibility_insufficient_steps() {
+        let report = make_report(10, vec![]); // only 10 steps
+        let policy = TierUpPolicy::default(); // requires 64
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        assert!(!decision.eligible);
+        assert!(decision.selected_candidates.is_empty());
+        assert!(decision.events.iter().any(|e| e.reason == "insufficient_total_steps"));
+    }
+
+    #[test]
+    fn eligibility_no_candidates_found() {
+        // Enough steps but paths have too few invocations.
+        let mut events = vec![];
+        for ip in 0..5u32 {
+            events.push(make_vm_event(ip, "load", Some(true)));
+        }
+        let report = make_report(100, events);
+        let policy = TierUpPolicy {
+            min_invocations_per_path: 10, // each path only has 1
+            ..TierUpPolicy::default()
+        };
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        assert!(!decision.eligible);
+        assert!(!decision.rejected_paths.is_empty());
+    }
+
+    #[test]
+    fn eligibility_hot_path_admitted() {
+        let mut events = vec![];
+        for _ in 0..20 {
+            events.push(make_vm_event(0, "load_prop", Some(true)));
+        }
+        let report = make_report(100, events);
+        let policy = TierUpPolicy {
+            min_total_steps: 10,
+            min_invocations_per_path: 5,
+            min_cache_hit_rate_millionths: 500_000,
+            max_candidates: 4,
+            profile_top_k: 16,
+            require_cache_signal: true,
+            ..TierUpPolicy::default()
+        };
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        assert!(decision.eligible);
+        assert_eq!(decision.selected_candidates.len(), 1);
+        assert_eq!(decision.selected_candidates[0].ip, 0);
+        assert_eq!(decision.selected_candidates[0].opcode, "load_prop");
+    }
+
+    #[test]
+    fn eligibility_low_cache_hit_rate_rejected() {
+        let mut events = vec![];
+        for _ in 0..20 {
+            events.push(make_vm_event(0, "load_prop", Some(false))); // all misses
+        }
+        let report = make_report(100, events);
+        let policy = TierUpPolicy {
+            min_total_steps: 10,
+            min_invocations_per_path: 5,
+            min_cache_hit_rate_millionths: 500_000,
+            ..TierUpPolicy::default()
+        };
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        assert!(!decision.eligible);
+        assert!(decision
+            .rejected_paths
+            .iter()
+            .any(|r| r.reason == "cache_hit_rate_below_threshold"));
+    }
+
+    #[test]
+    fn eligibility_missing_cache_signal_rejected() {
+        let mut events = vec![];
+        for _ in 0..20 {
+            events.push(make_vm_event(0, "add", None)); // no cache signal
+        }
+        let report = make_report(100, events);
+        let policy = TierUpPolicy {
+            min_total_steps: 10,
+            min_invocations_per_path: 5,
+            require_cache_signal: true,
+            ..TierUpPolicy::default()
+        };
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        assert!(!decision.eligible);
+        assert!(decision
+            .rejected_paths
+            .iter()
+            .any(|r| r.reason == "missing_cache_signal"));
+    }
+
+    #[test]
+    fn eligibility_cache_signal_not_required() {
+        let mut events = vec![];
+        for _ in 0..20 {
+            events.push(make_vm_event(0, "add", None)); // no cache signal
+        }
+        let report = make_report(100, events);
+        let policy = TierUpPolicy {
+            min_total_steps: 10,
+            min_invocations_per_path: 5,
+            min_cache_hit_rate_millionths: 0,
+            require_cache_signal: false,
+            ..TierUpPolicy::default()
+        };
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        assert!(decision.eligible);
+        assert_eq!(decision.selected_candidates.len(), 1);
+    }
+
+    #[test]
+    fn eligibility_max_candidates_enforced() {
+        let mut events = vec![];
+        for ip in 0..10u32 {
+            for _ in 0..20 {
+                events.push(make_vm_event(ip, "load_prop", Some(true)));
+            }
+        }
+        let report = make_report(300, events);
+        let policy = TierUpPolicy {
+            min_total_steps: 10,
+            min_invocations_per_path: 5,
+            min_cache_hit_rate_millionths: 500_000,
+            max_candidates: 3,
+            profile_top_k: 16,
+            require_cache_signal: true,
+            ..TierUpPolicy::default()
+        };
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        assert!(decision.eligible);
+        assert!(decision.selected_candidates.len() <= 3);
+    }
+
+    #[test]
+    fn decision_hash_is_deterministic() {
+        let events: Vec<VmEvent> = (0..20)
+            .map(|_| make_vm_event(0, "load_prop", Some(true)))
+            .collect();
+        let r1 = make_report(100, events.clone());
+        let r2 = make_report(100, events);
+        let policy = TierUpPolicy::default();
+        let d1 = evaluate_tier_up_eligibility(&r1, &policy);
+        let d2 = evaluate_tier_up_eligibility(&r2, &policy);
+        assert_eq!(d1.decision_hash, d2.decision_hash);
+        assert!(!d1.decision_hash.is_empty());
+    }
+
+    #[test]
+    fn decision_schema_version() {
+        let report = make_report(100, vec![]);
+        let policy = TierUpPolicy::default();
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        assert_eq!(decision.schema_version, TIER_UP_POLICY_SCHEMA_VERSION);
+    }
+
+    // -- Serde roundtrip tests -----------------------------------------------
+
+    #[test]
+    fn tier_up_policy_serde_roundtrip() {
+        let policy = TierUpPolicy::default();
+        let json = serde_json::to_string(&policy).unwrap();
+        let restored: TierUpPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, restored);
+    }
+
+    #[test]
+    fn hot_path_sample_serde_roundtrip() {
+        let sample = HotPathSample {
+            ip: 42,
+            opcode: "load_prop".to_string(),
+            invocations: 100,
+            cache_hits: 80,
+            cache_misses: 20,
+            cache_hit_rate_millionths: 800_000,
+        };
+        let json = serde_json::to_string(&sample).unwrap();
+        let restored: HotPathSample = serde_json::from_str(&json).unwrap();
+        assert_eq!(sample, restored);
+    }
+
+    #[test]
+    fn tier_up_decision_serde_roundtrip() {
+        let events: Vec<VmEvent> = (0..20)
+            .map(|_| make_vm_event(0, "load_prop", Some(true)))
+            .collect();
+        let report = make_report(100, events);
+        let policy = TierUpPolicy::default();
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        let json = serde_json::to_string(&decision).unwrap();
+        let restored: TierUpDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(decision, restored);
+    }
+
+    // -- normalize_limit tests -----------------------------------------------
+
+    #[test]
+    fn normalize_limit_zero_becomes_one() {
+        assert_eq!(normalize_limit(0), 1);
+    }
+
+    #[test]
+    fn normalize_limit_nonzero_unchanged() {
+        assert_eq!(normalize_limit(5), 5);
+    }
+
+    // -- HotPathSample tests -------------------------------------------------
+
+    #[test]
+    fn hot_path_sample_cache_observations() {
+        let sample = HotPathSample {
+            ip: 0,
+            opcode: "test".to_string(),
+            invocations: 100,
+            cache_hits: 30,
+            cache_misses: 10,
+            cache_hit_rate_millionths: 750_000,
+        };
+        assert_eq!(sample.cache_observations(), 40);
+    }
+
+    // -- make_event tests ----------------------------------------------------
+
+    #[test]
+    fn make_event_populates_all_fields() {
+        let event = make_event("trace-1", "test_event", "pass", "test_reason");
+        assert_eq!(event.trace_id, "trace-1");
+        assert_eq!(event.component, COMPONENT);
+        assert_eq!(event.event, "test_event");
+        assert_eq!(event.outcome, "pass");
+        assert_eq!(event.reason, "test_reason");
+    }
+}
