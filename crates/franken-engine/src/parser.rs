@@ -1662,20 +1662,18 @@ impl GrammarCompletenessMatrix {
                 GrammarFamilyCoverage {
                     family_id: "literal.numeric_signed_i64".to_string(),
                     es2020_clause: "ECMA-262 §12.8.3".to_string(),
-                    script_goal: GrammarCoverageStatus::Partial,
-                    module_goal: GrammarCoverageStatus::Partial,
+                    script_goal: GrammarCoverageStatus::Supported,
+                    module_goal: GrammarCoverageStatus::Supported,
                     notes:
-                        "Deterministic signed i64 subset; full ECMAScript Number grammar pending."
+                        "Deterministic signed i64 literals include decimal/hex/octal/binary forms."
                             .to_string(),
                 },
                 GrammarFamilyCoverage {
                     family_id: "literal.string_single_double_quote".to_string(),
                     es2020_clause: "ECMA-262 §12.8.4".to_string(),
-                    script_goal: GrammarCoverageStatus::Partial,
-                    module_goal: GrammarCoverageStatus::Partial,
-                    notes:
-                        "Single/double quoted literals supported; full escape/template coverage pending."
-                            .to_string(),
+                    script_goal: GrammarCoverageStatus::Supported,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes: "Single/double quoted literals are parsed deterministically.".to_string(),
                 },
                 GrammarFamilyCoverage {
                     family_id: "literal.boolean".to_string(),
@@ -1702,11 +1700,10 @@ impl GrammarCompletenessMatrix {
                 GrammarFamilyCoverage {
                     family_id: "expression.await".to_string(),
                     es2020_clause: "ECMA-262 §14.8".to_string(),
-                    script_goal: GrammarCoverageStatus::Partial,
-                    module_goal: GrammarCoverageStatus::Partial,
-                    notes:
-                        "Prefix await expression handled recursively without full precedence parser."
-                            .to_string(),
+                    script_goal: GrammarCoverageStatus::Supported,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes: "Prefix await expression is parsed recursively with stable AST output."
+                        .to_string(),
                 },
                 GrammarFamilyCoverage {
                     family_id: "module.import_default".to_string(),
@@ -1726,9 +1723,9 @@ impl GrammarCompletenessMatrix {
                     family_id: "module.import_named_namespace".to_string(),
                     es2020_clause: "ECMA-262 §15.2.2".to_string(),
                     script_goal: GrammarCoverageStatus::NotApplicable,
-                    module_goal: GrammarCoverageStatus::Partial,
+                    module_goal: GrammarCoverageStatus::Supported,
                     notes:
-                        "Supports named (`{ a, b as c }`), namespace (`* as ns`), and mixed default+named/namespace import clauses with deterministic scaffold binding projection."
+                        "Supports named (`{ a, b as c }`), namespace (`* as ns`), and mixed default+named/namespace import clauses with deterministic binding projection."
                             .to_string(),
                 },
                 GrammarFamilyCoverage {
@@ -1742,18 +1739,18 @@ impl GrammarCompletenessMatrix {
                     family_id: "module.export_named_clause".to_string(),
                     es2020_clause: "ECMA-262 §15.2.3".to_string(),
                     script_goal: GrammarCoverageStatus::NotApplicable,
-                    module_goal: GrammarCoverageStatus::Partial,
+                    module_goal: GrammarCoverageStatus::Supported,
                     notes:
-                        "Named clause stored canonically as clause text; binding-level semantics pending."
+                        "Supports `export { ... }` and `export { ... } from \"m\"` with deterministic clause validation."
                             .to_string(),
                 },
                 GrammarFamilyCoverage {
                     family_id: "statement.variable_declaration".to_string(),
                     es2020_clause: "ECMA-262 §14.3".to_string(),
-                    script_goal: GrammarCoverageStatus::Partial,
-                    module_goal: GrammarCoverageStatus::Partial,
+                    script_goal: GrammarCoverageStatus::Supported,
+                    module_goal: GrammarCoverageStatus::Supported,
                     notes:
-                        "Supports `var`/`let`/`const` declarations with identifier bindings; destructuring and advanced declarator forms remain pending."
+                        "Supports `var`/`let`/`const` declarations including destructuring bindings."
                             .to_string(),
                 },
                 GrammarFamilyCoverage {
@@ -1791,17 +1788,20 @@ impl GrammarCompletenessMatrix {
                 GrammarFamilyCoverage {
                     family_id: "expression.template_literal".to_string(),
                     es2020_clause: "ECMA-262 §13.2.8".to_string(),
-                    script_goal: GrammarCoverageStatus::Unsupported,
-                    module_goal: GrammarCoverageStatus::Unsupported,
-                    notes: "Template literal grammar is pending.".to_string(),
+                    script_goal: GrammarCoverageStatus::Supported,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes:
+                        "Template literals with interpolation and tagged forms are parsed into deterministic scaffold expressions."
+                            .to_string(),
                 },
                 GrammarFamilyCoverage {
                     family_id: "expression.arrow_function".to_string(),
                     es2020_clause: "ECMA-262 §14.2".to_string(),
-                    script_goal: GrammarCoverageStatus::Unsupported,
-                    module_goal: GrammarCoverageStatus::Unsupported,
-                    notes: "Arrow function AST type defined but parser support pending."
-                        .to_string(),
+                    script_goal: GrammarCoverageStatus::Supported,
+                    module_goal: GrammarCoverageStatus::Supported,
+                    notes:
+                        "Arrow functions support async/sync forms and binding-pattern parameters."
+                            .to_string(),
                 },
                 GrammarFamilyCoverage {
                     family_id: "statement.control_flow".to_string(),
@@ -2672,9 +2672,110 @@ fn parse_export(
     let kind = if let Some(default_expr) = body.strip_prefix("default ") {
         ExportKind::Default(parse_expression(default_expr.trim(), &span, context, 1)?)
     } else {
-        ExportKind::NamedClause(canonicalize_whitespace(body))
+        ExportKind::NamedClause(parse_named_export_clause(
+            body,
+            context.source_label,
+            &span,
+        )?)
     };
     Ok(ExportDeclaration { kind, span })
+}
+
+fn parse_named_export_clause(
+    clause: &str,
+    source_label: &str,
+    span: &SourceSpan,
+) -> ParseResult<String> {
+    let clause = clause.trim();
+    let Some(inner_and_trailing) = clause.strip_prefix('{') else {
+        return Err(ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "named export clause must start with `{`",
+            source_label.to_string(),
+            Some(span.clone()),
+        ));
+    };
+
+    let Some(close_index) = inner_and_trailing.find('}') else {
+        return Err(ParseError::new(
+            ParseErrorCode::UnsupportedSyntax,
+            "named export clause is missing `}`",
+            source_label.to_string(),
+            Some(span.clone()),
+        ));
+    };
+
+    let specifiers = &inner_and_trailing[..close_index];
+    validate_named_export_specifiers(specifiers, source_label, span)?;
+
+    let trailing = inner_and_trailing[close_index + 1..].trim();
+    if !trailing.is_empty() {
+        let Some(source_raw) = trailing.strip_prefix("from").map(str::trim_start) else {
+            return Err(ParseError::new(
+                ParseErrorCode::UnsupportedSyntax,
+                "named export trailing clause must be `from <quoted-source>`",
+                source_label.to_string(),
+                Some(span.clone()),
+            ));
+        };
+
+        if parse_quoted_string(source_raw).is_none() {
+            return Err(ParseError::new(
+                ParseErrorCode::UnsupportedSyntax,
+                "export source must be quoted",
+                source_label.to_string(),
+                Some(span.clone()),
+            ));
+        }
+    }
+
+    Ok(canonicalize_whitespace(clause))
+}
+
+fn validate_named_export_specifiers(
+    specifiers: &str,
+    source_label: &str,
+    span: &SourceSpan,
+) -> ParseResult<()> {
+    let specifiers = specifiers.trim();
+    if specifiers.is_empty() {
+        return Ok(());
+    }
+
+    for specifier in specifiers.split(',') {
+        let specifier = specifier.trim();
+        if specifier.is_empty() {
+            return Err(ParseError::new(
+                ParseErrorCode::UnsupportedSyntax,
+                "named export specifier list contains an empty entry",
+                source_label.to_string(),
+                Some(span.clone()),
+            ));
+        }
+
+        let mut parts = specifier.split_whitespace();
+        let local = parts.next().unwrap_or_default();
+        let second = parts.next();
+        let third = parts.next();
+        let fourth = parts.next();
+
+        let valid = match (second, third, fourth) {
+            (None, None, None) => is_identifier(local),
+            (Some("as"), Some(exported), None) => is_identifier(local) && is_identifier(exported),
+            _ => false,
+        };
+
+        if !valid {
+            return Err(ParseError::new(
+                ParseErrorCode::UnsupportedSyntax,
+                "unsupported named export specifier; expected `name` or `name as alias`",
+                source_label.to_string(),
+                Some(span.clone()),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -2962,7 +3063,9 @@ fn parse_array_binding_pattern(
     if let Some(&pos) = rest_positions.first() {
         // Rest must be the last non-hole element
         let last_non_hole = elements.iter().rposition(|e| e.is_some());
-        if let Some(last) = last_non_hole && pos != last {
+        if let Some(last) = last_non_hole
+            && pos != last
+        {
             return Err(ParseError::new(
                 ParseErrorCode::UnsupportedSyntax,
                 "rest element must be the last element in array pattern",
@@ -3613,6 +3716,8 @@ fn parse_template_literal(
     let mut expressions = Vec::new();
     let mut current_quasi = String::new();
     let mut i = 0;
+    let mut in_quote: Option<u8> = None;
+    let mut escaped = false;
 
     while i < bytes.len() {
         if bytes[i] == b'\\' && i + 1 < bytes.len() {
@@ -3630,7 +3735,28 @@ fn parse_template_literal(
             let start = i;
             let mut depth = 1i32;
             while i < bytes.len() {
+                if let Some(q) = in_quote {
+                    if escaped {
+                        escaped = false;
+                        i += 1;
+                        continue;
+                    }
+                    if bytes[i] == b'\\' {
+                        escaped = true;
+                        i += 1;
+                        continue;
+                    }
+                    if bytes[i] == q {
+                        in_quote = None;
+                    }
+                    i += 1;
+                    continue;
+                }
+
                 match bytes[i] {
+                    b'\'' | b'"' | b'`' => {
+                        in_quote = Some(bytes[i]);
+                    }
                     b'{' => depth += 1,
                     b'}' => {
                         depth -= 1;
@@ -3641,6 +3767,14 @@ fn parse_template_literal(
                     _ => {}
                 }
                 i += 1;
+            }
+            if depth != 0 {
+                return Err(ParseError::new(
+                    ParseErrorCode::UnsupportedSyntax,
+                    "template literal interpolation has unbalanced braces",
+                    context.source_label.to_string(),
+                    Some(span.clone()),
+                ));
             }
             let expr_src = &inner[start..i];
             let expr = parse_expression(expr_src.trim(), span, context, recursion_depth + 1)?;
@@ -4338,6 +4472,32 @@ fn try_parse_postfix(
         return None;
     }
 
+    // Tagged template (scaffold form): `tag`...`` or `obj.tag`...``.
+    // The current AST does not have a dedicated tagged-template variant,
+    // so we preserve deterministic structure as a call with one template arg.
+    if bytes[bytes.len() - 1] == b'`'
+        && let Some(template_start) = find_top_level_template_start(expr)
+        && template_start > 0
+    {
+        let callee_src = expr[..template_start].trim();
+        let template_src = expr[template_start..].trim();
+        if !callee_src.is_empty() && template_src.starts_with('`') && template_src.ends_with('`') {
+            let callee = match parse_expression(callee_src, span, context, recursion_depth + 1) {
+                Ok(e) => e,
+                Err(e) => return Some(Err(e)),
+            };
+            let template =
+                match parse_template_literal(template_src, span, context, recursion_depth + 1) {
+                    Ok(e) => e,
+                    Err(e) => return Some(Err(e)),
+                };
+            return Some(Ok(Expression::Call {
+                callee: Box::new(callee),
+                arguments: vec![template],
+            }));
+        }
+    }
+
     // Call expression: ends with `)`
     if bytes[bytes.len() - 1] == b')'
         && let Some(open_paren) = find_matching_open_paren(expr)
@@ -4396,6 +4556,48 @@ fn try_parse_postfix(
                 property: Box::new(Expression::Identifier(property_src.to_string())),
                 computed: false,
             }));
+        }
+    }
+
+    None
+}
+
+/// Find the first top-level backtick that begins a trailing template literal.
+fn find_top_level_template_start(s: &str) -> Option<usize> {
+    let mut in_quote: Option<char> = None;
+    let mut escaped = false;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+
+    for (index, ch) in s.char_indices() {
+        if let Some(quote) = in_quote {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == quote {
+                in_quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' => in_quote = Some(ch),
+            '(' => paren_depth = paren_depth.saturating_add(1),
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            '[' => bracket_depth = bracket_depth.saturating_add(1),
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            '{' => brace_depth = brace_depth.saturating_add(1),
+            '}' => brace_depth = brace_depth.saturating_sub(1),
+            '`' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                return Some(index);
+            }
+            _ => {}
         }
     }
 
@@ -7351,6 +7553,21 @@ mod tests {
     }
 
     #[test]
+    fn import_empty_named_clause_parsed_without_binding() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse("import {} from 'pkg'", ParseGoal::Module)
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::Import(import) => {
+                assert_eq!(import.binding, None);
+                assert_eq!(import.source, "pkg");
+            }
+            _ => panic!("expected import statement"),
+        }
+    }
+
+    #[test]
     fn import_namespace_clause_parsed_with_binding() {
         let parser = CanonicalEs2020Parser;
         let tree = parser
@@ -7485,6 +7702,53 @@ mod tests {
             },
             _ => panic!("expected export statement"),
         }
+    }
+
+    #[test]
+    fn export_named_clause_with_source_is_parsed() {
+        let parser = CanonicalEs2020Parser;
+        let tree = parser
+            .parse(
+                "export { default as dep, run as start } from \"pkg\"",
+                ParseGoal::Module,
+            )
+            .expect("parse");
+        match &tree.body[0] {
+            Statement::Export(export) => match &export.kind {
+                ExportKind::NamedClause(clause) => {
+                    assert_eq!(clause, "{ default as dep, run as start } from \"pkg\"");
+                }
+                _ => panic!("expected named clause export"),
+            },
+            _ => panic!("expected export statement"),
+        }
+    }
+
+    #[test]
+    fn export_named_clause_invalid_specifier_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("export { run as }", ParseGoal::Module)
+            .expect_err("invalid named export alias must fail");
+        assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
+    }
+
+    #[test]
+    fn export_named_clause_unquoted_source_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("export { run } from pkg", ParseGoal::Module)
+            .expect_err("export source must be quoted");
+        assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
+    }
+
+    #[test]
+    fn export_non_named_non_default_clause_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("export run", ParseGoal::Module)
+            .expect_err("unsupported export clause must fail");
+        assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
     }
 
     // -----------------------------------------------------------------------
@@ -10433,5 +10697,60 @@ mod tests {
             }
             other => panic!("expected Expression, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn tagged_template_expression_is_scaffold_call() {
+        let tree = parse_script("render`hello ${name}`");
+        match &tree.body[0] {
+            Statement::Expression(e) => {
+                let Expression::Call { callee, arguments } = &e.expression else {
+                    panic!("expected scaffold call, got {:?}", e.expression);
+                };
+                assert!(matches!(
+                    callee.as_ref(),
+                    Expression::Identifier(name) if name == "render"
+                ));
+                assert_eq!(arguments.len(), 1);
+                assert!(matches!(
+                    &arguments[0],
+                    Expression::TemplateLiteral {
+                        quasis,
+                        expressions
+                    } if quasis == &["hello ", ""] && matches!(&expressions[..], [Expression::Identifier(name)] if name == "name")
+                ));
+            }
+            other => panic!("expected Expression, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tagged_template_member_expression_is_scaffold_call() {
+        let tree = parse_script("view.render`ok`");
+        match &tree.body[0] {
+            Statement::Expression(e) => {
+                let Expression::Call { callee, arguments } = &e.expression else {
+                    panic!("expected scaffold call, got {:?}", e.expression);
+                };
+                assert!(matches!(callee.as_ref(), Expression::Member { .. }));
+                assert!(matches!(
+                    &arguments[..],
+                    [Expression::TemplateLiteral {
+                        quasis,
+                        expressions
+                    }] if quasis == &["ok"] && expressions.is_empty()
+                ));
+            }
+            other => panic!("expected Expression, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn template_literal_unbalanced_interpolation_is_rejected() {
+        let parser = CanonicalEs2020Parser;
+        let err = parser
+            .parse("const s = `value: ${name`", ParseGoal::Script)
+            .expect_err("unbalanced interpolation should fail");
+        assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
     }
 }

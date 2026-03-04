@@ -73,6 +73,13 @@
       "expected_hash": "sha256:03ca17913981d5341b4be41808fe71ef06d4f0369c86877e0b128ad6a3008e05"
     },
     {
+      "id": "module_import_named_namespace",
+      "family_id": "module.import_named_namespace",
+      "goal": "module",
+      "source": "import { run as start } from \"pkg\"",
+      "expected_hash": "sha256:6de8de22500ec13fa5164d80cfe8b04f2ab89f624476fdaca2e29ca4b27de0d9"
+    },
+    {
       "id": "module_export_default",
       "family_id": "module.export_default",
       "goal": "module",
@@ -126,7 +133,14 @@
       "family_id": "expression.template_literal",
       "goal": "script",
       "source": "`hello ${name}`",
-      "expected_hash": "sha256:5d2af01b02dec862633e8fa4466ea8f7593b48982581170da71c4930032776df"
+      "expected_hash": "sha256:d5fdd2a97f7d91426261cdad8b60161e06e31e53157ec172b1191e4027de41a2"
+    },
+    {
+      "id": "script_template_literal_tagged",
+      "family_id": "expression.template_literal",
+      "goal": "script",
+      "source": "render`hello ${name}`",
+      "expected_hash": "sha256:69d37f0508d4978ab439d31ef7478023b3964e389b8e5d7f16d92c7369834585"
     },
     {
       "id": "script_arrow_function_raw",

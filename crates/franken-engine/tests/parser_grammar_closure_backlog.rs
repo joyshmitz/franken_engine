@@ -104,7 +104,7 @@ fn grammar_closure_backlog_matches_scalar_reference_matrix() {
         matrix.families.len()
     );
     assert_eq!(backlog.families.len(), matrix.families.len());
-    assert_eq!(backlog.coverage_target_family_count, 20);
+    assert_eq!(backlog.coverage_target_family_count, 21);
 
     let mut matrix_by_family: BTreeMap<&str, (&str, GrammarCoverageStatus, GrammarCoverageStatus)> =
         BTreeMap::new();

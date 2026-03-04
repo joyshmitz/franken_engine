@@ -3,7 +3,7 @@ use std::io::Cursor;
 
 use frankenengine_engine::ast::{
     CANONICAL_AST_CONTRACT_VERSION, CANONICAL_AST_HASH_ALGORITHM, CANONICAL_AST_HASH_PREFIX,
-    CANONICAL_AST_SCHEMA_VERSION, Expression, ParseGoal, Statement, SyntaxTree,
+    CANONICAL_AST_SCHEMA_VERSION, ExportKind, Expression, ParseGoal, Statement, SyntaxTree,
     VariableDeclarationKind,
 };
 use frankenengine_engine::parser::{
@@ -99,6 +99,29 @@ fn parser_rejects_keyword_module_import_bindings() {
         .parse("import { run as for } from \"pkg\";", ParseGoal::Module)
         .expect_err("module import binding with keyword local name must fail");
     assert_eq!(error.code, ParseErrorCode::UnsupportedSyntax);
+}
+
+#[test]
+fn parser_supports_named_export_clause_forms() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser
+        .parse(
+            "const local = 1;\nexport { local as published };\nexport { default as dep } from \"pkg\";",
+            ParseGoal::Module,
+        )
+        .expect("module parse should succeed");
+
+    assert_eq!(tree.body.len(), 3);
+    assert!(matches!(
+        &tree.body[1],
+        Statement::Export(export)
+            if matches!(&export.kind, ExportKind::NamedClause(clause) if clause == "{ local as published }")
+    ));
+    assert!(matches!(
+        &tree.body[2],
+        Statement::Export(export)
+            if matches!(&export.kind, ExportKind::NamedClause(clause) if clause == "{ default as dep } from \"pkg\"")
+    ));
 }
 
 #[test]
@@ -1102,6 +1125,42 @@ fn parser_template_literal_empty() {
     } else {
         panic!("expected VariableDeclaration");
     }
+}
+
+#[test]
+fn parser_emits_tagged_template_as_scaffold_call() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser
+        .parse("render`hello ${name}`", ParseGoal::Script)
+        .expect("parse should succeed");
+    assert_eq!(tree.body.len(), 1);
+    if let Statement::Expression(expr_stmt) = &tree.body[0] {
+        if let Expression::Call { callee, arguments } = &expr_stmt.expression {
+            assert!(matches!(callee.as_ref(), Expression::Identifier(name) if name == "render"));
+            assert_eq!(arguments.len(), 1);
+            assert!(matches!(
+                &arguments[..],
+                [Expression::TemplateLiteral { quasis, expressions }]
+                    if quasis == &["hello ", ""] && matches!(&expressions[..], [Expression::Identifier(name)] if name == "name")
+            ));
+        } else {
+            panic!(
+                "expected scaffold call for tagged template, got {:?}",
+                expr_stmt.expression
+            );
+        }
+    } else {
+        panic!("expected Expression statement");
+    }
+}
+
+#[test]
+fn parser_rejects_unbalanced_template_interpolation() {
+    let parser = CanonicalEs2020Parser;
+    let err = parser
+        .parse("const s = `value: ${name`", ParseGoal::Script)
+        .expect_err("unbalanced interpolation should fail");
+    assert_eq!(err.code, ParseErrorCode::UnsupportedSyntax);
 }
 
 // ---------------------------------------------------------------------------
