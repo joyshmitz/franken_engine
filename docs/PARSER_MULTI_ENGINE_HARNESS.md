@@ -1,4 +1,4 @@
-# Parser Multi-Engine Harness (`bd-2mds.1.2.1`, `bd-2mds.1.2.2`, `bd-2mds.1.2.3`, `bd-2mds.1.2.4.1`)
+# Parser Multi-Engine Harness (`bd-1lsy.2.1`, `bd-1lsy.2.2`, `bd-1lsy.2.3`, `bd-1lsy.2.4`)
 
 Deterministic comparison harness for parser outputs across multiple engines under a controlled environment (`LC_ALL=C`, `TZ=UTC`) with reproducible manifests and one-command replay paths per fixture.
 
@@ -180,8 +180,9 @@ All CPU-intensive Rust operations are routed through `rch exec` when available.
 Relevant runner environment toggles:
 
 - `PARSER_MULTI_ENGINE_FAIL_ON_DIVERGENCE=1`
-- `PARSER_MULTI_ENGINE_FAIL_ON_CRITICAL_DRIFT=1`
+- `PARSER_MULTI_ENGINE_FAIL_ON_CRITICAL_DRIFT=1` (default; fail-closed on critical drift)
 - `PARSER_MULTI_ENGINE_EMIT_GOVERNANCE_ACTIONS=1` (default)
+- `PARSER_MULTI_ENGINE_BEAD_ID=<bead-id>` (defaults to `bd-1lsy.2.4` and is written to `run_manifest.json`)
 
 ## Artifacts
 

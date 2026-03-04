@@ -13,8 +13,9 @@ fixture_limit="${PARSER_MULTI_ENGINE_FIXTURE_LIMIT:-8}"
 fixture_id="${PARSER_MULTI_ENGINE_FIXTURE_ID:-}"
 seed="${PARSER_MULTI_ENGINE_SEED:-7}"
 fail_on_divergence="${PARSER_MULTI_ENGINE_FAIL_ON_DIVERGENCE:-0}"
-fail_on_critical_drift="${PARSER_MULTI_ENGINE_FAIL_ON_CRITICAL_DRIFT:-0}"
+fail_on_critical_drift="${PARSER_MULTI_ENGINE_FAIL_ON_CRITICAL_DRIFT:-1}"
 emit_governance_actions="${PARSER_MULTI_ENGINE_EMIT_GOVERNANCE_ACTIONS:-1}"
+harness_bead_id="${PARSER_MULTI_ENGINE_BEAD_ID:-bd-1lsy.2.4}"
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_dir="${artifact_root}/${timestamp}"
@@ -358,7 +359,7 @@ write_manifest() {
   {
     echo "{"
     echo '  "schema_version": "franken-engine.parser-multi-engine-harness.run-manifest.v1",'
-    echo '  "bead_id": "bd-2mds.1.2.4.1",'
+    echo "  \"bead_id\": \"${harness_bead_id}\","
     echo "  \"component\": \"${component}\","
     echo "  \"mode\": \"${mode}\","
     echo "  \"toolchain\": \"${toolchain}\","

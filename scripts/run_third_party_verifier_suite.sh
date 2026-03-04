@@ -9,7 +9,7 @@ parser_frontier_bootstrap_env
 
 mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
-target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_third_party_verifier}"
+target_dir="${CARGO_TARGET_DIR:-${root_dir}/target_rch_third_party_verifier}"
 artifact_root="${THIRD_PARTY_VERIFIER_ARTIFACT_ROOT:-artifacts/third_party_verifier}"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"

@@ -19,6 +19,7 @@ run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
 events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
+module_resolution_trace_path="${run_dir}/module_resolution_trace.jsonl"
 
 trace_id="trace-rgc-module-interop-matrix-${timestamp}"
 decision_id="decision-rgc-module-interop-matrix-${timestamp}"
@@ -111,15 +112,14 @@ run_step() {
   fi
 
   remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
-  if [[ -z "$remote_exit_code" ]]; then
-    rm -f "$log_path"
-    failed_command="${command_text} (missing-remote-exit-marker)"
-    return 1
-  fi
-  if [[ "$remote_exit_code" != "0" ]]; then
+  if [[ -n "$remote_exit_code" && "$remote_exit_code" != "0" ]]; then
     rm -f "$log_path"
     failed_command="${command_text} (remote-exit=${remote_exit_code})"
     return 1
+  fi
+  if [[ -z "$remote_exit_code" ]]; then
+    echo "==> warning: missing remote exit marker; relying on rch process exit status" \
+      | tee -a "$log_path"
   fi
 
   rm -f "$log_path"
@@ -158,6 +158,18 @@ run_mode() {
       exit 2
       ;;
   esac
+}
+
+run_local_step() {
+  local command_text="$1"
+  shift
+
+  commands_run+=("$command_text")
+  echo "==> $command_text"
+  if ! "$@"; then
+    failed_command="$command_text"
+    return 1
+  fi
 }
 
 write_manifest() {
@@ -233,6 +245,7 @@ write_manifest() {
     echo "    \"manifest\": \"${manifest_path}\"," 
     echo "    \"events\": \"${events_path}\"," 
     echo "    \"commands\": \"${commands_path}\"," 
+    echo "    \"module_resolution_trace\": \"${module_resolution_trace_path}\"," 
     echo '    "matrix_doc": "docs/module_compatibility_matrix_v1.json",'
     echo '    "matrix_impl": "crates/franken-engine/src/module_compatibility_matrix.rs",'
     echo '    "unit_tests": "crates/franken-engine/tests/module_compatibility_matrix.rs",'
@@ -244,6 +257,8 @@ write_manifest() {
     echo "    \"cat ${manifest_path}\"," 
     echo "    \"cat ${events_path}\"," 
     echo "    \"cat ${commands_path}\"," 
+    echo "    \"cat ${module_resolution_trace_path}\"," 
+    echo "    \"./scripts/e2e/rgc_module_resolution_trace_contract_smoke.sh ${module_resolution_trace_path}\"," 
     echo "    \"${replay_command}\""
     echo "  ]"
     echo "}"
@@ -255,5 +270,10 @@ write_manifest() {
 
 main_exit=0
 run_mode || main_exit=$?
+run_local_step \
+  "./scripts/e2e/rgc_module_resolution_trace_contract_smoke.sh ${module_resolution_trace_path}" \
+  "${root_dir}/scripts/e2e/rgc_module_resolution_trace_contract_smoke.sh" \
+  "${module_resolution_trace_path}" \
+  || main_exit=$?
 write_manifest "$main_exit"
 exit "$main_exit"

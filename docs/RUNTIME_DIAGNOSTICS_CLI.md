@@ -12,6 +12,9 @@ Subcommands:
 
 - `diagnostics`: emit runtime-state diagnostics
 - `export-evidence`: export evidence bundle with deterministic filtering/sorting
+- `doctor`: produce fail-closed preflight readiness report + support bundle pointers
+- `onboarding-scorecard`: derive deterministic onboarding readiness scorecard
+- `rollout-decision-artifact`: consolidate onboarding/advisory/platform evidence into explicit rollout recommendation (`promote|canary_hold|rollback|defer`)
 
 ## Input Contract
 
@@ -69,6 +72,26 @@ Evidence export summary mode:
 
 ```bash
 runtime_diagnostics export-evidence --input artifacts/runtime_input.json --summary
+```
+
+Onboarding scorecard:
+
+```bash
+runtime_diagnostics onboarding-scorecard \
+  --input artifacts/runtime_input.json \
+  --signals artifacts/onboarding_signals.json \
+  --summary
+```
+
+Rollout decision artifact:
+
+```bash
+runtime_diagnostics rollout-decision-artifact \
+  --input artifacts/runtime_input.json \
+  --signals artifacts/onboarding_signals.json \
+  --advisories artifacts/compat_advisories.json \
+  --platform-signals artifacts/platform_matrix_signals.json \
+  --summary
 ```
 
 ## Determinism Rules

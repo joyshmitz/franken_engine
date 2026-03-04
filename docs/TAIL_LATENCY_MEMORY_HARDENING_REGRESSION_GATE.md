@@ -132,6 +132,7 @@ Each run emits:
 - `artifacts/tail_latency_memory_hardening_regression_gate/<timestamp>/run_manifest.json`
 - `artifacts/tail_latency_memory_hardening_regression_gate/<timestamp>/events.jsonl`
 - `artifacts/tail_latency_memory_hardening_regression_gate/<timestamp>/commands.txt`
+- `artifacts/tail_latency_memory_hardening_regression_gate/<timestamp>/pause_distribution_report.json`
 
 The manifest must include replay command, deterministic run metadata, command
 transcript, and pass/fail outcome.
@@ -143,5 +144,6 @@ transcript, and pass/fail outcome.
 cat artifacts/tail_latency_memory_hardening_regression_gate/<timestamp>/run_manifest.json
 cat artifacts/tail_latency_memory_hardening_regression_gate/<timestamp>/events.jsonl
 cat artifacts/tail_latency_memory_hardening_regression_gate/<timestamp>/commands.txt
+cat artifacts/tail_latency_memory_hardening_regression_gate/<timestamp>/pause_distribution_report.json
 ./scripts/e2e/tail_latency_memory_hardening_regression_gate_replay.sh
 ```

@@ -20,8 +20,24 @@ events_path="$run_dir/events.jsonl"
 commands_path="$run_dir/commands.txt"
 guardplane_log_path="$run_dir/guardplane_decision_log.jsonl"
 containment_log_path="$run_dir/containment_workflow_log.jsonl"
+containment_timeline_path="$run_dir/containment_timeline.json"
 logs_dir="$run_dir/logs"
-bead_id="${GUARDPLANE_POLICY_ACTIONS_BEAD_ID:-bd-1lsy.6}"
+bead_id="${GUARDPLANE_POLICY_ACTIONS_BEAD_ID:-bd-1lsy.6.3}"
+guardplane_log_env_path="$guardplane_log_path"
+containment_log_env_path="$containment_log_path"
+containment_detection_source_event="${GUARDPLANE_CONTAINMENT_DETECTION_SOURCE_EVENT:-delegate_declassification}"
+containment_latency_slo_ns="${GUARDPLANE_CONTAINMENT_SLO_NS:-250000000}"
+guardplane_log_begin_marker="__FE_GUARDPLANE_DECISION_LOG_BEGIN__"
+guardplane_log_end_marker="__FE_GUARDPLANE_DECISION_LOG_END__"
+containment_log_begin_marker="__FE_CONTAINMENT_WORKFLOW_LOG_BEGIN__"
+containment_log_end_marker="__FE_CONTAINMENT_WORKFLOW_LOG_END__"
+
+if [[ "$guardplane_log_env_path" != /* ]]; then
+  guardplane_log_env_path="$root_dir/$guardplane_log_env_path"
+fi
+if [[ "$containment_log_env_path" != /* ]]; then
+  containment_log_env_path="$root_dir/$containment_log_env_path"
+fi
 
 trace_id="trace-guardplane-policy-actions-${timestamp}"
 decision_id="decision-guardplane-policy-actions-${timestamp}"
@@ -75,6 +91,143 @@ run_step() {
   return 1
 }
 
+write_containment_timeline() {
+  if [[ ! "$containment_latency_slo_ns" =~ ^[0-9]+$ ]]; then
+    echo "error: GUARDPLANE_CONTAINMENT_SLO_NS must be an unsigned integer (ns)" >&2
+    return 1
+  fi
+
+  local guardplane_array
+  local containment_array
+  guardplane_array="$(mktemp)"
+  containment_array="$(mktemp)"
+  jq -s '.' "$guardplane_log_path" >"$guardplane_array"
+  jq -s '.' "$containment_log_path" >"$containment_array"
+
+  if ! jq -n \
+    --arg schema_version "franken-engine.containment-timeline.v1" \
+    --arg component "$component" \
+    --arg trace_id "$trace_id" \
+    --arg decision_id "$decision_id" \
+    --arg policy_id "$policy_id" \
+    --arg source_event "$containment_detection_source_event" \
+    --arg generated_at_utc "$timestamp" \
+    --argjson containment_latency_slo_ns "$containment_latency_slo_ns" \
+    --slurpfile guardplane "$guardplane_array" \
+    --slurpfile containment "$containment_array" \
+    '
+      ($guardplane[0] | sort_by(.timestamp_ns)) as $guard_log
+      | ($containment[0] | sort_by(.timestamp_ns)) as $containment_log
+      | ($guard_log | map(select(.source_event == $source_event)) | first) as $detection
+      | ($containment_log | first) as $first_containment
+      | ($containment_log | map(select(.action == "quarantine")) | first) as $quarantine
+      | ($detection.timestamp_ns // null) as $detection_ts
+      | ($first_containment.timestamp_ns // null) as $first_containment_ts
+      | ($quarantine.timestamp_ns // null) as $quarantine_ts
+      | (
+          if $detection_ts != null and $first_containment_ts != null then
+            ($first_containment_ts - $detection_ts)
+          else
+            null
+          end
+        ) as $detection_to_first_containment_ns
+      | (
+          if $detection_ts != null and $quarantine_ts != null then
+            ($quarantine_ts - $detection_ts)
+          else
+            null
+          end
+        ) as $detection_to_quarantine_ns
+      | {
+          schema_version: $schema_version,
+          component: $component,
+          trace_id: $trace_id,
+          decision_id: $decision_id,
+          policy_id: $policy_id,
+          generated_at_utc: $generated_at_utc,
+          detection: {
+            source_event: $source_event,
+            timestamp_ns: $detection_ts
+          },
+          metrics: {
+            detection_to_first_containment_ns: $detection_to_first_containment_ns,
+            detection_to_quarantine_ns: $detection_to_quarantine_ns
+          },
+          slo: {
+            target_detection_to_first_containment_ns: $containment_latency_slo_ns,
+            met: (
+              $detection_to_first_containment_ns != null
+              and $detection_to_first_containment_ns <= $containment_latency_slo_ns
+            ),
+            measured_detection_to_first_containment_ns: $detection_to_first_containment_ns
+          },
+          timeline: (
+            $containment_log
+            | map({
+                timestamp_ns,
+                source_event,
+                action,
+                event,
+                lifecycle_transition,
+                resulting_state,
+                mesh_propagated,
+                mesh_fanout: (.mesh_targets | length),
+                mesh_targets
+              })
+          ),
+          checkpoints: {
+            containment_first_event: $first_containment_ts,
+            quarantine_established_at_ns: $quarantine_ts,
+            quarantine_fanout: (($quarantine.mesh_targets | length) // 0),
+            quarantine_mesh_propagated: (($quarantine.mesh_propagated) // false)
+          }
+        }
+    ' >"$containment_timeline_path"; then
+    rm -f "$guardplane_array" "$containment_array"
+    echo "error: unable to write containment timeline artifact" >&2
+    return 1
+  fi
+
+  rm -f "$guardplane_array" "$containment_array"
+}
+
+extract_artifact_from_step_log() {
+  local step_log_path="$1"
+  local begin_marker="$2"
+  local end_marker="$3"
+  local output_path="$4"
+
+  mkdir -p "$(dirname "$output_path")"
+  awk \
+    -v begin="$begin_marker" \
+    -v end="$end_marker" \
+    '
+      $0 == begin {capture=1; found_begin=1; next}
+      $0 == end {
+        if (capture) {
+          found_end=1
+          exit
+        }
+      }
+      capture {print}
+      END {
+        if (!found_begin || !found_end) {
+          exit 2
+        }
+      }
+    ' "$step_log_path" >"$output_path"
+}
+
+run_guardplane_artifact_capture_step() {
+  run_step "cargo test -p frankenengine-extension-host --lib guardplane_policy_action_logs_can_emit_jsonl_artifacts" \
+    env \
+      "FE_GUARDPLANE_DECISION_LOG_PATH=$guardplane_log_env_path" \
+      "FE_CONTAINMENT_WORKFLOW_LOG_PATH=$containment_log_env_path" \
+      "FE_GUARDPLANE_REPLAY_COMMAND=${0}::ci" \
+      "FE_GUARDPLANE_EMIT_STDOUT_MARKERS=1" \
+      cargo test -p frankenengine-extension-host --lib guardplane_policy_action_logs_can_emit_jsonl_artifacts -- --nocapture
+}
+
 run_mode() {
   case "$mode" in
     check)
@@ -90,6 +243,7 @@ run_mode() {
         cargo test -p frankenengine-extension-host --lib guardplane_safe_mode_fallback_is_fail_closed
       run_step "cargo test -p frankenengine-extension-host --lib quarantine_mesh_targets_are_sorted_and_recorded" \
         cargo test -p frankenengine-extension-host --lib quarantine_mesh_targets_are_sorted_and_recorded
+      run_guardplane_artifact_capture_step
       ;;
     clippy)
       run_step "cargo clippy -p frankenengine-extension-host --lib -- -D warnings" \
@@ -106,6 +260,7 @@ run_mode() {
         cargo test -p frankenengine-extension-host --lib guardplane_safe_mode_fallback_is_fail_closed
       run_step "cargo test -p frankenengine-extension-host --lib quarantine_mesh_targets_are_sorted_and_recorded" \
         cargo test -p frankenengine-extension-host --lib quarantine_mesh_targets_are_sorted_and_recorded
+      run_guardplane_artifact_capture_step
       run_step "cargo clippy -p frankenengine-extension-host --lib -- -D warnings" \
         cargo clippy -p frankenengine-extension-host --lib -- -D warnings
       ;;
@@ -114,29 +269,56 @@ run_mode() {
       exit 2
       ;;
   esac
+
+  if [[ "$mode" == "test" || "$mode" == "ci" ]]; then
+    local final_step_log="${command_logs[$(( ${#command_logs[@]} - 1 ))]}"
+    if ! extract_artifact_from_step_log \
+      "$final_step_log" \
+      "$guardplane_log_begin_marker" \
+      "$guardplane_log_end_marker" \
+      "$guardplane_log_path"; then
+      echo "error: unable to extract guardplane decision log from $final_step_log" >&2
+      failed_command="guardplane_policy_action_logs_can_emit_jsonl_artifacts"
+      failed_log_path="$final_step_log"
+      return 1
+    fi
+    if ! extract_artifact_from_step_log \
+      "$final_step_log" \
+      "$containment_log_begin_marker" \
+      "$containment_log_end_marker" \
+      "$containment_log_path"; then
+      echo "error: unable to extract containment workflow log from $final_step_log" >&2
+      failed_command="guardplane_policy_action_logs_can_emit_jsonl_artifacts"
+      failed_log_path="$final_step_log"
+      return 1
+    fi
+
+    if [[ ! -s "$guardplane_log_path" ]]; then
+      echo "error: missing guardplane decision log artifact: $guardplane_log_path" >&2
+      failed_command="guardplane_policy_action_logs_can_emit_jsonl_artifacts"
+      failed_log_path="$guardplane_log_path"
+      return 1
+    fi
+    if [[ ! -s "$containment_log_path" ]]; then
+      echo "error: missing containment workflow log artifact: $containment_log_path" >&2
+      failed_command="guardplane_policy_action_logs_can_emit_jsonl_artifacts"
+      failed_log_path="$containment_log_path"
+      return 1
+    fi
+    if ! write_containment_timeline; then
+      failed_command="containment_timeline_generation"
+      failed_log_path="$containment_timeline_path"
+      return 1
+    fi
+    if [[ ! -s "$containment_timeline_path" ]]; then
+      echo "error: missing containment timeline artifact: $containment_timeline_path" >&2
+      failed_command="containment_timeline_generation"
+      failed_log_path="$containment_timeline_path"
+      return 1
+    fi
+  fi
+
   mode_completed=true
-}
-
-write_guardplane_decision_log() {
-  local replay_command="${0} ci"
-  {
-    echo "{\"schema_version\":\"franken-engine.guardplane-decision-log.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"delegate_cell\",\"source_event\":\"delegate_declassification\",\"posterior_micros\":310000,\"action\":\"challenge\",\"safe_mode_fallback\":false,\"lifecycle_transition\":null,\"resulting_state\":\"running\",\"replay_command\":\"${replay_command}\"}"
-    echo "{\"schema_version\":\"franken-engine.guardplane-decision-log.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"delegate_cell\",\"source_event\":\"delegate_declassification\",\"posterior_micros\":420000,\"action\":\"sandbox\",\"safe_mode_fallback\":false,\"lifecycle_transition\":null,\"resulting_state\":\"running\",\"replay_command\":\"${replay_command}\"}"
-    echo "{\"schema_version\":\"franken-engine.guardplane-decision-log.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"delegate_cell\",\"source_event\":\"delegate_declassification\",\"posterior_micros\":640000,\"action\":\"suspend\",\"safe_mode_fallback\":false,\"lifecycle_transition\":\"suspend\",\"resulting_state\":\"suspending\",\"replay_command\":\"${replay_command}\"}"
-    echo "{\"schema_version\":\"franken-engine.guardplane-decision-log.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"delegate_cell\",\"source_event\":\"delegate_declassification\",\"posterior_micros\":750000,\"action\":\"terminate\",\"safe_mode_fallback\":false,\"lifecycle_transition\":\"terminate\",\"resulting_state\":\"terminating\",\"replay_command\":\"${replay_command}\"}"
-    echo "{\"schema_version\":\"franken-engine.guardplane-decision-log.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"delegate_cell\",\"source_event\":\"delegate_declassification\",\"posterior_micros\":860000,\"action\":\"quarantine\",\"safe_mode_fallback\":false,\"lifecycle_transition\":\"quarantine\",\"resulting_state\":\"quarantined\",\"replay_command\":\"${replay_command}\"}"
-    echo "{\"schema_version\":\"franken-engine.guardplane-decision-log.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"delegate_cell\",\"source_event\":\"delegate_hostcall\",\"posterior_micros\":200000,\"action\":\"sandbox\",\"safe_mode_fallback\":true,\"lifecycle_transition\":null,\"resulting_state\":\"running\",\"replay_command\":\"${replay_command}\"}"
-  } >"$guardplane_log_path"
-}
-
-write_containment_workflow_log() {
-  local replay_command="${0} ci"
-  {
-    echo "{\"schema_version\":\"franken-engine.containment-workflow-log.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"delegate_cell\",\"source_event\":\"delegate_declassification\",\"action\":\"sandbox\",\"lifecycle_transition\":null,\"resulting_state\":\"running\",\"mesh_targets\":[],\"mesh_propagated\":false,\"replay_command\":\"${replay_command}\"}"
-    echo "{\"schema_version\":\"franken-engine.containment-workflow-log.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"delegate_cell\",\"source_event\":\"delegate_declassification\",\"action\":\"suspend\",\"lifecycle_transition\":\"suspend\",\"resulting_state\":\"suspending\",\"mesh_targets\":[],\"mesh_propagated\":false,\"replay_command\":\"${replay_command}\"}"
-    echo "{\"schema_version\":\"franken-engine.containment-workflow-log.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"delegate_cell\",\"source_event\":\"delegate_declassification\",\"action\":\"terminate\",\"lifecycle_transition\":\"terminate\",\"resulting_state\":\"terminating\",\"mesh_targets\":[],\"mesh_propagated\":false,\"replay_command\":\"${replay_command}\"}"
-    echo "{\"schema_version\":\"franken-engine.containment-workflow-log.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"delegate_cell\",\"source_event\":\"delegate_declassification\",\"action\":\"quarantine\",\"lifecycle_transition\":\"quarantine\",\"resulting_state\":\"quarantined\",\"mesh_targets\":[\"peer-a\",\"peer-m\",\"peer-z\"],\"mesh_propagated\":true,\"replay_command\":\"${replay_command}\"}"
-  } >"$containment_log_path"
 }
 
 json_or_null() {
@@ -172,8 +354,13 @@ write_manifest() {
     dirty_worktree=true
   fi
 
-  write_guardplane_decision_log
-  write_containment_workflow_log
+  if [[ "$mode" == "test" || "$mode" == "ci" ]]; then
+    if [[ ! -s "$guardplane_log_path" || ! -s "$containment_log_path" || ! -s "$containment_timeline_path" ]]; then
+      outcome="fail"
+      error_code_json='"FE-DELEGATE-0007"'
+    fi
+  fi
+
   printf '%s\n' "${commands_run[@]}" >"$commands_path"
   failed_log_json="$(json_or_null "$failed_log_path")"
 
@@ -226,6 +413,7 @@ write_manifest() {
     echo "    \"commands\": \"${commands_path}\","
     echo "    \"guardplane_decision_log\": \"${guardplane_log_path}\","
     echo "    \"containment_workflow_log\": \"${containment_log_path}\","
+    echo "    \"containment_timeline\": \"${containment_timeline_path}\","
     echo "    \"logs_dir\": \"${logs_dir}\","
     echo '    "source_module": "crates/franken-extension-host/src/lib.rs",'
     echo '    "suite_script": "scripts/run_guardplane_policy_actions_suite.sh"'
@@ -236,6 +424,7 @@ write_manifest() {
     echo "    \"cat ${commands_path}\","
     echo "    \"cat ${guardplane_log_path}\","
     echo "    \"cat ${containment_log_path}\","
+    echo "    \"cat ${containment_timeline_path}\","
     echo "    \"${0} ci\""
     echo '  ]'
     echo "}"
@@ -245,6 +434,7 @@ write_manifest() {
   echo "guardplane policy actions events: $events_path"
   echo "guardplane decision log: $guardplane_log_path"
   echo "containment workflow log: $containment_log_path"
+  echo "containment timeline: $containment_timeline_path"
 }
 
 trap 'write_manifest $?' EXIT

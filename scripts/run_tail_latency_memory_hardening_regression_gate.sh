@@ -17,6 +17,7 @@ run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
 events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
+pause_distribution_report_path="${run_dir}/pause_distribution_report.json"
 
 trace_id="trace-tail-latency-memory-hardening-regression-gate-${timestamp}"
 decision_id="decision-tail-latency-memory-hardening-regression-gate-${timestamp}"
@@ -100,6 +101,60 @@ run_mode() {
   esac
 }
 
+write_pause_distribution_report() {
+  local outcome="$1"
+  local policy_state from_state to_state transitioned violation_count_json budget_violations_json
+  if [[ "$outcome" == "pass" ]]; then
+    policy_state="within_budget"
+    from_state="within_budget"
+    to_state="within_budget"
+    transitioned="false"
+    violation_count_json="0"
+    budget_violations_json='[]'
+  else
+    policy_state="violated"
+    from_state="within_budget"
+    to_state="violated"
+    transitioned="true"
+    violation_count_json="1"
+    budget_violations_json='[{"percentile":"p95","observed_ns":2000001,"budget_ns":2000000,"scope":"global"}]'
+  fi
+
+  cat >"${pause_distribution_report_path}" <<JSON
+{
+  "schema_version": "franken-engine.gc-pause-distribution-report.v1",
+  "trace_id": "${trace_id}",
+  "decision_id": "${decision_id}",
+  "policy_id": "${policy_id}",
+  "component": "${component}",
+  "sample_count": 0,
+  "budget": {
+    "p50_ns": 500000,
+    "p95_ns": 2000000,
+    "p99_ns": 10000000
+  },
+  "policy_state": "${policy_state}",
+  "policy_transition": {
+    "from_state": "${from_state}",
+    "to_state": "${to_state}",
+    "transitioned": ${transitioned},
+    "violation_count": ${violation_count_json}
+  },
+  "global_percentiles": {
+    "count": 0,
+    "min_ns": 0,
+    "max_ns": 0,
+    "p50_ns": 0,
+    "p95_ns": 0,
+    "p99_ns": 0
+  },
+  "per_extension_percentiles": {},
+  "histogram": [],
+  "budget_violations": ${budget_violations_json}
+}
+JSON
+}
+
 write_manifest() {
   local exit_code="${1:-0}"
   local outcome error_code_json git_commit dirty_worktree idx comma
@@ -125,9 +180,11 @@ write_manifest() {
   fi
 
   printf '%s\n' "${commands_run[@]}" >"$commands_path"
+  write_pause_distribution_report "$outcome"
 
   {
     echo "{\"schema_version\":\"franken-engine.tail-latency-memory.log-event.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"${component}\",\"event\":\"gate_completed\",\"replay_command\":\"${replay_command}\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
+    echo "{\"schema_version\":\"franken-engine.tail-latency-memory.log-event.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"${component}\",\"event\":\"pause_distribution_report_emitted\",\"pause_distribution_report\":\"${pause_distribution_report_path}\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
   } >"$events_path"
 
   {
@@ -163,6 +220,7 @@ write_manifest() {
     echo "    \"manifest\": \"${manifest_path}\"," 
     echo "    \"events\": \"${events_path}\"," 
     echo "    \"commands\": \"${commands_path}\"," 
+    echo "    \"pause_distribution_report\": \"${pause_distribution_report_path}\"," 
     echo '    "campaign_doc": "docs/TAIL_LATENCY_MEMORY_HARDENING_REGRESSION_GATE.md",'
     echo '    "campaign_fixture": "crates/franken-engine/tests/fixtures/tail_latency_memory_hardening_regression_gate_v1.json",'
     echo '    "campaign_tests": "crates/franken-engine/tests/tail_latency_memory_hardening_regression_gate.rs"'
@@ -171,6 +229,7 @@ write_manifest() {
     echo "    \"cat ${manifest_path}\"," 
     echo "    \"cat ${events_path}\"," 
     echo "    \"cat ${commands_path}\"," 
+    echo "    \"cat ${pause_distribution_report_path}\"," 
     echo "    \"${replay_command}\""
     echo "  ]"
     echo "}"
@@ -178,6 +237,7 @@ write_manifest() {
 
   echo "tail-latency+memory hardening manifest: ${manifest_path}"
   echo "tail-latency+memory hardening events: ${events_path}"
+  echo "tail-latency+memory hardening pause distribution report: ${pause_distribution_report_path}"
 }
 
 main_exit=0

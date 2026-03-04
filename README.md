@@ -1371,6 +1371,33 @@ Artifacts are written under:
 - `artifacts/rgc_performance_regression_verification_pack/<timestamp>/events.jsonl`
 - `artifacts/rgc_performance_regression_verification_pack/<timestamp>/commands.txt`
 
+## RGC Statistical Validation Pipeline
+
+`bd-1lsy.8.2` adds deterministic variance/significance/effect-size validation
+for benchmark promotion decisions, with fail-closed quarantine semantics for
+high-variance or low-confidence runs.
+
+```bash
+# RGC statistical validation pipeline gate (rch-backed check + test + clippy)
+./scripts/run_rgc_statistical_validation_pipeline.sh ci
+
+# deterministic replay wrapper
+./scripts/e2e/rgc_statistical_validation_pipeline_replay.sh ci
+```
+
+Contract and vectors:
+
+- [`docs/RGC_STATISTICAL_VALIDATION_PIPELINE_V1.md`](./docs/RGC_STATISTICAL_VALIDATION_PIPELINE_V1.md)
+- `docs/rgc_statistical_validation_pipeline_v1.json`
+- `crates/franken-engine/tests/rgc_statistical_validation_pipeline.rs`
+
+Artifacts are written under:
+
+- `artifacts/rgc_statistical_validation_pipeline/<timestamp>/run_manifest.json`
+- `artifacts/rgc_statistical_validation_pipeline/<timestamp>/events.jsonl`
+- `artifacts/rgc_statistical_validation_pipeline/<timestamp>/commands.txt`
+- `artifacts/rgc_statistical_validation_pipeline/<timestamp>/support_bundle/stats_verdict_report.json`
+
 ## RGC CLI and Operator Workflow Verification Pack
 
 `bd-1lsy.11.11` adds deterministic verification for operator CLI workflows
