@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use frankenengine_engine::engine_object_id::EngineObjectId;
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::semantic_contract_baseline::{
-    AdjudicationCategory, AdjudicationResolution, AdjudicationRule, CleanupPolicy,
+    AdjudicationCategory, AdjudicationResolution, CleanupPolicy,
     CompatibilityCorpus, ConsumerLane, ContractPackage, DeterminismLevel, DomMutation, DriftKind,
     EffectKind, EffectSemanticContract, EffectTiming, FixtureCategory, FixturePriority,
     ForbiddenPattern, FoundationError, FrozenBaseline, HookKind, HookSemanticContract,

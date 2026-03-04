@@ -5,11 +5,11 @@
 //! JSON field-name stability, initial-state checks, and serde roundtrips
 //! beyond the existing 47 integration tests.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use frankenengine_engine::runtime_decision_theory::{
-    BudgetConfig, BudgetController, BudgetEvent, BudgetEventKind, BudgetStatus,
-    ConformalCalibrator, ConformalConfig, CvarCheckResult, CvarConfig, CvarGuardrail,
+    BudgetConfig, BudgetController, BudgetEvent, BudgetEventKind, ConformalCalibrator,
+    ConformalConfig, CvarConfig, CvarGuardrail,
     DecisionContextConfig, DemotionReason, DriftConfig, DriftDetector, FallbackMetrics, LaneAction,
     LaneId, LatencyQuantiles, RegimeLabel, RiskFactor,
 };

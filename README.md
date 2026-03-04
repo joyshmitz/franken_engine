@@ -596,6 +596,9 @@ Artifacts are written under:
 `bd-2mds.1.7.2` compares `x86_64` and `aarch64` parser-lane evidence for
 deterministic reproducibility, classifies drift with explicit severity, and
 fails closed on unresolved critical deltas in strict matrix mode.
+`run_manifest.json` and `matrix_summary.json` include deterministic
+`matrix_input_status` (`pending_upstream_matrix`, `incomplete_matrix`,
+`blocked_critical_deltas`, `ready_for_external_rerun`) for downstream gating.
 
 ```bash
 # cross-arch matrix contract/test gate (rch-backed check + test + clippy)

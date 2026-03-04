@@ -68,6 +68,17 @@ Expected artifacts:
 5. **Symptom: failover/fallback ambiguity under pressure**
    - Primary drill:
      - `./scripts/run_parser_failover_controls_gate.sh ci`
+6. **Symptom: `rch` artifact retrieval failure / transfer corruption**
+   - Primary drill:
+     - `./scripts/run_parser_operator_developer_runbook.sh check`
+   - Fail-closed signatures (treat as gate failure, not soft pass):
+     - `Artifact retrieval failed`
+     - `Failed to retrieve artifacts:`
+     - `rsync artifact retrieval failed`
+     - `rsync error: ... code 23`
+   - Remediation:
+     - inspect worker health with `rch status --jobs --workers`
+     - rerun only after remote artifact transport is healthy
 
 ## Scriptable Drill Lane
 
@@ -91,6 +102,8 @@ One-command replay wrapper:
   **hold** and require a documented remediation/replay pass before re-enabling.
 - If failover controls show non-deterministic behavior, enforce fail-closed
   safe-mode posture and do not advance readiness gates.
+- If `rch` reports artifact retrieval failure signatures, treat the run as
+  hard-fail and rerun only after remote artifact transport health is restored.
 
 ## Operator Verification Checklist
 

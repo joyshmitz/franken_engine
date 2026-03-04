@@ -55,6 +55,14 @@ must fail-closed in strict `matrix` mode. In non-matrix modes (`check`,
 `test`, `clippy`, `ci`), missing inputs are recorded as informational metadata
 so compiler/test gate runs can execute without architecture-manifest inputs.
 
+`matrix_input_status` is emitted in both `run_manifest.json` and
+`matrix_summary.json` as one of:
+
+- `pending_upstream_matrix`: non-strict run with incomplete architecture inputs.
+- `incomplete_matrix`: strict matrix run missing required lane manifests.
+- `blocked_critical_deltas`: matrix inputs are complete but critical deltas remain.
+- `ready_for_external_rerun`: complete matrix with no unresolved critical deltas.
+
 ## Structured Logging Contract
 
 Event streams for this lane must include:
@@ -67,7 +75,8 @@ Event streams for this lane must include:
 - `outcome`
 - `error_code`
 
-Each lane-delta row must also include a deterministic replay pointer.
+`gate_completed` events must additionally include `matrix_input_status`.
+Each lane-delta row must include a deterministic replay pointer.
 
 ## Replay and Execution
 
