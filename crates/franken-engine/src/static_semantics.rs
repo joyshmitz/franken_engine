@@ -82,6 +82,12 @@ pub enum StaticErrorKind {
     DuplicateParameter,
     /// `delete` applied to an identifier in strict mode.
     DeleteOfIdentifier,
+    /// `eval` or `arguments` used as binding name in strict mode.
+    EvalArgumentsBinding,
+    /// `for-in` initializer in strict mode (`for (var x = 1 in ...)` is invalid).
+    ForInInitializer,
+    /// Duplicate binding name in destructuring pattern.
+    DuplicateDestructuringBinding,
 }
 
 impl StaticErrorKind {
@@ -104,6 +110,9 @@ impl StaticErrorKind {
             Self::ContinueOutsideLoop => "continue_outside_loop",
             Self::DuplicateParameter => "duplicate_parameter",
             Self::DeleteOfIdentifier => "delete_of_identifier",
+            Self::EvalArgumentsBinding => "eval_arguments_binding",
+            Self::ForInInitializer => "for_in_initializer",
+            Self::DuplicateDestructuringBinding => "duplicate_destructuring_binding",
         }
     }
 
@@ -127,6 +136,9 @@ impl StaticErrorKind {
             Self::ContinueOutsideLoop => "FE-STATIC-DIAG-CONTINUE-OUTSIDE-0015",
             Self::DuplicateParameter => "FE-STATIC-DIAG-DUP-PARAM-0016",
             Self::DeleteOfIdentifier => "FE-STATIC-DIAG-DELETE-IDENT-0017",
+            Self::EvalArgumentsBinding => "FE-STATIC-DIAG-EVAL-ARGS-0018",
+            Self::ForInInitializer => "FE-STATIC-DIAG-FOR-IN-INIT-0019",
+            Self::DuplicateDestructuringBinding => "FE-STATIC-DIAG-DUP-DESTR-0020",
         }
     }
 }
@@ -300,6 +312,39 @@ const KEYWORD_BINDINGS: &[&str] = &[
     "while",
     "with",
 ];
+
+/// Extract individual exported names from a named export clause string.
+///
+/// The parser produces canonicalized clause strings like `{ a, b as c }`.
+/// This function extracts the exported names (the "as" alias if present,
+/// otherwise the local name). Returns an empty vec if the clause cannot
+/// be parsed (falls back to whole-clause comparison).
+fn extract_export_specifier_names(clause: &str) -> Vec<String> {
+    let trimmed = clause.trim();
+    let inner = match trimmed.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+        Some(s) => s.trim(),
+        None => return Vec::new(),
+    };
+    if inner.is_empty() {
+        return Vec::new();
+    }
+    let mut names = Vec::new();
+    for specifier in inner.split(',') {
+        let specifier = specifier.trim();
+        if specifier.is_empty() {
+            continue;
+        }
+        // Handle `local as exported` form: the exported name is the alias.
+        let parts: Vec<&str> = specifier.split_whitespace().collect();
+        let exported_name = match parts.as_slice() {
+            [local] => *local,
+            [_local, "as", alias] => *alias,
+            _ => specifier,
+        };
+        names.push(exported_name.to_string());
+    }
+    names
+}
 
 fn is_reserved_binding(name: &str, is_module: bool) -> bool {
     // Module code is always strict
@@ -515,13 +560,29 @@ fn analyze_statement(
                         );
                     }
                 }
-                ExportKind::NamedClause(name) => {
-                    if !state.export_names.insert(name.clone()) {
-                        state.push_error(
-                            StaticErrorKind::DuplicateExport,
-                            format!("duplicate export name '{}'", name),
-                            export.span.clone(),
-                        );
+                ExportKind::NamedClause(clause) => {
+                    // Extract individual specifier names from the clause string.
+                    // The clause is canonicalized from the parser as `{ a, b as c }`.
+                    let specifier_names = extract_export_specifier_names(clause);
+                    if specifier_names.is_empty() {
+                        // Entire clause as single name (legacy or single-specifier).
+                        if !state.export_names.insert(clause.clone()) {
+                            state.push_error(
+                                StaticErrorKind::DuplicateExport,
+                                format!("duplicate export name '{}'", clause),
+                                export.span.clone(),
+                            );
+                        }
+                    } else {
+                        for exported_name in &specifier_names {
+                            if !state.export_names.insert(exported_name.clone()) {
+                                state.push_error(
+                                    StaticErrorKind::DuplicateExport,
+                                    format!("duplicate export name '{}'", exported_name),
+                                    export.span.clone(),
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -822,32 +883,102 @@ fn analyze_statement(
 
         Statement::ForIn(for_in_stmt) => {
             check_await_in_expression(state, &for_in_stmt.object, &for_in_stmt.span);
+            // Check binding names for reserved words
+            for bound_name in for_in_stmt.binding.binding_names() {
+                check_reserved(state, bound_name, &for_in_stmt.span);
+            }
+            // Check for duplicate names within destructuring
+            check_destructuring_duplicates(state, &for_in_stmt.binding, &for_in_stmt.span);
+            // Create scope for for-in binding if let/const
+            let for_in_scope_id = state.alloc_scope_id(scope_id.depth + 1);
+            let mut for_in_bindings: Vec<ResolvedBinding> = Vec::new();
+            let mut for_in_lex: BTreeMap<String, SourceSpan> = BTreeMap::new();
+            let mut for_in_var: BTreeMap<String, SourceSpan> = var_names.clone();
+            if let Some(ref kind) = for_in_stmt.binding_kind {
+                let bk = match kind {
+                    VariableDeclarationKind::Var => BindingKind::Var,
+                    VariableDeclarationKind::Let => BindingKind::Let,
+                    VariableDeclarationKind::Const => BindingKind::Const,
+                };
+                for bound_name in for_in_stmt.binding.binding_names() {
+                    let bid = state.alloc_binding_id();
+                    for_in_bindings.push(ResolvedBinding {
+                        name: bound_name.to_string(),
+                        binding_id: bid,
+                        scope: for_in_scope_id,
+                        kind: bk,
+                    });
+                }
+            }
             let prev_in_loop = state.in_loop;
             state.in_loop = true;
             analyze_statement(
                 state,
                 &for_in_stmt.body,
-                scope_id,
-                bindings,
-                lexical_names,
-                var_names,
+                for_in_scope_id,
+                &mut for_in_bindings,
+                &mut for_in_lex,
+                &mut for_in_var,
             );
             state.in_loop = prev_in_loop;
+            let for_in_scope = ScopeNode {
+                scope_id: for_in_scope_id,
+                parent: Some(scope_id),
+                kind: ScopeKind::Block,
+                bindings: for_in_bindings.clone(),
+            };
+            state.scopes.push(for_in_scope);
+            state.bindings.extend(for_in_bindings);
         }
 
         Statement::ForOf(for_of_stmt) => {
             check_await_in_expression(state, &for_of_stmt.iterable, &for_of_stmt.span);
+            // Check binding names for reserved words
+            for bound_name in for_of_stmt.binding.binding_names() {
+                check_reserved(state, bound_name, &for_of_stmt.span);
+            }
+            // Check for duplicate names within destructuring
+            check_destructuring_duplicates(state, &for_of_stmt.binding, &for_of_stmt.span);
+            // Create scope for for-of binding if let/const
+            let for_of_scope_id = state.alloc_scope_id(scope_id.depth + 1);
+            let mut for_of_bindings: Vec<ResolvedBinding> = Vec::new();
+            let mut for_of_lex: BTreeMap<String, SourceSpan> = BTreeMap::new();
+            let mut for_of_var: BTreeMap<String, SourceSpan> = var_names.clone();
+            if let Some(ref kind) = for_of_stmt.binding_kind {
+                let bk = match kind {
+                    VariableDeclarationKind::Var => BindingKind::Var,
+                    VariableDeclarationKind::Let => BindingKind::Let,
+                    VariableDeclarationKind::Const => BindingKind::Const,
+                };
+                for bound_name in for_of_stmt.binding.binding_names() {
+                    let bid = state.alloc_binding_id();
+                    for_of_bindings.push(ResolvedBinding {
+                        name: bound_name.to_string(),
+                        binding_id: bid,
+                        scope: for_of_scope_id,
+                        kind: bk,
+                    });
+                }
+            }
             let prev_in_loop = state.in_loop;
             state.in_loop = true;
             analyze_statement(
                 state,
                 &for_of_stmt.body,
-                scope_id,
-                bindings,
-                lexical_names,
-                var_names,
+                for_of_scope_id,
+                &mut for_of_bindings,
+                &mut for_of_lex,
+                &mut for_of_var,
             );
             state.in_loop = prev_in_loop;
+            let for_of_scope = ScopeNode {
+                scope_id: for_of_scope_id,
+                parent: Some(scope_id),
+                kind: ScopeKind::Block,
+                bindings: for_of_bindings.clone(),
+            };
+            state.scopes.push(for_of_scope);
+            state.bindings.extend(for_of_bindings);
         }
     }
 }
@@ -889,6 +1020,9 @@ fn analyze_variable_declaration(
         for bound_name in &names {
             check_reserved(state, bound_name, &declarator.span);
         }
+
+        // Check for duplicate names within a single destructuring pattern
+        check_destructuring_duplicates(state, &declarator.pattern, &declarator.span);
 
         // const without initializer
         if decl.kind == VariableDeclarationKind::Const && declarator.initializer.is_none() {
@@ -988,6 +1122,36 @@ fn check_reserved(state: &mut AnalyzerState, name: &str, span: &SourceSpan) {
             span.clone(),
         );
     }
+    // ES2020 §12.1.1: 'eval' and 'arguments' cannot be binding names in strict mode
+    if state.is_module && (name == "eval" || name == "arguments") {
+        state.push_error(
+            StaticErrorKind::EvalArgumentsBinding,
+            format!("'{}' cannot be used as a binding name in strict mode", name),
+            span.clone(),
+        );
+    }
+}
+
+/// Check for duplicate binding names within a single destructuring pattern.
+///
+/// Unlike the top-level duplicate check (which compares across declarations),
+/// this catches things like `let { a, a } = obj` or `([x, x]) => ...`.
+fn check_destructuring_duplicates(
+    state: &mut AnalyzerState,
+    pattern: &crate::ast::BindingPattern,
+    span: &SourceSpan,
+) {
+    let names = pattern.binding_names();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for name in &names {
+        if !seen.insert(name) {
+            state.push_error(
+                StaticErrorKind::DuplicateDestructuringBinding,
+                format!("duplicate binding name '{}' in destructuring pattern", name),
+                span.clone(),
+            );
+        }
+    }
 }
 
 /// Recursively walk an expression tree, checking for:
@@ -1072,9 +1236,72 @@ fn walk_expression(state: &mut AnalyzerState, expr: &Expression, span: &SourceSp
                 walk_expression(state, &prop.value, span);
             }
         }
-        Expression::ArrowFunction { body, .. } => {
-            if let crate::ast::ArrowBody::Expression(inner) = body {
-                walk_expression(state, inner, span);
+        Expression::ArrowFunction {
+            params,
+            body,
+            is_async: _,
+        } => {
+            // Check for duplicate parameter names in strict mode (module code)
+            if state.is_module {
+                let mut seen_params: BTreeSet<String> = BTreeSet::new();
+                for param in params {
+                    for bound_name in param.pattern.binding_names() {
+                        check_reserved(state, bound_name, &param.span);
+                        if !seen_params.insert(bound_name.to_string()) {
+                            state.push_error(
+                                StaticErrorKind::DuplicateParameter,
+                                format!("duplicate parameter name '{}'", bound_name),
+                                param.span.clone(),
+                            );
+                        }
+                    }
+                }
+            }
+            // Check for duplicate binding names within destructuring patterns
+            for param in params {
+                check_destructuring_duplicates(state, &param.pattern, &param.span);
+            }
+            match body {
+                crate::ast::ArrowBody::Expression(inner) => {
+                    walk_expression(state, inner, span);
+                }
+                crate::ast::ArrowBody::Block(block) => {
+                    // Arrow block body creates a function scope context
+                    let prev_in_function = state.in_function;
+                    let prev_in_loop = state.in_loop;
+                    let prev_in_switch = state.in_switch;
+                    let prev_const = state.const_bindings.clone();
+                    state.in_function = true;
+                    state.in_loop = false;
+                    state.in_switch = false;
+                    state.const_bindings = BTreeSet::new();
+                    let arrow_scope_id = state.alloc_scope_id(0);
+                    let mut arrow_bindings: Vec<ResolvedBinding> = Vec::new();
+                    let mut arrow_lex: BTreeMap<String, SourceSpan> = BTreeMap::new();
+                    let mut arrow_var: BTreeMap<String, SourceSpan> = BTreeMap::new();
+                    for child in &block.body {
+                        analyze_statement(
+                            state,
+                            child,
+                            arrow_scope_id,
+                            &mut arrow_bindings,
+                            &mut arrow_lex,
+                            &mut arrow_var,
+                        );
+                    }
+                    state.in_function = prev_in_function;
+                    state.in_loop = prev_in_loop;
+                    state.in_switch = prev_in_switch;
+                    state.const_bindings = prev_const;
+                    let arrow_scope = ScopeNode {
+                        scope_id: arrow_scope_id,
+                        parent: None,
+                        kind: ScopeKind::Function,
+                        bindings: arrow_bindings.clone(),
+                    };
+                    state.scopes.push(arrow_scope);
+                    state.bindings.extend(arrow_bindings);
+                }
             }
         }
         Expression::New { callee, arguments } => {
@@ -2193,6 +2420,9 @@ mod tests {
             StaticErrorKind::ContinueOutsideLoop,
             StaticErrorKind::DuplicateParameter,
             StaticErrorKind::DeleteOfIdentifier,
+            StaticErrorKind::EvalArgumentsBinding,
+            StaticErrorKind::ForInInitializer,
+            StaticErrorKind::DuplicateDestructuringBinding,
         ];
         for kind in kinds {
             let json = serde_json::to_string(&kind).unwrap();
@@ -2377,6 +2607,9 @@ mod tests {
             StaticErrorKind::ContinueOutsideLoop,
             StaticErrorKind::DuplicateParameter,
             StaticErrorKind::DeleteOfIdentifier,
+            StaticErrorKind::EvalArgumentsBinding,
+            StaticErrorKind::ForInInitializer,
+            StaticErrorKind::DuplicateDestructuringBinding,
         ];
         let codes: BTreeSet<&str> = kinds.iter().map(|k| k.diagnostic_code()).collect();
         assert_eq!(codes.len(), kinds.len(), "diagnostic codes must be unique");
@@ -3411,6 +3644,9 @@ mod tests {
             StaticErrorKind::ContinueOutsideLoop,
             StaticErrorKind::DuplicateParameter,
             StaticErrorKind::DeleteOfIdentifier,
+            StaticErrorKind::EvalArgumentsBinding,
+            StaticErrorKind::ForInInitializer,
+            StaticErrorKind::DuplicateDestructuringBinding,
         ];
         for kind in new_kinds {
             assert!(!kind.diagnostic_code().is_empty());
@@ -3810,9 +4046,12 @@ mod tests {
             StaticErrorKind::ContinueOutsideLoop,
             StaticErrorKind::DuplicateParameter,
             StaticErrorKind::DeleteOfIdentifier,
+            StaticErrorKind::EvalArgumentsBinding,
+            StaticErrorKind::ForInInitializer,
+            StaticErrorKind::DuplicateDestructuringBinding,
         ];
         let strs: BTreeSet<String> = kinds.iter().map(|k| k.to_string()).collect();
-        assert_eq!(strs.len(), 17, "all 17 Display outputs must be distinct");
+        assert_eq!(strs.len(), 20, "all 20 Display outputs must be distinct");
     }
 
     #[test]
@@ -3835,6 +4074,9 @@ mod tests {
             StaticErrorKind::ContinueOutsideLoop,
             StaticErrorKind::DuplicateParameter,
             StaticErrorKind::DeleteOfIdentifier,
+            StaticErrorKind::EvalArgumentsBinding,
+            StaticErrorKind::ForInInitializer,
+            StaticErrorKind::DuplicateDestructuringBinding,
         ];
         for kind in kinds {
             assert_eq!(kind.to_string(), kind.as_str());
@@ -3903,6 +4145,9 @@ mod tests {
             StaticErrorKind::ContinueOutsideLoop,
             StaticErrorKind::DuplicateParameter,
             StaticErrorKind::DeleteOfIdentifier,
+            StaticErrorKind::EvalArgumentsBinding,
+            StaticErrorKind::ForInInitializer,
+            StaticErrorKind::DuplicateDestructuringBinding,
         ];
         for kind in kinds {
             assert!(
@@ -4532,6 +4777,901 @@ mod tests {
                 .errors
                 .iter()
                 .any(|e| e.kind == StaticErrorKind::AwaitOutsideAsync)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // eval/arguments binding in strict mode (ES2020 §12.1.1)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn eval_as_binding_in_module_detected() {
+        let tree = make_tree(
+            ParseGoal::Module,
+            vec![var_decl(
+                VariableDeclarationKind::Let,
+                "eval",
+                Some(Expression::NumericLiteral(1)),
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::EvalArgumentsBinding),
+            "eval as let binding in module should be flagged"
+        );
+    }
+
+    #[test]
+    fn arguments_as_binding_in_module_detected() {
+        let tree = make_tree(
+            ParseGoal::Module,
+            vec![var_decl(
+                VariableDeclarationKind::Const,
+                "arguments",
+                Some(Expression::NumericLiteral(1)),
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::EvalArgumentsBinding),
+            "arguments as const binding in module should be flagged"
+        );
+    }
+
+    #[test]
+    fn eval_as_binding_in_script_allowed() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![var_decl(
+                VariableDeclarationKind::Var,
+                "eval",
+                Some(Expression::NumericLiteral(1)),
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::EvalArgumentsBinding),
+            "eval as var binding in sloppy mode should be allowed"
+        );
+    }
+
+    #[test]
+    fn arguments_as_binding_in_script_allowed() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![var_decl(VariableDeclarationKind::Var, "arguments", None, 1)],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::EvalArgumentsBinding),
+            "arguments as var binding in sloppy mode should be allowed"
+        );
+    }
+
+    #[test]
+    fn eval_as_import_binding_in_module_detected() {
+        let tree = make_tree(
+            ParseGoal::Module,
+            vec![import_stmt(Some("eval"), "some-module", 1)],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::EvalArgumentsBinding),
+            "eval as import binding in module should be flagged"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Arrow function parameter validation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn arrow_duplicate_params_in_module_detected() {
+        use crate::ast::{ArrowBody, BindingPattern, FunctionParam};
+        let tree = make_tree(
+            ParseGoal::Module,
+            vec![expr_stmt(
+                Expression::ArrowFunction {
+                    params: vec![
+                        FunctionParam {
+                            pattern: BindingPattern::Identifier("a".to_string()),
+                            span: span(1),
+                        },
+                        FunctionParam {
+                            pattern: BindingPattern::Identifier("a".to_string()),
+                            span: span(1),
+                        },
+                    ],
+                    body: ArrowBody::Expression(Box::new(Expression::Identifier("a".to_string()))),
+                    is_async: false,
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::DuplicateParameter),
+            "duplicate arrow params in module should be flagged"
+        );
+    }
+
+    #[test]
+    fn arrow_block_body_return_allowed() {
+        use crate::ast::{
+            ArrowBody, BindingPattern, BlockStatement, FunctionParam, ReturnStatement,
+        };
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::ArrowFunction {
+                    params: vec![FunctionParam {
+                        pattern: BindingPattern::Identifier("x".to_string()),
+                        span: span(1),
+                    }],
+                    body: ArrowBody::Block(BlockStatement {
+                        body: vec![Statement::Return(ReturnStatement {
+                            argument: Some(Expression::Identifier("x".to_string())),
+                            span: span(2),
+                        })],
+                        span: span(1),
+                    }),
+                    is_async: false,
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::ReturnOutsideFunction),
+            "return inside arrow function block body should be allowed"
+        );
+    }
+
+    #[test]
+    fn arrow_block_body_const_tracked() {
+        use crate::ast::{ArrowBody, BlockStatement};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::ArrowFunction {
+                    params: vec![],
+                    body: ArrowBody::Block(BlockStatement {
+                        body: vec![
+                            var_decl(
+                                VariableDeclarationKind::Const,
+                                "x",
+                                Some(Expression::NumericLiteral(1)),
+                                2,
+                            ),
+                            expr_stmt(
+                                Expression::Assignment {
+                                    operator: crate::ast::AssignmentOperator::Assign,
+                                    left: Box::new(Expression::Identifier("x".to_string())),
+                                    right: Box::new(Expression::NumericLiteral(2)),
+                                },
+                                3,
+                            ),
+                        ],
+                        span: span(1),
+                    }),
+                    is_async: false,
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::AssignmentToConst),
+            "assignment to const inside arrow body should be detected"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Destructuring duplicate binding
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn destructuring_duplicate_in_object_pattern() {
+        use crate::ast::{BindingPattern, ObjectPatternProperty};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::VariableDeclaration(VariableDeclaration {
+                kind: VariableDeclarationKind::Let,
+                declarations: vec![VariableDeclarator {
+                    pattern: BindingPattern::ObjectPattern(vec![
+                        ObjectPatternProperty {
+                            key: Expression::Identifier("a".to_string()),
+                            value: BindingPattern::Identifier("x".to_string()),
+                            computed: false,
+                            shorthand: false,
+                        },
+                        ObjectPatternProperty {
+                            key: Expression::Identifier("b".to_string()),
+                            value: BindingPattern::Identifier("x".to_string()),
+                            computed: false,
+                            shorthand: false,
+                        },
+                    ]),
+                    initializer: Some(Expression::Identifier("obj".to_string())),
+                    span: span(1),
+                }],
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::DuplicateDestructuringBinding),
+            "duplicate x in destructuring should be flagged"
+        );
+    }
+
+    #[test]
+    fn destructuring_no_duplicate_ok() {
+        use crate::ast::{BindingPattern, ObjectPatternProperty};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::VariableDeclaration(VariableDeclaration {
+                kind: VariableDeclarationKind::Let,
+                declarations: vec![VariableDeclarator {
+                    pattern: BindingPattern::ObjectPattern(vec![
+                        ObjectPatternProperty {
+                            key: Expression::Identifier("a".to_string()),
+                            value: BindingPattern::Identifier("x".to_string()),
+                            computed: false,
+                            shorthand: false,
+                        },
+                        ObjectPatternProperty {
+                            key: Expression::Identifier("b".to_string()),
+                            value: BindingPattern::Identifier("y".to_string()),
+                            computed: false,
+                            shorthand: false,
+                        },
+                    ]),
+                    initializer: Some(Expression::Identifier("obj".to_string())),
+                    span: span(1),
+                }],
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::DuplicateDestructuringBinding),
+            "distinct names in destructuring should not error"
+        );
+    }
+
+    #[test]
+    fn destructuring_duplicate_in_array_pattern() {
+        use crate::ast::BindingPattern;
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::VariableDeclaration(VariableDeclaration {
+                kind: VariableDeclarationKind::Const,
+                declarations: vec![VariableDeclarator {
+                    pattern: BindingPattern::ArrayPattern(vec![
+                        Some(BindingPattern::Identifier("a".to_string())),
+                        Some(BindingPattern::Identifier("a".to_string())),
+                    ]),
+                    initializer: Some(Expression::ArrayLiteral(vec![
+                        Some(Expression::NumericLiteral(1)),
+                        Some(Expression::NumericLiteral(2)),
+                    ])),
+                    span: span(1),
+                }],
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::DuplicateDestructuringBinding),
+            "duplicate a in array destructuring should be flagged"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // For-in/for-of scope creation and binding validation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn for_in_creates_scope_with_let_binding() {
+        use crate::ast::{BindingPattern, ForInStatement};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::ForIn(ForInStatement {
+                binding: BindingPattern::Identifier("key".to_string()),
+                binding_kind: Some(VariableDeclarationKind::Let),
+                object: Expression::Identifier("obj".to_string()),
+                body: Box::new(expr_stmt(Expression::Identifier("key".to_string()), 2)),
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(result.passed(), "for-in with let binding should pass");
+        assert!(
+            result.scopes.len() >= 2,
+            "for-in should create a child scope (got {} scopes)",
+            result.scopes.len()
+        );
+        assert!(
+            result.bindings.iter().any(|b| b.name == "key"),
+            "for-in binding 'key' should be registered"
+        );
+    }
+
+    #[test]
+    fn for_of_creates_scope_with_const_binding() {
+        use crate::ast::{BindingPattern, ForOfStatement};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::ForOf(ForOfStatement {
+                binding: BindingPattern::Identifier("item".to_string()),
+                binding_kind: Some(VariableDeclarationKind::Const),
+                iterable: Expression::Identifier("arr".to_string()),
+                body: Box::new(expr_stmt(Expression::Identifier("item".to_string()), 2)),
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(result.passed(), "for-of with const binding should pass");
+        assert!(
+            result.bindings.iter().any(|b| b.name == "item"),
+            "for-of binding 'item' should be registered"
+        );
+    }
+
+    #[test]
+    fn for_in_reserved_binding_detected_in_module() {
+        use crate::ast::{BindingPattern, ForInStatement};
+        let tree = make_tree(
+            ParseGoal::Module,
+            vec![Statement::ForIn(ForInStatement {
+                binding: BindingPattern::Identifier("eval".to_string()),
+                binding_kind: Some(VariableDeclarationKind::Let),
+                object: Expression::Identifier("obj".to_string()),
+                body: Box::new(expr_stmt(Expression::NumericLiteral(1), 2)),
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::EvalArgumentsBinding),
+            "for-in binding 'eval' in module should be flagged"
+        );
+    }
+
+    #[test]
+    fn for_of_destructuring_duplicate_detected() {
+        use crate::ast::{BindingPattern, ForOfStatement};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::ForOf(ForOfStatement {
+                binding: BindingPattern::ArrayPattern(vec![
+                    Some(BindingPattern::Identifier("x".to_string())),
+                    Some(BindingPattern::Identifier("x".to_string())),
+                ]),
+                binding_kind: Some(VariableDeclarationKind::Let),
+                iterable: Expression::Identifier("pairs".to_string()),
+                body: Box::new(expr_stmt(Expression::NumericLiteral(1), 2)),
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::DuplicateDestructuringBinding),
+            "duplicate x in for-of destructuring should be flagged"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // New error kinds as_str and diagnostic_code coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn new_error_kinds_v2_as_str() {
+        assert_eq!(
+            StaticErrorKind::EvalArgumentsBinding.as_str(),
+            "eval_arguments_binding"
+        );
+        assert_eq!(
+            StaticErrorKind::ForInInitializer.as_str(),
+            "for_in_initializer"
+        );
+        assert_eq!(
+            StaticErrorKind::DuplicateDestructuringBinding.as_str(),
+            "duplicate_destructuring_binding"
+        );
+    }
+
+    #[test]
+    fn new_error_kinds_v2_diagnostic_codes() {
+        assert_eq!(
+            StaticErrorKind::EvalArgumentsBinding.diagnostic_code(),
+            "FE-STATIC-DIAG-EVAL-ARGS-0018"
+        );
+        assert_eq!(
+            StaticErrorKind::ForInInitializer.diagnostic_code(),
+            "FE-STATIC-DIAG-FOR-IN-INIT-0019"
+        );
+        assert_eq!(
+            StaticErrorKind::DuplicateDestructuringBinding.diagnostic_code(),
+            "FE-STATIC-DIAG-DUP-DESTR-0020"
+        );
+    }
+
+    #[test]
+    fn new_error_kinds_v2_serde_roundtrip() {
+        let kinds = [
+            StaticErrorKind::EvalArgumentsBinding,
+            StaticErrorKind::ForInInitializer,
+            StaticErrorKind::DuplicateDestructuringBinding,
+        ];
+        for kind in kinds {
+            let json = serde_json::to_string(&kind).unwrap();
+            let back: StaticErrorKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(kind, back);
+        }
+    }
+
+    #[test]
+    fn arrow_destructuring_params_dup_detected() {
+        use crate::ast::{ArrowBody, BindingPattern, FunctionParam, ObjectPatternProperty};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::ArrowFunction {
+                    params: vec![FunctionParam {
+                        pattern: BindingPattern::ObjectPattern(vec![
+                            ObjectPatternProperty {
+                                key: Expression::Identifier("a".to_string()),
+                                value: BindingPattern::Identifier("x".to_string()),
+                                computed: false,
+                                shorthand: false,
+                            },
+                            ObjectPatternProperty {
+                                key: Expression::Identifier("b".to_string()),
+                                value: BindingPattern::Identifier("x".to_string()),
+                                computed: false,
+                                shorthand: false,
+                            },
+                        ]),
+                        span: span(1),
+                    }],
+                    body: ArrowBody::Expression(Box::new(Expression::Identifier("x".to_string()))),
+                    is_async: false,
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::DuplicateDestructuringBinding),
+            "duplicate binding in arrow destructuring param should be flagged"
+        );
+    }
+
+    #[test]
+    fn arrow_block_body_break_outside_loop_detected() {
+        use crate::ast::{ArrowBody, BlockStatement, BreakStatement};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::ArrowFunction {
+                    params: vec![],
+                    body: ArrowBody::Block(BlockStatement {
+                        body: vec![Statement::Break(BreakStatement {
+                            label: None,
+                            span: span(2),
+                        })],
+                        span: span(1),
+                    }),
+                    is_async: false,
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::BreakOutsideLoop),
+            "break inside arrow block body (no loop) should be detected"
+        );
+    }
+
+    #[test]
+    fn arrow_block_body_continue_in_for_ok() {
+        use crate::ast::{ArrowBody, BlockStatement, ContinueStatement, ForInStatement};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![expr_stmt(
+                Expression::ArrowFunction {
+                    params: vec![],
+                    body: ArrowBody::Block(BlockStatement {
+                        body: vec![Statement::ForIn(ForInStatement {
+                            binding: BindingPattern::Identifier("k".to_string()),
+                            binding_kind: Some(VariableDeclarationKind::Const),
+                            object: Expression::Identifier("obj".to_string()),
+                            body: Box::new(Statement::Continue(ContinueStatement {
+                                label: None,
+                                span: span(3),
+                            })),
+                            span: span(2),
+                        })],
+                        span: span(1),
+                    }),
+                    is_async: false,
+                },
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::ContinueOutsideLoop),
+            "continue inside for-in inside arrow block body should be OK"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Export named clause specifier extraction
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn extract_export_specifier_names_single() {
+        let names = super::extract_export_specifier_names("{ a }");
+        assert_eq!(names, vec!["a"]);
+    }
+
+    #[test]
+    fn extract_export_specifier_names_multiple() {
+        let names = super::extract_export_specifier_names("{ a, b, c }");
+        assert_eq!(names, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn extract_export_specifier_names_with_alias() {
+        let names = super::extract_export_specifier_names("{ a as x, b }");
+        assert_eq!(names, vec!["x", "b"]);
+    }
+
+    #[test]
+    fn extract_export_specifier_names_empty_clause() {
+        let names = super::extract_export_specifier_names("{ }");
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn extract_export_specifier_names_not_brace() {
+        let names = super::extract_export_specifier_names("foo");
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn duplicate_export_via_named_specifiers() {
+        // export { a } followed by export { a } should detect duplicate "a"
+        let tree = make_tree(
+            ParseGoal::Module,
+            vec![
+                Statement::Export(ExportDeclaration {
+                    kind: ExportKind::NamedClause("{ a }".to_string()),
+                    span: span(1),
+                }),
+                Statement::Export(ExportDeclaration {
+                    kind: ExportKind::NamedClause("{ a }".to_string()),
+                    span: span(2),
+                }),
+            ],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::DuplicateExport),
+            "duplicate 'a' in separate named export clauses should be detected"
+        );
+    }
+
+    #[test]
+    fn duplicate_export_across_default_and_named() {
+        // export default 42; export { x as default } — duplicate "default"
+        let tree = make_tree(
+            ParseGoal::Module,
+            vec![
+                export_default(Expression::NumericLiteral(42), 1),
+                Statement::Export(ExportDeclaration {
+                    kind: ExportKind::NamedClause("{ x as default }".to_string()),
+                    span: span(2),
+                }),
+            ],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::DuplicateExport),
+            "export default + export {{x as default}} should detect duplicate 'default'"
+        );
+    }
+
+    #[test]
+    fn distinct_named_exports_ok() {
+        let tree = make_tree(
+            ParseGoal::Module,
+            vec![
+                Statement::Export(ExportDeclaration {
+                    kind: ExportKind::NamedClause("{ a, b }".to_string()),
+                    span: span(1),
+                }),
+                Statement::Export(ExportDeclaration {
+                    kind: ExportKind::NamedClause("{ c }".to_string()),
+                    span: span(2),
+                }),
+            ],
+        );
+        let result = analyze(&tree);
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::DuplicateExport),
+            "distinct specifier names across export clauses should pass"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Static error kind coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn static_error_kind_as_str_covers_all_variants() {
+        // Ensure every variant returns a non-empty stable string.
+        let all_kinds = vec![
+            StaticErrorKind::DuplicateBinding,
+            StaticErrorKind::ConstWithoutInitializer,
+            StaticErrorKind::ImportInScript,
+            StaticErrorKind::ExportInScript,
+            StaticErrorKind::DuplicateExport,
+            StaticErrorKind::AwaitOutsideAsync,
+            StaticErrorKind::TemporalDeadZone,
+            StaticErrorKind::LexicalVarCollision,
+            StaticErrorKind::EmptyDeclaratorList,
+            StaticErrorKind::ReservedWordBinding,
+            StaticErrorKind::ImportRedeclaration,
+            StaticErrorKind::AssignmentToConst,
+            StaticErrorKind::ReturnOutsideFunction,
+            StaticErrorKind::BreakOutsideLoop,
+            StaticErrorKind::ContinueOutsideLoop,
+            StaticErrorKind::DuplicateParameter,
+            StaticErrorKind::DeleteOfIdentifier,
+            StaticErrorKind::EvalArgumentsBinding,
+            StaticErrorKind::ForInInitializer,
+            StaticErrorKind::DuplicateDestructuringBinding,
+        ];
+        for kind in &all_kinds {
+            let s = kind.as_str();
+            assert!(!s.is_empty(), "as_str() must not be empty for {:?}", kind);
+            let code = kind.diagnostic_code();
+            assert!(
+                code.starts_with("FE-STATIC-DIAG-"),
+                "diagnostic code must start with FE-STATIC-DIAG- for {:?}",
+                kind
+            );
+        }
+        // Verify unique as_str values
+        let strs: BTreeSet<_> = all_kinds.iter().map(|k| k.as_str()).collect();
+        assert_eq!(
+            strs.len(),
+            all_kinds.len(),
+            "all error kinds should have unique as_str"
+        );
+        // Verify unique diagnostic codes
+        let codes: BTreeSet<_> = all_kinds.iter().map(|k| k.diagnostic_code()).collect();
+        assert_eq!(
+            codes.len(),
+            all_kinds.len(),
+            "all error kinds should have unique diagnostic codes"
+        );
+    }
+
+    #[test]
+    fn static_error_display_includes_diagnostic_code() {
+        let err = StaticError::new(StaticErrorKind::DuplicateBinding, "test message", span(5));
+        let display = format!("{}", err);
+        assert!(
+            display.contains("FE-STATIC-DIAG-DUP-BINDING-0001"),
+            "Display should include diagnostic code: {}",
+            display
+        );
+        assert!(
+            display.contains("test message"),
+            "Display should include message: {}",
+            display
+        );
+    }
+
+    #[test]
+    fn static_analysis_result_canonical_value_has_required_keys() {
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![var_decl(
+                VariableDeclarationKind::Let,
+                "x",
+                Some(Expression::NumericLiteral(1)),
+                1,
+            )],
+        );
+        let result = analyze(&tree);
+        let cv = result.canonical_value();
+        if let CanonicalValue::Map(map) = &cv {
+            assert!(map.contains_key("bindings"));
+            assert!(map.contains_key("errors"));
+            assert!(map.contains_key("is_module"));
+            assert!(map.contains_key("scopes"));
+        } else {
+            panic!("canonical_value should be a Map");
+        }
+    }
+
+    #[test]
+    fn static_semantics_event_canonical_value_keys() {
+        let tree = make_tree(ParseGoal::Module, vec![]);
+        let result = analyze(&tree);
+        let event = StaticSemanticsEvent::from_result(&result);
+        assert_eq!(event.component, "static_semantics");
+        assert_eq!(event.event, "analysis_complete");
+        assert_eq!(event.outcome, "pass");
+        assert!(event.is_module);
+        let cv = event.canonical_value();
+        if let CanonicalValue::Map(map) = &cv {
+            assert!(map.contains_key("component"));
+            assert!(map.contains_key("event"));
+            assert!(map.contains_key("outcome"));
+            assert!(map.contains_key("is_module"));
+            assert!(map.contains_key("binding_count"));
+            assert!(map.contains_key("error_count"));
+            assert!(map.contains_key("scope_count"));
+        } else {
+            panic!("event canonical_value should be a Map");
+        }
+    }
+
+    #[test]
+    fn for_of_loop_binding_scope_created() {
+        use crate::ast::{BlockStatement, ForOfStatement};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::ForOf(ForOfStatement {
+                binding: BindingPattern::Identifier("item".to_string()),
+                binding_kind: Some(VariableDeclarationKind::Const),
+                iterable: Expression::Identifier("items".to_string()),
+                body: Box::new(Statement::Block(BlockStatement {
+                    body: vec![],
+                    span: span(2),
+                })),
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(result.passed());
+        // Should have top scope + for-of scope + block scope
+        assert!(
+            result.scopes.len() >= 2,
+            "for-of should create its own scope"
+        );
+    }
+
+    #[test]
+    fn for_in_reserved_binding_detected() {
+        use crate::ast::{BlockStatement, ForInStatement};
+        let tree = make_tree(
+            ParseGoal::Module,
+            vec![Statement::ForIn(ForInStatement {
+                binding: BindingPattern::Identifier("package".to_string()),
+                binding_kind: Some(VariableDeclarationKind::Let),
+                object: Expression::Identifier("obj".to_string()),
+                body: Box::new(Statement::Block(BlockStatement {
+                    body: vec![],
+                    span: span(2),
+                })),
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::ReservedWordBinding),
+            "'package' is strict-mode reserved and should be flagged in module code"
+        );
+    }
+
+    #[test]
+    fn destructuring_in_for_of_duplicate_detected() {
+        use crate::ast::{BlockStatement, ForOfStatement, ObjectPatternProperty};
+        let tree = make_tree(
+            ParseGoal::Script,
+            vec![Statement::ForOf(ForOfStatement {
+                binding: BindingPattern::ObjectPattern(vec![
+                    ObjectPatternProperty {
+                        key: Expression::Identifier("a".to_string()),
+                        value: BindingPattern::Identifier("x".to_string()),
+                        computed: false,
+                        shorthand: false,
+                    },
+                    ObjectPatternProperty {
+                        key: Expression::Identifier("b".to_string()),
+                        value: BindingPattern::Identifier("x".to_string()),
+                        computed: false,
+                        shorthand: false,
+                    },
+                ]),
+                binding_kind: Some(VariableDeclarationKind::Const),
+                iterable: Expression::Identifier("arr".to_string()),
+                body: Box::new(Statement::Block(BlockStatement {
+                    body: vec![],
+                    span: span(2),
+                })),
+                span: span(1),
+            })],
+        );
+        let result = analyze(&tree);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.kind == StaticErrorKind::DuplicateDestructuringBinding),
+            "duplicate 'x' in for-of destructuring pattern should be detected"
         );
     }
 }

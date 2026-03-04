@@ -56,7 +56,7 @@
       "family_id": "expression.binary_precedence",
       "goal": "script",
       "source": "a + b * c",
-      "expected_hash": "sha256:62a4e52514327b26c52adc6fc35c648bc3ebede50e821c9d72c8e9e2ab75100d"
+      "expected_hash": "sha256:f205653845adafa3af4678d025ac6ca3ae45a26f90145ed05aec5e6aab8f6310"
     },
     {
       "id": "module_import_default",
@@ -105,28 +105,28 @@
       "family_id": "statement.variable_declaration",
       "goal": "script",
       "source": "let value = 1",
-      "expected_hash": "sha256:c778612b0cac0dc168a3620b1b91893bca770c2a7c51c088ef61031a5c5442ac"
+      "expected_hash": "sha256:782085aeec6df60da7a3aeeca145462401b01b6a60a427d21516b642286beed2"
     },
     {
       "id": "script_function_declaration_raw",
       "family_id": "statement.function_declaration",
       "goal": "script",
       "source": "function foo() {}",
-      "expected_hash": "sha256:57158fa8743e180861e9f86d22bfaa57682a3de88eddfdc3baa59e1d3280bb89"
+      "expected_hash": "sha256:db82bcff38e2adb06b83ad8f94fc2455779fa350a7674022b61f6ee9a416630a"
     },
     {
       "id": "script_call_member_chain_raw",
       "family_id": "expression.call_member_chain",
       "goal": "script",
       "source": "obj.method(arg)",
-      "expected_hash": "sha256:0c1d35018b44775b7e0542cfe7f1a033c03ff40113314abd8be09baf3b62d9ea"
+      "expected_hash": "sha256:e04ce07c16ea91d29de165dfedd342186efab6e0e6ac61f21834354e2fed9d95"
     },
     {
       "id": "script_object_literal_raw",
       "family_id": "expression.object_array_literal",
       "goal": "script",
       "source": "{ key: value }",
-      "expected_hash": "sha256:df6a3db9e9e0b5cd368d3f8a2ffd4fff850caa6360febb155ef5dda0838a18e1"
+      "expected_hash": "sha256:50cd5f7d07dce79e87e3376d8a94e0ab5471f7f31e7a1a64b9572f54d5cb4b5a"
     },
     {
       "id": "script_template_literal_raw",
@@ -147,14 +147,14 @@
       "family_id": "expression.arrow_function",
       "goal": "script",
       "source": "(x) => x + 1",
-      "expected_hash": "sha256:2cbf49225d21019cda94793baf18858861707838b7c09f560928c7cb3504d324"
+      "expected_hash": "sha256:6e2dd955cd63a6c7ebd47b88b3c47ccbd5c0b1e6226c573f1bcaa39e62def6b0"
     },
     {
       "id": "script_control_flow_raw",
       "family_id": "statement.control_flow",
       "goal": "script",
       "source": "if (flag) run()",
-      "expected_hash": "sha256:5c1ffeea13ea2bcadffc352798762e017620d8a9cb4c56d56be2dbe83722719f"
+      "expected_hash": "sha256:8e1e00408b1bf95d39c5edd1e220df5760a81c2735e9f0c99d5220fe27a0f9de"
     }
   ]
 }
