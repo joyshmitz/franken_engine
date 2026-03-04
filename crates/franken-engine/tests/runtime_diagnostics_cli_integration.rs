@@ -1661,3 +1661,102 @@ fn render_onboarding_scorecard_summary_contains_key_fields() {
     assert!(summary.contains("next_steps:"));
     assert!(summary.contains("reproducible_commands:"));
 }
+
+// ===================================================================
+// Section 20: Rollout decision artifact consolidation
+// ===================================================================
+
+#[test]
+fn rollout_decision_artifact_merges_sources_and_emits_recommendation() {
+    let preflight = run_preflight_doctor(
+        &make_cli_input(),
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let onboarding = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/weather-ext".to_string(),
+        package_name: "weather-ext".to_string(),
+        target_platforms: vec!["linux-x64".to_string(), "macos-arm64".to_string()],
+        preflight,
+        external_signals: vec![OnboardingScorecardSignal {
+            signal_id: "compat:fs".to_string(),
+            source: "compatibility_advisory".to_string(),
+            severity: EvidenceSeverity::Warning,
+            summary: "fs parity warning".to_string(),
+            remediation: "review deterministic shim path".to_string(),
+            reproducible_command: "scripts/run_frx_lockstep_oracle_suite.sh ci".to_string(),
+            evidence_links: vec!["artifacts/frx_lockstep_oracle/latest/report.json".to_string()],
+            owner_hint: Some("compatibility-lane".to_string()),
+        }],
+    });
+
+    let artifact = build_rollout_decision_artifact(&RolloutDecisionArtifactInput {
+        onboarding_scorecard: onboarding,
+        compatibility_advisories: vec![OnboardingScorecardSignal {
+            signal_id: "compat:fs".to_string(),
+            source: "compatibility_advisory".to_string(),
+            severity: EvidenceSeverity::Critical,
+            summary: "critical fs parity drift".to_string(),
+            remediation: "rollback candidate and block promotion".to_string(),
+            reproducible_command: "scripts/run_frx_lockstep_oracle_suite.sh ci".to_string(),
+            evidence_links: vec!["artifacts/frx_lockstep_oracle/latest/report.json".to_string()],
+            owner_hint: Some("compatibility-lane".to_string()),
+        }],
+        platform_matrix_signals: vec![OnboardingScorecardSignal {
+            signal_id: "matrix:macos-arm64".to_string(),
+            source: "platform_matrix".to_string(),
+            severity: EvidenceSeverity::Warning,
+            summary: "macos-arm64 line-ending normalization drift".to_string(),
+            remediation: "normalize newline handling in emitted artifacts".to_string(),
+            reproducible_command: "scripts/run_rgc_cross_platform_matrix_gate.sh ci".to_string(),
+            evidence_links: vec![
+                "artifacts/rgc_cross_platform_matrix/latest/matrix_summary.json".to_string(),
+            ],
+            owner_hint: Some("platform-matrix-lane".to_string()),
+        }],
+    });
+
+    assert_eq!(artifact.recommendation, RolloutRecommendation::Rollback);
+    assert!(artifact.mandatory_field_status.valid);
+    assert!(artifact.ga_gate_consumable);
+    assert!(artifact.pilot_gate_consumable);
+    assert!(
+        artifact
+            .merged_signals
+            .iter()
+            .any(|signal| signal.signal_id == "compat:fs"
+                && signal.severity == EvidenceSeverity::Critical)
+    );
+}
+
+#[test]
+fn rollout_decision_artifact_fails_closed_on_missing_required_fields() {
+    let preflight = run_preflight_doctor(
+        &make_cli_input(),
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let mut onboarding = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/example".to_string(),
+        package_name: "example".to_string(),
+        target_platforms: vec!["linux-x64".to_string()],
+        preflight,
+        external_signals: Vec::new(),
+    });
+    onboarding.workload_id.clear();
+    onboarding.logs.clear();
+
+    let artifact = build_rollout_decision_artifact(&RolloutDecisionArtifactInput {
+        onboarding_scorecard: onboarding,
+        compatibility_advisories: Vec::new(),
+        platform_matrix_signals: Vec::new(),
+    });
+    let summary = render_rollout_decision_artifact_summary(&artifact);
+
+    assert_eq!(artifact.recommendation, RolloutRecommendation::Defer);
+    assert!(!artifact.mandatory_field_status.valid);
+    assert!(!artifact.ga_gate_consumable);
+    assert!(!artifact.pilot_gate_consumable);
+    assert!(summary.contains("mandatory_fields_valid: false"));
+    assert!(summary.contains("missing_fields:"));
+}

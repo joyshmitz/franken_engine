@@ -242,6 +242,7 @@ fn tail_memory_doc_has_required_sections() {
         "## Structured Log Contract",
         "./scripts/run_tail_latency_memory_hardening_regression_gate.sh ci",
         "./scripts/e2e/tail_latency_memory_hardening_regression_gate_replay.sh",
+        "pause_distribution_report.json",
     ] {
         assert!(doc.contains(section), "missing doc section: {section}");
     }

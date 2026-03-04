@@ -244,7 +244,9 @@ fn rgc_056_contract_is_versioned_and_replay_bound() {
             && scenario.path_type == "failure"
             && scenario.expected_exit_code == 1
             && scenario.expected_error_code == "FE-RGC-056-VECTORS-0001"
-            && scenario.expected_message_fragment.contains("missing vectors JSON")
+            && scenario
+                .expected_message_fragment
+                .contains("missing vectors JSON")
             && !scenario.command_template.trim().is_empty()
     }));
     assert!(contract.failure_scenarios.iter().any(|scenario| {
@@ -252,7 +254,9 @@ fn rgc_056_contract_is_versioned_and_replay_bound() {
             && scenario.path_type == "failure"
             && scenario.expected_exit_code == 1
             && scenario.expected_error_code == "FE-RGC-056-VECTORS-0002"
-            && scenario.expected_message_fragment.contains("failed to parse vectors JSON")
+            && scenario
+                .expected_message_fragment
+                .contains("failed to parse vectors JSON")
             && !scenario.command_template.trim().is_empty()
     }));
     assert!(contract.failure_scenarios.iter().any(|scenario| {
@@ -266,12 +270,16 @@ fn rgc_056_contract_is_versioned_and_replay_bound() {
             && !scenario.command_template.trim().is_empty()
     }));
 
-    assert!(contract.operator_verification.iter().any(|entry| {
-        entry.contains("run_rgc_fault_injection_chaos_verification_pack.sh ci")
-    }));
-    assert!(contract.operator_verification.iter().any(|entry| {
-        entry.contains("rgc_fault_injection_chaos_verification_pack_replay.sh")
-    }));
+    assert!(
+        contract.operator_verification.iter().any(|entry| {
+            entry.contains("run_rgc_fault_injection_chaos_verification_pack.sh ci")
+        })
+    );
+    assert!(
+        contract.operator_verification.iter().any(|entry| {
+            entry.contains("rgc_fault_injection_chaos_verification_pack_replay.sh")
+        })
+    );
 }
 
 #[test]

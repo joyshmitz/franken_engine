@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::counterexample_synthesizer::{
-    ConcreteScenario, ConflictDiagnostic, ControllerInterference, ControllerInterferenceEvent,
+    ConcreteScenario, ControllerInterference, ControllerInterferenceEvent,
     CounterexampleSynthesizer, DEFAULT_BUDGET_NS, DEFAULT_MAX_MINIMIZATION_ROUNDS,
     InterferenceKind, MinimalityEvidence, RegressionCorpus, SynthesisConfig, SynthesisError,
     SynthesisOutcome, SynthesisStrategy,

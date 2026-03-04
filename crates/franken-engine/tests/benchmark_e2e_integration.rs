@@ -11,7 +11,7 @@ use frankenengine_engine::benchmark_e2e::{
     BENCHMARK_E2E_COMPONENT, BENCHMARK_E2E_SCHEMA_VERSION, BenchmarkFamily, BenchmarkMeasurement,
     BenchmarkSuiteConfig, LatencyDistribution, MIN_START_BUDGET_MILLIONTHS, RegressionThresholds,
     ScaleProfile, Xorshift64, detect_regression, measurements_to_cases, run_benchmark,
-    run_benchmark_suite, run_boot_storm, run_capability_churn,
+    run_benchmark_suite, run_boot_storm, run_capability_churn, write_evidence_artifacts,
 };
 
 // ── Constants ───────────────────────────────────────────────────────────
@@ -346,4 +346,33 @@ fn full_lifecycle_run_and_regression_check() {
     );
     // Same measurement compared against itself → zero regression → not blocked.
     assert!(!regression.blocked);
+}
+
+#[test]
+fn benchmark_e2e_script_emits_artifacts_to_env_dir() {
+    let Some(raw_dir) = std::env::var_os("FRANKEN_BENCH_E2E_OUTPUT_DIR") else {
+        return;
+    };
+
+    let output_dir = std::path::PathBuf::from(raw_dir);
+    let config = BenchmarkSuiteConfig {
+        seed: 42,
+        profiles: vec![ScaleProfile::Small],
+        families: vec![
+            BenchmarkFamily::BootStorm,
+            BenchmarkFamily::MixedCpuIoAgentMesh,
+        ],
+        thresholds: RegressionThresholds::default(),
+        run_id: "script-report-run".to_string(),
+        run_date: "2026-03-04".to_string(),
+    };
+    let result = run_benchmark_suite(&config);
+    let artifacts = write_evidence_artifacts(&result, &output_dir)
+        .expect("script report run should emit benchmark artifacts");
+
+    assert!(artifacts.run_manifest_path.exists());
+    assert!(artifacts.events_path.exists());
+    assert!(artifacts.commands_path.exists());
+    assert!(artifacts.benchmark_env_manifest_path.exists());
+    assert!(artifacts.raw_results_archive_path.exists());
 }

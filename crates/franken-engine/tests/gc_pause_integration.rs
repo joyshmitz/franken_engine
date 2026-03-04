@@ -11,7 +11,8 @@
 
 use frankenengine_engine::gc::{GcCollector, GcConfig, GcEvent, GcPhase};
 use frankenengine_engine::gc_pause::{
-    BudgetViolation, PauseBudget, PauseRecord, PauseTracker, Percentile, PercentileSnapshot,
+    BudgetViolation, PAUSE_DISTRIBUTION_REPORT_SCHEMA, PauseBudget, PauseBudgetPolicyState,
+    PauseRecord, PauseTracker, Percentile, PercentileSnapshot,
 };
 
 // ===========================================================================
@@ -1016,4 +1017,54 @@ fn global_percentiles_mix_all_extensions() {
     assert_eq!(snap.p50_ns, 100);
     // p95: ceil(0.95*100)=95, index 94, value 900
     assert_eq!(snap.p95_ns, 900);
+}
+
+// ===========================================================================
+// 23. Pause distribution report and policy transitions
+// ===========================================================================
+
+#[test]
+fn pause_distribution_report_contains_expected_contract_fields() {
+    let mut tracker = PauseTracker::new(PauseBudget::new(10_000, 20_000, 30_000));
+    tracker.record(&make_simple_event(1, "ext-b", 1000));
+    tracker.record(&make_simple_event(2, "ext-a", 2000));
+    tracker.record(&make_simple_event(3, "ext-a", 3000));
+
+    let report = tracker.pause_distribution_report();
+    assert_eq!(report.schema_version, PAUSE_DISTRIBUTION_REPORT_SCHEMA);
+    assert_eq!(report.sample_count, 3);
+    assert_eq!(report.global_percentiles.count, 3);
+    assert_eq!(
+        report
+            .per_extension_percentiles
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec!["ext-a".to_string(), "ext-b".to_string()]
+    );
+    let histogram_total: u64 = report.histogram.iter().map(|bucket| bucket.count).sum();
+    assert_eq!(histogram_total, report.sample_count);
+    assert_eq!(report.policy_state, PauseBudgetPolicyState::WithinBudget);
+}
+
+#[test]
+fn pause_distribution_report_policy_transition_detects_budget_tightening() {
+    let mut tracker = PauseTracker::new(PauseBudget::new(10_000, 20_000, 30_000));
+    tracker.record(&make_simple_event(1, "ext-a", 500));
+    let previous_state = tracker.budget_policy_state();
+    assert_eq!(previous_state, PauseBudgetPolicyState::WithinBudget);
+
+    tracker.set_budget(PauseBudget::new(100, 100, 100));
+    let report = tracker.pause_distribution_report_with_transition(previous_state);
+    assert_eq!(report.policy_state, PauseBudgetPolicyState::Violated);
+    assert!(report.policy_transition.transitioned);
+    assert_eq!(
+        report.policy_transition.from_state,
+        PauseBudgetPolicyState::WithinBudget
+    );
+    assert_eq!(
+        report.policy_transition.to_state,
+        PauseBudgetPolicyState::Violated
+    );
+    assert!(!report.budget_violations.is_empty());
 }

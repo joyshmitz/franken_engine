@@ -5,12 +5,12 @@
 //! JSON field-name stability, serde roundtrips, factory functions,
 //! and edge-case validation beyond the existing 37 integration tests.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use frankenengine_engine::policy_as_data_security::{
     AdversarialScenario, AdversarialSuite, EscalationLevel, ExpectedOutcome, FailurePlaybook,
-    PlaybookStep, PolicyDataKind, PolicySandboxProfile, PolicyVerificationResult, SCHEMA_VERSION,
-    SandboxRestriction, ScenarioCategory, ScenarioResult, SecurityReport, SignedPolicyArtifact,
+    PlaybookStep, PolicyDataKind, PolicyVerificationResult, SCHEMA_VERSION, SandboxRestriction,
+    ScenarioCategory, ScenarioResult, SecurityReport, SignedPolicyArtifact,
     canonical_adversarial_scenarios, canonical_failure_playbooks, canonical_sandbox_profiles,
     generate_report,
 };

@@ -107,6 +107,29 @@ args = []
     write_runtime_specs_content(path, toml.as_str());
 }
 
+fn write_runtime_specs_with_runtime_command(path: &Path, command: &str) {
+    let escaped_command = command.replace('\\', "\\\\");
+    let toml = format!(
+        r#"schema_version = "franken-engine.lockstep-runtimes.v1"
+
+[[runtimes]]
+runtime_id = "node"
+display_name = "node suffix lookup adapter"
+version_pin = "node@test"
+command = "{escaped_command}"
+args = []
+
+[[runtimes]]
+runtime_id = "bun"
+display_name = "bun suffix lookup adapter"
+version_pin = "bun@test"
+command = "{escaped_command}"
+args = []
+"#
+    );
+    write_runtime_specs_content(path, toml.as_str());
+}
+
 fn runtime_specs_content(expected_hash: &str, runtime_ids: &[&str]) -> String {
     let mut toml = String::from("schema_version = \"franken-engine.lockstep-runtimes.v1\"\n");
     for runtime_id in runtime_ids {
@@ -770,6 +793,62 @@ fn lockstep_runner_preflight_only_passes_for_valid_runtime_specs() {
 
     let _ = fs::remove_file(catalog_path);
     let _ = fs::remove_file(runtime_specs_path);
+}
+
+#[test]
+fn lockstep_runner_preflight_only_accepts_pathext_command_lookup() {
+    let catalog_path = temp_path("franken_lockstep_runner_preflight_suffix_catalog", "json");
+    let runtime_specs_path = temp_path("franken_lockstep_runner_preflight_suffix_specs", "toml");
+    let command_dir = temp_dir("franken_lockstep_runner_preflight_suffix_cmds");
+    let command_stem = "franken_lockstep_fake_runtime";
+    let command_path = command_dir.join(format!("{command_stem}.exe"));
+    write_fixture_catalog(&catalog_path);
+    write_runtime_specs_with_runtime_command(&runtime_specs_path, command_stem);
+    fs::write(&command_path, b"#!/bin/sh\necho noop\n").expect("command stub should be written");
+
+    let mut combined_paths = vec![command_dir.clone()];
+    if let Some(existing_path) = std::env::var_os("PATH") {
+        combined_paths.extend(std::env::split_paths(&existing_path));
+    }
+    let combined_path =
+        std::env::join_paths(combined_paths).expect("combined PATH should serialize");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken_lockstep_runner"))
+        .env("PATH", combined_path)
+        .env("PATHEXT", ".EXE;.CMD;.BAT")
+        .args([
+            "--fixture-catalog",
+            catalog_path
+                .to_str()
+                .expect("fixture path should be valid utf8"),
+            "--runtime-specs",
+            runtime_specs_path
+                .to_str()
+                .expect("runtime specs path should be valid utf8"),
+            "--preflight-only",
+        ])
+        .output()
+        .expect("lockstep runner should execute");
+
+    assert!(
+        output.status.success(),
+        "command failed with stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should contain preflight JSON");
+    assert_eq!(report["preflight_passed"].as_bool(), Some(true));
+    assert_eq!(
+        report["checked_external_engines"].as_u64(),
+        Some(2),
+        "preflight should evaluate both external runtimes"
+    );
+
+    let _ = fs::remove_file(catalog_path);
+    let _ = fs::remove_file(runtime_specs_path);
+    let _ = fs::remove_file(command_path);
+    let _ = fs::remove_dir(command_dir);
 }
 
 #[test]

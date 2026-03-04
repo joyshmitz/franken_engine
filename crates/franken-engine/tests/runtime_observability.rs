@@ -468,12 +468,7 @@ fn structured_security_log_event_serde_roundtrip() {
 #[test]
 fn runtime_security_observability_serde_roundtrip() {
     let mut observability = RuntimeSecurityObservability::new();
-    observability.record_auth_failure(
-        context(1, "auth"),
-        AuthFailureType::KeyExpired,
-        None,
-        None,
-    );
+    observability.record_auth_failure(context(1, "auth"), AuthFailureType::KeyExpired, None, None);
     observability.record_checkpoint_violation(
         context(2, "cp"),
         CheckpointViolationType::RollbackAttempt,

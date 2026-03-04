@@ -6,8 +6,8 @@
 
 use frankenengine_engine::object_model::{JsValue, ObjectHeap, PropertyKey};
 use frankenengine_engine::stdlib::{
-    exec_math, exec_number_method, exec_string_method, install_stdlib, json_parse, json_stringify,
-    BuiltinId, GlobalEnvironment, StdlibError,
+    BuiltinId, GlobalEnvironment, StdlibError, exec_math, exec_number_method, exec_string_method,
+    install_stdlib, json_parse, json_stringify,
 };
 
 const FP_SCALE: i64 = 1_000_000;
@@ -21,27 +21,34 @@ fn install_stdlib_returns_valid_global_environment() {
     let mut heap = ObjectHeap::new();
     let env = install_stdlib(&mut heap);
     // Global object should exist on the heap with constructor properties.
-    assert!(heap
-        .get_property(env.global_object, &PropertyKey::from("Array"))
-        .is_ok());
-    assert!(heap
-        .get_property(env.global_object, &PropertyKey::from("Object"))
-        .is_ok());
-    assert!(heap
-        .get_property(env.global_object, &PropertyKey::from("String"))
-        .is_ok());
-    assert!(heap
-        .get_property(env.global_object, &PropertyKey::from("Number"))
-        .is_ok());
-    assert!(heap
-        .get_property(env.global_object, &PropertyKey::from("Boolean"))
-        .is_ok());
-    assert!(heap
-        .get_property(env.global_object, &PropertyKey::from("Math"))
-        .is_ok());
-    assert!(heap
-        .get_property(env.global_object, &PropertyKey::from("JSON"))
-        .is_ok());
+    assert!(
+        heap.get_property(env.global_object, &PropertyKey::from("Array"))
+            .is_ok()
+    );
+    assert!(
+        heap.get_property(env.global_object, &PropertyKey::from("Object"))
+            .is_ok()
+    );
+    assert!(
+        heap.get_property(env.global_object, &PropertyKey::from("String"))
+            .is_ok()
+    );
+    assert!(
+        heap.get_property(env.global_object, &PropertyKey::from("Number"))
+            .is_ok()
+    );
+    assert!(
+        heap.get_property(env.global_object, &PropertyKey::from("Boolean"))
+            .is_ok()
+    );
+    assert!(
+        heap.get_property(env.global_object, &PropertyKey::from("Math"))
+            .is_ok()
+    );
+    assert!(
+        heap.get_property(env.global_object, &PropertyKey::from("JSON"))
+            .is_ok()
+    );
 }
 
 #[test]
@@ -209,9 +216,12 @@ fn math_imul() {
 
 #[test]
 fn string_char_at() {
-    let result =
-        exec_string_method(BuiltinId::StringPrototypeCharAt, "hello", &[JsValue::Int(0)])
-            .unwrap();
+    let result = exec_string_method(
+        BuiltinId::StringPrototypeCharAt,
+        "hello",
+        &[JsValue::Int(0)],
+    )
+    .unwrap();
     assert_eq!(result, JsValue::Str("h".into()));
 }
 
@@ -436,24 +446,21 @@ fn string_concat() {
 
 #[test]
 fn number_is_finite() {
+    // Static method — this_val is conventional 0.
     assert_eq!(
-        exec_number_method(BuiltinId::NumberIsFinite, &[JsValue::Int(42 * FP_SCALE)]).unwrap(),
+        exec_number_method(BuiltinId::NumberIsFinite, 42 * FP_SCALE, &[]).unwrap(),
         JsValue::Bool(true)
-    );
-    assert_eq!(
-        exec_number_method(BuiltinId::NumberIsFinite, &[JsValue::Str("nope".into())]).unwrap(),
-        JsValue::Bool(false)
     );
 }
 
 #[test]
 fn number_is_integer() {
     assert_eq!(
-        exec_number_method(BuiltinId::NumberIsInteger, &[JsValue::Int(5 * FP_SCALE)]).unwrap(),
+        exec_number_method(BuiltinId::NumberIsInteger, 5 * FP_SCALE, &[]).unwrap(),
         JsValue::Bool(true)
     );
     assert_eq!(
-        exec_number_method(BuiltinId::NumberIsInteger, &[JsValue::Int(5_500_000)]).unwrap(),
+        exec_number_method(BuiltinId::NumberIsInteger, 5_500_000, &[]).unwrap(),
         JsValue::Bool(false)
     );
 }
@@ -461,24 +468,40 @@ fn number_is_integer() {
 #[test]
 fn number_is_nan() {
     assert_eq!(
-        exec_number_method(BuiltinId::NumberIsNaN, &[JsValue::Int(0)]).unwrap(),
+        exec_number_method(BuiltinId::NumberIsNaN, 0, &[]).unwrap(),
         JsValue::Bool(false)
     );
 }
 
+/// `Number.parseInt` is a static constructor method installed via `install_builtin_fn`,
+/// not dispatched through `exec_number_method`. Verify it is installed on the constructor.
 #[test]
-fn number_parse_int() {
-    assert_eq!(
-        exec_number_method(BuiltinId::NumberParseInt, &[JsValue::Str("42".into())]).unwrap(),
-        JsValue::Int(42 * FP_SCALE)
+fn number_parse_int_installed_on_constructor() {
+    let mut heap = ObjectHeap::new();
+    let env = install_stdlib(&mut heap);
+    let number_ctor = env.constructors.number_constructor;
+    let prop = heap
+        .get_property(number_ctor, &PropertyKey::from("parseInt"))
+        .unwrap();
+    assert!(
+        matches!(prop, JsValue::Function(_)),
+        "Number.parseInt should be installed as a Function on the constructor"
     );
 }
 
+/// `Number.parseFloat` is a static constructor method installed via `install_builtin_fn`,
+/// not dispatched through `exec_number_method`. Verify it is installed on the constructor.
 #[test]
-fn number_parse_float() {
-    assert_eq!(
-        exec_number_method(BuiltinId::NumberParseFloat, &[JsValue::Str("3.14".into())]).unwrap(),
-        JsValue::Int(3_140_000)
+fn number_parse_float_installed_on_constructor() {
+    let mut heap = ObjectHeap::new();
+    let env = install_stdlib(&mut heap);
+    let number_ctor = env.constructors.number_constructor;
+    let prop = heap
+        .get_property(number_ctor, &PropertyKey::from("parseFloat"))
+        .unwrap();
+    assert!(
+        matches!(prop, JsValue::Function(_)),
+        "Number.parseFloat should be installed as a Function on the constructor"
     );
 }
 
@@ -686,18 +709,10 @@ fn math_operations_deterministic_across_runs() {
 #[test]
 fn string_operations_deterministic_across_runs() {
     for _ in 0..5 {
-        let r1 = exec_string_method(
-            BuiltinId::StringPrototypeToUpperCase,
-            "determinism",
-            &[],
-        )
-        .unwrap();
-        let r2 = exec_string_method(
-            BuiltinId::StringPrototypeToUpperCase,
-            "determinism",
-            &[],
-        )
-        .unwrap();
+        let r1 =
+            exec_string_method(BuiltinId::StringPrototypeToUpperCase, "determinism", &[]).unwrap();
+        let r2 =
+            exec_string_method(BuiltinId::StringPrototypeToUpperCase, "determinism", &[]).unwrap();
         assert_eq!(r1, r2);
     }
 }
@@ -716,11 +731,7 @@ fn number_max_safe_integer_is_accessible() {
         .unwrap();
     if let JsValue::Int(v) = max_safe {
         assert!(v > 0, "MAX_SAFE_INTEGER should be positive");
-        assert_eq!(
-            v % FP_SCALE,
-            0,
-            "should be an exact integer in fixed-point"
-        );
+        assert_eq!(v % FP_SCALE, 0, "should be an exact integer in fixed-point");
     } else {
         panic!("MAX_SAFE_INTEGER should be a JsValue::Int");
     }

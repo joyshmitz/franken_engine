@@ -4,9 +4,13 @@
 //! with policy hooks, capability gating, and dependency chain traversal.
 
 use std::collections::BTreeSet;
+use std::fs;
 
 use frankenengine_engine::capability::RuntimeCapability;
 use frankenengine_engine::module_resolver::*;
+use frankenengine_engine::rgc_test_harness::{
+    DeterministicTestContext, EventInput, HarnessLane, HarnessRunManifest, write_artifact_triad,
+};
 
 // -----------------------------------------------------------------------
 // Helpers
@@ -1099,4 +1103,152 @@ fn error_context_propagates_ids() {
     assert_eq!(err.trace_id, "trace-err");
     assert_eq!(err.decision_id, "decision-err");
     assert_eq!(err.policy_id, "policy-err");
+}
+
+// -----------------------------------------------------------------------
+// Section 19: Capability-safe host API surface (RGC-403)
+// -----------------------------------------------------------------------
+
+#[test]
+fn host_api_surface_emits_deterministic_allow_and_deny_telemetry() {
+    let surface = CapabilitySafeHostApiSurface::standard();
+    let policy = grant(&[RuntimeCapability::FsRead]);
+
+    let harness_ctx = DeterministicTestContext::new(
+        "rgc-403-host-api-surface",
+        "host-api-surface-fixture",
+        HarnessLane::Security,
+        403,
+    );
+    let resolver_ctx = ResolutionContext::new(
+        harness_ctx.trace_id.clone(),
+        harness_ctx.decision_id.clone(),
+        harness_ctx.policy_id.clone(),
+    );
+
+    let allow = surface
+        .authorize(
+            &HostApiRequest::new("node:fs", "read_file"),
+            &resolver_ctx,
+            &policy,
+        )
+        .expect("fs read should be allowed");
+    let deny = surface
+        .authorize(
+            &HostApiRequest::new("node:process", "spawn"),
+            &resolver_ctx,
+            &policy,
+        )
+        .expect_err("process spawn should fail without process capability");
+
+    assert_eq!(allow.event.outcome, "allow");
+    assert_eq!(allow.event.error_code, "none");
+    assert_eq!(deny.event.outcome, "deny");
+    assert_eq!(deny.event.error_code, "FE-HOSTAPI-0003");
+    assert!(allow.event.decision_stable_id.starts_with("hostapi-dec-"));
+    assert!(deny.event.decision_stable_id.starts_with("hostapi-dec-"));
+    assert_ne!(
+        allow.event.decision_stable_id,
+        deny.event.decision_stable_id
+    );
+
+    let events = vec![
+        harness_ctx.event(EventInput {
+            sequence: 1,
+            component: "host_api_surface",
+            event: "host_api_authorization",
+            outcome: "allow",
+            error_code: None,
+            timing_us: 11,
+            timestamp_unix_ms: 1_700_000_000_001,
+        }),
+        harness_ctx.event(EventInput {
+            sequence: 2,
+            component: "host_api_surface",
+            event: "host_api_authorization",
+            outcome: "deny",
+            error_code: Some("FE-HOSTAPI-0003"),
+            timing_us: 17,
+            timestamp_unix_ms: 1_700_000_000_002,
+        }),
+    ];
+    let commands = vec![
+        format!(
+            "authorize {} {} decision_stable_id={}",
+            allow.event.module_specifier, allow.event.operation, allow.event.decision_stable_id
+        ),
+        format!(
+            "authorize {} {} error_code={} decision_stable_id={}",
+            deny.event.module_specifier,
+            deny.event.operation,
+            deny.event.error_code,
+            deny.event.decision_stable_id
+        ),
+    ];
+
+    let run_id = harness_ctx.default_run_id();
+    let manifest = HarnessRunManifest::from_context(
+        &harness_ctx,
+        &run_id,
+        events.len(),
+        commands.len(),
+        "./scripts/e2e/rgc_runtime_semantics_verification_pack_replay.sh ci",
+        1_700_000_000_099,
+    );
+
+    let artifact_root = std::env::temp_dir().join(format!(
+        "module_resolver_host_api_surface_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&artifact_root);
+    let triad = write_artifact_triad(&artifact_root, &manifest, &events, &commands)
+        .expect("artifact triad should be written");
+    assert!(triad.manifest_path.exists());
+    assert!(triad.events_path.exists());
+    assert!(triad.commands_path.exists());
+
+    let commands_text = fs::read_to_string(&triad.commands_path).expect("read commands");
+    assert!(commands_text.contains(&allow.event.decision_stable_id));
+    assert!(commands_text.contains(&deny.event.decision_stable_id));
+    assert!(commands_text.contains("error_code=FE-HOSTAPI-0003"));
+
+    let events_text = fs::read_to_string(&triad.events_path).expect("read events");
+    assert!(events_text.contains("\"event\":\"host_api_authorization\""));
+    assert!(events_text.contains("\"error_code\":\"FE-HOSTAPI-0003\""));
+
+    let _ = fs::remove_dir_all(&artifact_root);
+}
+
+#[test]
+fn host_api_surface_fail_closed_for_unsupported_node_like_requests() {
+    let surface = CapabilitySafeHostApiSurface::standard();
+    let policy = grant(&[
+        RuntimeCapability::FsRead,
+        RuntimeCapability::FsWrite,
+        RuntimeCapability::NetworkEgress,
+        RuntimeCapability::ProcessSpawn,
+        RuntimeCapability::IdempotencyDerive,
+    ]);
+
+    let err = surface
+        .authorize(
+            &HostApiRequest::new("node:fs/../../net", "connect"),
+            &ctx(),
+            &policy,
+        )
+        .expect_err("unknown module form must deny");
+    assert_eq!(err.code, HostApiErrorCode::UnsupportedModule);
+    assert_eq!(err.event.error_code, "FE-HOSTAPI-0001");
+    assert!(err.event.remediation.contains("node:net"));
+
+    let err = surface
+        .authorize(
+            &HostApiRequest::new("node:crypto", "rm -rf"),
+            &ctx(),
+            &policy,
+        )
+        .expect_err("unsupported operation must deny");
+    assert_eq!(err.code, HostApiErrorCode::UnsupportedOperation);
+    assert_eq!(err.event.error_code, "FE-HOSTAPI-0002");
+    assert!(err.event.remediation.contains("register a new descriptor"));
 }

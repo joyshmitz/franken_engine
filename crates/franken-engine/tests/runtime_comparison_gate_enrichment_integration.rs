@@ -6,7 +6,7 @@
 //! and MethodologyAudit/ArtifactBundleAudit completeness edge cases
 //! beyond the existing 30 integration tests.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::runtime_comparison_gate::{

@@ -7,8 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 const PACK_SCHEMA_VERSION: &str = "franken-engine.rgc-runtime-semantics-verification-pack.v1";
-const VECTORS_SCHEMA_VERSION: &str =
-    "franken-engine.rgc-runtime-semantics-verification-vectors.v1";
+const VECTORS_SCHEMA_VERSION: &str = "franken-engine.rgc-runtime-semantics-verification-vectors.v1";
 const PACK_JSON: &str =
     include_str!("../../../docs/rgc_runtime_semantics_verification_pack_v1.json");
 const VECTORS_JSON: &str =
@@ -237,7 +236,9 @@ fn rgc_057_contract_is_versioned_and_replay_bound() {
             && scenario.path_type == "failure"
             && scenario.expected_exit_code == 1
             && scenario.expected_error_code == "FE-RGC-057-VECTORS-0001"
-            && scenario.expected_message_fragment.contains("missing vectors JSON")
+            && scenario
+                .expected_message_fragment
+                .contains("missing vectors JSON")
             && !scenario.command_template.trim().is_empty()
     }));
     assert!(contract.failure_scenarios.iter().any(|scenario| {
@@ -261,12 +262,18 @@ fn rgc_057_contract_is_versioned_and_replay_bound() {
             && !scenario.command_template.trim().is_empty()
     }));
 
-    assert!(contract.operator_verification.iter().any(|entry| {
-        entry.contains("run_rgc_runtime_semantics_verification_pack.sh ci")
-    }));
-    assert!(contract.operator_verification.iter().any(|entry| {
-        entry.contains("rgc_runtime_semantics_verification_pack_replay.sh")
-    }));
+    assert!(
+        contract
+            .operator_verification
+            .iter()
+            .any(|entry| { entry.contains("run_rgc_runtime_semantics_verification_pack.sh ci") })
+    );
+    assert!(
+        contract
+            .operator_verification
+            .iter()
+            .any(|entry| { entry.contains("rgc_runtime_semantics_verification_pack_replay.sh") })
+    );
 }
 
 #[test]
@@ -307,7 +314,8 @@ fn rgc_057_vectors_are_deterministic_unique_and_complete() {
             vector.path_type
         );
         assert!(
-            ["expect_pass", "expect_fail_with_minimal_repro"].contains(&vector.expected_outcome.as_str()),
+            ["expect_pass", "expect_fail_with_minimal_repro"]
+                .contains(&vector.expected_outcome.as_str()),
             "invalid expected_outcome {}",
             vector.expected_outcome
         );
@@ -331,8 +339,7 @@ fn rgc_057_vectors_are_deterministic_unique_and_complete() {
             "minimal_repro_pointer must not be empty"
         );
         assert_eq!(
-            vector.expected_outcome,
-            "expect_pass",
+            vector.expected_outcome, "expect_pass",
             "runtime semantics vectors must currently be golden-path deterministic checks"
         );
         assert_eq!(
