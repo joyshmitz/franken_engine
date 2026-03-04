@@ -89,6 +89,44 @@ rch_reject_local_fallback() {
   fi
 }
 
+rch_missing_remote_exit_reason() {
+  local log_path="$1"
+  local run_rch_exit="$2"
+
+  if [[ "$run_rch_exit" == "124" || "$run_rch_exit" == "137" ]]; then
+    printf 'timeout-before-remote-exit-marker'
+    return
+  fi
+
+  if rch_strip_ansi "$log_path" | grep -Eiq 'timed out|timeout protection|deadline exceeded|signal: 9|killed'; then
+    printf 'timeout-before-remote-exit-marker'
+    return
+  fi
+
+  if rch_strip_ansi "$log_path" | grep -Fq 'Executing command remotely:'; then
+    printf 'remote-exit-marker-lost-after-remote-start'
+    return
+  fi
+
+  printf 'missing-remote-exit-marker'
+}
+
+rch_missing_remote_exit_error_code() {
+  local reason="$1"
+
+  case "$reason" in
+    timeout-before-remote-exit-marker)
+      printf 'FE-RGC-CI-QUALITY-GATE-0009'
+      ;;
+    remote-exit-marker-lost-after-remote-start)
+      printf 'FE-RGC-CI-QUALITY-GATE-0010'
+      ;;
+    *)
+      printf 'FE-RGC-CI-QUALITY-GATE-0008'
+      ;;
+  esac
+}
+
 declare -a commands_run=()
 declare -a events_buffer=()
 declare -a failed_lanes=()
@@ -139,7 +177,7 @@ record_event() {
 run_step_rch() {
   local lane="$1"
   local command_text="$2"
-  local log_path remote_exit_code run_rch_exit command_slug
+  local log_path remote_exit_code run_rch_exit command_slug missing_marker_reason missing_marker_error_code
   shift 2
 
   commands_run+=("$command_text")
@@ -168,11 +206,13 @@ run_step_rch() {
       record_event "lane_failed" "fail" "FE-RGC-CI-QUALITY-GATE-0003" "$lane" "$failed_command"
       return 1
     else
-      failed_command="${command_text} (rch-exit=${run_rch_exit}; missing-remote-exit-marker; log=${log_path})"
+      missing_marker_reason="$(rch_missing_remote_exit_reason "$log_path" "$run_rch_exit")"
+      missing_marker_error_code="$(rch_missing_remote_exit_error_code "$missing_marker_reason")"
+      failed_command="${command_text} (rch-exit=${run_rch_exit}; ${missing_marker_reason}; log=${log_path})"
       failure_lane="$lane"
       failure_owner="$(default_owner_for_lane "$lane")"
       failed_lanes+=("$lane")
-      record_event "lane_failed" "fail" "FE-RGC-CI-QUALITY-GATE-0008" "$lane" "$failed_command"
+      record_event "lane_failed" "fail" "$missing_marker_error_code" "$lane" "$failed_command"
       return 1
     fi
   fi
@@ -188,11 +228,13 @@ run_step_rch() {
 
   remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
   if [[ -z "$remote_exit_code" ]]; then
-    failed_command="${command_text} (missing-remote-exit-marker; rch-exit=${run_rch_exit}; log=${log_path})"
+    missing_marker_reason="$(rch_missing_remote_exit_reason "$log_path" "$run_rch_exit")"
+    missing_marker_error_code="$(rch_missing_remote_exit_error_code "$missing_marker_reason")"
+    failed_command="${command_text} (${missing_marker_reason}; rch-exit=${run_rch_exit}; log=${log_path})"
     failure_lane="$lane"
     failure_owner="$(default_owner_for_lane "$lane")"
     failed_lanes+=("$lane")
-    record_event "lane_failed" "fail" "FE-RGC-CI-QUALITY-GATE-0008" "$lane" "$failed_command"
+    record_event "lane_failed" "fail" "$missing_marker_error_code" "$lane" "$failed_command"
     return 1
   fi
 

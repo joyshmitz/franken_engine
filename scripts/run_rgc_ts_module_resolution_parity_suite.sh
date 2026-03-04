@@ -35,7 +35,7 @@ fi
 
 run_rch() {
   timeout "${rch_timeout_seconds}" \
-    rch exec -q -- env \
+    rch exec -- env \
     "RUSTUP_TOOLCHAIN=${toolchain}" \
     "CARGO_TARGET_DIR=${target_dir}" \
     "$@"
@@ -117,6 +117,9 @@ run_step() {
 }
 
 run_mode() {
+  local -a clippy_cmd=(
+    cargo clippy -p frankenengine-engine --test ts_module_resolution_parity --no-deps -- -D warnings
+  )
   case "$mode" in
     check)
       run_step "cargo check -p frankenengine-engine --test ts_module_resolution_parity" \
@@ -127,16 +130,16 @@ run_mode() {
         cargo test -p frankenengine-engine --test ts_module_resolution_parity
       ;;
     clippy)
-      run_step "cargo clippy -p frankenengine-engine --test ts_module_resolution_parity -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test ts_module_resolution_parity -- -D warnings
+      run_step "cargo clippy -p frankenengine-engine --test ts_module_resolution_parity --no-deps -- -D warnings" \
+        "${clippy_cmd[@]}"
       ;;
     ci)
       run_step "cargo check -p frankenengine-engine --test ts_module_resolution_parity" \
         cargo check -p frankenengine-engine --test ts_module_resolution_parity
       run_step "cargo test -p frankenengine-engine --test ts_module_resolution_parity" \
         cargo test -p frankenengine-engine --test ts_module_resolution_parity
-      run_step "cargo clippy -p frankenengine-engine --test ts_module_resolution_parity -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test ts_module_resolution_parity -- -D warnings
+      run_step "cargo clippy -p frankenengine-engine --test ts_module_resolution_parity --no-deps -- -D warnings" \
+        "${clippy_cmd[@]}"
       ;;
     *)
       echo "usage: $0 [check|test|clippy|ci]" >&2

@@ -126,17 +126,21 @@ fi
 
 run_rch() {
   timeout "${rch_timeout_seconds}" \
-    rch exec -q -- env \
+    rch exec -- env \
     "RUSTUP_TOOLCHAIN=${toolchain}" \
     "CARGO_TARGET_DIR=${target_dir}" \
     "$@"
+}
+
+rch_strip_ansi() {
+  sed -E $'s/\x1B\\[[0-9;]*[[:alpha:]]//g' "$1"
 }
 
 rch_remote_exit_code() {
   local log_path="$1"
   local remote_exit_line remote_exit_code
 
-  remote_exit_line="$(rg -o 'Remote command finished: exit=[0-9]+' "$log_path" | tail -n1 || true)"
+  remote_exit_line="$(rch_strip_ansi "$log_path" | rg -o 'Remote command finished: exit=[0-9]+' | tail -n1 || true)"
   if [[ -z "$remote_exit_line" ]]; then
     return 1
   fi
@@ -151,7 +155,7 @@ rch_remote_exit_code() {
 
 rch_reject_local_fallback() {
   local log_path="$1"
-  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|running locally|\[RCH\] local \(|Failed to query daemon:.*running locally|Dependency preflight blocked remote execution|RCH-E326' "$log_path"; then
+  if rch_strip_ansi "$log_path" | grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|running locally|\[RCH\] local \(|Failed to query daemon:.*running locally|Dependency preflight blocked remote execution|RCH-E326'; then
     echo "rch reported local fallback; refusing local execution for heavy command" >&2
     return 1
   fi
@@ -159,8 +163,8 @@ rch_reject_local_fallback() {
 
 rch_recovered_success() {
   local log_path="$1"
-  if rg -q 'Remote command finished: exit=0|Finished.*profile|test result: ok\.' "$log_path" \
-    && ! rg -qi 'error(\[[[:alnum:]]+\])?:' "$log_path"; then
+  if rch_strip_ansi "$log_path" | rg -q 'Remote command finished: exit=0|Finished.*profile|test result: ok\.' \
+    && ! rch_strip_ansi "$log_path" | rg -qi 'error(\[[[:alnum:]]+\])?:'; then
     return 0
   fi
   return 1
@@ -214,7 +218,11 @@ run_step() {
   fi
 
   remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
-  if [[ -n "$remote_exit_code" && "$remote_exit_code" != "0" ]]; then
+  if [[ -z "$remote_exit_code" ]]; then
+    failed_command="${command_text} (rch-exit=${status}; missing-remote-exit-marker)"
+    return 1
+  fi
+  if [[ "$remote_exit_code" != "0" ]]; then
     failed_command="${command_text} (rch-exit=${status}; remote-exit=${remote_exit_code})"
     return 1
   fi

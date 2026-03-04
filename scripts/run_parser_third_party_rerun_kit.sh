@@ -16,6 +16,7 @@ run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
 events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
+step_logs_dir="${run_dir}/step_logs"
 kit_index_path="${run_dir}/rerun_kit_index.json"
 verifier_notes_path="${run_dir}/verifier_notes.md"
 
@@ -23,6 +24,8 @@ matrix_summary_path="${PARSER_RERUN_KIT_MATRIX_SUMMARY:-}"
 matrix_deltas_path="${PARSER_RERUN_KIT_MATRIX_DELTAS:-}"
 matrix_manifest_path="${PARSER_RERUN_KIT_MATRIX_MANIFEST:-}"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
+rch_build_timeout_sec="${RCH_BUILD_TIMEOUT_SEC:-${RCH_BUILD_TIMEOUT_SECONDS:-${rch_timeout_seconds}}}"
+cargo_build_jobs="${CARGO_BUILD_JOBS:-2}"
 
 trace_id="trace-parser-third-party-rerun-kit-${timestamp}"
 decision_id="decision-parser-third-party-rerun-kit-${timestamp}"
@@ -30,7 +33,7 @@ policy_id="policy-parser-third-party-rerun-kit-v1"
 component="parser_third_party_rerun_kit_gate"
 replay_command="./scripts/e2e/parser_third_party_rerun_kit_replay.sh ${mode}"
 
-mkdir -p "$run_dir"
+mkdir -p "$run_dir" "$step_logs_dir"
 
 if ! command -v rch >/dev/null 2>&1; then
   echo "rch is required for parser third-party rerun kit heavy commands" >&2
@@ -38,10 +41,12 @@ if ! command -v rch >/dev/null 2>&1; then
 fi
 
 run_rch() {
-  timeout "${rch_timeout_seconds}" \
+  RCH_BUILD_TIMEOUT_SEC="${rch_build_timeout_sec}" \
+    timeout "${rch_timeout_seconds}" \
     rch exec -- env \
     "RUSTUP_TOOLCHAIN=${toolchain}" \
     "CARGO_TARGET_DIR=${target_dir}" \
+    "CARGO_BUILD_JOBS=${cargo_build_jobs}" \
     "$@"
 }
 
@@ -78,7 +83,10 @@ rch_reject_artifact_retrieval_failure() {
 }
 
 declare -a commands_run=()
+declare -a step_logs=()
 failed_command=""
+failed_step_log_path=""
+step_counter=0
 manifest_written=false
 matrix_input_status="pending_upstream_matrix"
 matrix_complete=false
@@ -87,38 +95,58 @@ matrix_eval_error=""
 
 run_step() {
   local command_text="$1"
-  local log_path
+  local log_path run_rc remote_exit_code
   shift
 
+  step_counter=$((step_counter + 1))
+  log_path="${step_logs_dir}/step_${step_counter}.log"
   commands_run+=("$command_text")
+  step_logs+=("$log_path")
   echo "==> $command_text"
-  log_path="$(mktemp)"
 
-  if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
-    local remote_exit_code
+  if run_rch "$@" > >(tee "$log_path") 2>&1; then
+    run_rc=0
+  else
+    run_rc=$?
     remote_exit_code="$(rch_last_remote_exit_code "$log_path")"
     if [[ "$remote_exit_code" == "0" ]] && rch_has_recoverable_artifact_timeout "$log_path"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
     else
-      rm -f "$log_path"
-      failed_command="$command_text"
+      if [[ "$run_rc" -eq 124 ]]; then
+        failed_command="${command_text} (timeout-${rch_timeout_seconds}s)"
+      elif [[ -n "$remote_exit_code" ]]; then
+        failed_command="${command_text} (remote-exit-${remote_exit_code})"
+      else
+        failed_command="${command_text} (rch-exit-${run_rc})"
+      fi
+      failed_step_log_path="$log_path"
       return 1
     fi
   fi
 
   if ! rch_reject_local_fallback "$log_path"; then
-    rm -f "$log_path"
     failed_command="${command_text} (rch-local-fallback-detected)"
+    failed_step_log_path="$log_path"
     return 1
   fi
 
   if ! rch_reject_artifact_retrieval_failure "$log_path"; then
-    rm -f "$log_path"
     failed_command="${command_text} (rch-artifact-retrieval-failed)"
+    failed_step_log_path="$log_path"
     return 1
   fi
 
-  rm -f "$log_path"
+  remote_exit_code="$(rch_last_remote_exit_code "$log_path")"
+  if [[ "$remote_exit_code" != "0" ]]; then
+    if [[ -z "$remote_exit_code" ]]; then
+      echo "rch output missing remote exit marker; failing closed" | tee -a "$log_path"
+      failed_command="${command_text} (missing-remote-exit-marker)"
+    else
+      failed_command="${command_text} (remote-exit-${remote_exit_code})"
+    fi
+    failed_step_log_path="$log_path"
+    return 1
+  fi
 }
 
 run_mode() {
@@ -320,6 +348,7 @@ write_manifest() {
     echo "  \"toolchain\": \"${toolchain}\","
     echo "  \"cargo_target_dir\": \"${target_dir}\","
     echo "  \"rch_exec_timeout_seconds\": ${rch_timeout_seconds},"
+    echo "  \"rch_build_timeout_sec\": ${rch_build_timeout_sec},"
     echo "  \"trace_id\": \"${trace_id}\","
     echo "  \"decision_id\": \"${decision_id}\","
     echo "  \"policy_id\": \"${policy_id}\","
@@ -330,6 +359,9 @@ write_manifest() {
     echo "  \"error_code\": ${error_code_json},"
     if [[ -n "$failed_command" ]]; then
       echo "  \"failed_command\": \"$(parser_frontier_json_escape "${failed_command}")\","
+    fi
+    if [[ -n "$failed_step_log_path" ]]; then
+      echo "  \"failed_step_log\": \"$(parser_frontier_json_escape "${failed_step_log_path}")\","
     fi
     echo "  \"matrix_input_status\": \"${matrix_input_status}\","
     echo "  \"matrix_complete\": ${matrix_complete},"
@@ -359,6 +391,7 @@ write_manifest() {
     echo "    \"manifest\": \"${manifest_path}\","
     echo "    \"events\": \"${events_path}\","
     echo "    \"commands\": \"${commands_path}\","
+    echo "    \"step_logs_dir\": \"${step_logs_dir}\","
     echo "    \"rerun_kit_index\": \"${kit_index_path}\","
     echo "    \"verifier_notes\": \"${verifier_notes_path}\","
     echo '    "contract_doc": "docs/PARSER_THIRD_PARTY_RERUN_KIT.md",'
@@ -370,6 +403,7 @@ write_manifest() {
     echo "    \"cat ${manifest_path}\","
     echo "    \"cat ${events_path}\","
     echo "    \"cat ${commands_path}\","
+    echo "    \"ls -1 ${step_logs_dir}\","
     echo "    \"cat ${kit_index_path}\","
     echo "    \"cat ${verifier_notes_path}\","
     echo "    \"${replay_command}\""

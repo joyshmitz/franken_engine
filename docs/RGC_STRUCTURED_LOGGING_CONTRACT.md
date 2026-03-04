@@ -54,6 +54,12 @@ Failure code for contract-level violations:
 
 - `FE-RGC-054A-LOG-SCHEMA-0001`
 
+Fail-closed offload diagnostics preserve explicit missing-marker attribution:
+
+- `timeout-before-remote-exit-marker`
+- `remote-exit-marker-lost-after-remote-start`
+- `missing-remote-exit-marker`
+
 ## Secret Redaction Audit Contract (RGC-065A)
 
 `RGC-065A` extends the structured logging contract with deterministic secret-redaction

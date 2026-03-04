@@ -19,7 +19,7 @@ trace_id="trace-test262-gate-${timestamp}"
 decision_id="decision-test262-gate-${timestamp}"
 policy_id="policy-test262-es2020"
 component="test262_es2020_gate_runner"
-bead_id="bd-11p"
+bead_id="${TEST262_GATE_BEAD_ID:-bd-11p}"
 run_date="$(date -u +%Y-%m-%d)"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
 pins_path="crates/franken-engine/tests/test262_conformance_pins.toml"
@@ -51,6 +51,7 @@ runner_manifest_path=""
 runner_evidence_path=""
 runner_hwm_path=""
 runner_canonical_hwm_path=""
+runner_case_execution_path=""
 
 run_step() {
   local command_text="$1"
@@ -102,6 +103,7 @@ run_test() {
   runner_evidence_path="$(rg -o 'test262 evidence=.*' "$runner_log_path" | tail -n 1 | sed 's/.*test262 evidence=//')"
   runner_hwm_path="$(rg -o 'test262 high_water_mark=.*' "$runner_log_path" | tail -n 1 | sed 's/.*test262 high_water_mark=//')"
   runner_canonical_hwm_path="$(rg -o 'test262 canonical_high_water_mark=.*' "$runner_log_path" | tail -n 1 | sed 's/.*test262 canonical_high_water_mark=//')"
+  runner_case_execution_path="$(rg -o 'test262 case_execution=.*' "$runner_log_path" | tail -n 1 | sed 's/.*test262 case_execution=//')"
   if [[ -n "$runner_canonical_hwm_path" ]]; then
     canonical_hwm_path="$runner_canonical_hwm_path"
   fi
@@ -145,7 +147,7 @@ run_mode() {
 write_manifest() {
   local exit_code="${1:-0}"
   local outcome error_code failed_log_json runner_manifest_json runner_evidence_json
-  local runner_hwm_json canonical_hwm_json idx comma
+  local runner_hwm_json canonical_hwm_json runner_case_execution_json idx comma
 
   if [[ "$exit_code" -eq 0 ]]; then
     outcome="pass"
@@ -187,6 +189,12 @@ write_manifest() {
     canonical_hwm_json="null"
   fi
 
+  if [[ -n "$runner_case_execution_path" ]]; then
+    runner_case_execution_json="\"$(json_escape "$runner_case_execution_path")\""
+  else
+    runner_case_execution_json="null"
+  fi
+
   cat >"$events_path" <<JSONL
 {"trace_id":"${trace_id}","decision_id":"${decision_id}","policy_id":"${policy_id}","component":"${component}","event":"suite_completed","outcome":"${outcome}","error_code":${error_code}}
 JSONL
@@ -216,7 +224,8 @@ JSONL
     echo "    \"runner_manifest\": ${runner_manifest_json},";
     echo "    \"runner_evidence\": ${runner_evidence_json},";
     echo "    \"runner_high_water_mark\": ${runner_hwm_json},";
-    echo "    \"canonical_high_water_mark\": ${canonical_hwm_json}";
+    echo "    \"canonical_high_water_mark\": ${canonical_hwm_json},";
+    echo "    \"runner_case_execution\": ${runner_case_execution_json}";
     echo '  },';
     echo '  "commands": [';
     for idx in "${!commands_run[@]}"; do
@@ -245,6 +254,7 @@ JSONL
     echo "    \"cat $(json_escape "$events_path")\",";
     echo "    \"cat $(json_escape "$commands_path")\",";
     echo "    \"find $(json_escape "$runner_output_root") -maxdepth 2 -type f | sort\",";
+    echo "    \"cat $(json_escape "$runner_output_root")/*/test262_case_execution.jsonl\",";
     echo "    \"cat $(json_escape "$canonical_hwm_path")\",";
     echo "    \"${0} ci\"";
     echo '  ]';

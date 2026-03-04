@@ -64,6 +64,16 @@ Events include stable keys:
 - `outcome`
 - `error_code`
 
+Failure code mapping (deterministic):
+
+- `FE-RGC-CI-QUALITY-GATE-0000`: gate-level failure summary
+- `FE-RGC-CI-QUALITY-GATE-0002`: local fallback detected (fail-closed)
+- `FE-RGC-CI-QUALITY-GATE-0003`: remote command returned non-zero exit
+- `FE-RGC-CI-QUALITY-GATE-0004`: local lane command failed
+- `FE-RGC-CI-QUALITY-GATE-0008`: remote exit marker missing (generic)
+- `FE-RGC-CI-QUALITY-GATE-0009`: timeout before remote exit marker emitted
+- `FE-RGC-CI-QUALITY-GATE-0010`: remote exit marker lost after remote start
+
 ## Required Artifacts
 
 Every run emits:

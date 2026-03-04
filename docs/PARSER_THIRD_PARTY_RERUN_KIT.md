@@ -100,9 +100,17 @@ By default the gate script uses a run-scoped target directory under:
 This avoids cross-run cargo lock contention when prior remote jobs are still
 draining. Set `CARGO_TARGET_DIR` explicitly if you need a fixed path.
 
+If remote builds exceed the `rch` default build wrapper timeout, set
+`RCH_BUILD_TIMEOUT_SEC` (or `RCH_BUILD_TIMEOUT_SECONDS`) so the remote lane
+does not fail early with timeout kill exits while the outer gate timeout is
+still larger.
+
 If `rch` reports remote-preflight/local-fallback conditions (including
 `RCH-E326` or `running locally`), the gate must fail closed rather than
 continuing on local execution.
+
+The gate also fails closed when the `rch` output does not include an explicit
+`Remote command finished: exit=0` marker for each heavy step.
 
 ## Required Artifacts
 
@@ -111,6 +119,7 @@ Each run emits:
 - `artifacts/parser_third_party_rerun_kit/<timestamp>/run_manifest.json`
 - `artifacts/parser_third_party_rerun_kit/<timestamp>/events.jsonl`
 - `artifacts/parser_third_party_rerun_kit/<timestamp>/commands.txt`
+- `artifacts/parser_third_party_rerun_kit/<timestamp>/step_logs/step_*.log`
 - `artifacts/parser_third_party_rerun_kit/<timestamp>/rerun_kit_index.json`
 - `artifacts/parser_third_party_rerun_kit/<timestamp>/verifier_notes.md`
 
@@ -121,6 +130,7 @@ Each run emits:
 3. Confirm:
    - `run_manifest.json` has deterministic env fields and replay command.
    - `rerun_kit_index.json` has expected `matrix_input_status`.
+   - `step_logs/` contains per-step `rch` logs for triage and remote-exit diagnostics.
    - `events.jsonl` validates with `scripts/validate_parser_log_schema.sh`.
 4. Replay through:
 

@@ -633,7 +633,8 @@ Artifacts are written under:
 
 `bd-2mds.1.7.3` packages cross-architecture matrix evidence into a deterministic
 third-party rerun bundle and fails closed unless
-`matrix_input_status == ready_for_external_rerun`.
+`matrix_input_status == ready_for_external_rerun`, including fail-closed
+behavior when `rch` local fallback or missing remote-exit markers are detected.
 
 ```bash
 # third-party rerun kit contract/test gate (rch-backed check + test + clippy)
@@ -660,6 +661,7 @@ Artifacts are written under:
 - `artifacts/parser_third_party_rerun_kit/<timestamp>/run_manifest.json`
 - `artifacts/parser_third_party_rerun_kit/<timestamp>/events.jsonl`
 - `artifacts/parser_third_party_rerun_kit/<timestamp>/commands.txt`
+- `artifacts/parser_third_party_rerun_kit/<timestamp>/step_logs/step_*.log`
 - `artifacts/parser_third_party_rerun_kit/<timestamp>/rerun_kit_index.json`
 - `artifacts/parser_third_party_rerun_kit/<timestamp>/verifier_notes.md`
 
@@ -1397,6 +1399,32 @@ Artifacts are written under:
 - `artifacts/rgc_statistical_validation_pipeline/<timestamp>/events.jsonl`
 - `artifacts/rgc_statistical_validation_pipeline/<timestamp>/commands.txt`
 - `artifacts/rgc_statistical_validation_pipeline/<timestamp>/support_bundle/stats_verdict_report.json`
+
+## RGC Performance Regression Gate
+
+`bd-1lsy.8.3` adds deterministic regression verdicting with culprit ranking and
+waiver-expiry fail-closed enforcement for promotion decisions.
+
+```bash
+# RGC performance regression gate (rch-backed check + test + clippy)
+./scripts/run_rgc_performance_regression_gate.sh ci
+
+# deterministic replay wrapper
+./scripts/e2e/rgc_performance_regression_gate_replay.sh ci
+```
+
+Contract and vectors:
+
+- [`docs/RGC_PERFORMANCE_REGRESSION_GATE_V1.md`](./docs/RGC_PERFORMANCE_REGRESSION_GATE_V1.md)
+- `docs/rgc_performance_regression_gate_v1.json`
+- `crates/franken-engine/tests/rgc_performance_regression_gate.rs`
+
+Artifacts are written under:
+
+- `artifacts/rgc_performance_regression_gate/<timestamp>/run_manifest.json`
+- `artifacts/rgc_performance_regression_gate/<timestamp>/events.jsonl`
+- `artifacts/rgc_performance_regression_gate/<timestamp>/commands.txt`
+- `artifacts/rgc_performance_regression_gate/<timestamp>/regression_report.json`
 
 ## RGC CLI and Operator Workflow Verification Pack
 

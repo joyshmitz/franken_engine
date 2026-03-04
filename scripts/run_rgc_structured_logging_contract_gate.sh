@@ -76,6 +76,28 @@ rch_reject_local_fallback() {
   fi
 }
 
+rch_missing_remote_exit_reason() {
+  local log_path="$1"
+  local run_rch_exit="$2"
+
+  if [[ "$run_rch_exit" == "124" || "$run_rch_exit" == "137" ]]; then
+    printf 'timeout-before-remote-exit-marker'
+    return
+  fi
+
+  if rch_strip_ansi "$log_path" | grep -Eiq 'timed out|timeout protection|deadline exceeded|signal: 9|killed'; then
+    printf 'timeout-before-remote-exit-marker'
+    return
+  fi
+
+  if rch_strip_ansi "$log_path" | grep -Fq 'Executing command remotely:'; then
+    printf 'remote-exit-marker-lost-after-remote-start'
+    return
+  fi
+
+  printf 'missing-remote-exit-marker'
+}
+
 declare -a commands_run=()
 failed_command=""
 manifest_written=false
@@ -83,7 +105,7 @@ step_counter=0
 
 run_step() {
   local command_text="$1"
-  local log_path remote_exit_code run_rch_exit command_slug
+  local log_path remote_exit_code run_rch_exit command_slug missing_marker_reason
   shift
   commands_run+=("$command_text")
   echo "==> $command_text"
@@ -107,7 +129,8 @@ run_step() {
       failed_command="${command_text} (remote-exit=${remote_exit_code}; rch-exit=${run_rch_exit}; log=${log_path})"
       return 1
     else
-      failed_command="${command_text} (rch-exit=${run_rch_exit}; missing-remote-exit-marker; log=${log_path})"
+      missing_marker_reason="$(rch_missing_remote_exit_reason "$log_path" "$run_rch_exit")"
+      failed_command="${command_text} (rch-exit=${run_rch_exit}; ${missing_marker_reason}; log=${log_path})"
       return 1
     fi
   fi
@@ -118,7 +141,8 @@ run_step() {
 
   remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
   if [[ -z "$remote_exit_code" ]]; then
-    failed_command="${command_text} (missing-remote-exit-marker; rch-exit=${run_rch_exit}; log=${log_path})"
+    missing_marker_reason="$(rch_missing_remote_exit_reason "$log_path" "$run_rch_exit")"
+    failed_command="${command_text} (${missing_marker_reason}; rch-exit=${run_rch_exit}; log=${log_path})"
     return 1
   fi
 

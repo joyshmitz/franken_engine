@@ -34,18 +34,48 @@ fi
 
 run_rch() {
   timeout "${rch_timeout_seconds}" \
-    rch exec -q -- env \
+    rch exec -- env \
     "RUSTUP_TOOLCHAIN=${toolchain}" \
     "CARGO_TARGET_DIR=${target_dir}" \
     "$@"
 }
 
+rch_strip_ansi() {
+  sed -E $'s/\x1B\\[[0-9;]*[[:alpha:]]//g' "$1"
+}
+
+rch_remote_exit_code() {
+  local log_path="$1"
+  local remote_exit_line remote_exit_code
+
+  remote_exit_line="$(rch_strip_ansi "$log_path" | rg -o 'Remote command finished: exit=[0-9]+' | tail -n1 || true)"
+  if [[ -z "$remote_exit_line" ]]; then
+    return 1
+  fi
+
+  remote_exit_code="${remote_exit_line##*=}"
+  if [[ -z "$remote_exit_code" ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "$remote_exit_code"
+}
+
 rch_reject_local_fallback() {
   local log_path="$1"
-  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|running locally|\[RCH\] local \(|Failed to query daemon:.*running locally|Dependency preflight blocked remote execution|RCH-E326' "$log_path"; then
+  if rch_strip_ansi "$log_path" | grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|running locally|\[RCH\] local \(|Failed to query daemon:.*running locally|Dependency preflight blocked remote execution|RCH-E326'; then
     echo "rch reported local fallback; refusing local execution for heavy command" >&2
     return 1
   fi
+}
+
+rch_recovered_success() {
+  local log_path="$1"
+  if rch_strip_ansi "$log_path" | rg -q 'Remote command finished: exit=0|Finished.*profile|test result: ok\.' \
+    && ! rch_strip_ansi "$log_path" | rg -qi 'error(\[[[:alnum:]]+\])?:'; then
+    return 0
+  fi
+  return 1
 }
 
 declare -a commands_run=()
@@ -56,23 +86,50 @@ step_log_index=0
 run_step() {
   local command_text="$1"
   local step_log_path="${run_dir}/step_$(printf '%03d' "$step_log_index").log"
+  local status remote_exit_code
   step_log_index=$((step_log_index + 1))
   shift
 
   commands_run+=("$command_text")
   echo "==> $command_text"
 
-  if ! run_rch "$@" > >(tee "$step_log_path") 2>&1; then
-    if rg -q "Remote command finished: exit=0" "$step_log_path"; then
+  set +e
+  run_rch "$@" > >(tee "$step_log_path") 2>&1
+  status=$?
+  set -e
+
+  if [[ "$status" -ne 0 ]]; then
+    if [[ "$status" -eq 124 ]]; then
+      echo "==> failure: rch command timed out after ${rch_timeout_seconds}s" | tee -a "$step_log_path"
+      failed_command="${command_text} (timeout-${rch_timeout_seconds}s)"
+      return 1
+    fi
+
+    if rch_recovered_success "$step_log_path"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$step_log_path"
     else
-      failed_command="$command_text"
+      remote_exit_code="$(rch_remote_exit_code "$step_log_path" || true)"
+      if [[ -n "$remote_exit_code" ]]; then
+        failed_command="${command_text} (rch-exit=${status}; remote-exit=${remote_exit_code})"
+      else
+        failed_command="${command_text} (rch-exit=${status}; missing-remote-exit-marker)"
+      fi
       return 1
     fi
   fi
 
   if ! rch_reject_local_fallback "$step_log_path"; then
     failed_command="${command_text} (rch-local-fallback-detected)"
+    return 1
+  fi
+
+  remote_exit_code="$(rch_remote_exit_code "$step_log_path" || true)"
+  if [[ -z "$remote_exit_code" ]]; then
+    failed_command="${command_text} (rch-exit=${status}; missing-remote-exit-marker)"
+    return 1
+  fi
+  if [[ "$remote_exit_code" != "0" ]]; then
+    failed_command="${command_text} (rch-exit=${status}; remote-exit=${remote_exit_code})"
     return 1
   fi
 }

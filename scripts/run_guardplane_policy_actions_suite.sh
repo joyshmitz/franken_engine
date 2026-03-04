@@ -22,7 +22,7 @@ guardplane_log_path="$run_dir/guardplane_decision_log.jsonl"
 containment_log_path="$run_dir/containment_workflow_log.jsonl"
 containment_timeline_path="$run_dir/containment_timeline.json"
 logs_dir="$run_dir/logs"
-bead_id="${GUARDPLANE_POLICY_ACTIONS_BEAD_ID:-bd-1lsy.6.3}"
+bead_id="${GUARDPLANE_POLICY_ACTIONS_BEAD_ID:-bd-1lsy.6.4}"
 guardplane_log_env_path="$guardplane_log_path"
 containment_log_env_path="$containment_log_path"
 containment_detection_source_event="${GUARDPLANE_CONTAINMENT_DETECTION_SOURCE_EVENT:-delegate_declassification}"
@@ -65,6 +65,7 @@ ensure_remote_only() {
 
 declare -a commands_run=()
 declare -a command_logs=()
+artifact_capture_log_path=""
 failed_command=""
 failed_log_path=""
 manifest_written=false
@@ -226,6 +227,7 @@ run_guardplane_artifact_capture_step() {
       "FE_GUARDPLANE_REPLAY_COMMAND=${0}::ci" \
       "FE_GUARDPLANE_EMIT_STDOUT_MARKERS=1" \
       cargo test -p frankenengine-extension-host --lib guardplane_policy_action_logs_can_emit_jsonl_artifacts -- --nocapture
+  artifact_capture_log_path="${command_logs[$(( ${#command_logs[@]} - 1 ))]}"
 }
 
 run_mode() {
@@ -271,7 +273,13 @@ run_mode() {
   esac
 
   if [[ "$mode" == "test" || "$mode" == "ci" ]]; then
-    local final_step_log="${command_logs[$(( ${#command_logs[@]} - 1 ))]}"
+    local final_step_log="$artifact_capture_log_path"
+    if [[ -z "$final_step_log" ]]; then
+      echo "error: missing artifact capture step log path" >&2
+      failed_command="guardplane_policy_action_logs_can_emit_jsonl_artifacts"
+      failed_log_path="$run_dir"
+      return 1
+    fi
     if ! extract_artifact_from_step_log \
       "$final_step_log" \
       "$guardplane_log_begin_marker" \

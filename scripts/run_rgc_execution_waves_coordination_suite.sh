@@ -10,6 +10,7 @@ parser_frontier_bootstrap_env
 mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
+cargo_build_jobs="${CARGO_BUILD_JOBS:-2}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 target_dir="${CARGO_TARGET_DIR:-${root_dir}/.rch_target/rgc_execution_waves_${timestamp}}"
 artifact_root="${RGC_EXECUTION_WAVES_ARTIFACT_ROOT:-artifacts/rgc_execution_waves_coordination}"
@@ -35,6 +36,7 @@ run_rch() {
   timeout "${rch_timeout_seconds}" \
     rch exec -- env \
     "RUSTUP_TOOLCHAIN=${toolchain}" \
+    "CARGO_BUILD_JOBS=${cargo_build_jobs}" \
     "CARGO_TARGET_DIR=${target_dir}" \
     "$@"
 }
@@ -76,20 +78,27 @@ manifest_written=false
 
 run_step() {
   local command_text="$1"
-  local log_path remote_exit_code
+  local log_path remote_exit_code rch_exit_code
   shift
 
   commands_run+=("$command_text")
   echo "==> $command_text"
   log_path="$(mktemp)"
+  rch_exit_code=0
 
   if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
+    rch_exit_code=$?
     if rch_strip_ansi "$log_path" | rg -q "Remote command finished: exit=0"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" \
         | tee -a "$log_path"
     else
+      remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
       rm -f "$log_path"
-      failed_command="$command_text"
+      if [[ -n "$remote_exit_code" ]]; then
+        failed_command="${command_text} (rch-exit=${rch_exit_code}; remote-exit=${remote_exit_code})"
+      else
+        failed_command="${command_text} (rch-exit=${rch_exit_code}; missing-remote-exit-marker)"
+      fi
       return 1
     fi
   fi
@@ -101,7 +110,13 @@ run_step() {
   fi
 
   remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
-  if [[ -n "$remote_exit_code" && "$remote_exit_code" != "0" ]]; then
+  if [[ -z "$remote_exit_code" ]]; then
+    rm -f "$log_path"
+    failed_command="${command_text} (missing-remote-exit-marker)"
+    return 1
+  fi
+
+  if [[ "$remote_exit_code" != "0" ]]; then
     rm -f "$log_path"
     failed_command="${command_text} (remote-exit=${remote_exit_code})"
     return 1
@@ -197,6 +212,7 @@ write_manifest() {
     echo "  \"component\": \"${component}\","
     echo "  \"mode\": \"${mode}\","
     echo "  \"toolchain\": \"${toolchain}\","
+    echo "  \"cargo_build_jobs\": ${cargo_build_jobs},"
     echo "  \"cargo_target_dir\": \"${target_dir}\","
     echo "  \"rch_exec_timeout_seconds\": ${rch_timeout_seconds},"
     echo "  \"trace_id\": \"${trace_id}\","

@@ -6,7 +6,7 @@ cd "$root_dir"
 
 mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
-target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_lockstep_runner_suite}"
+target_dir="${CARGO_TARGET_DIR:-${root_dir}/target_rch_lockstep_runner_suite}"
 artifact_root="${LOCKSTEP_RUNNER_ARTIFACT_ROOT:-artifacts/lockstep_runner}"
 fixture_catalog="${LOCKSTEP_RUNNER_FIXTURE_CATALOG:-crates/franken-engine/tests/fixtures/parser_phase0_semantic_fixtures.json}"
 fixture_limit="${LOCKSTEP_RUNNER_FIXTURE_LIMIT:-8}"
@@ -42,6 +42,58 @@ fi
 
 run_rch() {
   rch exec -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
+}
+
+run_rch_strict_logged() {
+  local log_path="$1"
+  shift
+
+  local fifo_path fallback_flag_path reader_pid rch_pid rch_status=0
+  local line
+
+  fifo_path="$(mktemp -u "${run_dir}/rch-stream.XXXXXX")"
+  fallback_flag_path="$(mktemp "${run_dir}/rch-fallback.XXXXXX")"
+  rm -f "$fallback_flag_path"
+  mkfifo "$fifo_path"
+  : >"$log_path"
+
+  {
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      printf '%s\n' "$line" | tee -a "$log_path"
+      if [[ "$line" == *"Remote toolchain failure, falling back to local"* ||
+        "$line" == *"falling back to local"* ||
+        "$line" == *"fallback to local"* ||
+        "$line" == *"local fallback"* ||
+        "$line" == *"running locally"* ||
+        "$line" == *"[RCH] local ("* ||
+        "$line" == *"Failed to query daemon:"*"running locally"* ||
+        "$line" == *"Dependency preflight blocked remote execution"* ||
+        "$line" == *"RCH-E326"* ]]; then
+        : >"$fallback_flag_path"
+        if [[ -n "${rch_pid:-}" ]]; then
+          kill "$rch_pid" 2>/dev/null || true
+        fi
+        pkill -f "CARGO_TARGET_DIR=${target_dir}" 2>/dev/null || true
+        pkill -f "${target_dir}" 2>/dev/null || true
+      fi
+    done <"$fifo_path"
+  } &
+  reader_pid=$!
+
+  run_rch "$@" >"$fifo_path" 2>&1 &
+  rch_pid=$!
+  wait "$rch_pid" || rch_status=$?
+  wait "$reader_pid" || true
+  rm -f "$fifo_path"
+
+  if [[ -f "$fallback_flag_path" ]]; then
+    rm -f "$fallback_flag_path"
+    pkill -f "CARGO_TARGET_DIR=${target_dir}" 2>/dev/null || true
+    return 125
+  fi
+
+  rm -f "$fallback_flag_path"
+  return "$rch_status"
 }
 
 rch_reject_local_fallback() {
@@ -89,14 +141,19 @@ preflight_report_path="${run_dir}/report.preflight.json"
 run_step() {
   local command_text="$1"
   shift
-  local step_log_path="${run_dir}/step_$(printf '%03d' "$step_log_index").log"
+  local step_log_path
+  step_log_path="${run_dir}/step_$(printf '%03d' "$step_log_index").log"
   step_log_index=$((step_log_index + 1))
   commands_run+=("$command_text")
   echo "==> $command_text"
   set +e
-  run_rch "$@" > >(tee "$step_log_path") 2>&1
+  run_rch_strict_logged "$step_log_path" "$@"
   local rc=$?
   set -e
+  if [[ "$rc" -eq 125 ]]; then
+    failed_command="${command_text} (rch-local-fallback-detected)"
+    return 86
+  fi
   if [[ "$rc" -ne 0 ]]; then
     failed_command="$command_text"
     return "$rc"
@@ -135,9 +192,15 @@ run_report_step() {
   commands_run+=("$preflight_command_text")
   echo "==> $preflight_command_text"
   set +e
-  run_rch "${preflight_command[@]}" | tee "$preflight_stdout_path"
+  run_rch_strict_logged "$preflight_stdout_path" "${preflight_command[@]}"
   local preflight_rc=$?
   set -e
+  if [[ "$preflight_rc" -eq 125 ]]; then
+    preflight_state="failed"
+    preflight_error_code="FE-LOCKSTEP-PREFLIGHT-LOCAL-FALLBACK"
+    failed_command="${preflight_command_text} (rch-local-fallback-detected)"
+    return 86
+  fi
   if ! rch_reject_local_fallback "$preflight_stdout_path"; then
     preflight_state="failed"
     preflight_error_code="FE-LOCKSTEP-PREFLIGHT-LOCAL-FALLBACK"
@@ -159,6 +222,7 @@ run_report_step() {
   fi
 
   if [[ "$preflight_rc" -ne 0 ]]; then
+    preflight_state="failed"
     if [[ -z "$preflight_error_code" ]]; then
       preflight_error_code="FE-LOCKSTEP-PREFLIGHT-COMMAND-FAILED"
     fi
@@ -206,9 +270,13 @@ run_report_step() {
   echo "==> $command_text"
 
   set +e
-  run_rch "${command[@]}" | tee "$report_stdout_path"
+  run_rch_strict_logged "$report_stdout_path" "${command[@]}"
   local rc=$?
   set -e
+  if [[ "$rc" -eq 125 ]]; then
+    failed_command="${command_text} (rch-local-fallback-detected)"
+    return 86
+  fi
 
   if ! rch_reject_local_fallback "$report_stdout_path"; then
     failed_command="${command_text} (rch-local-fallback-detected)"
@@ -320,7 +388,7 @@ write_manifest() {
   {
     echo "{"
     echo '  "schema_version": "franken-engine.lockstep-runner-suite.run-manifest.v1",'
-    echo '  "bead_id": "bd-1lsy.9.2",'
+    echo '  "bead_id": "bd-2vu",'
     echo "  \"component\": \"${component}\","
     echo "  \"mode\": \"${mode}\","
     echo "  \"toolchain\": \"${toolchain}\","
