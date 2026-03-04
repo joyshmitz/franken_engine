@@ -228,6 +228,7 @@ pub mod spectral_fleet_convergence;
 pub mod static_analysis_graph;
 pub mod static_authority_analyzer;
 pub mod static_semantics;
+pub mod stdlib;
 pub mod storage_adapter;
 pub mod structural_causal_model;
 pub mod succinct_witness_compiler;
