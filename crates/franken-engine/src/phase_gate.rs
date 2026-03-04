@@ -1788,4 +1788,357 @@ mod tests {
         assert_eq!(report.metrics.get("event_count"), Some("42"));
         assert_eq!(report.metrics.get("match"), Some("true"));
     }
+
+    // -- Interleaving zero surfaces (div-by-zero) --------------------------
+
+    #[test]
+    fn interleaving_zero_surfaces_passes_zero_threshold() {
+        let mut eval = GateEvaluator::new(
+            test_epoch(),
+            GateThresholds {
+                interleaving_coverage_pct: 0,
+                ..GateThresholds::default()
+            },
+        );
+        let report = eval.evaluate_interleaving(
+            &InterleavingInput {
+                total_surfaces: 0,
+                explored_surfaces: 0,
+                unresolved_failures: 0,
+                regression_transcripts: 0,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert!(report.status.is_passed());
+    }
+
+    #[test]
+    fn interleaving_zero_surfaces_fails_nonzero_threshold() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_interleaving(
+            &InterleavingInput {
+                total_surfaces: 0,
+                explored_surfaces: 0,
+                unresolved_failures: 0,
+                regression_transcripts: 0,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        // 0% coverage < 95% threshold → failed.
+        assert!(!report.status.is_passed());
+    }
+
+    // -- Interleaving unresolved failures only (no coverage fail) ----------
+
+    #[test]
+    fn interleaving_only_unresolved_failures() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_interleaving(
+            &InterleavingInput {
+                total_surfaces: 100,
+                explored_surfaces: 100,
+                unresolved_failures: 3,
+                regression_transcripts: 0,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert!(!report.status.is_passed());
+        if let GateStatus::Failed { reasons } = &report.status {
+            assert_eq!(reasons.len(), 1);
+            assert!(reasons[0].contains("unresolved"));
+        }
+    }
+
+    // -- Conformance: insufficient vectors only ----------------------------
+
+    #[test]
+    fn conformance_insufficient_vectors_only() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_conformance(
+            &ConformanceInput {
+                total_vectors: 100,
+                passed_vectors: 100,
+                failed_vectors: 0,
+                categories: vec!["a".to_string()],
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert!(!report.status.is_passed());
+        if let GateStatus::Failed { reasons } = &report.status {
+            assert_eq!(reasons.len(), 1);
+            assert!(reasons[0].contains("vector count"));
+        }
+    }
+
+    // -- Fuzz: all four failure reasons simultaneously --------------------
+
+    #[test]
+    fn fuzz_all_four_failures() {
+        let mut eval = default_evaluator();
+        let report = eval.evaluate_fuzz(
+            &FuzzInput {
+                cpu_hours: 1,
+                crashes: 2,
+                unexpected_panics: 3,
+                bypasses: 4,
+                targets: vec!["t".to_string()],
+            },
+            "ci",
+            "t",
+            0,
+        );
+        if let GateStatus::Failed { reasons } = &report.status {
+            assert_eq!(reasons.len(), 4);
+        } else {
+            panic!("expected Failed");
+        }
+    }
+
+    // -- Gate re-evaluation overwrites previous report --------------------
+
+    #[test]
+    fn re_evaluation_overwrites_report() {
+        let mut eval = default_evaluator();
+        // First: fail.
+        eval.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"a"),
+                replayed_hash: ContentHash::compute(b"b"),
+                event_count: 1,
+            },
+            "ci1",
+            "t1",
+            100,
+        );
+        assert!(!eval.all_gates_passed());
+        // Second: pass.
+        eval.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"x"),
+                replayed_hash: ContentHash::compute(b"x"),
+                event_count: 2,
+            },
+            "ci2",
+            "t2",
+            200,
+        );
+        let report = eval.report(GateId::DeterministicReplay).unwrap();
+        assert!(report.status.is_passed());
+        assert_eq!(report.ci_run_id, "ci2");
+    }
+
+    // -- Event drain and re-eval isolation --------------------------------
+
+    #[test]
+    fn drain_events_then_re_eval() {
+        let mut eval = default_evaluator();
+        eval.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"x"),
+                replayed_hash: ContentHash::compute(b"x"),
+                event_count: 1,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        let events1 = eval.drain_events();
+        assert!(!events1.is_empty());
+
+        // Re-eval generates new events.
+        eval.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"x"),
+                replayed_hash: ContentHash::compute(b"x"),
+                event_count: 2,
+            },
+            "ci2",
+            "t2",
+            100,
+        );
+        let events2 = eval.drain_events();
+        assert!(!events2.is_empty());
+    }
+
+    // -- GateStatus is_terminal -------------------------------------------
+
+    #[test]
+    fn gate_status_is_terminal_all_variants() {
+        assert!(GateStatus::Passed.is_terminal());
+        assert!(
+            GateStatus::Failed {
+                reasons: vec!["x".into()]
+            }
+            .is_terminal()
+        );
+        assert!(
+            GateStatus::Skipped {
+                reason: "skip".into()
+            }
+            .is_terminal()
+        );
+        assert!(!GateStatus::Pending.is_terminal());
+    }
+
+    // -- GateMetrics edge cases -------------------------------------------
+
+    #[test]
+    fn gate_metrics_overwrite_key() {
+        let m = GateMetrics::empty().with("k", "v1").with("k", "v2");
+        assert_eq!(m.get("k"), Some("v2"));
+    }
+
+    // -- Report hash determinism ------------------------------------------
+
+    #[test]
+    fn report_hash_deterministic_same_inputs() {
+        let mut eval1 = default_evaluator();
+        let mut eval2 = default_evaluator();
+        let input = ReplayInput {
+            recorded_hash: ContentHash::compute(b"test"),
+            replayed_hash: ContentHash::compute(b"test"),
+            event_count: 10,
+        };
+        let r1 = eval1.evaluate_replay(&input, "ci", "trace", 42);
+        let r2 = eval2.evaluate_replay(&input, "ci", "trace", 42);
+        assert_eq!(r1.report_hash, r2.report_hash);
+    }
+
+    // -- export_reports returns all evaluated gates ------------------------
+
+    #[test]
+    fn export_reports_count() {
+        let mut eval = default_evaluator();
+        eval.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"x"),
+                replayed_hash: ContentHash::compute(b"x"),
+                event_count: 1,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        eval.evaluate_fuzz(
+            &FuzzInput {
+                cpu_hours: 48,
+                crashes: 0,
+                unexpected_panics: 0,
+                bypasses: 0,
+                targets: vec!["t".to_string()],
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert_eq!(eval.export_reports().len(), 2);
+    }
+
+    // -- summary returns evaluated gate statuses --------------------------
+
+    #[test]
+    fn summary_includes_only_evaluated() {
+        let mut eval = default_evaluator();
+        assert!(eval.summary().is_empty());
+        eval.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"x"),
+                replayed_hash: ContentHash::compute(b"x"),
+                event_count: 1,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        let summary = eval.summary();
+        assert_eq!(summary.len(), 1);
+        assert!(summary.contains_key(&GateId::DeterministicReplay));
+    }
+
+    // -- event_counts persist across drain --------------------------------
+
+    #[test]
+    fn event_counts_persist_after_drain() {
+        let mut eval = default_evaluator();
+        eval.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"x"),
+                replayed_hash: ContentHash::compute(b"x"),
+                event_count: 1,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        let counts_before = eval.event_counts().clone();
+        eval.drain_events();
+        assert_eq!(eval.event_counts(), &counts_before);
+    }
+
+    // -- Custom thresholds ------------------------------------------------
+
+    #[test]
+    fn custom_zero_threshold_allows_minimal_input() {
+        let mut eval = GateEvaluator::new(
+            test_epoch(),
+            GateThresholds {
+                interleaving_coverage_pct: 0,
+                min_conformance_vectors: 0,
+                min_fuzz_cpu_hours: 0,
+            },
+        );
+        eval.evaluate_interleaving(
+            &InterleavingInput {
+                total_surfaces: 1,
+                explored_surfaces: 0,
+                unresolved_failures: 0,
+                regression_transcripts: 0,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        eval.evaluate_conformance(
+            &ConformanceInput {
+                total_vectors: 0,
+                passed_vectors: 0,
+                failed_vectors: 0,
+                categories: vec![],
+            },
+            "ci",
+            "t",
+            0,
+        );
+        eval.evaluate_fuzz(
+            &FuzzInput {
+                cpu_hours: 0,
+                crashes: 0,
+                unexpected_panics: 0,
+                bypasses: 0,
+                targets: vec![],
+            },
+            "ci",
+            "t",
+            0,
+        );
+        eval.evaluate_replay(
+            &ReplayInput {
+                recorded_hash: ContentHash::compute(b"x"),
+                replayed_hash: ContentHash::compute(b"x"),
+                event_count: 0,
+            },
+            "ci",
+            "t",
+            0,
+        );
+        assert!(eval.all_gates_passed());
+    }
 }

@@ -2226,6 +2226,8 @@ mod tests {
     fn evaluate_observation_assigns_divergence_category_and_guidance() {
         let mut entry = valid_entry("case-category");
         entry.franken_native_behavior = "native-strict".to_string();
+        entry.franken_node_compat_behavior = "native-strict".to_string();
+        entry.franken_bun_compat_behavior = "native-strict".to_string();
         entry.node_behavior = "node-lenient".to_string();
         entry.bun_behavior = "native-strict".to_string();
         entry.divergence = Some(DivergencePolicy {
@@ -2265,6 +2267,8 @@ mod tests {
     fn evaluate_scenario_produces_deterministic_report() {
         let mut strict_entry = valid_entry("case-strict");
         strict_entry.franken_native_behavior = "native-strict".to_string();
+        strict_entry.franken_node_compat_behavior = "native-strict".to_string();
+        strict_entry.franken_bun_compat_behavior = "native-strict".to_string();
         strict_entry.node_behavior = "node-lenient".to_string();
         strict_entry.bun_behavior = "native-strict".to_string();
         strict_entry.divergence = Some(DivergencePolicy {

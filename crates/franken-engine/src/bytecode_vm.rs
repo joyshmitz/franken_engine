@@ -946,4 +946,1705 @@ mod tests {
         let value = Value::Object(object_id);
         assert_eq!(value, Value::Object(ObjectId(7)));
     }
+
+    // -- Value tests ---------------------------------------------------------
+
+    #[test]
+    fn value_is_truthy_undefined() {
+        assert!(!Value::Undefined.is_truthy());
+    }
+
+    #[test]
+    fn value_is_truthy_bool() {
+        assert!(Value::Bool(true).is_truthy());
+        assert!(!Value::Bool(false).is_truthy());
+    }
+
+    #[test]
+    fn value_is_truthy_int() {
+        assert!(Value::Int(1).is_truthy());
+        assert!(Value::Int(-1).is_truthy());
+        assert!(!Value::Int(0).is_truthy());
+    }
+
+    #[test]
+    fn value_is_truthy_object() {
+        assert!(Value::Object(ObjectId(0)).is_truthy());
+    }
+
+    #[test]
+    fn value_kind_names() {
+        assert_eq!(Value::Undefined.kind(), "undefined");
+        assert_eq!(Value::Bool(true).kind(), "bool");
+        assert_eq!(Value::Int(42).kind(), "int");
+        assert_eq!(Value::Object(ObjectId(0)).kind(), "object");
+    }
+
+    // -- Instruction opcode_name tests ---------------------------------------
+
+    #[test]
+    fn instruction_opcode_names() {
+        assert_eq!(
+            Instruction::LoadConst {
+                dst: r(0),
+                const_index: 0
+            }
+            .opcode_name(),
+            "load_const"
+        );
+        assert_eq!(
+            Instruction::Move {
+                dst: r(0),
+                src: r(1)
+            }
+            .opcode_name(),
+            "move"
+        );
+        assert_eq!(
+            Instruction::Add {
+                dst: r(0),
+                lhs: r(1),
+                rhs: r(2)
+            }
+            .opcode_name(),
+            "add"
+        );
+        assert_eq!(
+            Instruction::Sub {
+                dst: r(0),
+                lhs: r(1),
+                rhs: r(2)
+            }
+            .opcode_name(),
+            "sub"
+        );
+        assert_eq!(
+            Instruction::Mul {
+                dst: r(0),
+                lhs: r(1),
+                rhs: r(2)
+            }
+            .opcode_name(),
+            "mul"
+        );
+        assert_eq!(
+            Instruction::Div {
+                dst: r(0),
+                lhs: r(1),
+                rhs: r(2)
+            }
+            .opcode_name(),
+            "div"
+        );
+        assert_eq!(
+            Instruction::NewObject { dst: r(0) }.opcode_name(),
+            "new_object"
+        );
+        assert_eq!(Instruction::Return { src: r(0) }.opcode_name(), "return");
+    }
+
+    // -- Error case tests ----------------------------------------------------
+
+    #[test]
+    fn division_by_zero_returns_error() {
+        let program = Program {
+            constants: vec![Value::Int(10), Value::Int(0)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Div {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-divzero", 8, 64);
+        let error = vm.execute(&program).expect_err("should error");
+        assert_eq!(error, VmError::DivisionByZero);
+    }
+
+    #[test]
+    fn constant_out_of_bounds() {
+        let program = Program {
+            constants: vec![Value::Int(1)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 99,
+                },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-const-oob", 8, 64);
+        let error = vm.execute(&program).expect_err("should error");
+        assert!(matches!(error, VmError::ConstantOutOfBounds { .. }));
+    }
+
+    #[test]
+    fn budget_exhausted_error() {
+        let program = Program {
+            constants: vec![],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::Jump { target: 0 }, // infinite loop
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-budget", 4, 10);
+        let error = vm.execute(&program).expect_err("should exhaust budget");
+        assert!(matches!(error, VmError::BudgetExhausted { .. }));
+    }
+
+    #[test]
+    fn missing_return_error() {
+        let program = Program {
+            constants: vec![Value::Int(1)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                // No return instruction
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-no-return", 4, 64);
+        let error = vm
+            .execute(&program)
+            .expect_err("should error on missing return");
+        assert_eq!(error, VmError::MissingReturn);
+    }
+
+    // -- Arithmetic tests ----------------------------------------------------
+
+    #[test]
+    fn add_two_values() {
+        let program = Program {
+            constants: vec![Value::Int(100), Value::Int(200)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Add {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-add", 8, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(300));
+    }
+
+    #[test]
+    fn sub_two_values() {
+        let program = Program {
+            constants: vec![Value::Int(50), Value::Int(30)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Sub {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-sub", 8, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(20));
+    }
+
+    #[test]
+    fn div_two_values() {
+        let program = Program {
+            constants: vec![Value::Int(100), Value::Int(5)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Div {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-div", 8, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(20));
+    }
+
+    // -- Move instruction test -----------------------------------------------
+
+    #[test]
+    fn move_copies_value() {
+        let program = Program {
+            constants: vec![Value::Int(42)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::Move {
+                    dst: r(1),
+                    src: r(0),
+                },
+                Instruction::Return { src: r(1) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-move", 8, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(42));
+    }
+
+    // -- Conditional jump tests ----------------------------------------------
+
+    #[test]
+    fn jump_if_false_skips_when_falsy() {
+        let program = Program {
+            constants: vec![Value::Bool(false), Value::Int(1), Value::Int(2)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                }, // false
+                Instruction::JumpIfFalse {
+                    condition: r(0),
+                    target: 3,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                }, // skipped
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 2,
+                }, // target
+                Instruction::Return { src: r(1) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-jif-false", 8, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(2));
+    }
+
+    #[test]
+    fn jump_if_false_continues_when_truthy() {
+        let program = Program {
+            constants: vec![Value::Bool(true), Value::Int(1), Value::Int(2)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                }, // true
+                Instruction::JumpIfFalse {
+                    condition: r(0),
+                    target: 3,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                }, // not skipped
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 2,
+                }, // also executes
+                Instruction::Return { src: r(1) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-jif-true", 8, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(2)); // both const loads run
+    }
+
+    // -- Object property tests -----------------------------------------------
+
+    #[test]
+    fn new_object_and_store_load_prop() {
+        let program = Program {
+            constants: vec![Value::Int(99)],
+            property_pool: vec!["x".to_string()],
+            instructions: vec![
+                Instruction::NewObject { dst: r(0) },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 0,
+                },
+                Instruction::StoreProp {
+                    object: r(0),
+                    property_index: 0,
+                    value: r(1),
+                },
+                Instruction::LoadPropCached {
+                    dst: r(2),
+                    object: r(0),
+                    property_index: 0,
+                },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-prop", 8, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(99));
+        assert_eq!(report.cache_stats.misses, 1);
+    }
+
+    // -- Determinism tests ---------------------------------------------------
+
+    #[test]
+    fn execution_is_deterministic_across_runs() {
+        let program = Program {
+            constants: vec![Value::Int(3), Value::Int(4)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Add {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+
+        let mut vm1 = BytecodeVm::new("trace-det", 8, 64);
+        let r1 = vm1.execute(&program).unwrap();
+        let mut vm2 = BytecodeVm::new("trace-det", 8, 64);
+        let r2 = vm2.execute(&program).unwrap();
+
+        assert_eq!(r1.result, r2.result);
+        assert_eq!(r1.state_hash, r2.state_hash);
+        assert_eq!(r1.steps, r2.steps);
+    }
+
+    // -- Serde roundtrip tests -----------------------------------------------
+
+    #[test]
+    fn program_serde_roundtrip() {
+        let program = Program {
+            constants: vec![Value::Int(42), Value::Bool(true)],
+            property_pool: vec!["key".to_string()],
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        let json = serde_json::to_string(&program).unwrap();
+        let restored: Program = serde_json::from_str(&json).unwrap();
+        assert_eq!(program, restored);
+    }
+
+    #[test]
+    fn vm_error_serializes() {
+        let errors = vec![
+            VmError::DivisionByZero,
+            VmError::MissingReturn,
+            VmError::BudgetExhausted {
+                executed_steps: 100,
+                step_budget: 50,
+            },
+            VmError::RegisterOutOfBounds {
+                register: 10,
+                register_count: 8,
+            },
+        ];
+        for error in &errors {
+            let json = serde_json::to_string(error).unwrap();
+            assert!(!json.is_empty());
+            // Verify JSON parses as valid
+            let _: serde_json::Value = serde_json::from_str(&json).unwrap();
+        }
+    }
+
+    #[test]
+    fn value_serde_roundtrip() {
+        let values = vec![
+            Value::Undefined,
+            Value::Bool(true),
+            Value::Int(42),
+            Value::Object(ObjectId(7)),
+        ];
+        for val in &values {
+            let json = serde_json::to_string(val).unwrap();
+            let restored: Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(*val, restored);
+        }
+    }
+
+    // -- VmError code tests --------------------------------------------------
+
+    #[test]
+    fn vm_error_codes_are_distinct() {
+        let codes: Vec<&str> = vec![
+            VmError::RegisterOutOfBounds {
+                register: 0,
+                register_count: 0,
+            }
+            .code(),
+            VmError::ConstantOutOfBounds {
+                const_index: 0,
+                constant_count: 0,
+            }
+            .code(),
+            VmError::PropertyIndexOutOfBounds {
+                property_index: 0,
+                property_count: 0,
+            }
+            .code(),
+            VmError::ObjectNotFound { object_id: 0 }.code(),
+            VmError::TypeMismatch {
+                expected: "int",
+                got: "bool",
+            }
+            .code(),
+            VmError::DivisionByZero.code(),
+            VmError::InvalidJumpTarget {
+                target: 0,
+                instruction_count: 0,
+            }
+            .code(),
+            VmError::MissingReturn.code(),
+            VmError::BudgetExhausted {
+                executed_steps: 0,
+                step_budget: 0,
+            }
+            .code(),
+        ];
+        let unique_count = {
+            let mut sorted = codes.clone();
+            sorted.sort();
+            sorted.dedup();
+            sorted.len()
+        };
+        assert_eq!(
+            codes.len(),
+            unique_count,
+            "all error codes should be distinct"
+        );
+    }
+
+    // -- Event generation tests ----------------------------------------------
+
+    #[test]
+    fn events_contain_instruction_entries() {
+        let program = Program {
+            constants: vec![Value::Int(1)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-events", 4, 64);
+        let report = vm.execute(&program).unwrap();
+        assert!(!report.events.is_empty());
+        assert!(report.events.iter().all(|e| e.trace_id == "trace-events"));
+        assert!(report.events.iter().all(|e| e.component == "bytecode_vm"));
+        assert!(report.events.iter().any(|e| e.opcode == "load_const"));
+        assert!(report.events.iter().any(|e| e.opcode == "return"));
+    }
+
+    // -- Register boundary tests (enrichment) --------------------------------
+
+    #[test]
+    fn register_out_of_bounds_on_write() {
+        let program = Program {
+            constants: vec![Value::Int(1)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(99),
+                    const_index: 0,
+                },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-reg-oob-write", 4, 64);
+        let error = vm.execute(&program).expect_err("should fail on OOB write");
+        assert!(matches!(
+            error,
+            VmError::RegisterOutOfBounds {
+                register: 99,
+                register_count: 4
+            }
+        ));
+    }
+
+    #[test]
+    fn register_out_of_bounds_on_read() {
+        let program = Program {
+            constants: vec![],
+            property_pool: Vec::new(),
+            instructions: vec![Instruction::Return { src: r(50) }],
+        };
+        let mut vm = BytecodeVm::new("trace-reg-oob-read", 4, 64);
+        let error = vm.execute(&program).expect_err("should fail on OOB read");
+        assert!(matches!(
+            error,
+            VmError::RegisterOutOfBounds { register: 50, .. }
+        ));
+    }
+
+    // -- Property index OOB (enrichment) -------------------------------------
+
+    #[test]
+    fn property_index_out_of_bounds_on_store() {
+        let program = Program {
+            constants: vec![Value::Int(1)],
+            property_pool: vec!["a".to_string()],
+            instructions: vec![
+                Instruction::NewObject { dst: r(0) },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 0,
+                },
+                Instruction::StoreProp {
+                    object: r(0),
+                    property_index: 99,
+                    value: r(1),
+                },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-prop-oob-store", 8, 64);
+        let error = vm.execute(&program).expect_err("should fail on prop OOB");
+        assert!(matches!(
+            error,
+            VmError::PropertyIndexOutOfBounds {
+                property_index: 99,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn property_index_out_of_bounds_on_load() {
+        let program = Program {
+            constants: vec![],
+            property_pool: vec!["a".to_string()],
+            instructions: vec![
+                Instruction::NewObject { dst: r(0) },
+                Instruction::LoadPropCached {
+                    dst: r(1),
+                    object: r(0),
+                    property_index: 50,
+                },
+                Instruction::Return { src: r(1) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-prop-oob-load", 8, 64);
+        let error = vm.execute(&program).expect_err("should fail on prop OOB");
+        assert!(matches!(
+            error,
+            VmError::PropertyIndexOutOfBounds {
+                property_index: 50,
+                ..
+            }
+        ));
+    }
+
+    // -- Object not found (enrichment) ---------------------------------------
+
+    #[test]
+    fn object_not_found_on_store_prop() {
+        let program = Program {
+            constants: vec![Value::Int(1)],
+            property_pool: vec!["x".to_string()],
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                // r(0) is Int, not Object; but let's use a fake Object handle
+                Instruction::StoreProp {
+                    object: r(0),
+                    property_index: 0,
+                    value: r(0),
+                },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-obj-not-found-store", 8, 64);
+        let error = vm.execute(&program).expect_err("should fail");
+        assert!(matches!(
+            error,
+            VmError::TypeMismatch {
+                expected: "object",
+                got: "int"
+            }
+        ));
+    }
+
+    #[test]
+    fn object_not_found_on_load_prop_cached() {
+        let program = Program {
+            constants: vec![Value::Bool(true)],
+            property_pool: vec!["x".to_string()],
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadPropCached {
+                    dst: r(1),
+                    object: r(0),
+                    property_index: 0,
+                },
+                Instruction::Return { src: r(1) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-obj-not-found-load", 8, 64);
+        let error = vm.execute(&program).expect_err("should fail");
+        assert!(matches!(
+            error,
+            VmError::TypeMismatch {
+                expected: "object",
+                got: "bool"
+            }
+        ));
+    }
+
+    // -- Type mismatch in arithmetic (enrichment) ----------------------------
+
+    #[test]
+    fn type_mismatch_add_bool_to_int() {
+        let program = Program {
+            constants: vec![Value::Bool(true), Value::Int(1)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Add {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-type-mismatch", 8, 64);
+        let error = vm
+            .execute(&program)
+            .expect_err("should fail on type mismatch");
+        assert!(matches!(
+            error,
+            VmError::TypeMismatch {
+                expected: "int",
+                got: "bool"
+            }
+        ));
+    }
+
+    #[test]
+    fn type_mismatch_mul_undefined() {
+        let program = Program {
+            constants: vec![Value::Int(5)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                // r(1) is Undefined by default
+                Instruction::Mul {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-type-mismatch-undefined", 8, 64);
+        let error = vm
+            .execute(&program)
+            .expect_err("should fail on type mismatch");
+        assert!(matches!(
+            error,
+            VmError::TypeMismatch {
+                expected: "int",
+                got: "undefined"
+            }
+        ));
+    }
+
+    // -- Negative integer arithmetic (enrichment) ----------------------------
+
+    #[test]
+    fn negative_integer_arithmetic() {
+        let program = Program {
+            constants: vec![Value::Int(-10), Value::Int(3)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Mul {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-negative", 8, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(-30));
+    }
+
+    #[test]
+    fn integer_subtraction_yields_negative() {
+        let program = Program {
+            constants: vec![Value::Int(5), Value::Int(100)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Sub {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-sub-negative", 8, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(-95));
+    }
+
+    #[test]
+    fn negative_division_truncates_toward_zero() {
+        let program = Program {
+            constants: vec![Value::Int(-7), Value::Int(2)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Div {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-neg-div", 8, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(-3)); // -7 / 2 = -3 (truncated)
+    }
+
+    // -- Multiple objects (enrichment) ---------------------------------------
+
+    #[test]
+    fn multiple_objects_independent_properties() {
+        let program = Program {
+            constants: vec![Value::Int(10), Value::Int(20)],
+            property_pool: vec!["val".to_string()],
+            instructions: vec![
+                Instruction::NewObject { dst: r(0) },
+                Instruction::NewObject { dst: r(1) },
+                Instruction::LoadConst {
+                    dst: r(2),
+                    const_index: 0,
+                },
+                Instruction::StoreProp {
+                    object: r(0),
+                    property_index: 0,
+                    value: r(2),
+                },
+                Instruction::LoadConst {
+                    dst: r(3),
+                    const_index: 1,
+                },
+                Instruction::StoreProp {
+                    object: r(1),
+                    property_index: 0,
+                    value: r(3),
+                },
+                Instruction::LoadPropCached {
+                    dst: r(4),
+                    object: r(0),
+                    property_index: 0,
+                },
+                Instruction::LoadPropCached {
+                    dst: r(5),
+                    object: r(1),
+                    property_index: 0,
+                },
+                Instruction::Add {
+                    dst: r(6),
+                    lhs: r(4),
+                    rhs: r(5),
+                },
+                Instruction::Return { src: r(6) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-multi-obj", 12, 128);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(30));
+    }
+
+    // -- Load missing property returns Undefined (enrichment) ----------------
+
+    #[test]
+    fn load_missing_property_returns_undefined() {
+        let program = Program {
+            constants: vec![],
+            property_pool: vec!["missing".to_string()],
+            instructions: vec![
+                Instruction::NewObject { dst: r(0) },
+                Instruction::LoadPropCached {
+                    dst: r(1),
+                    object: r(0),
+                    property_index: 0,
+                },
+                Instruction::Return { src: r(1) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-missing-prop", 8, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Undefined);
+    }
+
+    // -- Property overwrite (enrichment) -------------------------------------
+
+    #[test]
+    fn store_prop_overwrites_existing_value() {
+        let program = Program {
+            constants: vec![Value::Int(1), Value::Int(2)],
+            property_pool: vec!["x".to_string()],
+            instructions: vec![
+                Instruction::NewObject { dst: r(0) },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 0,
+                },
+                Instruction::StoreProp {
+                    object: r(0),
+                    property_index: 0,
+                    value: r(1),
+                },
+                Instruction::LoadConst {
+                    dst: r(2),
+                    const_index: 1,
+                },
+                Instruction::StoreProp {
+                    object: r(0),
+                    property_index: 0,
+                    value: r(2),
+                },
+                Instruction::LoadPropCached {
+                    dst: r(3),
+                    object: r(0),
+                    property_index: 0,
+                },
+                Instruction::Return { src: r(3) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-overwrite", 8, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(2));
+    }
+
+    // -- Jump boundary condition (enrichment) --------------------------------
+
+    #[test]
+    fn jump_to_last_valid_instruction() {
+        let program = Program {
+            constants: vec![Value::Int(42)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::Jump { target: 1 },
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-jump-boundary", 4, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(42));
+    }
+
+    #[test]
+    fn jump_if_false_to_exact_boundary() {
+        let program = Program {
+            constants: vec![Value::Int(0), Value::Int(99)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                }, // 0 is falsy
+                Instruction::JumpIfFalse {
+                    condition: r(0),
+                    target: 2,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Return { src: r(1) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-jif-boundary", 4, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(99));
+    }
+
+    #[test]
+    fn jump_if_false_invalid_target() {
+        let program = Program {
+            constants: vec![Value::Int(0)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::JumpIfFalse {
+                    condition: r(0),
+                    target: 999,
+                },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-jif-invalid", 4, 64);
+        let error = vm.execute(&program).expect_err("should fail");
+        assert!(matches!(
+            error,
+            VmError::InvalidJumpTarget { target: 999, .. }
+        ));
+    }
+
+    // -- State hash uniqueness (enrichment) ----------------------------------
+
+    #[test]
+    fn different_programs_produce_different_state_hashes() {
+        let program_a = Program {
+            constants: vec![Value::Int(1), Value::Int(2)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Add {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let program_b = Program {
+            constants: vec![Value::Int(1), Value::Int(2)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Mul {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+
+        let mut vm_a = BytecodeVm::new("trace-hash-a", 8, 64);
+        let report_a = vm_a.execute(&program_a).unwrap();
+        let mut vm_b = BytecodeVm::new("trace-hash-b", 8, 64);
+        let report_b = vm_b.execute(&program_b).unwrap();
+
+        assert_ne!(report_a.result, report_b.result);
+        assert_ne!(report_a.state_hash, report_b.state_hash);
+    }
+
+    // -- Complex control flow (enrichment) -----------------------------------
+
+    #[test]
+    fn countdown_loop_with_accumulator() {
+        // Computes: accumulator = 0; counter = 5; while(counter) { accumulator += counter; counter -= 1; }
+        let program = Program {
+            constants: vec![Value::Int(0), Value::Int(5), Value::Int(1)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                // r(0) = accumulator = 0
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                // r(1) = counter = 5
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                // r(2) = 1 (decrement constant)
+                Instruction::LoadConst {
+                    dst: r(2),
+                    const_index: 2,
+                },
+                // loop: if (!counter) goto end
+                Instruction::JumpIfFalse {
+                    condition: r(1),
+                    target: 7,
+                },
+                // accumulator += counter
+                Instruction::Add {
+                    dst: r(0),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
+                // counter -= 1
+                Instruction::Sub {
+                    dst: r(1),
+                    lhs: r(1),
+                    rhs: r(2),
+                },
+                // goto loop
+                Instruction::Jump { target: 3 },
+                // end: return accumulator
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-countdown", 8, 256);
+        let report = vm.execute(&program).unwrap();
+        // 5 + 4 + 3 + 2 + 1 = 15
+        assert_eq!(report.result, Value::Int(15));
+        // 3 init + 5 * (jif + add + sub + jump) + 1 final_jif + 1 return = 3 + 20 + 1 + 1 = 25
+        assert_eq!(report.steps, 25);
+    }
+
+    // -- VM reuse across executions (enrichment) -----------------------------
+
+    #[test]
+    fn vm_resets_state_on_reexecution() {
+        let program_a = Program {
+            constants: vec![Value::Int(100)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        let program_b = Program {
+            constants: vec![Value::Int(200)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+
+        let mut vm = BytecodeVm::new("trace-reuse", 4, 64);
+        let report_a = vm.execute(&program_a).unwrap();
+        assert_eq!(report_a.result, Value::Int(100));
+
+        let report_b = vm.execute(&program_b).unwrap();
+        assert_eq!(report_b.result, Value::Int(200));
+        // Events should only contain entries from the second run
+        assert!(report_b.events.iter().all(|e| e.step <= 2));
+    }
+
+    // -- Bool constant loading (enrichment) ----------------------------------
+
+    #[test]
+    fn load_and_return_bool_constant() {
+        let program = Program {
+            constants: vec![Value::Bool(true)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-bool", 4, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Bool(true));
+    }
+
+    // -- Undefined default register value (enrichment) -----------------------
+
+    #[test]
+    fn default_register_is_undefined() {
+        let program = Program {
+            constants: vec![],
+            property_pool: Vec::new(),
+            instructions: vec![Instruction::Return { src: r(0) }],
+        };
+        let mut vm = BytecodeVm::new("trace-default-reg", 4, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Undefined);
+    }
+
+    // -- Empty program (enrichment) ------------------------------------------
+
+    #[test]
+    fn empty_program_returns_missing_return() {
+        let program = Program::default();
+        let mut vm = BytecodeVm::new("trace-empty", 4, 64);
+        let error = vm.execute(&program).expect_err("should fail");
+        assert_eq!(error, VmError::MissingReturn);
+    }
+
+    // -- Budget boundary (enrichment) ----------------------------------------
+
+    #[test]
+    fn budget_exactly_sufficient() {
+        let program = Program {
+            constants: vec![Value::Int(42)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        // Budget of exactly 2 steps (load + return)
+        let mut vm = BytecodeVm::new("trace-budget-exact", 4, 2);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(42));
+        assert_eq!(report.steps, 2);
+    }
+
+    #[test]
+    fn budget_one_short_fails() {
+        let program = Program {
+            constants: vec![Value::Int(42)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        // Budget of 1 step — load succeeds but return hits the budget check
+        let mut vm = BytecodeVm::new("trace-budget-short", 4, 1);
+        let error = vm.execute(&program).expect_err("should exhaust budget");
+        assert!(matches!(
+            error,
+            VmError::BudgetExhausted {
+                executed_steps: 1,
+                step_budget: 1
+            }
+        ));
+    }
+
+    // -- Execution report events count (enrichment) --------------------------
+
+    #[test]
+    fn event_count_matches_steps() {
+        let program = Program {
+            constants: vec![Value::Int(1), Value::Int(2)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Add {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-event-count", 8, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.events.len() as u64, report.steps);
+    }
+
+    // -- Inline cache with multiple properties (enrichment) ------------------
+
+    #[test]
+    fn cache_entries_per_instruction_pointer() {
+        let program = Program {
+            constants: vec![Value::Int(10), Value::Int(20)],
+            property_pool: vec!["a".to_string(), "b".to_string()],
+            instructions: vec![
+                Instruction::NewObject { dst: r(0) },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 0,
+                },
+                Instruction::StoreProp {
+                    object: r(0),
+                    property_index: 0,
+                    value: r(1),
+                },
+                Instruction::LoadConst {
+                    dst: r(2),
+                    const_index: 1,
+                },
+                Instruction::StoreProp {
+                    object: r(0),
+                    property_index: 1,
+                    value: r(2),
+                },
+                // Two different LoadPropCached at different IPs
+                Instruction::LoadPropCached {
+                    dst: r(3),
+                    object: r(0),
+                    property_index: 0,
+                },
+                Instruction::LoadPropCached {
+                    dst: r(4),
+                    object: r(0),
+                    property_index: 1,
+                },
+                Instruction::Add {
+                    dst: r(5),
+                    lhs: r(3),
+                    rhs: r(4),
+                },
+                Instruction::Return { src: r(5) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("trace-multi-cache", 12, 128);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(30));
+        assert_eq!(report.cache_stats.entries, 2);
+        assert_eq!(report.cache_stats.misses, 2);
+    }
+
+    // -- Enrichment tests ---------------------------------------------------
+
+    #[test]
+    fn value_ordering_undefined_lt_bool_lt_int_lt_object() {
+        let vals = vec![
+            Value::Object(ObjectId(0)),
+            Value::Int(0),
+            Value::Bool(false),
+            Value::Undefined,
+        ];
+        let mut sorted = vals.clone();
+        sorted.sort();
+        assert_eq!(sorted[0], Value::Undefined);
+        assert!(matches!(sorted[1], Value::Bool(_)));
+        assert!(matches!(sorted[2], Value::Int(_)));
+        assert!(matches!(sorted[3], Value::Object(_)));
+    }
+
+    #[test]
+    fn register_index_conversion() {
+        assert_eq!(Register(0).index(), 0);
+        assert_eq!(Register(255).index(), 255);
+    }
+
+    #[test]
+    fn object_id_equality_and_ordering() {
+        assert!(ObjectId(0) < ObjectId(1));
+        assert_eq!(ObjectId(42), ObjectId(42));
+    }
+
+    #[test]
+    fn instruction_serde_roundtrip_all_variants() {
+        let instructions = vec![
+            Instruction::LoadConst { dst: r(0), const_index: 1 },
+            Instruction::Move { dst: r(0), src: r(1) },
+            Instruction::Add { dst: r(0), lhs: r(1), rhs: r(2) },
+            Instruction::Sub { dst: r(0), lhs: r(1), rhs: r(2) },
+            Instruction::Mul { dst: r(0), lhs: r(1), rhs: r(2) },
+            Instruction::Div { dst: r(0), lhs: r(1), rhs: r(2) },
+            Instruction::NewObject { dst: r(0) },
+            Instruction::StoreProp { object: r(0), property_index: 0, value: r(1) },
+            Instruction::LoadPropCached { dst: r(0), object: r(1), property_index: 0 },
+            Instruction::Jump { target: 0 },
+            Instruction::JumpIfFalse { condition: r(0), target: 0 },
+            Instruction::Return { src: r(0) },
+        ];
+        for instr in &instructions {
+            let json = serde_json::to_string(instr).unwrap();
+            let back: Instruction = serde_json::from_str(&json).unwrap();
+            assert_eq!(*instr, back);
+        }
+    }
+
+    #[test]
+    fn vm_error_code_all_distinct() {
+        let errors: Vec<VmError> = vec![
+            VmError::RegisterOutOfBounds { register: 0, register_count: 0 },
+            VmError::ConstantOutOfBounds { const_index: 0, constant_count: 0 },
+            VmError::PropertyIndexOutOfBounds { property_index: 0, property_count: 0 },
+            VmError::ObjectNotFound { object_id: 0 },
+            VmError::TypeMismatch { expected: "int", got: "bool" },
+            VmError::DivisionByZero,
+            VmError::InvalidJumpTarget { target: 0, instruction_count: 0 },
+            VmError::MissingReturn,
+            VmError::BudgetExhausted { executed_steps: 0, step_budget: 0 },
+        ];
+        let codes: Vec<_> = errors.iter().map(|e| e.code()).collect();
+        let unique: std::collections::BTreeSet<_> = codes.iter().collect();
+        assert_eq!(codes.len(), unique.len());
+    }
+
+    #[test]
+    fn vm_error_serde_roundtrip_all_variants() {
+        let errors: Vec<VmError> = vec![
+            VmError::RegisterOutOfBounds { register: 5, register_count: 4 },
+            VmError::ConstantOutOfBounds { const_index: 3, constant_count: 2 },
+            VmError::PropertyIndexOutOfBounds { property_index: 1, property_count: 0 },
+            VmError::ObjectNotFound { object_id: 99 },
+            VmError::TypeMismatch { expected: "int", got: "bool" },
+            VmError::DivisionByZero,
+            VmError::InvalidJumpTarget { target: 10, instruction_count: 5 },
+            VmError::MissingReturn,
+            VmError::BudgetExhausted { executed_steps: 100, step_budget: 50 },
+        ];
+        for err in &errors {
+            let json = serde_json::to_string(err).unwrap();
+            let back: VmError = serde_json::from_str(&json).unwrap();
+            assert_eq!(*err, back);
+        }
+    }
+
+    #[test]
+    fn execution_report_serde_roundtrip() {
+        let program = Program {
+            constants: vec![Value::Int(1)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst { dst: r(0), const_index: 0 },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("serde-rt", 4, 64);
+        let report = vm.execute(&program).unwrap();
+        let json = serde_json::to_string(&report).unwrap();
+        let back: ExecutionReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(report, back);
+    }
+
+    #[test]
+    fn inline_cache_stats_default_is_zero() {
+        let stats = InlineCacheStats::default();
+        assert_eq!(stats.entries, 0);
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.misses, 0);
+    }
+
+    #[test]
+    fn inline_cache_entry_default_is_zero() {
+        let entry = InlineCacheEntry::default();
+        assert_eq!(entry.shape_id, 0);
+        assert_eq!(entry.hits, 0);
+        assert_eq!(entry.misses, 0);
+    }
+
+    #[test]
+    fn program_default_is_empty() {
+        let p = Program::default();
+        assert!(p.constants.is_empty());
+        assert!(p.property_pool.is_empty());
+        assert!(p.instructions.is_empty());
+    }
+
+    #[test]
+    fn mul_by_zero_returns_zero() {
+        let program = Program {
+            constants: vec![Value::Int(42), Value::Int(0)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst { dst: r(0), const_index: 0 },
+                Instruction::LoadConst { dst: r(1), const_index: 1 },
+                Instruction::Mul { dst: r(2), lhs: r(0), rhs: r(1) },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("mul-zero", 4, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(0));
+    }
+
+    #[test]
+    fn add_negative_integers() {
+        let program = Program {
+            constants: vec![Value::Int(-10), Value::Int(-20)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst { dst: r(0), const_index: 0 },
+                Instruction::LoadConst { dst: r(1), const_index: 1 },
+                Instruction::Add { dst: r(2), lhs: r(0), rhs: r(1) },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("add-neg", 4, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Int(-30));
+    }
+
+    #[test]
+    fn type_mismatch_div_object_by_int() {
+        let program = Program {
+            constants: vec![Value::Int(2)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::NewObject { dst: r(0) },
+                Instruction::LoadConst { dst: r(1), const_index: 0 },
+                Instruction::Div { dst: r(2), lhs: r(0), rhs: r(1) },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("div-obj", 4, 64);
+        let err = vm.execute(&program).unwrap_err();
+        assert_eq!(err.code(), "type_mismatch");
+    }
+
+    #[test]
+    fn type_mismatch_sub_bool_from_int() {
+        let program = Program {
+            constants: vec![Value::Int(5), Value::Bool(true)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst { dst: r(0), const_index: 0 },
+                Instruction::LoadConst { dst: r(1), const_index: 1 },
+                Instruction::Sub { dst: r(2), lhs: r(0), rhs: r(1) },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("sub-type", 4, 64);
+        let err = vm.execute(&program).unwrap_err();
+        assert_eq!(err.code(), "type_mismatch");
+    }
+
+    #[test]
+    fn new_object_returns_object_value() {
+        let program = Program {
+            constants: Vec::new(),
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::NewObject { dst: r(0) },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("new-obj", 4, 64);
+        let report = vm.execute(&program).unwrap();
+        assert!(matches!(report.result, Value::Object(_)));
+    }
+
+    #[test]
+    fn events_trace_id_matches_vm() {
+        let program = Program {
+            constants: vec![Value::Int(1)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst { dst: r(0), const_index: 0 },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("my-trace-id", 4, 64);
+        let report = vm.execute(&program).unwrap();
+        for event in &report.events {
+            assert_eq!(event.trace_id, "my-trace-id");
+            assert_eq!(event.component, "bytecode_vm");
+        }
+    }
+
+    #[test]
+    fn events_step_is_monotonically_increasing() {
+        let program = Program {
+            constants: vec![Value::Int(1), Value::Int(2)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst { dst: r(0), const_index: 0 },
+                Instruction::LoadConst { dst: r(1), const_index: 1 },
+                Instruction::Add { dst: r(2), lhs: r(0), rhs: r(1) },
+                Instruction::Return { src: r(2) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("steps", 4, 64);
+        let report = vm.execute(&program).unwrap();
+        for window in report.events.windows(2) {
+            assert!(window[1].step > window[0].step);
+        }
+    }
+
+    #[test]
+    fn return_bool_constant() {
+        let program = Program {
+            constants: vec![Value::Bool(true)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst { dst: r(0), const_index: 0 },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("bool-ret", 4, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Bool(true));
+    }
+
+    #[test]
+    fn state_hash_is_deterministic() {
+        let program = Program {
+            constants: vec![Value::Int(42)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst { dst: r(0), const_index: 0 },
+                Instruction::Return { src: r(0) },
+            ],
+        };
+        let mut vm1 = BytecodeVm::new("hash-det", 4, 64);
+        let mut vm2 = BytecodeVm::new("hash-det", 4, 64);
+        let r1 = vm1.execute(&program).unwrap();
+        let r2 = vm2.execute(&program).unwrap();
+        assert_eq!(r1.state_hash, r2.state_hash);
+    }
+
+    #[test]
+    fn inline_cache_stats_serde_roundtrip() {
+        let stats = InlineCacheStats { entries: 3, hits: 10, misses: 2 };
+        let json = serde_json::to_string(&stats).unwrap();
+        let back: InlineCacheStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(stats, back);
+    }
+
+    #[test]
+    fn inline_cache_entry_serde_roundtrip() {
+        let entry = InlineCacheEntry {
+            shape_id: 5,
+            property_index: 2,
+            slot_index: 1,
+            hits: 100,
+            misses: 3,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: InlineCacheEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, back);
+    }
+
+    #[test]
+    fn vm_event_serde_roundtrip() {
+        let event = VmEvent {
+            trace_id: "t".to_string(),
+            component: "c".to_string(),
+            step: 1,
+            ip: 0,
+            opcode: "add".to_string(),
+            event: "instruction".to_string(),
+            outcome: "ok".to_string(),
+            error_code: None,
+            cache_hit: Some(true),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: VmEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn move_preserves_value_type() {
+        let program = Program {
+            constants: vec![Value::Bool(false)],
+            property_pool: Vec::new(),
+            instructions: vec![
+                Instruction::LoadConst { dst: r(0), const_index: 0 },
+                Instruction::Move { dst: r(1), src: r(0) },
+                Instruction::Return { src: r(1) },
+            ],
+        };
+        let mut vm = BytecodeVm::new("move-bool", 4, 64);
+        let report = vm.execute(&program).unwrap();
+        assert_eq!(report.result, Value::Bool(false));
+    }
 }

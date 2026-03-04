@@ -2473,4 +2473,537 @@ mod tests {
         assert_eq!(ev.analysis_method, AnalysisMethod::LatticeReachability);
         assert!(ev.summary.contains("2 hostcall site(s)"));
     }
+
+    // -----------------------------------------------------------------------
+    // Enrichment: PearlTower 2026-03-04 — BFS / topology / cache / field tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn all_dead_edges_path_sensitive_excludes_everything() {
+        // entry -> dead_edge -> hostcall(admin)
+        // With path-sensitive, admin should NOT be reachable (only dead path).
+        // Manifest does NOT declare admin, so it should be excluded.
+        let mut graph = EffectGraph::new("ext-all-dead");
+        graph.add_node(entry_node("e"));
+        graph.add_node(hostcall_node("h_admin", "admin"));
+        graph.add_node(exit_node("x"));
+        graph.add_edge(dead_edge("e", "h_admin"));
+        graph.add_edge(dead_edge("h_admin", "x"));
+        // Live edge directly to exit so entry is valid.
+        graph.add_edge(edge("e", "x"));
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-all-dead".to_string(),
+            declared_capabilities: BTreeSet::new(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(path_sensitive_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 60_000)
+            .expect("analysis");
+
+        assert!(!report.requires_capability(&cap("admin")));
+        assert!(report.upper_bound_capabilities.is_empty());
+        assert!(report.precision.excluded_by_path_sensitivity > 0);
+    }
+
+    #[test]
+    fn self_loop_hostcall_terminates_and_captures() {
+        // entry -> hostcall(fs_read) -> hostcall(fs_read) [self-loop]
+        //                             -> exit
+        let mut graph = EffectGraph::new("ext-selfloop");
+        graph.add_node(entry_node("e"));
+        graph.add_node(hostcall_node("h", "fs_read"));
+        graph.add_node(exit_node("x"));
+        graph.add_edge(edge("e", "h"));
+        graph.add_edge(edge("h", "h")); // self-loop
+        graph.add_edge(edge("h", "x"));
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-selfloop".to_string(),
+            declared_capabilities: [cap("fs_read")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 61_000)
+            .expect("analysis");
+
+        assert!(report.requires_capability(&cap("fs_read")));
+        assert_eq!(report.upper_bound_capabilities.len(), 1);
+    }
+
+    #[test]
+    fn deep_chain_capabilities_at_end_reachable() {
+        // entry -> c0 -> c1 -> c2 -> c3 -> c4 -> hostcall(deep_cap) -> exit
+        let mut graph = EffectGraph::new("ext-deep");
+        graph.add_node(entry_node("e"));
+        for i in 0..5 {
+            graph.add_node(computation_node(&format!("c{i}")));
+        }
+        graph.add_node(hostcall_node("h_deep", "deep_cap"));
+        graph.add_node(exit_node("x"));
+
+        graph.add_edge(edge("e", "c0"));
+        for i in 0..4 {
+            graph.add_edge(edge(&format!("c{i}"), &format!("c{}", i + 1)));
+        }
+        graph.add_edge(edge("c4", "h_deep"));
+        graph.add_edge(edge("h_deep", "x"));
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-deep".to_string(),
+            declared_capabilities: [cap("deep_cap")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 62_000)
+            .expect("analysis");
+
+        assert!(report.requires_capability(&cap("deep_cap")));
+        assert_eq!(report.precision.ratio_millionths, 1_000_000);
+    }
+
+    #[test]
+    fn path_sensitive_no_dead_edges_matches_non_path_sensitive() {
+        // Same graph, no dead edges — both modes should yield identical upper bounds.
+        let graph = multi_cap_graph();
+        let manifest = multi_cap_manifest();
+
+        let analyzer_normal = StaticAuthorityAnalyzer::new(default_config());
+        let analyzer_sensitive = StaticAuthorityAnalyzer::new(path_sensitive_config());
+
+        let r_normal = analyzer_normal
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 63_000)
+            .expect("normal");
+        let r_sensitive = analyzer_sensitive
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 63_000)
+            .expect("sensitive");
+
+        assert_eq!(
+            r_normal.upper_bound_capabilities,
+            r_sensitive.upper_bound_capabilities
+        );
+    }
+
+    #[test]
+    fn multiple_entries_converging_to_single_hostcall() {
+        // e1 -> h, e2 -> h, e3 -> h -> exit
+        let mut graph = EffectGraph::new("ext-converge");
+        graph.add_node(entry_node("e1"));
+        graph.add_node(entry_node("e2"));
+        graph.add_node(entry_node("e3"));
+        graph.add_node(hostcall_node("h", "shared_cap"));
+        graph.add_node(exit_node("x"));
+        graph.add_edge(edge("e1", "h"));
+        graph.add_edge(edge("e2", "h"));
+        graph.add_edge(edge("e3", "h"));
+        graph.add_edge(edge("h", "x"));
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-converge".to_string(),
+            declared_capabilities: [cap("shared_cap")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 64_000)
+            .expect("analysis");
+
+        assert!(report.requires_capability(&cap("shared_cap")));
+        let ev = report
+            .per_capability_evidence
+            .iter()
+            .find(|e| e.capability == cap("shared_cap"))
+            .unwrap();
+        // Only one hostcall node despite 3 entry paths.
+        assert_eq!(ev.requiring_nodes.len(), 1);
+        assert!(ev.requiring_nodes.contains("h"));
+    }
+
+    #[test]
+    fn cache_discriminates_by_path_sensitive_flag() {
+        let mut cache = AnalysisCache::new(10);
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(1),
+                65_000,
+            )
+            .expect("analysis");
+
+        let key_false = AnalysisCacheKey {
+            effect_graph_hash: report.effect_graph_hash.clone(),
+            manifest_hash: report.manifest_hash.clone(),
+            path_sensitive: false,
+        };
+        let key_true = AnalysisCacheKey {
+            effect_graph_hash: report.effect_graph_hash.clone(),
+            manifest_hash: report.manifest_hash.clone(),
+            path_sensitive: true,
+        };
+
+        cache.insert(key_false.clone(), report.clone());
+        assert!(cache.get(&key_false).is_some());
+        assert!(cache.get(&key_true).is_none());
+
+        cache.insert(key_true.clone(), report);
+        assert_eq!(cache.len(), 2);
+        assert!(cache.get(&key_false).is_some());
+        assert!(cache.get(&key_true).is_some());
+    }
+
+    #[test]
+    fn entry_only_graph_no_edges_yields_empty_upper_bound() {
+        let mut graph = EffectGraph::new("ext-entry-only");
+        graph.add_node(entry_node("e"));
+        // No edges at all.
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-entry-only".to_string(),
+            declared_capabilities: BTreeSet::new(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 66_000)
+            .expect("analysis");
+
+        assert!(report.upper_bound_capabilities.is_empty());
+    }
+
+    #[test]
+    fn mixed_dead_live_diamond_path_sensitive_keeps_live_cap() {
+        // entry -> branch -> [live] hostcall(fs_read) -> exit
+        //                 -> [dead] hostcall(net_send) -> exit
+        // manifest declares both. Path-sensitive: fs_read reachable, net_send dead
+        // but net_send in manifest → included via fallback.
+        let mut graph = EffectGraph::new("ext-mixed-diamond");
+        graph.add_node(entry_node("e"));
+        graph.add_node(control_flow_node("b"));
+        graph.add_node(hostcall_node("h_fs", "fs_read"));
+        graph.add_node(hostcall_node("h_net", "net_send"));
+        graph.add_node(exit_node("x"));
+        graph.add_edge(edge("e", "b"));
+        graph.add_edge(edge("b", "h_fs"));
+        graph.add_edge(dead_edge("b", "h_net"));
+        graph.add_edge(edge("h_fs", "x"));
+        graph.add_edge(edge("h_net", "x"));
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-mixed-diamond".to_string(),
+            declared_capabilities: [cap("fs_read"), cap("net_send")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(path_sensitive_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 67_000)
+            .expect("analysis");
+
+        // fs_read via LatticeReachability
+        let fs_ev = report
+            .per_capability_evidence
+            .iter()
+            .find(|e| e.capability == cap("fs_read"))
+            .unwrap();
+        assert_eq!(fs_ev.analysis_method, AnalysisMethod::LatticeReachability);
+
+        // net_send via ManifestFallback (dead path, but declared)
+        let net_ev = report
+            .per_capability_evidence
+            .iter()
+            .find(|e| {
+                e.capability == cap("net_send")
+                    && e.analysis_method == AnalysisMethod::ManifestFallback
+            });
+        assert!(net_ev.is_some());
+
+        // Both in upper bound
+        assert!(report.requires_capability(&cap("fs_read")));
+        assert!(report.requires_capability(&cap("net_send")));
+    }
+
+    #[test]
+    fn report_zone_matches_config_zone() {
+        let mut config = default_config();
+        config.zone = "us-west-2".to_string();
+        let analyzer = StaticAuthorityAnalyzer::new(config);
+        let report = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(5),
+                68_000,
+            )
+            .expect("analysis");
+
+        assert_eq!(report.zone, "us-west-2");
+    }
+
+    #[test]
+    fn report_epoch_matches_input_epoch() {
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let epoch = SecurityEpoch::from_raw(42);
+        let report = analyzer
+            .analyze(&simple_graph(), &simple_manifest(), epoch, 69_000)
+            .expect("analysis");
+
+        assert_eq!(report.epoch, epoch);
+    }
+
+    #[test]
+    fn report_timestamp_matches_input() {
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(1),
+                99_999,
+            )
+            .expect("analysis");
+
+        assert_eq!(report.timestamp_ns, 99_999);
+    }
+
+    #[test]
+    fn report_timed_out_false_and_duration_zero() {
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(1),
+                70_000,
+            )
+            .expect("analysis");
+
+        assert!(!report.timed_out);
+        assert_eq!(report.analysis_duration_ns, 0);
+    }
+
+    #[test]
+    fn computation_only_graph_empty_upper_bound() {
+        // entry -> compute -> exit (no hostcalls, no manifest caps)
+        let mut graph = EffectGraph::new("ext-compute");
+        graph.add_node(entry_node("e"));
+        graph.add_node(computation_node("c"));
+        graph.add_node(exit_node("x"));
+        graph.add_edge(edge("e", "c"));
+        graph.add_edge(edge("c", "x"));
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-compute".to_string(),
+            declared_capabilities: BTreeSet::new(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 71_000)
+            .expect("analysis");
+
+        assert!(report.upper_bound_capabilities.is_empty());
+        assert!(report.per_capability_evidence.is_empty());
+    }
+
+    #[test]
+    fn dead_chain_path_sensitive_excludes_transitive() {
+        // entry -> [dead] -> compute -> hostcall(secret) -> exit
+        // entry -> [live] -> exit
+        // Path-sensitive: secret should not be reachable.
+        let mut graph = EffectGraph::new("ext-dead-chain");
+        graph.add_node(entry_node("e"));
+        graph.add_node(computation_node("c"));
+        graph.add_node(hostcall_node("h", "secret"));
+        graph.add_node(exit_node("x1"));
+        graph.add_node(exit_node("x2"));
+        graph.add_edge(dead_edge("e", "c"));
+        graph.add_edge(edge("c", "h"));
+        graph.add_edge(edge("h", "x1"));
+        graph.add_edge(edge("e", "x2")); // live path to exit
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-dead-chain".to_string(),
+            declared_capabilities: BTreeSet::new(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(path_sensitive_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 72_000)
+            .expect("analysis");
+
+        assert!(!report.requires_capability(&cap("secret")));
+    }
+
+    #[test]
+    fn bfs_visited_prevents_duplicate_capability_nodes() {
+        // entry -> hostcall(A) -> compute -> hostcall(A) [cycle]
+        //                                 -> exit
+        // Verify A appears with 1 node in evidence (h1), not duplicated.
+        let mut graph = EffectGraph::new("ext-bfs-dup");
+        graph.add_node(entry_node("e"));
+        graph.add_node(hostcall_node("h1", "cap_a"));
+        graph.add_node(computation_node("c"));
+        graph.add_node(exit_node("x"));
+        graph.add_edge(edge("e", "h1"));
+        graph.add_edge(edge("h1", "c"));
+        graph.add_edge(edge("c", "h1")); // cycle back
+        graph.add_edge(edge("c", "x"));
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-bfs-dup".to_string(),
+            declared_capabilities: [cap("cap_a")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 73_000)
+            .expect("analysis");
+
+        let ev = report
+            .per_capability_evidence
+            .iter()
+            .find(|e| e.capability == cap("cap_a"))
+            .unwrap();
+        assert_eq!(ev.requiring_nodes.len(), 1);
+        assert!(ev.requiring_nodes.contains("h1"));
+    }
+
+    #[test]
+    fn many_capabilities_at_different_distances() {
+        // entry -> h1(A) -> h2(B) -> h3(C) -> exit
+        let mut graph = EffectGraph::new("ext-dist");
+        graph.add_node(entry_node("e"));
+        graph.add_node(hostcall_node("h1", "cap_a"));
+        graph.add_node(hostcall_node("h2", "cap_b"));
+        graph.add_node(hostcall_node("h3", "cap_c"));
+        graph.add_node(exit_node("x"));
+        graph.add_edge(edge("e", "h1"));
+        graph.add_edge(edge("h1", "h2"));
+        graph.add_edge(edge("h2", "h3"));
+        graph.add_edge(edge("h3", "x"));
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-dist".to_string(),
+            declared_capabilities: [cap("cap_a"), cap("cap_b"), cap("cap_c")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 74_000)
+            .expect("analysis");
+
+        assert_eq!(report.upper_bound_capabilities.len(), 3);
+        assert!(report.requires_capability(&cap("cap_a")));
+        assert!(report.requires_capability(&cap("cap_b")));
+        assert!(report.requires_capability(&cap("cap_c")));
+        assert_eq!(report.precision.ratio_millionths, 1_000_000);
+    }
+
+    #[test]
+    fn manifest_fallback_summary_contains_conservatively() {
+        let graph = simple_graph(); // only fs_read
+        let manifest = ManifestIntents {
+            extension_id: "ext-simple".to_string(),
+            declared_capabilities: [cap("fs_read"), cap("phantom_cap")].into(),
+            optional_capabilities: BTreeSet::new(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 75_000)
+            .expect("analysis");
+
+        let ev = report
+            .per_capability_evidence
+            .iter()
+            .find(|e| e.capability == cap("phantom_cap"))
+            .unwrap();
+        assert_eq!(ev.analysis_method, AnalysisMethod::ManifestFallback);
+        assert!(ev.summary.contains("conservatively"));
+    }
+
+    #[test]
+    fn manifest_only_optional_caps_not_in_upper_bound() {
+        // Manifest has NO declared caps but has optional caps.
+        // Graph has no hostcalls. Optional caps are NOT added to upper bound.
+        let mut graph = EffectGraph::new("ext-opt-only");
+        graph.add_node(entry_node("e"));
+        graph.add_node(exit_node("x"));
+        graph.add_edge(edge("e", "x"));
+
+        let manifest = ManifestIntents {
+            extension_id: "ext-opt-only".to_string(),
+            declared_capabilities: BTreeSet::new(),
+            optional_capabilities: [cap("opt_cap")].into(),
+        };
+
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(&graph, &manifest, SecurityEpoch::from_raw(1), 76_000)
+            .expect("analysis");
+
+        // opt_cap is optional, not declared, and not in graph → not in upper bound.
+        assert!(!report.requires_capability(&cap("opt_cap")));
+        assert!(report.upper_bound_capabilities.is_empty());
+    }
+
+    #[test]
+    fn primary_analysis_method_is_lattice_reachability() {
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let report = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(1),
+                77_000,
+            )
+            .expect("analysis");
+
+        assert_eq!(
+            report.primary_analysis_method,
+            AnalysisMethod::LatticeReachability
+        );
+    }
+
+    #[test]
+    fn report_hashes_bind_to_input_graph_and_manifest() {
+        let analyzer = StaticAuthorityAnalyzer::new(default_config());
+        let r1 = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(1),
+                78_000,
+            )
+            .expect("r1");
+
+        // Verify effect_graph_hash and manifest_hash are non-trivial.
+        assert_ne!(r1.effect_graph_hash, r1.manifest_hash);
+
+        // Same inputs → same hashes.
+        let r2 = analyzer
+            .analyze(
+                &simple_graph(),
+                &simple_manifest(),
+                SecurityEpoch::from_raw(1),
+                79_000,
+            )
+            .expect("r2");
+        assert_eq!(r1.effect_graph_hash, r2.effect_graph_hash);
+        assert_eq!(r1.manifest_hash, r2.manifest_hash);
+    }
 }

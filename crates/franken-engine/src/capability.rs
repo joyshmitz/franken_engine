@@ -1114,4 +1114,323 @@ mod tests {
     fn policy_profile_display_shows_count_4() {
         assert_eq!(CapabilityProfile::policy().to_string(), "PolicyCaps[4]");
     }
+
+    // -- Enum completeness --------------------------------------------------
+
+    #[test]
+    fn full_profile_contains_all_16_capabilities() {
+        use RuntimeCapability::*;
+        let all = [
+            VmDispatch, GcInvoke, IrLowering, PolicyRead, PolicyWrite,
+            EvidenceEmit, DecisionInvoke, NetworkEgress, LeaseManagement,
+            IdempotencyDerive, ExtensionLifecycle, HeapAllocate, EnvRead,
+            ProcessSpawn, FsRead, FsWrite,
+        ];
+        let full = CapabilityProfile::full();
+        for cap in &all {
+            assert!(full.has(*cap), "full profile should have {:?}", cap);
+        }
+        assert_eq!(full.len(), 16);
+    }
+
+    #[test]
+    fn runtime_capability_display_all_unique() {
+        use RuntimeCapability::*;
+        let all = [
+            VmDispatch, GcInvoke, IrLowering, PolicyRead, PolicyWrite,
+            EvidenceEmit, DecisionInvoke, NetworkEgress, LeaseManagement,
+            IdempotencyDerive, ExtensionLifecycle, HeapAllocate, EnvRead,
+            ProcessSpawn, FsRead, FsWrite,
+        ];
+        let strings: BTreeSet<String> = all.iter().map(|c| c.to_string()).collect();
+        assert_eq!(strings.len(), 16, "all display strings should be unique");
+    }
+
+    // -- Profile disjointness pairwise matrix -------------------------------
+
+    #[test]
+    fn narrow_profiles_pairwise_disjoint() {
+        let ec = CapabilityProfile::engine_core();
+        let pol = CapabilityProfile::policy();
+        let rem = CapabilityProfile::remote();
+        // engine_core ∩ policy = ∅
+        assert!(ec.intersect(&pol).is_empty());
+        // engine_core ∩ remote = ∅
+        assert!(ec.intersect(&rem).is_empty());
+        // policy ∩ remote = ∅
+        assert!(pol.intersect(&rem).is_empty());
+    }
+
+    // -- Subsumption exhaustive pairwise ------------------------------------
+
+    #[test]
+    fn subsumption_pairwise_matrix() {
+        let profiles = [
+            CapabilityProfile::full(),
+            CapabilityProfile::engine_core(),
+            CapabilityProfile::policy(),
+            CapabilityProfile::remote(),
+            CapabilityProfile::compute_only(),
+        ];
+        for (i, a) in profiles.iter().enumerate() {
+            for (j, b) in profiles.iter().enumerate() {
+                if i == j {
+                    assert!(a.subsumes(b), "{} should subsume itself", a.kind);
+                } else if i == 0 {
+                    // Full subsumes everything.
+                    assert!(a.subsumes(b), "full should subsume {}", b.kind);
+                } else if j == 4 {
+                    // Everything subsumes compute_only (empty set).
+                    assert!(a.subsumes(b), "{} should subsume compute_only", a.kind);
+                } else if i != 0 && j != 4 && i != j {
+                    // Narrow profiles should not subsume each other.
+                    assert!(!a.subsumes(b), "{} should not subsume {}", a.kind, b.kind);
+                }
+            }
+        }
+    }
+
+    // -- Intersection properties --------------------------------------------
+
+    #[test]
+    fn intersection_idempotent() {
+        let ec = CapabilityProfile::engine_core();
+        let pol = CapabilityProfile::policy();
+        let ab = ec.intersect(&pol);
+        let ab_b = ab.intersect(&pol);
+        assert_eq!(ab.capabilities, ab_b.capabilities);
+    }
+
+    #[test]
+    fn intersection_with_full_preserves_caps() {
+        let full = CapabilityProfile::full();
+        let ec = CapabilityProfile::engine_core();
+        let result = full.intersect(&ec);
+        assert_eq!(result.capabilities, ec.capabilities);
+    }
+
+    #[test]
+    fn intersection_result_kind_always_compute_only() {
+        let full = CapabilityProfile::full();
+        let ec = CapabilityProfile::engine_core();
+        let result = full.intersect(&ec);
+        assert_eq!(result.kind, ProfileKind::ComputeOnly);
+    }
+
+    #[test]
+    fn sequential_intersections_narrow_to_empty() {
+        let mut result = CapabilityProfile::full();
+        result = result.intersect(&CapabilityProfile::engine_core());
+        assert_eq!(result.len(), 4);
+        result = result.intersect(&CapabilityProfile::policy());
+        assert!(result.is_empty(), "ec ∩ policy should be empty");
+    }
+
+    // -- Custom profile construction ----------------------------------------
+
+    #[test]
+    fn custom_profile_has_and_len() {
+        let profile = CapabilityProfile {
+            kind: ProfileKind::ComputeOnly,
+            capabilities: BTreeSet::from([
+                RuntimeCapability::FsRead,
+                RuntimeCapability::FsWrite,
+            ]),
+        };
+        assert_eq!(profile.len(), 2);
+        assert!(profile.has(RuntimeCapability::FsRead));
+        assert!(profile.has(RuntimeCapability::FsWrite));
+        assert!(!profile.has(RuntimeCapability::NetworkEgress));
+    }
+
+    #[test]
+    fn custom_profile_subsumption() {
+        let fs_only = CapabilityProfile {
+            kind: ProfileKind::ComputeOnly,
+            capabilities: BTreeSet::from([
+                RuntimeCapability::FsRead,
+                RuntimeCapability::FsWrite,
+            ]),
+        };
+        let full = CapabilityProfile::full();
+        assert!(full.subsumes(&fs_only));
+        assert!(!fs_only.subsumes(&full));
+    }
+
+    // -- require_all edge cases ---------------------------------------------
+
+    #[test]
+    fn require_all_empty_requirements_always_ok() {
+        let co = CapabilityProfile::compute_only();
+        assert!(require_all(&co, &[], "test").is_ok());
+    }
+
+    #[test]
+    fn require_all_duplicate_requirements() {
+        let ec = CapabilityProfile::engine_core();
+        // Duplicate missing cap should produce duplicate denials.
+        let result = require_all(
+            &ec,
+            &[RuntimeCapability::NetworkEgress, RuntimeCapability::NetworkEgress],
+            "test",
+        );
+        let denials = result.unwrap_err();
+        assert_eq!(denials.len(), 2);
+    }
+
+    #[test]
+    fn require_all_collects_all_denials_with_component() {
+        let co = CapabilityProfile::compute_only();
+        let caps = [
+            RuntimeCapability::VmDispatch,
+            RuntimeCapability::PolicyRead,
+            RuntimeCapability::NetworkEgress,
+        ];
+        let denials = require_all(&co, &caps, "orchestrator").unwrap_err();
+        assert_eq!(denials.len(), 3);
+        for denial in &denials {
+            assert_eq!(denial.component, "orchestrator");
+            assert_eq!(denial.held_profile, ProfileKind::ComputeOnly);
+        }
+    }
+
+    #[test]
+    fn require_all_partial_denials_specific_caps() {
+        let ec = CapabilityProfile::engine_core();
+        let caps = [
+            RuntimeCapability::VmDispatch,      // granted
+            RuntimeCapability::PolicyRead,       // denied
+            RuntimeCapability::HeapAllocate,     // granted
+            RuntimeCapability::NetworkEgress,    // denied
+        ];
+        let denials = require_all(&ec, &caps, "mixed").unwrap_err();
+        assert_eq!(denials.len(), 2);
+        assert!(denials.iter().any(|d| d.required == RuntimeCapability::PolicyRead));
+        assert!(denials.iter().any(|d| d.required == RuntimeCapability::NetworkEgress));
+    }
+
+    // -- require_capability edge cases --------------------------------------
+
+    #[test]
+    fn require_capability_denied_fields() {
+        let ec = CapabilityProfile::engine_core();
+        let err = require_capability(&ec, RuntimeCapability::FsWrite, "writer").unwrap_err();
+        assert_eq!(err.required, RuntimeCapability::FsWrite);
+        assert_eq!(err.held_profile, ProfileKind::EngineCore);
+        assert_eq!(err.component, "writer");
+    }
+
+    #[test]
+    fn require_capability_display_message() {
+        let err = CapabilityDenied {
+            required: RuntimeCapability::ProcessSpawn,
+            held_profile: ProfileKind::Remote,
+            component: "sandbox".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("sandbox"));
+        assert!(msg.contains("process_spawn"));
+        assert!(msg.contains("RemoteCaps"));
+    }
+
+    // -- CapabilityDenied serde roundtrip -----------------------------------
+
+    #[test]
+    fn capability_denied_serde_roundtrip() {
+        let denied = CapabilityDenied {
+            required: RuntimeCapability::GcInvoke,
+            held_profile: ProfileKind::Remote,
+            component: "gc-manager".to_string(),
+        };
+        let json = serde_json::to_string(&denied).unwrap();
+        let back: CapabilityDenied = serde_json::from_str(&json).unwrap();
+        assert_eq!(denied, back);
+    }
+
+    // -- ProfileKind ordering full chain ------------------------------------
+
+    #[test]
+    fn profile_kind_ordering_full_chain() {
+        assert!(ProfileKind::Full < ProfileKind::EngineCore);
+        assert!(ProfileKind::EngineCore < ProfileKind::Policy);
+        assert!(ProfileKind::Policy < ProfileKind::Remote);
+        assert!(ProfileKind::Remote < ProfileKind::ComputeOnly);
+    }
+
+    #[test]
+    fn profile_kind_display_strings_unique() {
+        let kinds = [
+            ProfileKind::Full,
+            ProfileKind::EngineCore,
+            ProfileKind::Policy,
+            ProfileKind::Remote,
+            ProfileKind::ComputeOnly,
+        ];
+        let strings: BTreeSet<String> = kinds.iter().map(|k| k.to_string()).collect();
+        assert_eq!(strings.len(), 5);
+    }
+
+    // -- RuntimeCapability ordering -----------------------------------------
+
+    #[test]
+    fn runtime_capability_ordering_full_chain() {
+        use RuntimeCapability::*;
+        let ordered = [
+            VmDispatch, GcInvoke, IrLowering, PolicyRead, PolicyWrite,
+            EvidenceEmit, DecisionInvoke, NetworkEgress, LeaseManagement,
+            IdempotencyDerive, ExtensionLifecycle, HeapAllocate, EnvRead,
+            ProcessSpawn, FsRead, FsWrite,
+        ];
+        for i in 0..ordered.len() {
+            for j in (i + 1)..ordered.len() {
+                assert!(ordered[i] < ordered[j], "{:?} should be < {:?}", ordered[i], ordered[j]);
+            }
+        }
+    }
+
+    // -- Profile union coverage check ---------------------------------------
+
+    #[test]
+    fn narrow_profiles_union_equals_full_minus_extras() {
+        let ec = CapabilityProfile::engine_core();
+        let pol = CapabilityProfile::policy();
+        let rem = CapabilityProfile::remote();
+        let mut union_caps: BTreeSet<RuntimeCapability> = BTreeSet::new();
+        union_caps.extend(&ec.capabilities);
+        union_caps.extend(&pol.capabilities);
+        union_caps.extend(&rem.capabilities);
+        // The union of narrow profiles should be a subset of full.
+        let full = CapabilityProfile::full();
+        assert!(union_caps.is_subset(&full.capabilities));
+        // But should not cover all 16 (missing ExtensionLifecycle, EnvRead, ProcessSpawn, FsRead, FsWrite).
+        assert!(union_caps.len() < 16);
+    }
+
+    // -- Deterministic serialization ----------------------------------------
+
+    #[test]
+    fn profile_serialization_deterministic() {
+        let p1 = CapabilityProfile::full();
+        let p2 = CapabilityProfile::full();
+        let j1 = serde_json::to_string(&p1).unwrap();
+        let j2 = serde_json::to_string(&p2).unwrap();
+        assert_eq!(j1, j2);
+    }
+
+    // -- is_empty correctness -----------------------------------------------
+
+    #[test]
+    fn compute_only_is_empty() {
+        assert!(CapabilityProfile::compute_only().is_empty());
+    }
+
+    #[test]
+    fn full_is_not_empty() {
+        assert!(!CapabilityProfile::full().is_empty());
+    }
+
+    #[test]
+    fn engine_core_is_not_empty() {
+        assert!(!CapabilityProfile::engine_core().is_empty());
+    }
 }

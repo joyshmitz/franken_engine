@@ -1721,4 +1721,406 @@ mod tests {
             }
         }
     }
+
+    // --- Witness comparison: isolated field mismatches ----------------------
+
+    #[test]
+    fn witness_diff_chunk_count_only() {
+        let w1 = MergeWitness {
+            merged_hash: ContentHash::compute(b"same"),
+            witness_hash: ContentHash::compute(b"same"),
+            chunk_count: 3,
+            boundary_repairs: 1,
+            total_tokens: 50,
+        };
+        let w2 = MergeWitness {
+            chunk_count: 5,
+            ..w1.clone()
+        };
+        let diff = compare_witnesses(&w1, &w2);
+        assert!(!diff.matches);
+        assert_eq!(diff.diffs.len(), 1);
+        assert_eq!(diff.diffs[0].field, "chunk_count");
+    }
+
+    #[test]
+    fn witness_diff_boundary_repairs_only() {
+        let w1 = MergeWitness {
+            merged_hash: ContentHash::compute(b"same"),
+            witness_hash: ContentHash::compute(b"same"),
+            chunk_count: 3,
+            boundary_repairs: 1,
+            total_tokens: 50,
+        };
+        let w2 = MergeWitness {
+            boundary_repairs: 7,
+            ..w1.clone()
+        };
+        let diff = compare_witnesses(&w1, &w2);
+        assert!(!diff.matches);
+        assert_eq!(diff.diffs.len(), 1);
+        assert_eq!(diff.diffs[0].field, "boundary_repairs");
+    }
+
+    #[test]
+    fn witness_diff_total_tokens_only() {
+        let w1 = MergeWitness {
+            merged_hash: ContentHash::compute(b"same"),
+            witness_hash: ContentHash::compute(b"same"),
+            chunk_count: 3,
+            boundary_repairs: 1,
+            total_tokens: 50,
+        };
+        let w2 = MergeWitness {
+            total_tokens: 99,
+            ..w1.clone()
+        };
+        let diff = compare_witnesses(&w1, &w2);
+        assert!(!diff.matches);
+        assert_eq!(diff.diffs.len(), 1);
+        assert_eq!(diff.diffs[0].field, "total_tokens");
+    }
+
+    // --- Transcript comparison: isolated field mismatches -------------------
+
+    fn make_transcript(seed: u64) -> ScheduleTranscript {
+        ScheduleTranscript {
+            seed,
+            worker_count: 2,
+            plan_hash: ContentHash::compute(b"plan"),
+            execution_order: vec![0, 1],
+            dispatches: vec![
+                ScheduleDispatch {
+                    step_index: 0,
+                    chunk_index: 0,
+                    worker_slot: 0,
+                },
+                ScheduleDispatch {
+                    step_index: 1,
+                    chunk_index: 1,
+                    worker_slot: 1,
+                },
+            ],
+            transcript_hash: ContentHash::compute(b"transcript"),
+        }
+    }
+
+    #[test]
+    fn transcript_diff_worker_count_only() {
+        let t1 = make_transcript(42);
+        let t2 = ScheduleTranscript {
+            worker_count: 8,
+            ..t1.clone()
+        };
+        let diff = compare_transcripts(&t1, &t2);
+        assert!(!diff.matches);
+        assert!(diff.diffs.iter().any(|d| d.field == "worker_count"));
+    }
+
+    #[test]
+    fn transcript_diff_plan_hash_only() {
+        let t1 = make_transcript(42);
+        let t2 = ScheduleTranscript {
+            plan_hash: ContentHash::compute(b"different-plan"),
+            ..t1.clone()
+        };
+        let diff = compare_transcripts(&t1, &t2);
+        assert!(!diff.matches);
+        assert!(diff.diffs.iter().any(|d| d.field == "plan_hash"));
+    }
+
+    #[test]
+    fn transcript_diff_execution_order_only() {
+        let t1 = make_transcript(42);
+        let t2 = ScheduleTranscript {
+            execution_order: vec![1, 0],
+            ..t1.clone()
+        };
+        let diff = compare_transcripts(&t1, &t2);
+        assert!(!diff.matches);
+        assert!(diff.diffs.iter().any(|d| d.field == "execution_order"));
+    }
+
+    #[test]
+    fn transcript_diff_dispatches_only() {
+        let t1 = make_transcript(42);
+        let t2 = ScheduleTranscript {
+            dispatches: vec![ScheduleDispatch {
+                step_index: 0,
+                chunk_index: 1,
+                worker_slot: 0,
+            }],
+            ..t1.clone()
+        };
+        let diff = compare_transcripts(&t1, &t2);
+        assert!(!diff.matches);
+        assert!(diff.diffs.iter().any(|d| d.field == "dispatches"));
+    }
+
+    #[test]
+    fn transcript_diff_transcript_hash_only() {
+        let t1 = make_transcript(42);
+        let t2 = ScheduleTranscript {
+            transcript_hash: ContentHash::compute(b"other-hash"),
+            ..t1.clone()
+        };
+        let diff = compare_transcripts(&t1, &t2);
+        assert!(!diff.matches);
+        assert!(diff.diffs.iter().any(|d| d.field == "transcript_hash"));
+    }
+
+    #[test]
+    fn transcript_diff_all_fields_differ() {
+        let t1 = make_transcript(42);
+        let t2 = ScheduleTranscript {
+            seed: 99,
+            worker_count: 8,
+            plan_hash: ContentHash::compute(b"other"),
+            execution_order: vec![1, 0],
+            dispatches: vec![],
+            transcript_hash: ContentHash::compute(b"other-hash"),
+        };
+        let diff = compare_transcripts(&t1, &t2);
+        assert!(!diff.matches);
+        assert_eq!(diff.diffs.len(), 6, "all 6 transcript fields should differ");
+    }
+
+    // --- Gate config variations --------------------------------------------
+
+    #[test]
+    fn gate_single_worker_variation() {
+        let config = GateConfig {
+            seed_count: 1,
+            repeats_per_seed: 1,
+            worker_variations: vec![2],
+            ..GateConfig::default()
+        };
+        let result = evaluate_gate(&test_source(), &config);
+        assert_eq!(result.workers_tested, vec![2]);
+        assert_eq!(result.total_runs, 1);
+    }
+
+    #[test]
+    fn gate_no_serial_parity() {
+        let config = GateConfig {
+            seed_count: 1,
+            repeats_per_seed: 1,
+            worker_variations: vec![2],
+            require_serial_parity: false,
+            ..GateConfig::default()
+        };
+        let result = evaluate_gate(&test_source(), &config);
+        assert_eq!(result.decision, GateDecision::Promote);
+    }
+
+    #[test]
+    fn gate_utf8_source() {
+        let source = "var résumé = 'café';\nvar π = 3;\n".repeat(10);
+        let config = GateConfig {
+            seed_count: 1,
+            repeats_per_seed: 1,
+            worker_variations: vec![2],
+            ..GateConfig::default()
+        };
+        let result = evaluate_gate(&source, &config);
+        assert!(result.total_runs >= 1);
+    }
+
+    #[test]
+    fn gate_input_bytes_matches_source() {
+        let source = test_source();
+        let config = GateConfig {
+            seed_count: 1,
+            repeats_per_seed: 1,
+            worker_variations: vec![2],
+            ..GateConfig::default()
+        };
+        let result = evaluate_gate(&source, &config);
+        assert_eq!(result.input_bytes, source.len() as u64);
+    }
+
+    // --- Flake-rate edge cases ---------------------------------------------
+
+    #[test]
+    fn flake_rate_one_run_one_mismatch() {
+        let fr = FlakeRate::compute(1, 1, 0);
+        assert_eq!(fr.rate_millionths, 1_000_000);
+        assert!(!fr.within_threshold);
+    }
+
+    #[test]
+    fn flake_rate_mismatched_exceeds_total_clamped() {
+        // If mismatched > total, rate should still be 1_000_000.
+        let fr = FlakeRate::compute(5, 10, 0);
+        assert!(fr.rate_millionths >= 1_000_000);
+    }
+
+    #[test]
+    fn flake_rate_within_threshold_boundary() {
+        // Exactly at threshold should be within.
+        let fr = FlakeRate::compute(100, 5, 50_000);
+        assert_eq!(fr.rate_millionths, 50_000);
+        assert!(fr.within_threshold);
+    }
+
+    #[test]
+    fn flake_rate_just_above_threshold() {
+        // 100 runs, 6 mismatches = 60_000, threshold 50_000.
+        let fr = FlakeRate::compute(100, 6, 50_000);
+        assert_eq!(fr.rate_millionths, 60_000);
+        assert!(!fr.within_threshold);
+    }
+
+    // --- Operator summary edge cases ---------------------------------------
+
+    #[test]
+    fn operator_summary_fields_present() {
+        let source = test_source();
+        let config = small_gate_config();
+        let result = evaluate_gate(&source, &config);
+        let summary = generate_operator_summary(&result);
+        assert!(!summary.flake_rate_display.is_empty());
+        assert!(!summary.recommended_action.is_empty());
+    }
+
+    #[test]
+    fn operator_summary_zero_incidents_no_hints() {
+        let source = test_source();
+        let config = small_gate_config();
+        let result = evaluate_gate(&source, &config);
+        let summary = generate_operator_summary(&result);
+        assert_eq!(summary.incident_count, 0);
+        assert!(summary.root_cause_hints.is_empty());
+    }
+
+    // --- Replay bundle edge cases ------------------------------------------
+
+    #[test]
+    fn replay_bundle_empty_on_promote() {
+        let source = test_source();
+        let config = small_gate_config();
+        let result = evaluate_gate(&source, &config);
+        assert_eq!(result.decision, GateDecision::Promote);
+        assert!(build_replay_bundle(&result).is_none());
+    }
+
+    #[test]
+    fn replay_bundle_schema_version() {
+        // Build a bundle with synthetic incidents.
+        let bundle = ReplayBundle {
+            schema_version: SCHEMA_VERSION.to_string(),
+            input_hash: ContentHash::compute(b"test"),
+            input_bytes: 100,
+            incidents: vec![],
+            failing_seeds: vec![42],
+            failing_workers: vec![2],
+            replay_commands: vec!["franken-engine parse --seed 42".to_string()],
+            reference_hash: ContentHash::compute(b"ref"),
+        };
+        assert_eq!(bundle.schema_version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn replay_bundle_serde_fields() {
+        let bundle = ReplayBundle {
+            schema_version: SCHEMA_VERSION.to_string(),
+            input_hash: ContentHash::compute(b"test"),
+            input_bytes: 100,
+            incidents: vec![],
+            failing_seeds: vec![42, 99],
+            failing_workers: vec![2, 4],
+            replay_commands: vec!["cmd1".to_string(), "cmd2".to_string()],
+            reference_hash: ContentHash::compute(b"ref"),
+        };
+        let json = serde_json::to_string(&bundle).unwrap();
+        let back: ReplayBundle = serde_json::from_str(&json).unwrap();
+        assert_eq!(bundle, back);
+        assert_eq!(back.failing_seeds.len(), 2);
+        assert_eq!(back.replay_commands.len(), 2);
+    }
+
+    // --- Rollback integration edge cases -----------------------------------
+
+    #[test]
+    fn rollback_not_triggered_on_promote() {
+        let source = test_source();
+        let config = small_gate_config();
+        let result = evaluate_gate(&source, &config);
+        let mut rollback = RollbackControl::default();
+        let triggered = apply_gate_to_rollback(&result, &mut rollback);
+        assert!(!triggered);
+    }
+
+    // --- Gate result determinism with varied configs -----------------------
+
+    #[test]
+    fn gate_result_reference_hash_stable() {
+        let source = test_source();
+        let config = GateConfig {
+            seed_count: 2,
+            repeats_per_seed: 2,
+            worker_variations: vec![2],
+            ..GateConfig::default()
+        };
+        let r1 = evaluate_gate(&source, &config);
+        let r2 = evaluate_gate(&source, &config);
+        assert_eq!(r1.reference_hash, r2.reference_hash);
+        assert_eq!(r1.input_hash, r2.input_hash);
+    }
+
+    // --- Run record coverage -----------------------------------------------
+
+    #[test]
+    fn run_record_fields_from_gate() {
+        let source = test_source();
+        let config = GateConfig {
+            seed_count: 1,
+            repeats_per_seed: 1,
+            worker_variations: vec![2],
+            ..GateConfig::default()
+        };
+        let result = evaluate_gate(&source, &config);
+        assert!(!result.runs.is_empty());
+        let run = &result.runs[0];
+        assert!(run.token_count > 0);
+        assert_eq!(run.run_index, 0);
+    }
+
+    // --- GateResult accessors & constants ----------------------------------
+
+    #[test]
+    fn component_constant() {
+        assert_eq!(COMPONENT, "parallel_interference_gate");
+    }
+
+    #[test]
+    fn default_constants() {
+        assert_eq!(DEFAULT_SEED_COUNT, 10);
+        assert_eq!(DEFAULT_REPEATS_PER_SEED, 3);
+        assert_eq!(DEFAULT_FLAKE_THRESHOLD_MILLIONTHS, 0);
+        assert_eq!(DEFAULT_MAX_WORKER_VARIATIONS, 4);
+    }
+
+    #[test]
+    fn gate_result_no_incidents_means_promote() {
+        let source = test_source();
+        let config = small_gate_config();
+        let result = evaluate_gate(&source, &config);
+        assert!(result.incidents.is_empty());
+        assert_eq!(result.decision, GateDecision::Promote);
+    }
+
+    // --- WitnessDiffEntry clone & equality ----------------------------------
+
+    #[test]
+    fn witness_diff_entry_fields() {
+        let entry = WitnessDiffEntry {
+            field: "merged_hash".to_string(),
+            expected: "abc".to_string(),
+            actual: "def".to_string(),
+        };
+        let clone = entry.clone();
+        assert_eq!(entry, clone);
+        assert_eq!(entry.field, "merged_hash");
+    }
 }

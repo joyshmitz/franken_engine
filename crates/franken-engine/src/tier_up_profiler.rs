@@ -383,11 +383,7 @@ mod tests {
     use super::*;
     use crate::bytecode_vm::{ExecutionReport, InlineCacheStats, Value, VmEvent};
 
-    fn make_vm_event(
-        ip: u32,
-        opcode: &str,
-        cache_hit: Option<bool>,
-    ) -> VmEvent {
+    fn make_vm_event(ip: u32, opcode: &str, cache_hit: Option<bool>) -> VmEvent {
         VmEvent {
             trace_id: "test-trace".to_string(),
             component: "bytecode_vm".to_string(),
@@ -598,7 +594,12 @@ mod tests {
         let decision = evaluate_tier_up_eligibility(&report, &policy);
         assert!(!decision.eligible);
         assert!(decision.selected_candidates.is_empty());
-        assert!(decision.events.iter().any(|e| e.reason == "insufficient_total_steps"));
+        assert!(
+            decision
+                .events
+                .iter()
+                .any(|e| e.reason == "insufficient_total_steps")
+        );
     }
 
     #[test]
@@ -656,10 +657,12 @@ mod tests {
         };
         let decision = evaluate_tier_up_eligibility(&report, &policy);
         assert!(!decision.eligible);
-        assert!(decision
-            .rejected_paths
-            .iter()
-            .any(|r| r.reason == "cache_hit_rate_below_threshold"));
+        assert!(
+            decision
+                .rejected_paths
+                .iter()
+                .any(|r| r.reason == "cache_hit_rate_below_threshold")
+        );
     }
 
     #[test]
@@ -677,10 +680,12 @@ mod tests {
         };
         let decision = evaluate_tier_up_eligibility(&report, &policy);
         assert!(!decision.eligible);
-        assert!(decision
-            .rejected_paths
-            .iter()
-            .any(|r| r.reason == "missing_cache_signal"));
+        assert!(
+            decision
+                .rejected_paths
+                .iter()
+                .any(|r| r.reason == "missing_cache_signal")
+        );
     }
 
     #[test]
@@ -822,5 +827,364 @@ mod tests {
         assert_eq!(event.event, "test_event");
         assert_eq!(event.outcome, "pass");
         assert_eq!(event.reason, "test_reason");
+    }
+
+    // -- Enrichment tests ---------------------------------------------------
+
+    #[test]
+    fn policy_default_serde_roundtrip() {
+        let policy = TierUpPolicy::default();
+        let json = serde_json::to_string(&policy).unwrap();
+        let back: TierUpPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, back);
+    }
+
+    #[test]
+    fn policy_hash_changes_with_min_steps() {
+        let a = TierUpPolicy::default();
+        let b = TierUpPolicy {
+            min_total_steps: a.min_total_steps + 1,
+            ..a.clone()
+        };
+        assert_ne!(a.policy_hash(), b.policy_hash());
+    }
+
+    #[test]
+    fn profile_observed_events_counts_only_candidates() {
+        let events = vec![
+            make_vm_event(0, "add", None),
+            make_vm_event(1, "budget", None),  // excluded
+            make_vm_event(2, "eof", None),     // excluded
+        ];
+        let report = make_report(100, events);
+        let profile = build_hot_path_profile(&report, 10);
+        assert_eq!(profile.observed_instruction_events, 1);
+    }
+
+    #[test]
+    fn profile_aggregates_same_ip_opcode() {
+        let events = vec![
+            make_vm_event(5, "load", Some(true)),
+            make_vm_event(5, "load", Some(false)),
+            make_vm_event(5, "load", None),
+        ];
+        let report = make_report(100, events);
+        let profile = build_hot_path_profile(&report, 10);
+        assert_eq!(profile.top_paths.len(), 1);
+        let path = &profile.top_paths[0];
+        assert_eq!(path.invocations, 3);
+        assert_eq!(path.cache_hits, 1);
+        assert_eq!(path.cache_misses, 1);
+    }
+
+    #[test]
+    fn profile_different_opcodes_at_same_ip_are_separate() {
+        let events = vec![
+            make_vm_event(5, "load", None),
+            make_vm_event(5, "store", None),
+        ];
+        let report = make_report(100, events);
+        let profile = build_hot_path_profile(&report, 10);
+        assert_eq!(profile.top_paths.len(), 2);
+    }
+
+    #[test]
+    fn profile_top_k_zero_becomes_one() {
+        let events = vec![
+            make_vm_event(0, "a", None),
+            make_vm_event(1, "b", None),
+        ];
+        let report = make_report(100, events);
+        let profile = build_hot_path_profile(&report, 0);
+        assert_eq!(profile.top_paths.len(), 1);
+    }
+
+    #[test]
+    fn profile_total_steps_matches_report() {
+        let report = make_report(42, Vec::new());
+        let profile = build_hot_path_profile(&report, 10);
+        assert_eq!(profile.total_steps, 42);
+    }
+
+    #[test]
+    fn profile_trace_id_propagated() {
+        let report = make_report(10, Vec::new());
+        let profile = build_hot_path_profile(&report, 10);
+        assert_eq!(profile.trace_id, report.trace_id);
+    }
+
+    #[test]
+    fn profile_tiebreak_by_ip_for_equal_invocations() {
+        let events = vec![
+            make_vm_event(10, "op", None),
+            make_vm_event(5, "op", None),
+        ];
+        let report = make_report(100, events);
+        let profile = build_hot_path_profile(&report, 10);
+        // Equal invocations, tiebreak ascending by ip
+        assert_eq!(profile.top_paths[0].ip, 5);
+        assert_eq!(profile.top_paths[1].ip, 10);
+    }
+
+    #[test]
+    fn eligibility_events_include_started_and_completed() {
+        let events = vec![
+            make_vm_event(0, "add", Some(true)),
+            make_vm_event(0, "add", Some(true)),
+            make_vm_event(0, "add", Some(true)),
+        ];
+        let report = make_report(100, events);
+        let decision = evaluate_tier_up_eligibility(&report, &TierUpPolicy::default());
+        assert!(decision.events.iter().any(|e| e.event == "tier_up_started"));
+        assert!(decision.events.iter().any(|e| e.event == "tier_up_completed"));
+    }
+
+    #[test]
+    fn eligibility_deny_outcome_on_insufficient_steps() {
+        let report = make_report(1, Vec::new());
+        let decision = evaluate_tier_up_eligibility(&report, &TierUpPolicy::default());
+        assert!(!decision.eligible);
+        let completed = decision.events.iter().find(|e| e.event == "tier_up_completed").unwrap();
+        assert_eq!(completed.outcome, "deny");
+        assert_eq!(completed.reason, "insufficient_total_steps");
+    }
+
+    #[test]
+    fn eligibility_decision_hash_is_not_empty() {
+        let report = make_report(100, Vec::new());
+        let decision = evaluate_tier_up_eligibility(&report, &TierUpPolicy::default());
+        assert!(!decision.decision_hash.is_empty());
+    }
+
+    #[test]
+    fn eligibility_rejected_paths_have_correct_reasons() {
+        let policy = TierUpPolicy {
+            min_total_steps: 1,
+            min_invocations_per_path: 5,
+            ..TierUpPolicy::default()
+        };
+        // Only 1 invocation, below threshold of 5
+        let events = vec![make_vm_event(0, "add", Some(true))];
+        let report = make_report(100, events);
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        assert_eq!(decision.rejected_paths.len(), 1);
+        assert_eq!(decision.rejected_paths[0].reason, "insufficient_invocations");
+    }
+
+    #[test]
+    fn eligibility_cache_rate_rejection_reason() {
+        let policy = TierUpPolicy {
+            min_total_steps: 1,
+            min_invocations_per_path: 1,
+            min_cache_hit_rate_millionths: 900_000,
+            require_cache_signal: false,
+            ..TierUpPolicy::default()
+        };
+        // 50% cache rate, below 90% threshold
+        let events = vec![
+            make_vm_event(0, "add", Some(true)),
+            make_vm_event(0, "add", Some(false)),
+        ];
+        let report = make_report(100, events);
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        assert!(decision.rejected_paths.iter().any(|r| r.reason == "cache_hit_rate_below_threshold"));
+    }
+
+    #[test]
+    fn eligibility_missing_cache_signal_rejection_reason() {
+        let policy = TierUpPolicy {
+            min_total_steps: 1,
+            min_invocations_per_path: 1,
+            require_cache_signal: true,
+            ..TierUpPolicy::default()
+        };
+        // No cache signals
+        let events = vec![make_vm_event(0, "add", None)];
+        let report = make_report(100, events);
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        assert!(decision.rejected_paths.iter().any(|r| r.reason == "missing_cache_signal"));
+    }
+
+    #[test]
+    fn eligibility_candidate_rationale_populated() {
+        let policy = TierUpPolicy {
+            min_total_steps: 1,
+            min_invocations_per_path: 1,
+            min_cache_hit_rate_millionths: 0,
+            require_cache_signal: false,
+            ..TierUpPolicy::default()
+        };
+        let events = vec![make_vm_event(0, "add", Some(true))];
+        let report = make_report(100, events);
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        assert_eq!(decision.selected_candidates.len(), 1);
+        assert_eq!(
+            decision.selected_candidates[0].rationale,
+            "hot_path_meets_tier_up_thresholds"
+        );
+    }
+
+    #[test]
+    fn eligibility_allow_outcome_when_eligible() {
+        let policy = TierUpPolicy {
+            min_total_steps: 1,
+            min_invocations_per_path: 1,
+            min_cache_hit_rate_millionths: 0,
+            require_cache_signal: false,
+            ..TierUpPolicy::default()
+        };
+        let events = vec![make_vm_event(0, "add", Some(true))];
+        let report = make_report(100, events);
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        assert!(decision.eligible);
+        let completed = decision.events.iter().find(|e| e.event == "tier_up_completed").unwrap();
+        assert_eq!(completed.outcome, "allow");
+    }
+
+    #[test]
+    fn eligibility_schema_version_always_set() {
+        let report = make_report(100, Vec::new());
+        let decision = evaluate_tier_up_eligibility(&report, &TierUpPolicy::default());
+        assert_eq!(decision.schema_version, TIER_UP_POLICY_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn eligibility_policy_hash_propagated() {
+        let policy = TierUpPolicy::default();
+        let report = make_report(100, Vec::new());
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        assert_eq!(decision.policy_hash, policy.policy_hash());
+    }
+
+    #[test]
+    fn decision_serde_full_roundtrip() {
+        let policy = TierUpPolicy {
+            min_total_steps: 1,
+            min_invocations_per_path: 1,
+            min_cache_hit_rate_millionths: 0,
+            require_cache_signal: false,
+            ..TierUpPolicy::default()
+        };
+        let events = vec![
+            make_vm_event(0, "add", Some(true)),
+            make_vm_event(1, "sub", Some(false)),
+        ];
+        let report = make_report(100, events);
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        let json = serde_json::to_string(&decision).unwrap();
+        let back: TierUpDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(decision, back);
+    }
+
+    #[test]
+    fn rejection_serde_roundtrip() {
+        let rejection = TierUpRejection {
+            ip: 42,
+            opcode: "load".to_string(),
+            invocations: 5,
+            cache_hit_rate_millionths: 500_000,
+            reason: "test".to_string(),
+        };
+        let json = serde_json::to_string(&rejection).unwrap();
+        let back: TierUpRejection = serde_json::from_str(&json).unwrap();
+        assert_eq!(rejection, back);
+    }
+
+    #[test]
+    fn candidate_serde_roundtrip() {
+        let candidate = TierUpCandidate {
+            ip: 7,
+            opcode: "store".to_string(),
+            invocations: 100,
+            cache_hit_rate_millionths: 800_000,
+            rationale: "hot".to_string(),
+        };
+        let json = serde_json::to_string(&candidate).unwrap();
+        let back: TierUpCandidate = serde_json::from_str(&json).unwrap();
+        assert_eq!(candidate, back);
+    }
+
+    #[test]
+    fn decision_event_serde_roundtrip() {
+        let event = TierUpDecisionEvent {
+            trace_id: "t".to_string(),
+            component: COMPONENT.to_string(),
+            event: "e".to_string(),
+            outcome: "o".to_string(),
+            reason: "r".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: TierUpDecisionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn cache_hit_rate_single_hit() {
+        assert_eq!(cache_hit_rate_millionths(1, 0), 1_000_000);
+    }
+
+    #[test]
+    fn cache_hit_rate_single_miss() {
+        assert_eq!(cache_hit_rate_millionths(0, 1), 0);
+    }
+
+    #[test]
+    fn hot_path_sample_zero_cache_rate_when_no_observations() {
+        let sample = HotPathSample {
+            ip: 0,
+            opcode: "nop".to_string(),
+            invocations: 10,
+            cache_hits: 0,
+            cache_misses: 0,
+            cache_hit_rate_millionths: 0,
+        };
+        assert_eq!(sample.cache_observations(), 0);
+    }
+
+    #[test]
+    fn eligibility_max_candidates_truncates_to_one_when_zero() {
+        let policy = TierUpPolicy {
+            min_total_steps: 1,
+            min_invocations_per_path: 1,
+            min_cache_hit_rate_millionths: 0,
+            require_cache_signal: false,
+            max_candidates: 0,
+            ..TierUpPolicy::default()
+        };
+        let events = vec![
+            make_vm_event(0, "add", Some(true)),
+            make_vm_event(1, "sub", Some(true)),
+        ];
+        let report = make_report(100, events);
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        // normalize_limit(0) = 1
+        assert_eq!(decision.selected_candidates.len(), 1);
+    }
+
+    #[test]
+    fn eligibility_no_cache_signal_passes_when_not_required() {
+        let policy = TierUpPolicy {
+            min_total_steps: 1,
+            min_invocations_per_path: 1,
+            require_cache_signal: false,
+            min_cache_hit_rate_millionths: 0,
+            ..TierUpPolicy::default()
+        };
+        let events = vec![make_vm_event(0, "add", None)];
+        let report = make_report(100, events);
+        let decision = evaluate_tier_up_eligibility(&report, &policy);
+        assert!(decision.eligible);
+        assert_eq!(decision.selected_candidates.len(), 1);
+    }
+
+    #[test]
+    fn profile_hash_differs_for_different_traces() {
+        let mut report1 = make_report(10, vec![make_vm_event(0, "add", None)]);
+        report1.trace_id = "trace-1".to_string();
+        let mut report2 = make_report(10, vec![make_vm_event(0, "add", None)]);
+        report2.trace_id = "trace-2".to_string();
+        let p1 = build_hot_path_profile(&report1, 10);
+        let p2 = build_hot_path_profile(&report2, 10);
+        assert_ne!(p1.profile_hash, p2.profile_hash);
     }
 }

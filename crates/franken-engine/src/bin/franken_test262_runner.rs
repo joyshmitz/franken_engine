@@ -67,6 +67,13 @@ fn usage() -> &'static str {
 }
 
 fn parse_args() -> Result<CliArgs, String> {
+    parse_args_from(std::env::args().skip(1))
+}
+
+fn parse_args_from<I>(raw_args: I) -> Result<CliArgs, String>
+where
+    I: IntoIterator<Item = String>,
+{
     let mut pins_path = default_pins_path();
     let mut profile_path = default_profile_path();
     let mut waivers_path = default_waivers_path();
@@ -82,7 +89,7 @@ fn parse_args() -> Result<CliArgs, String> {
     let mut policy_id = "policy-test262-es2020".to_string();
     let mut acknowledge_pass_regression = false;
 
-    let mut args = std::env::args().skip(1);
+    let mut args = raw_args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--pins" => {
@@ -720,6 +727,10 @@ mod tests {
         .to_string()
     }
 
+    fn parse_cli_args(args: &[&str]) -> Result<CliArgs, String> {
+        parse_args_from(args.iter().map(|arg| (*arg).to_string()))
+    }
+
     #[test]
     fn parse_jsonl_observed_results() {
         let content = format!(
@@ -795,6 +806,63 @@ mod tests {
         let content = format!("{}\nnot-json\n", sample_case_line("language/a.js", "2"));
         let err = parse_case_vectors(&content).expect_err("invalid line must fail");
         assert!(err.to_string().contains("line 2"));
+    }
+
+    #[test]
+    fn parse_case_vectors_rejects_duplicate_test_ids() {
+        let content = format!(
+            "{}\n{}\n",
+            sample_case_line("language/a.js", "2"),
+            sample_case_line("language/a.js", "2")
+        );
+        let err = parse_case_vectors(&content).expect_err("duplicate test ids must fail");
+        assert!(err.to_string().contains("duplicate case vector test_id"));
+    }
+
+    #[test]
+    fn parse_case_vectors_rejects_missing_expected_value() {
+        let content = serde_json::json!({
+            "test_id": "language/a.js",
+            "es2020_clause": "13.3.1",
+            "source": "1 + 1;",
+            "expected_value": "   ",
+            "runtime_lane": "hybrid",
+            "deterministic_seed": 7
+        })
+        .to_string();
+        let err = parse_case_vectors(&content).expect_err("missing expected value must fail");
+        assert!(err.to_string().contains("missing expected_value"));
+    }
+
+    #[test]
+    fn parse_args_rejects_observed_without_allow_flag() {
+        let err = parse_cli_args(&["--observed-results", "/tmp/observed.jsonl"])
+            .expect_err("observed path without allow flag must fail");
+        assert!(err.contains("--observed-results requires --allow-precomputed-observed"));
+    }
+
+    #[test]
+    fn parse_args_defaults_observed_results_path_when_allowed() {
+        let args = parse_cli_args(&["--allow-precomputed-observed"]).expect("args parse");
+        assert!(args.allow_precomputed_observed);
+        assert_eq!(
+            args.observed_results_path,
+            Some(default_observed_results_path())
+        );
+    }
+
+    #[test]
+    fn parse_args_rejects_empty_single_test_id() {
+        let err = parse_cli_args(&["--single-test-id", "   "])
+            .expect_err("empty single-test-id must fail");
+        assert!(err.contains("--single-test-id must not be empty"));
+    }
+
+    #[test]
+    fn rerun_command_quotes_single_test_id_with_apostrophe() {
+        let args = parse_cli_args(&[]).expect("default args");
+        let cmd = rerun_command_for_case(&args, "language/foo'bar.js");
+        assert!(cmd.contains("--single-test-id 'language/foo'\"'\"'bar.js'"));
     }
 
     #[test]

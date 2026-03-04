@@ -2129,4 +2129,363 @@ mod tests {
         let ordered: Vec<_> = set.into_iter().collect();
         assert!(ordered[0] < ordered[1], "BTreeSet preserves ordering");
     }
+
+    // ── Empty preimage ceremony ───────────────────────────────────────
+
+    #[test]
+    fn ceremony_with_empty_preimage() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let ceremony = ThresholdCeremony::new(
+            &policy,
+            ThresholdScope::EmergencyRevocation,
+            b"",
+            DeterministicTimestamp(1000),
+        );
+        assert!(ceremony.is_ok());
+    }
+
+    // ── k=n ceremony with one missing share ───────────────────────────
+
+    #[test]
+    fn k_equals_n_ceremony_missing_one_fails() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(3, &keys);
+        let mut ceremony = ThresholdCeremony::new(
+            &policy,
+            ThresholdScope::EmergencyRevocation,
+            TEST_PREIMAGE,
+            DeterministicTimestamp(1000),
+        )
+        .unwrap();
+
+        // Submit only 2 of 3.
+        for key in &keys[..2] {
+            ceremony
+                .submit_partial(key, TEST_PREIMAGE, DeterministicTimestamp(2000))
+                .unwrap();
+        }
+        assert!(!ceremony.is_threshold_met());
+        let err = ceremony.finalize(TEST_PREIMAGE).unwrap_err();
+        assert!(matches!(
+            err,
+            ThresholdError::InsufficientThresholdShares { .. }
+        ));
+    }
+
+    // ── requires_threshold returns false for unlisted scope ───────────
+
+    #[test]
+    fn requires_threshold_returns_false_for_unlisted_scope() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        // make_scopes() only includes EmergencyRevocation and KeyRotation.
+        assert!(!policy.requires_threshold(ThresholdScope::PolicyCheckpoint));
+        assert!(!policy.requires_threshold(ThresholdScope::AuthoritySetChange));
+    }
+
+    // ── is_authorized returns false for unknown holder ────────────────
+
+    #[test]
+    fn is_authorized_false_for_unknown_holder() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let unknown = ShareHolderId([0xffu8; 32]);
+        assert!(!policy.is_authorized(&unknown));
+    }
+
+    // ── Share holder hex display ──────────────────────────────────────
+
+    #[test]
+    fn share_holder_to_hex_length() {
+        let holder = ShareHolderId([0xab; 32]);
+        let hex = holder.to_hex();
+        assert_eq!(hex.len(), 64); // 32 bytes × 2 hex chars
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn share_holder_display_prefix() {
+        let holder = ShareHolderId([0xcd; 32]);
+        let display = holder.to_string();
+        assert!(display.starts_with("share:"));
+        // Display truncates to first 16 hex chars.
+        assert_eq!(display.len(), "share:".len() + 16);
+    }
+
+    // ── Policy display format ─────────────────────────────────────────
+
+    #[test]
+    fn policy_display_format() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let display = policy.to_string();
+        assert!(display.contains("2-of-3"));
+        assert!(display.contains("scopes=2"));
+        assert!(display.starts_with("ThresholdPolicy("));
+    }
+
+    // ── signatures_collected counts ───────────────────────────────────
+
+    #[test]
+    fn signatures_collected_increments() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let mut ceremony = ThresholdCeremony::new(
+            &policy,
+            ThresholdScope::KeyRotation,
+            TEST_PREIMAGE,
+            DeterministicTimestamp(1000),
+        )
+        .unwrap();
+
+        assert_eq!(ceremony.signatures_collected(), 0);
+        ceremony
+            .submit_partial(&keys[0], TEST_PREIMAGE, DeterministicTimestamp(2000))
+            .unwrap();
+        assert_eq!(ceremony.signatures_collected(), 1);
+        ceremony
+            .submit_partial(&keys[1], TEST_PREIMAGE, DeterministicTimestamp(3000))
+            .unwrap();
+        assert_eq!(ceremony.signatures_collected(), 2);
+    }
+
+    // ── participants list ─────────────────────────────────────────────
+
+    #[test]
+    fn participants_returns_submitters() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let mut ceremony = ThresholdCeremony::new(
+            &policy,
+            ThresholdScope::EmergencyRevocation,
+            TEST_PREIMAGE,
+            DeterministicTimestamp(1000),
+        )
+        .unwrap();
+
+        assert!(ceremony.participants().is_empty());
+        ceremony
+            .submit_partial(&keys[0], TEST_PREIMAGE, DeterministicTimestamp(2000))
+            .unwrap();
+        assert_eq!(ceremony.participants().len(), 1);
+    }
+
+    // ── drain_events does not affect ceremony state ───────────────────
+
+    #[test]
+    fn drain_events_preserves_ceremony_state() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let mut ceremony = ThresholdCeremony::new(
+            &policy,
+            ThresholdScope::EmergencyRevocation,
+            TEST_PREIMAGE,
+            DeterministicTimestamp(1000),
+        )
+        .unwrap();
+
+        ceremony
+            .submit_partial(&keys[0], TEST_PREIMAGE, DeterministicTimestamp(2000))
+            .unwrap();
+        let events = ceremony.drain_events();
+        assert!(!events.is_empty());
+        // Ceremony state unchanged — can still submit and finalize.
+        ceremony
+            .submit_partial(&keys[1], TEST_PREIMAGE, DeterministicTimestamp(3000))
+            .unwrap();
+        assert!(ceremony.is_threshold_met());
+        let result = ceremony.finalize(TEST_PREIMAGE);
+        assert!(result.is_ok());
+    }
+
+    // ── ThresholdResult verify catches wrong hash ─────────────────────
+
+    #[test]
+    fn threshold_result_verify_wrong_preimage() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let mut ceremony = ThresholdCeremony::new(
+            &policy,
+            ThresholdScope::EmergencyRevocation,
+            TEST_PREIMAGE,
+            DeterministicTimestamp(1000),
+        )
+        .unwrap();
+        ceremony
+            .submit_partial(&keys[0], TEST_PREIMAGE, DeterministicTimestamp(2000))
+            .unwrap();
+        ceremony
+            .submit_partial(&keys[1], TEST_PREIMAGE, DeterministicTimestamp(3000))
+            .unwrap();
+        let result = ceremony.finalize(TEST_PREIMAGE).unwrap();
+        let err = result.verify(b"wrong-preimage").unwrap_err();
+        assert!(matches!(err, ThresholdError::PreimageMismatch));
+    }
+
+    // ── ThresholdResult verify checks threshold count ─────────────────
+
+    #[test]
+    fn threshold_result_verify_success() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let mut ceremony = ThresholdCeremony::new(
+            &policy,
+            ThresholdScope::EmergencyRevocation,
+            TEST_PREIMAGE,
+            DeterministicTimestamp(1000),
+        )
+        .unwrap();
+        ceremony
+            .submit_partial(&keys[0], TEST_PREIMAGE, DeterministicTimestamp(2000))
+            .unwrap();
+        ceremony
+            .submit_partial(&keys[1], TEST_PREIMAGE, DeterministicTimestamp(3000))
+            .unwrap();
+        let result = ceremony.finalize(TEST_PREIMAGE).unwrap();
+        assert!(result.verify(TEST_PREIMAGE).is_ok());
+        assert_eq!(result.threshold_k, 2);
+        assert_eq!(result.signatures.len(), 2);
+        assert_eq!(result.participating_shares.len(), 2);
+    }
+
+    // ── Error display coverage ────────────────────────────────────────
+
+    #[test]
+    fn error_display_insufficient_shares() {
+        let err = ThresholdError::InsufficientThresholdShares {
+            collected: 1,
+            required: 3,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains('1'));
+        assert!(msg.contains('3'));
+    }
+
+    #[test]
+    fn error_display_preimage_mismatch() {
+        let err = ThresholdError::PreimageMismatch;
+        let msg = err.to_string();
+        assert!(msg.contains("preimage"));
+    }
+
+    #[test]
+    fn error_display_ceremony_already_finalized() {
+        let err = ThresholdError::CeremonyAlreadyFinalized;
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn error_display_no_scoped_operations() {
+        let err = ThresholdError::NoScopedOperations;
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn error_display_scope_not_thresholded() {
+        let err = ThresholdError::ScopeNotThresholded {
+            scope: ThresholdScope::PolicyCheckpoint,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("policy_checkpoint"));
+    }
+
+    // ── Schema stability ──────────────────────────────────────────────
+
+    #[test]
+    fn schema_ids_are_stable() {
+        let s1 = threshold_policy_schema_id();
+        let s2 = threshold_policy_schema_id();
+        assert_eq!(s1, s2);
+        let c1 = threshold_ceremony_schema_id();
+        let c2 = threshold_ceremony_schema_id();
+        assert_eq!(c1, c2);
+    }
+
+    #[test]
+    fn schema_hash_stable() {
+        let h1 = threshold_policy_schema();
+        let h2 = threshold_policy_schema();
+        assert_eq!(h1, h2);
+    }
+
+    // ── ThresholdScope ALL constant ───────────────────────────────────
+
+    #[test]
+    fn threshold_scope_all_contains_four() {
+        assert_eq!(ThresholdScope::ALL.len(), 4);
+        assert!(ThresholdScope::ALL.contains(&ThresholdScope::EmergencyRevocation));
+        assert!(ThresholdScope::ALL.contains(&ThresholdScope::KeyRotation));
+        assert!(ThresholdScope::ALL.contains(&ThresholdScope::AuthoritySetChange));
+        assert!(ThresholdScope::ALL.contains(&ThresholdScope::PolicyCheckpoint));
+    }
+
+    // ── Share refresh preserves k ─────────────────────────────────────
+
+    #[test]
+    fn share_refresh_preserves_threshold_k() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let new_keys = make_share_keys(3);
+        let new_vks: Vec<_> = new_keys.iter().map(|k| k.verification_key()).collect();
+        let (new_policy, _) =
+            refresh_shares(&policy, &new_vks, SecurityEpoch::from_raw(2)).unwrap();
+        assert_eq!(new_policy.threshold_k, policy.threshold_k);
+        assert_eq!(new_policy.total_n, policy.total_n);
+    }
+
+    // ── Share refresh wrong count ─────────────────────────────────────
+
+    #[test]
+    fn share_refresh_wrong_count_fails() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let new_keys = make_share_keys(4); // 4 != 3
+        let new_vks: Vec<_> = new_keys.iter().map(|k| k.verification_key()).collect();
+        let err = refresh_shares(&policy, &new_vks, SecurityEpoch::from_raw(2)).unwrap_err();
+        assert!(matches!(err, ThresholdError::InvalidThreshold { .. }));
+    }
+
+    // ── Ceremony event types ──────────────────────────────────────────
+
+    #[test]
+    fn ceremony_events_include_initiated() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let mut ceremony = ThresholdCeremony::new(
+            &policy,
+            ThresholdScope::EmergencyRevocation,
+            TEST_PREIMAGE,
+            DeterministicTimestamp(1000),
+        )
+        .unwrap();
+
+        let events = ceremony.drain_events();
+        assert!(events.iter().any(|e| matches!(
+            e.event_type,
+            ThresholdEventType::CeremonyInitiated { .. }
+        )));
+    }
+
+    #[test]
+    fn ceremony_events_include_submission() {
+        let keys = make_share_keys(3);
+        let policy = create_test_policy(2, &keys);
+        let mut ceremony = ThresholdCeremony::new(
+            &policy,
+            ThresholdScope::EmergencyRevocation,
+            TEST_PREIMAGE,
+            DeterministicTimestamp(1000),
+        )
+        .unwrap();
+        ceremony
+            .submit_partial(&keys[0], TEST_PREIMAGE, DeterministicTimestamp(2000))
+            .unwrap();
+
+        let events = ceremony.drain_events();
+        assert!(events.iter().any(|e| matches!(
+            e.event_type,
+            ThresholdEventType::PartialSignatureSubmitted { .. }
+        )));
+    }
 }

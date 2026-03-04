@@ -816,12 +816,14 @@ mod tests {
     #[test]
     fn low_confidence_regression_is_quarantined() {
         let policy = stable_policy();
+        // Moderate noise, ~1.5% regression — above warn (1%) but below fail (2%).
+        // Uniform +15 shift with noisy samples yields p > 0.05 → ConfidenceQuarantine.
         let workload = WorkloadSamples::new(
             "scheduler_path",
             "low_confidence",
             "sha256:scheduler",
-            vec![1000, 1500, 950, 1600, 970, 1450, 980, 1510, 990],
-            vec![1030, 1530, 980, 1630, 995, 1480, 1000, 1540, 1020],
+            vec![980, 1000, 1020, 960, 1040, 1010, 990, 970, 1030],
+            vec![995, 1015, 1035, 975, 1055, 1025, 1005, 985, 1045],
         );
 
         let input = StatisticalValidationInput::new("trace", "decision", "policy", vec![workload]);
@@ -895,5 +897,402 @@ mod tests {
     fn confidence_interval_is_well_ordered() {
         let interval = mean_delta_confidence_interval_ns(100.0, 10.0, 950_000);
         assert!(interval.lower_ns <= interval.upper_ns);
+    }
+
+    // -- Helper function tests -----------------------------------------------
+
+    #[test]
+    fn median_u64_empty() {
+        assert_eq!(median_u64(&[]), 0);
+    }
+
+    #[test]
+    fn median_u64_single() {
+        assert_eq!(median_u64(&[42]), 42);
+    }
+
+    #[test]
+    fn median_u64_odd_count() {
+        assert_eq!(median_u64(&[3, 1, 2]), 2);
+    }
+
+    #[test]
+    fn median_u64_even_count() {
+        assert_eq!(median_u64(&[1, 2, 3, 4]), 2); // (2+3)/2 = 2.5, truncated to 2
+    }
+
+    #[test]
+    fn trim_warmup_drops_first_n() {
+        let samples = vec![100, 200, 300, 400, 500];
+        let trimmed = trim_warmup(&samples, 2);
+        assert_eq!(trimmed, vec![300, 400, 500]);
+    }
+
+    #[test]
+    fn trim_warmup_all_dropped() {
+        let samples = vec![1, 2, 3];
+        let trimmed = trim_warmup(&samples, 5);
+        assert!(trimmed.is_empty());
+    }
+
+    #[test]
+    fn trim_warmup_zero_drops_nothing() {
+        let samples = vec![10, 20, 30];
+        let trimmed = trim_warmup(&samples, 0);
+        assert_eq!(trimmed, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn compute_stats_empty() {
+        assert!(compute_stats(&[]).is_none());
+    }
+
+    #[test]
+    fn compute_stats_uniform() {
+        let stats = compute_stats(&[1000, 1000, 1000, 1000, 1000]).unwrap();
+        assert_eq!(stats.mean_ns, 1000);
+        assert_eq!(stats.stddev_ns, 0);
+        assert_eq!(stats.cv_millionths, 0);
+        assert_eq!(stats.sample_count, 5);
+    }
+
+    #[test]
+    fn compute_stats_nonzero_stddev() {
+        let stats = compute_stats(&[900, 1000, 1100]).unwrap();
+        assert_eq!(stats.mean_ns, 1000);
+        assert!(stats.stddev_ns > 0);
+        assert!(stats.cv_millionths > 0);
+    }
+
+    #[test]
+    fn regression_millionths_positive() {
+        // 10% regression: candidate = 1100, baseline = 1000
+        let reg = regression_millionths(1000.0, 1100.0);
+        assert_eq!(reg, 100_000); // 0.1 * 1M = 100k
+    }
+
+    #[test]
+    fn regression_millionths_negative_improvement() {
+        // 10% improvement: candidate = 900, baseline = 1000
+        let reg = regression_millionths(1000.0, 900.0);
+        assert_eq!(reg, -100_000);
+    }
+
+    #[test]
+    fn regression_millionths_zero_baseline() {
+        assert_eq!(regression_millionths(0.0, 100.0), 0);
+    }
+
+    #[test]
+    fn normal_cdf_at_zero() {
+        let cdf = normal_cdf(0.0);
+        assert!((cdf - 0.5).abs() < 0.001, "normal_cdf(0) should be ~0.5");
+    }
+
+    #[test]
+    fn normal_cdf_far_positive() {
+        let cdf = normal_cdf(5.0);
+        assert!(cdf > 0.999, "normal_cdf(5) should be ~1.0");
+    }
+
+    #[test]
+    fn normal_cdf_far_negative() {
+        let cdf = normal_cdf(-5.0);
+        assert!(cdf < 0.001, "normal_cdf(-5) should be ~0.0");
+    }
+
+    #[test]
+    fn erf_approx_zero() {
+        let erf = erf_approx(0.0);
+        assert!(erf.abs() < 0.001, "erf(0) should be ~0");
+    }
+
+    #[test]
+    fn erf_approx_large() {
+        let erf = erf_approx(3.0);
+        assert!((erf - 1.0).abs() < 0.01, "erf(3) should be ~1");
+    }
+
+    #[test]
+    fn p_value_identical_samples() {
+        let p = two_sided_p_value_millionths(0.0, 10.0);
+        assert_eq!(p, MILLION, "zero delta should give p=1.0");
+    }
+
+    #[test]
+    fn p_value_large_delta() {
+        let p = two_sided_p_value_millionths(100.0, 1.0);
+        assert!(p < 50_000, "large z-score should give small p-value");
+    }
+
+    #[test]
+    fn p_value_zero_stderr() {
+        let p = two_sided_p_value_millionths(100.0, 0.0);
+        assert_eq!(p, 0, "nonzero delta with zero stderr should give p=0");
+    }
+
+    #[test]
+    fn p_value_zero_delta_zero_stderr() {
+        let p = two_sided_p_value_millionths(0.0, 0.0);
+        assert_eq!(p, MILLION);
+    }
+
+    // -- Policy and type tests -----------------------------------------------
+
+    #[test]
+    fn default_policy_has_sensible_values() {
+        let policy = StatisticalValidationPolicy::default();
+        assert!(policy.warmup_drop_samples > 0);
+        assert!(policy.min_samples_after_filter > 0);
+    }
+
+    #[test]
+    fn workload_outcome_as_str() {
+        assert_eq!(WorkloadOutcome::Pass.as_str(), "pass");
+        assert_eq!(WorkloadOutcome::Warn.as_str(), "warn");
+        assert_eq!(WorkloadOutcome::Fail.as_str(), "fail");
+        assert_eq!(WorkloadOutcome::Quarantine.as_str(), "quarantine");
+    }
+
+    #[test]
+    fn workload_outcome_display() {
+        assert_eq!(format!("{}", WorkloadOutcome::Pass), "pass");
+        assert_eq!(format!("{}", WorkloadOutcome::Quarantine), "quarantine");
+    }
+
+    #[test]
+    fn finding_code_stable_codes_are_distinct() {
+        let codes = vec![
+            FindingCode::MissingBenchmarkMetadata.stable_code(),
+            FindingCode::InsufficientSamples.stable_code(),
+            FindingCode::VarianceQuarantine.stable_code(),
+            FindingCode::ConfidenceQuarantine.stable_code(),
+            FindingCode::RegressionFail.stable_code(),
+            FindingCode::RegressionWarn.stable_code(),
+        ];
+        let mut unique = codes.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(
+            codes.len(),
+            unique.len(),
+            "all error codes should be distinct"
+        );
+    }
+
+    #[test]
+    fn finding_code_display_matches_stable_code() {
+        let code = FindingCode::InsufficientSamples;
+        assert_eq!(format!("{code}"), code.stable_code());
+    }
+
+    // -- MAD filter tests ----------------------------------------------------
+
+    #[test]
+    fn mad_filter_empty_input() {
+        let policy = OutlierPolicy::default();
+        let result = apply_mad_filter(&[], &policy);
+        assert!(result.filtered.is_empty());
+        assert_eq!(result.removed, 0);
+    }
+
+    #[test]
+    fn mad_filter_uniform_keeps_all() {
+        let policy = OutlierPolicy::default();
+        let samples = vec![100, 100, 100, 100, 100, 100, 100, 100];
+        let result = apply_mad_filter(&samples, &policy);
+        assert_eq!(result.filtered.len(), 8);
+        assert_eq!(result.removed, 0);
+    }
+
+    #[test]
+    fn mad_filter_removes_extreme_outlier() {
+        let policy = OutlierPolicy {
+            mad_multiplier_millionths: 3_000_000,
+            min_retained_samples: 5,
+        };
+        let samples = vec![100, 101, 99, 100, 102, 100, 101, 99, 100_000];
+        let result = apply_mad_filter(&samples, &policy);
+        assert!(result.removed > 0, "extreme outlier should be removed");
+    }
+
+    // -- Inverse normal CDF tests --------------------------------------------
+
+    #[test]
+    fn inverse_normal_cdf_at_half() {
+        let z = inverse_normal_cdf(0.5);
+        assert!(z.abs() < 0.01, "inverse_normal_cdf(0.5) should be ~0");
+    }
+
+    #[test]
+    fn inverse_normal_cdf_at_975() {
+        let z = inverse_normal_cdf(0.975);
+        assert!(
+            (z - 1.96).abs() < 0.05,
+            "inverse_normal_cdf(0.975) should be ~1.96"
+        );
+    }
+
+    // -- Standard error tests ------------------------------------------------
+
+    #[test]
+    fn standard_error_zero_samples() {
+        let stats = SampleStatsNs {
+            sample_count: 0,
+            mean_ns: 0,
+            stddev_ns: 0,
+            cv_millionths: 0,
+        };
+        assert_eq!(standard_error(&stats, &stats), 0.0);
+    }
+
+    // -- Serde roundtrip tests -----------------------------------------------
+
+    #[test]
+    fn validation_input_serde_roundtrip() {
+        let input = StatisticalValidationInput::new(
+            "trace",
+            "decision",
+            "policy",
+            vec![low_noise_workload()],
+        );
+        let json = serde_json::to_string(&input).unwrap();
+        let restored: StatisticalValidationInput = serde_json::from_str(&json).unwrap();
+        assert_eq!(input, restored);
+    }
+
+    #[test]
+    fn validation_policy_serde_roundtrip() {
+        let policy = stable_policy();
+        let json = serde_json::to_string(&policy).unwrap();
+        let restored: StatisticalValidationPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(policy, restored);
+    }
+
+    #[test]
+    fn validation_report_serde_roundtrip() {
+        let policy = stable_policy();
+        let input = StatisticalValidationInput::new(
+            "trace",
+            "decision",
+            "policy",
+            vec![low_noise_workload()],
+        );
+        let report = evaluate_statistical_validation(&input, &policy);
+        let json = serde_json::to_string(&report).unwrap();
+        let restored: StatisticalValidationReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(report, restored);
+    }
+
+    // -- Promotion decision tests --------------------------------------------
+
+    #[test]
+    fn pass_allows_promotion() {
+        let policy = StatisticalValidationPolicy {
+            warmup_drop_samples: 0,
+            min_samples_after_filter: 3,
+            outlier_policy: OutlierPolicy {
+                mad_multiplier_millionths: 10_000_000,
+                min_retained_samples: 3,
+            },
+            thresholds: StatisticalThresholds {
+                max_cv_millionths: 500_000, // generous
+                warning_regression_millionths: 100_000,
+                fail_regression_millionths: 200_000,
+                max_p_value_millionths: 50_000,
+                min_effect_size_millionths: 100_000,
+                confidence_level_millionths: 950_000,
+            },
+        };
+        let workload = WorkloadSamples::new(
+            "fast_path",
+            "stable",
+            "sha256:fast",
+            vec![1000, 1001, 999, 1000, 1001, 1000, 1002, 999, 1000],
+            vec![1000, 1001, 999, 1000, 1001, 1000, 1002, 999, 1000],
+        );
+        let input = StatisticalValidationInput::new("t", "d", "p", vec![workload]);
+        let report = evaluate_statistical_validation(&input, &policy);
+        assert!(report.promote_allowed);
+        assert_eq!(report.verdicts[0].outcome, WorkloadOutcome::Pass);
+    }
+
+    #[test]
+    fn insufficient_samples_fails() {
+        let policy = stable_policy();
+        let workload = WorkloadSamples::new(
+            "tiny",
+            "test",
+            "sha256:tiny",
+            vec![100, 200],
+            vec![100, 200],
+        );
+        let input = StatisticalValidationInput::new("t", "d", "p", vec![workload]);
+        let report = evaluate_statistical_validation(&input, &policy);
+        assert!(!report.promote_allowed);
+        assert_eq!(report.verdicts[0].outcome, WorkloadOutcome::Fail);
+        assert!(
+            report.verdicts[0]
+                .findings
+                .iter()
+                .any(|f| f.code == FindingCode::InsufficientSamples)
+        );
+    }
+
+    #[test]
+    fn multiple_workloads_independent_verdicts() {
+        let policy = stable_policy();
+        let good = low_noise_workload();
+        let mut bad = low_noise_workload();
+        bad.workload_id = "bad_workload".to_string();
+        bad.benchmark_metadata_hash.clear(); // missing metadata
+
+        let input = StatisticalValidationInput::new("t", "d", "p", vec![good, bad]);
+        let report = evaluate_statistical_validation(&input, &policy);
+        assert_eq!(report.verdicts.len(), 2);
+        assert!(
+            !report.promote_allowed,
+            "one failure should block promotion"
+        );
+    }
+
+    #[test]
+    fn error_stable_codes() {
+        let err = StatisticalValidationError::Serialization("test".into());
+        assert_eq!(err.stable_code(), ERROR_SERIALIZATION);
+    }
+
+    #[test]
+    fn workload_outcome_ordering() {
+        assert!(WorkloadOutcome::Pass < WorkloadOutcome::Warn);
+        assert!(WorkloadOutcome::Warn < WorkloadOutcome::Fail);
+        assert!(WorkloadOutcome::Fail < WorkloadOutcome::Quarantine);
+    }
+
+    #[test]
+    fn confidence_interval_zero_stderr() {
+        let ci = mean_delta_confidence_interval_ns(50.0, 0.0, 950_000);
+        assert_eq!(ci.lower_ns, 50);
+        assert_eq!(ci.upper_ns, 50);
+    }
+
+    #[test]
+    fn logs_contain_workload_events() {
+        let policy = stable_policy();
+        let input = StatisticalValidationInput::new(
+            "trace",
+            "decision",
+            "policy",
+            vec![low_noise_workload()],
+        );
+        let report = evaluate_statistical_validation(&input, &policy);
+        assert!(!report.logs.is_empty());
+        assert!(report.logs.iter().all(|l| l.event == "workload_evaluated"));
+        assert!(
+            report
+                .logs
+                .iter()
+                .all(|l| l.component == PERFORMANCE_STATISTICAL_VALIDATION_COMPONENT)
+        );
     }
 }
