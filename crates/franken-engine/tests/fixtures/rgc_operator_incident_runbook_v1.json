@@ -1,0 +1,81 @@
+{
+  "schema_version": "franken-engine.rgc-operator-incident-runbook.fixture.v1",
+  "contract_version": "1.0.0",
+  "bead_id": "bd-1lsy.10.2",
+  "policy_id": "policy-rgc-operator-incident-runbook-v1",
+  "required_modes": [
+    "check",
+    "test",
+    "clippy",
+    "ci",
+    "drill"
+  ],
+  "required_manifest_keys": [
+    "schema_version",
+    "bead_id",
+    "deterministic_env_schema_version",
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "deterministic_environment",
+    "replay_command",
+    "incident_timeline",
+    "commands",
+    "artifacts",
+    "operator_verification"
+  ],
+  "required_log_keys": [
+    "schema_version",
+    "trace_id",
+    "decision_id",
+    "policy_id",
+    "component",
+    "event",
+    "outcome",
+    "error_code"
+  ],
+  "drill_replay_commands": [
+    "./scripts/e2e/rgc_runtime_semantics_verification_pack_replay.sh",
+    "./scripts/e2e/rgc_performance_regression_verification_pack_replay.sh",
+    "./scripts/e2e/rgc_security_enforcement_verification_pack_replay.sh",
+    "./scripts/e2e/rgc_module_interop_verification_matrix_replay.sh",
+    "./scripts/e2e/rgc_execution_waves_coordination_replay.sh"
+  ],
+  "incident_matrix": [
+    {
+      "scenario_id": "semantic_drift",
+      "symptom": "semantic drift detected",
+      "severity": "high",
+      "expected_triage": "rerun_runtime_semantics_replay",
+      "replay_command": "./scripts/e2e/rgc_runtime_semantics_verification_pack_replay.sh"
+    },
+    {
+      "scenario_id": "performance_regression",
+      "symptom": "performance regression p95",
+      "severity": "high",
+      "expected_triage": "rerun_performance_regression_replay",
+      "replay_command": "./scripts/e2e/rgc_performance_regression_verification_pack_replay.sh"
+    },
+    {
+      "scenario_id": "containment_false_positive",
+      "symptom": "containment false positive",
+      "severity": "critical",
+      "expected_triage": "rerun_security_enforcement_replay",
+      "replay_command": "./scripts/e2e/rgc_security_enforcement_verification_pack_replay.sh"
+    },
+    {
+      "scenario_id": "lockstep_divergence",
+      "symptom": "lockstep divergence across runtimes",
+      "severity": "critical",
+      "expected_triage": "rerun_module_interop_replay",
+      "replay_command": "./scripts/e2e/rgc_module_interop_verification_matrix_replay.sh"
+    },
+    {
+      "scenario_id": "replay_mismatch",
+      "symptom": "replay mismatch against expected evidence",
+      "severity": "critical",
+      "expected_triage": "rerun_execution_waves_replay",
+      "replay_command": "./scripts/e2e/rgc_execution_waves_coordination_replay.sh"
+    }
+  ]
+}
