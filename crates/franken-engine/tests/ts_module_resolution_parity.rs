@@ -108,26 +108,23 @@ fn rgc_202_contract_schema_and_required_fields_are_present() {
     let resolution_policy = contract
         .get("resolution_policy")
         .expect("resolution_policy should exist");
-    assert_eq!(
+    assert!(
         resolution_policy
             .get("deterministic")
             .and_then(Value::as_bool)
-            .expect("deterministic should exist"),
-        true
+            .expect("deterministic should exist")
     );
-    assert_eq!(
+    assert!(
         resolution_policy
             .get("paths_alias_support")
             .and_then(Value::as_bool)
-            .expect("paths_alias_support should exist"),
-        true
+            .expect("paths_alias_support should exist")
     );
-    assert_eq!(
+    assert!(
         resolution_policy
             .get("base_url_fallback")
             .and_then(Value::as_bool)
-            .expect("base_url_fallback should exist"),
-        true
+            .expect("base_url_fallback should exist")
     );
 
     let stable_fields: BTreeSet<String> =
@@ -153,12 +150,11 @@ fn rgc_202_contract_schema_and_required_fields_are_present() {
         .expect("parity_scenarios should be array");
     assert_eq!(parity_scenarios.len(), 3);
     for scenario in parity_scenarios {
-        assert_eq!(
+        assert!(
             scenario
                 .get("required")
                 .and_then(Value::as_bool)
-                .expect("required should exist"),
-            true
+                .expect("required should exist")
         );
         assert!(
             scenario
@@ -407,7 +403,7 @@ fn drift_classifier_and_artifact_emitter_cover_e2e_requirements() {
     ];
     let drift = classify_resolution_drift(&reference, &observed);
     assert_eq!(drift.class, TsResolutionDriftClass::CandidateOrderMismatch);
-    assert_eq!(drift.drift_detected, true);
+    assert!(drift.drift_detected);
     assert!(!drift.remediation.trim().is_empty());
 
     let output_dir = unique_temp_dir("parity");

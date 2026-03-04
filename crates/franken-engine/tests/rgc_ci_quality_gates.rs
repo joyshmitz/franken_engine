@@ -25,6 +25,7 @@ struct RgcCiQualityGatesFixture {
     gate_version: String,
     required_modes: Vec<String>,
     required_structured_log_fields: Vec<String>,
+    required_error_codes: Vec<String>,
     lane_command_contract: Vec<LaneCommandContract>,
     regression_verdict_samples: Vec<RegressionVerdictSample>,
     required_artifacts: Vec<String>,
@@ -142,6 +143,22 @@ fn rgc_ci_quality_log_and_artifact_contract_is_complete() {
     ] {
         assert!(artifacts.contains(required), "missing artifact {required}");
     }
+
+    let error_codes = fixture
+        .required_error_codes
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    for code in [
+        "FE-RGC-CI-QUALITY-GATE-0000",
+        "FE-RGC-CI-QUALITY-GATE-0002",
+        "FE-RGC-CI-QUALITY-GATE-0003",
+        "FE-RGC-CI-QUALITY-GATE-0004",
+        "FE-RGC-CI-QUALITY-GATE-0008",
+        "FE-RGC-CI-QUALITY-GATE-0009",
+        "FE-RGC-CI-QUALITY-GATE-0010",
+    ] {
+        assert!(error_codes.contains(code), "missing error code {code}");
+    }
 }
 
 #[test]
@@ -172,6 +189,14 @@ fn rgc_ci_quality_script_contract_references_rch_for_heavy_lanes() {
         script.contains("rch exec -- env"),
         "script must route heavy lanes through rch"
     );
+    assert!(
+        script.contains("timeout-before-remote-exit-marker"),
+        "script must classify timeout marker loss separately"
+    );
+    assert!(
+        script.contains("remote-exit-marker-lost-after-remote-start"),
+        "script must classify post-remote-start marker loss separately"
+    );
 
     for contract in fixture.lane_command_contract {
         assert!(
@@ -189,6 +214,13 @@ fn rgc_ci_quality_script_contract_references_rch_for_heavy_lanes() {
                 contract.lane
             );
         }
+    }
+
+    for code in fixture.required_error_codes {
+        assert!(
+            script.contains(&code),
+            "script missing required failure code {code}"
+        );
     }
 }
 

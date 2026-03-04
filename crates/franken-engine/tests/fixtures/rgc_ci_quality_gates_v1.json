@@ -20,6 +20,15 @@
     "outcome",
     "error_code"
   ],
+  "required_error_codes": [
+    "FE-RGC-CI-QUALITY-GATE-0000",
+    "FE-RGC-CI-QUALITY-GATE-0002",
+    "FE-RGC-CI-QUALITY-GATE-0003",
+    "FE-RGC-CI-QUALITY-GATE-0004",
+    "FE-RGC-CI-QUALITY-GATE-0008",
+    "FE-RGC-CI-QUALITY-GATE-0009",
+    "FE-RGC-CI-QUALITY-GATE-0010"
+  ],
   "lane_command_contract": [
     {
       "lane": "check",

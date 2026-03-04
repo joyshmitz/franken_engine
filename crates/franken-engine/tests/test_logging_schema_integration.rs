@@ -1356,6 +1356,18 @@ fn rgc_054a_gate_scripts_exist_and_reference_rch() {
         "gate manifest should track bead id"
     );
     assert!(
+        gate.contains("rch_missing_remote_exit_reason"),
+        "gate must classify missing remote-exit-marker failures"
+    );
+    assert!(
+        gate.contains("timeout-before-remote-exit-marker"),
+        "gate must preserve timeout-specific missing marker attribution"
+    );
+    assert!(
+        gate.contains("remote-exit-marker-lost-after-remote-start"),
+        "gate must preserve remote-start marker-loss attribution"
+    );
+    assert!(
         replay.contains("run_rgc_structured_logging_contract_gate.sh"),
         "replay wrapper must route through gate script"
     );
