@@ -1858,6 +1858,7 @@ mod tests {
         };
         let cloned = original.clone();
         original.p99_ns = 999;
+        assert_eq!(original.p99_ns, 999);
         assert_eq!(cloned.p99_ns, 300);
     }
 
@@ -1874,6 +1875,7 @@ mod tests {
         };
         let cloned = original.clone();
         original.throughput_ops_per_sec = 0;
+        assert_eq!(original.throughput_ops_per_sec, 0);
         assert_eq!(cloned.throughput_ops_per_sec, 1000);
     }
 

@@ -9,10 +9,10 @@
 use frankenengine_engine::observability_quality_sentinel::{
     DEFAULT_MAX_BLIND_SPOT_RATIO, DEFAULT_MAX_RECONSTRUCTION_AMBIGUITY,
     DEFAULT_MAX_TAIL_UNDERCOVERAGE, DEFAULT_MIN_FIDELITY, DegradationArtifact, DegradationRegime,
-    DemotionPolicy, DemotionReceipt, DemotionRule, DemotionTarget, DimensionState,
-    MIN_OBSERVATIONS_FOR_TEST, ObservabilityQualitySentinel, QualityDimension, QualityObservation,
-    QualityThreshold, SCHEMA_VERSION, SentinelReport, SequentialTestState,
-    canonical_demotion_policy, generate_report,
+    DemotionPolicy, DemotionReceipt, DemotionTarget, MIN_OBSERVATIONS_FOR_TEST,
+    ObservabilityQualitySentinel, QualityDimension, QualityObservation, QualityThreshold,
+    SCHEMA_VERSION, SentinelReport, SequentialTestState, canonical_demotion_policy,
+    generate_report,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 
@@ -258,7 +258,7 @@ fn sequential_test_update_nominal_no_rejection() {
         warning_millionths: 900_000,
     };
     // Feed nominal values (above threshold)
-    for i in 0..20 {
+    for _ in 0..20 {
         st.update(&threshold, 950_000);
     }
     assert!(!st.rejected);
@@ -463,7 +463,7 @@ fn sentinel_observe_fidelity_breached() {
     let mut sentinel = make_sentinel();
     // Fidelity below limit (800k) triggers breach
     let obs = qobs(QualityDimension::SignalFidelity, 700_000, 1000);
-    let (artifacts, receipts) = sentinel.observe(&obs);
+    let (artifacts, _receipts) = sentinel.observe(&obs);
     assert!(
         !artifacts.is_empty(),
         "expected degradation artifact for breached fidelity"
@@ -477,7 +477,7 @@ fn sentinel_observe_fidelity_emergency() {
     let mut sentinel = make_sentinel();
     // Fidelity below limit/2 (400k) triggers emergency
     let obs = qobs(QualityDimension::SignalFidelity, 300_000, 1000);
-    let (artifacts, receipts) = sentinel.observe(&obs);
+    let (artifacts, _receipts) = sentinel.observe(&obs);
     assert!(!artifacts.is_empty());
     assert_eq!(artifacts[0].regime, DegradationRegime::Emergency);
 }
@@ -487,7 +487,7 @@ fn sentinel_observe_blind_spot_breached() {
     let mut sentinel = make_sentinel();
     // Blind spot above limit (50k) triggers breach
     let obs = qobs(QualityDimension::BlindSpotRatio, 60_000, 1000);
-    let (artifacts, receipts) = sentinel.observe(&obs);
+    let (artifacts, _receipts) = sentinel.observe(&obs);
     assert!(!artifacts.is_empty());
     assert_eq!(artifacts[0].regime, DegradationRegime::Breached);
 }
@@ -500,7 +500,7 @@ fn sentinel_observe_blind_spot_breached() {
 fn sentinel_breach_triggers_demotion() {
     let mut sentinel = make_sentinel();
     let obs = qobs(QualityDimension::SignalFidelity, 700_000, 1000);
-    let (artifacts, receipts) = sentinel.observe(&obs);
+    let (_artifacts, receipts) = sentinel.observe(&obs);
     assert!(
         !receipts.is_empty(),
         "expected demotion receipt for breached fidelity"
@@ -656,7 +656,7 @@ fn full_lifecycle_observe_breach_demote_recover() {
     assert!(!sentinel.is_degraded());
 
     // 2. Breach observation
-    let (artifacts, receipts) =
+    let (artifacts, _receipts) =
         sentinel.observe(&qobs(QualityDimension::SignalFidelity, 700_000, 5000));
     assert!(!artifacts.is_empty());
     assert_eq!(sentinel.worst_regime(), DegradationRegime::Breached);

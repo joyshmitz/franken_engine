@@ -6,13 +6,12 @@
 //! factory functions, and edge-case validation beyond the existing
 //! 31 integration tests.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use frankenengine_engine::disruption_scorecard::{
-    DimensionScore, DimensionThreshold, DisruptionDimension, EvidenceInput, HistoryEntry,
-    SCORECARD_COMPONENT, SCORECARD_SCHEMA_VERSION, ScorecardError, ScorecardHistory,
-    ScorecardLogEntry, ScorecardOutcome, ScorecardResult, ScorecardSchema, compute_scorecard,
-    generate_log_entries, passes_release_gate,
+    DimensionThreshold, DisruptionDimension, EvidenceInput, SCORECARD_COMPONENT,
+    SCORECARD_SCHEMA_VERSION, ScorecardError, ScorecardHistory, ScorecardOutcome, ScorecardResult,
+    ScorecardSchema, compute_scorecard, generate_log_entries, passes_release_gate,
 };
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::security_epoch::SecurityEpoch;
