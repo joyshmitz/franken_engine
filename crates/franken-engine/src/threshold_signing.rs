@@ -2461,10 +2461,11 @@ mod tests {
         .unwrap();
 
         let events = ceremony.drain_events();
-        assert!(events.iter().any(|e| matches!(
-            e.event_type,
-            ThresholdEventType::CeremonyInitiated { .. }
-        )));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e.event_type, ThresholdEventType::CeremonyInitiated { .. }))
+        );
     }
 
     #[test]

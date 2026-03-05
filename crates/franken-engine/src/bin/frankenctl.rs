@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenengine_engine::ast::ParseGoal;
+use frankenengine_engine::benchmark_denominator::{
+    PublicationContext, PublicationGateInput, evaluate_publication_gate,
+};
 use frankenengine_engine::benchmark_e2e::{
     BenchmarkFamily, BenchmarkSuiteConfig, ScaleProfile, run_benchmark_suite,
     write_evidence_artifacts,
@@ -24,10 +27,19 @@ use frankenengine_engine::receipt_verifier_pipeline::{
     ReceiptVerifierCliInput, render_verdict_summary, verify_receipt_by_id,
 };
 use frankenengine_engine::region_lifecycle::FinalizeResult;
+use frankenengine_engine::third_party_verifier::{
+    BenchmarkClaimBundle, ClaimedBenchmarkOutcome, THIRD_PARTY_VERIFIER_COMPONENT,
+    ThirdPartyVerificationReport, VerificationCheckResult, VerificationVerdict, VerifierEvent,
+    render_report_summary, verify_benchmark_claim,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 const FRANKENCTL_SCHEMA_VERSION: &str = "franken-engine.frankenctl.v1";
 const COMPILE_ARTIFACT_SCHEMA_VERSION: &str = "franken-engine.frankenctl.compile-artifact.v1";
+const CODE_BUNDLE_MISSING_FILE: &str = "FE-TPV-BUNDLE-0001";
+const CODE_BUNDLE_PARSE_ERROR: &str = "FE-TPV-BUNDLE-0002";
+const CODE_BUNDLE_CONTEXT_MISMATCH: &str = "FE-TPV-BUNDLE-0003";
+const CODE_BUNDLE_REMOTE_EXEC: &str = "FE-TPV-BUNDLE-0004";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CommandSpec {
@@ -72,12 +84,40 @@ enum VerifyArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BenchmarkArgs {
+    mode: BenchmarkMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BenchmarkMode {
+    Run(BenchmarkRunArgs),
+    Score(BenchmarkScoreArgs),
+    Verify(BenchmarkVerifyArgs),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BenchmarkRunArgs {
     run_id: String,
     run_date: String,
     seed: u64,
     out_dir: PathBuf,
     profiles: Vec<ScaleProfile>,
     families: Vec<BenchmarkFamily>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BenchmarkScoreArgs {
+    input: PathBuf,
+    trace_id: String,
+    decision_id: String,
+    policy_id: String,
+    output: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BenchmarkVerifyArgs {
+    bundle: PathBuf,
+    output: Option<PathBuf>,
+    summary: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,6 +200,19 @@ struct BenchmarkCommandOutput {
     profiles: Vec<String>,
     families: Vec<String>,
     artifacts: BenchmarkArtifactPaths,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BenchmarkScoreCommandOutput {
+    schema_version: String,
+    trace_id: String,
+    decision_id: String,
+    policy_id: String,
+    score_vs_node: f64,
+    score_vs_bun: f64,
+    publish_allowed: bool,
+    blockers: Vec<String>,
+    output: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -380,10 +433,26 @@ fn parse_verify_args(args: &[String]) -> Result<VerifyArgs, String> {
 }
 
 fn parse_benchmark_args(args: &[String]) -> Result<BenchmarkArgs, String> {
-    if args.first().map(|value| value.as_str()) != Some("run") {
-        return Err("benchmark requires subcommand `run`".to_string());
+    if args.is_empty() {
+        return Err("benchmark requires a subcommand: run | score | verify".to_string());
     }
+    match args[0].as_str() {
+        "run" => parse_benchmark_run_args(&args[1..]).map(|run| BenchmarkArgs {
+            mode: BenchmarkMode::Run(run),
+        }),
+        "score" => parse_benchmark_score_args(&args[1..]).map(|score| BenchmarkArgs {
+            mode: BenchmarkMode::Score(score),
+        }),
+        "verify" => parse_benchmark_verify_args(&args[1..]).map(|verify| BenchmarkArgs {
+            mode: BenchmarkMode::Verify(verify),
+        }),
+        other => Err(format!(
+            "unknown benchmark subcommand `{other}` (expected run | score | verify)"
+        )),
+    }
+}
 
+fn parse_benchmark_run_args(args: &[String]) -> Result<BenchmarkRunArgs, String> {
     let mut run_id = default_run_id("benchmark");
     let mut run_date = "1970-01-01".to_string();
     let mut seed = 42_u64;
@@ -391,7 +460,7 @@ fn parse_benchmark_args(args: &[String]) -> Result<BenchmarkArgs, String> {
     let mut profiles: Vec<ScaleProfile> = Vec::new();
     let mut families: Vec<BenchmarkFamily> = Vec::new();
 
-    let mut index = 1usize;
+    let mut index = 0usize;
     while index < args.len() {
         match args[index].as_str() {
             "--run-id" => run_id = next_arg(args, &mut index, "--run-id")?,
@@ -418,13 +487,65 @@ fn parse_benchmark_args(args: &[String]) -> Result<BenchmarkArgs, String> {
         families = BenchmarkFamily::all().to_vec();
     }
 
-    Ok(BenchmarkArgs {
+    Ok(BenchmarkRunArgs {
         run_id,
         run_date,
         seed,
         out_dir,
         profiles,
         families,
+    })
+}
+
+fn parse_benchmark_score_args(args: &[String]) -> Result<BenchmarkScoreArgs, String> {
+    let mut input: Option<PathBuf> = None;
+    let mut trace_id = "trace-frankenctl-benchmark-score".to_string();
+    let mut decision_id = "decision-frankenctl-benchmark-score".to_string();
+    let mut policy_id = "frankenctl.benchmark.score.v1".to_string();
+    let mut output: Option<PathBuf> = None;
+
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--input" => input = Some(PathBuf::from(next_arg(args, &mut index, "--input")?)),
+            "--trace-id" => trace_id = next_arg(args, &mut index, "--trace-id")?,
+            "--decision-id" => decision_id = next_arg(args, &mut index, "--decision-id")?,
+            "--policy-id" => policy_id = next_arg(args, &mut index, "--policy-id")?,
+            "--output" => output = Some(PathBuf::from(next_arg(args, &mut index, "--output")?)),
+            flag => return Err(format!("unknown benchmark score flag `{flag}`")),
+        }
+        index += 1;
+    }
+
+    Ok(BenchmarkScoreArgs {
+        input: input.ok_or_else(|| "benchmark score requires --input <path>".to_string())?,
+        trace_id,
+        decision_id,
+        policy_id,
+        output,
+    })
+}
+
+fn parse_benchmark_verify_args(args: &[String]) -> Result<BenchmarkVerifyArgs, String> {
+    let mut bundle: Option<PathBuf> = None;
+    let mut output: Option<PathBuf> = None;
+    let mut summary = false;
+
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--bundle" => bundle = Some(PathBuf::from(next_arg(args, &mut index, "--bundle")?)),
+            "--output" => output = Some(PathBuf::from(next_arg(args, &mut index, "--output")?)),
+            "--summary" => summary = true,
+            flag => return Err(format!("unknown benchmark verify flag `{flag}`")),
+        }
+        index += 1;
+    }
+
+    Ok(BenchmarkVerifyArgs {
+        bundle: bundle.ok_or_else(|| "benchmark verify requires --bundle <dir>".to_string())?,
+        output,
+        summary,
     })
 }
 
@@ -595,6 +716,14 @@ fn execute_verify(args: VerifyArgs) -> Result<i32, String> {
 }
 
 fn execute_benchmark(args: BenchmarkArgs) -> Result<i32, String> {
+    match args.mode {
+        BenchmarkMode::Run(run_args) => execute_benchmark_run(run_args),
+        BenchmarkMode::Score(score_args) => execute_benchmark_score(score_args),
+        BenchmarkMode::Verify(verify_args) => execute_benchmark_verify(verify_args),
+    }
+}
+
+fn execute_benchmark_run(args: BenchmarkRunArgs) -> Result<i32, String> {
     let config = BenchmarkSuiteConfig {
         seed: args.seed,
         profiles: args.profiles.clone(),
@@ -644,6 +773,376 @@ fn execute_benchmark(args: BenchmarkArgs) -> Result<i32, String> {
 
     print_json(&output)?;
     if result.blocked { Ok(25) } else { Ok(0) }
+}
+
+fn execute_benchmark_score(args: BenchmarkScoreArgs) -> Result<i32, String> {
+    let input = load_json_file::<PublicationGateInput>(&args.input)?;
+    let ctx = PublicationContext::new(
+        args.trace_id.clone(),
+        args.decision_id.clone(),
+        args.policy_id.clone(),
+    );
+    let decision = evaluate_publication_gate(&input, &ctx)
+        .map_err(|error| format!("benchmark score evaluation failed: {error}"))?;
+
+    let claim_bundle = BenchmarkClaimBundle {
+        trace_id: ctx.trace_id.clone(),
+        decision_id: ctx.decision_id.clone(),
+        policy_id: ctx.policy_id.clone(),
+        input,
+        claimed: ClaimedBenchmarkOutcome {
+            score_vs_node: decision.score_vs_node,
+            score_vs_bun: decision.score_vs_bun,
+            publish_allowed: decision.publish_allowed,
+            blockers: decision.blockers.clone(),
+        },
+    };
+
+    if let Some(path) = &args.output {
+        write_json_file(path, &claim_bundle)?;
+    }
+
+    let output = BenchmarkScoreCommandOutput {
+        schema_version: FRANKENCTL_SCHEMA_VERSION.to_string(),
+        trace_id: ctx.trace_id,
+        decision_id: ctx.decision_id,
+        policy_id: ctx.policy_id,
+        score_vs_node: claim_bundle.claimed.score_vs_node,
+        score_vs_bun: claim_bundle.claimed.score_vs_bun,
+        publish_allowed: claim_bundle.claimed.publish_allowed,
+        blockers: claim_bundle.claimed.blockers,
+        output: args.output.map(|path| path.display().to_string()),
+    };
+
+    print_json(&output)?;
+    if output.publish_allowed {
+        Ok(0)
+    } else {
+        Ok(25)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BenchmarkBundleManifest {
+    schema_version: String,
+    trace_id: String,
+    decision_id: String,
+    policy_id: String,
+}
+
+fn execute_benchmark_verify(args: BenchmarkVerifyArgs) -> Result<i32, String> {
+    let results_path = args.bundle.join("results.json");
+    if !results_path.is_file() {
+        return Err(format!(
+            "benchmark verify requires --bundle <dir> containing env.json, manifest.json, repro.lock, commands.txt, and results.json (missing `{}`)",
+            results_path.display()
+        ));
+    }
+
+    let input = load_json_file::<BenchmarkClaimBundle>(&results_path)?;
+    let mut report = verify_benchmark_claim(&input);
+    validate_benchmark_bundle_contract(&args.bundle, &input, &mut report);
+
+    if let Some(path) = &args.output {
+        write_json_file(path, &report)?;
+    }
+    if args.summary {
+        println!("{}", render_report_summary(&report));
+    } else {
+        print_json(&report)?;
+    }
+    Ok(report.exit_code())
+}
+
+fn validate_benchmark_bundle_contract(
+    bundle_dir: &Path,
+    input: &BenchmarkClaimBundle,
+    report: &mut ThirdPartyVerificationReport,
+) {
+    let required_files = [
+        "env.json",
+        "manifest.json",
+        "repro.lock",
+        "commands.txt",
+        "results.json",
+    ];
+
+    let mut bundle_violations = false;
+    for file in required_files {
+        let path = bundle_dir.join(file);
+        let present = path.is_file();
+        append_benchmark_bundle_check(
+            report,
+            format!("bundle_file_{file}_present"),
+            present,
+            CODE_BUNDLE_MISSING_FILE,
+            if present {
+                format!("required bundle file present: {}", path.display())
+            } else {
+                format!("required bundle file missing: {}", path.display())
+            },
+        );
+        if !present {
+            bundle_violations = true;
+        }
+    }
+
+    let manifest_path = bundle_dir.join("manifest.json");
+    let manifest = if manifest_path.is_file() {
+        match load_json_file::<BenchmarkBundleManifest>(&manifest_path) {
+            Ok(manifest) => {
+                let schema_ok = !manifest.schema_version.trim().is_empty();
+                append_benchmark_bundle_check(
+                    report,
+                    "bundle_manifest_schema_version_present".to_string(),
+                    schema_ok,
+                    CODE_BUNDLE_PARSE_ERROR,
+                    if schema_ok {
+                        format!(
+                            "bundle manifest schema_version present: {}",
+                            manifest.schema_version
+                        )
+                    } else {
+                        "bundle manifest schema_version must be non-empty".to_string()
+                    },
+                );
+                if !schema_ok {
+                    bundle_violations = true;
+                }
+
+                let context_matches = manifest.trace_id == input.trace_id
+                    && manifest.decision_id == input.decision_id
+                    && manifest.policy_id == input.policy_id;
+                append_benchmark_bundle_check(
+                    report,
+                    "bundle_manifest_context_matches_claim".to_string(),
+                    context_matches,
+                    CODE_BUNDLE_CONTEXT_MISMATCH,
+                    if context_matches {
+                        "bundle manifest trace/decision/policy context matches results.json claim"
+                            .to_string()
+                    } else {
+                        format!(
+                            "bundle manifest context mismatch: manifest=({}, {}, {}), results=({}, {}, {})",
+                            manifest.trace_id,
+                            manifest.decision_id,
+                            manifest.policy_id,
+                            input.trace_id,
+                            input.decision_id,
+                            input.policy_id
+                        )
+                    },
+                );
+                if !context_matches {
+                    bundle_violations = true;
+                }
+
+                Some(manifest)
+            }
+            Err(error) => {
+                append_benchmark_bundle_check(
+                    report,
+                    "bundle_manifest_parses".to_string(),
+                    false,
+                    CODE_BUNDLE_PARSE_ERROR,
+                    error,
+                );
+                bundle_violations = true;
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let env_path = bundle_dir.join("env.json");
+    if env_path.is_file() {
+        match load_json_file::<serde_json::Value>(&env_path) {
+            Ok(value) => {
+                let env_obj = value.as_object().cloned().unwrap_or_default();
+                let env_ok = !env_obj.is_empty()
+                    && env_obj.contains_key("os")
+                    && env_obj.contains_key("arch")
+                    && (env_obj.contains_key("toolchain") || env_obj.contains_key("runtime_pins"));
+                append_benchmark_bundle_check(
+                    report,
+                    "bundle_env_has_core_fields".to_string(),
+                    env_ok,
+                    CODE_BUNDLE_PARSE_ERROR,
+                    if env_ok {
+                        "env.json includes required fields: os, arch, and toolchain/runtime_pins"
+                            .to_string()
+                    } else {
+                        "env.json must include os/arch and either toolchain or runtime_pins"
+                            .to_string()
+                    },
+                );
+                if !env_ok {
+                    bundle_violations = true;
+                }
+            }
+            Err(error) => {
+                append_benchmark_bundle_check(
+                    report,
+                    "bundle_env_parses".to_string(),
+                    false,
+                    CODE_BUNDLE_PARSE_ERROR,
+                    error,
+                );
+                bundle_violations = true;
+            }
+        }
+    }
+
+    let repro_path = bundle_dir.join("repro.lock");
+    if repro_path.is_file() {
+        let repro_ok = fs::read_to_string(&repro_path)
+            .map(|content| {
+                let trimmed = content.trim();
+                if trimmed.is_empty() {
+                    return false;
+                }
+                if trimmed.starts_with('{') || trimmed.starts_with('[') {
+                    serde_json::from_str::<serde_json::Value>(trimmed)
+                        .map(|value| value.is_object() || value.is_array())
+                        .unwrap_or(false)
+                } else {
+                    true
+                }
+            })
+            .unwrap_or(false);
+        append_benchmark_bundle_check(
+            report,
+            "bundle_repro_lock_present_and_non_empty".to_string(),
+            repro_ok,
+            CODE_BUNDLE_PARSE_ERROR,
+            if repro_ok {
+                format!(
+                    "repro.lock is present and parseable: {}",
+                    repro_path.display()
+                )
+            } else {
+                format!("repro.lock is missing or invalid: {}", repro_path.display())
+            },
+        );
+        if !repro_ok {
+            bundle_violations = true;
+        }
+    }
+
+    let commands_path = bundle_dir.join("commands.txt");
+    if commands_path.is_file() {
+        match fs::read_to_string(&commands_path) {
+            Ok(content) => {
+                let non_empty = !content.trim().is_empty();
+                append_benchmark_bundle_check(
+                    report,
+                    "bundle_commands_non_empty".to_string(),
+                    non_empty,
+                    CODE_BUNDLE_PARSE_ERROR,
+                    if non_empty {
+                        format!(
+                            "commands.txt contains command transcript: {}",
+                            commands_path.display()
+                        )
+                    } else {
+                        format!("commands.txt is empty: {}", commands_path.display())
+                    },
+                );
+                if !non_empty {
+                    bundle_violations = true;
+                }
+
+                let remote_only = content.lines().any(|line| line.contains("rch exec --"));
+                append_benchmark_bundle_check(
+                    report,
+                    "bundle_commands_include_rch_exec".to_string(),
+                    remote_only,
+                    CODE_BUNDLE_REMOTE_EXEC,
+                    if remote_only {
+                        "commands.txt includes rch-wrapped execution evidence".to_string()
+                    } else {
+                        "commands.txt must include at least one `rch exec --` command".to_string()
+                    },
+                );
+                if !remote_only {
+                    bundle_violations = true;
+                }
+            }
+            Err(error) => {
+                append_benchmark_bundle_check(
+                    report,
+                    "bundle_commands_readable".to_string(),
+                    false,
+                    CODE_BUNDLE_PARSE_ERROR,
+                    format!(
+                        "failed to read commands.txt '{}': {error}",
+                        commands_path.display()
+                    ),
+                );
+                bundle_violations = true;
+            }
+        }
+    }
+
+    let scope = if let Some(manifest) = manifest {
+        format!(
+            "bundle={} schema={} trace={} decision={} policy={}",
+            bundle_dir.display(),
+            manifest.schema_version,
+            manifest.trace_id,
+            manifest.decision_id,
+            manifest.policy_id
+        )
+    } else {
+        format!("bundle={}", bundle_dir.display())
+    };
+    report.events.push(VerifierEvent {
+        trace_id: report.trace_id.clone(),
+        decision_id: report.decision_id.clone(),
+        policy_id: report.policy_id.clone(),
+        component: THIRD_PARTY_VERIFIER_COMPONENT.to_string(),
+        event: "benchmark_bundle_contract_checked".to_string(),
+        outcome: if bundle_violations {
+            "fail".to_string()
+        } else {
+            "pass".to_string()
+        },
+        error_code: if bundle_violations {
+            Some(CODE_BUNDLE_PARSE_ERROR.to_string())
+        } else {
+            None
+        },
+    });
+
+    if bundle_violations {
+        report.verdict = VerificationVerdict::Failed;
+        report.confidence_statement =
+            "verification failed: benchmark bundle contract violations detected".to_string();
+        report.scope_limitations.push(scope);
+    } else if report.confidence_statement.trim().is_empty() {
+        report.confidence_statement =
+            "bundle contract checks passed alongside benchmark claim recomputation".to_string();
+    }
+}
+
+fn append_benchmark_bundle_check(
+    report: &mut ThirdPartyVerificationReport,
+    name: String,
+    passed: bool,
+    error_code: &'static str,
+    detail: String,
+) {
+    report.checks.push(VerificationCheckResult {
+        name,
+        passed,
+        error_code: if passed {
+            None
+        } else {
+            Some(error_code.to_string())
+        },
+        detail,
+    });
 }
 
 fn execute_replay(args: ReplayArgs) -> Result<i32, String> {
@@ -866,6 +1365,9 @@ fn usage() -> String {
         "  frankenctl verify receipt --input <verifier_input.json> --receipt-id <id> [--summary]",
         "  frankenctl benchmark run [--seed <u64>] [--run-id <id>] [--run-date <YYYY-MM-DD>]",
         "      [--profile small|medium|large]... [--family <name>]... [--out-dir <path>]",
+        "  frankenctl benchmark score --input <publication_gate_input.json>",
+        "      [--trace-id <id>] [--decision-id <id>] [--policy-id <id>] [--output <results.json>]",
+        "  frankenctl benchmark verify --bundle <dir> [--summary] [--output <report.json>]",
         "  frankenctl replay run --trace <trace.json> [--mode strict|best-effort|validate] [--out <report.json>]",
         "",
         "benchmark families:",
@@ -896,7 +1398,7 @@ fn command_remediation(command: &str) -> &'static str {
         "run" => "Verify extension source path and `--extension-id`, then rerun `frankenctl run`.",
         "verify" => "Inspect input artifact/receipt payload and rerun `frankenctl verify ...`.",
         "benchmark" => {
-            "Use constrained profiles/families first, then rerun `frankenctl benchmark run`."
+            "Validate benchmark subcommand args (run|score|verify), then rerun `frankenctl benchmark ...`."
         }
         "replay" => "Validate trace JSON and mode, then rerun `frankenctl replay run`.",
         _ => "Run `frankenctl --help` for command usage details.",
@@ -997,7 +1499,9 @@ mod tests {
         ];
         let parsed = parse_command(&args).expect("benchmark command should parse");
         match parsed {
-            CommandSpec::Benchmark(spec) => {
+            CommandSpec::Benchmark(BenchmarkArgs {
+                mode: BenchmarkMode::Run(spec),
+            }) => {
                 assert_eq!(spec.seed, 123);
                 assert_eq!(
                     spec.profiles,
@@ -1013,6 +1517,64 @@ mod tests {
                 assert_eq!(spec.out_dir, PathBuf::from("artifacts/custom"));
             }
             other => panic!("expected benchmark command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_benchmark_score_command() {
+        let args = vec![
+            "benchmark".to_string(),
+            "score".to_string(),
+            "--input".to_string(),
+            "artifacts/input.json".to_string(),
+            "--trace-id".to_string(),
+            "trace-score".to_string(),
+            "--decision-id".to_string(),
+            "decision-score".to_string(),
+            "--policy-id".to_string(),
+            "policy-score".to_string(),
+            "--output".to_string(),
+            "artifacts/results.json".to_string(),
+        ];
+        let parsed = parse_command(&args).expect("benchmark score should parse");
+        match parsed {
+            CommandSpec::Benchmark(BenchmarkArgs {
+                mode: BenchmarkMode::Score(spec),
+            }) => {
+                assert_eq!(spec.input, PathBuf::from("artifacts/input.json"));
+                assert_eq!(spec.trace_id, "trace-score");
+                assert_eq!(spec.decision_id, "decision-score");
+                assert_eq!(spec.policy_id, "policy-score");
+                assert_eq!(spec.output, Some(PathBuf::from("artifacts/results.json")));
+            }
+            other => panic!("expected benchmark score command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_benchmark_verify_command() {
+        let args = vec![
+            "benchmark".to_string(),
+            "verify".to_string(),
+            "--bundle".to_string(),
+            "artifacts/bundle".to_string(),
+            "--summary".to_string(),
+            "--output".to_string(),
+            "artifacts/verify_report.json".to_string(),
+        ];
+        let parsed = parse_command(&args).expect("benchmark verify should parse");
+        match parsed {
+            CommandSpec::Benchmark(BenchmarkArgs {
+                mode: BenchmarkMode::Verify(spec),
+            }) => {
+                assert_eq!(spec.bundle, PathBuf::from("artifacts/bundle"));
+                assert_eq!(
+                    spec.output,
+                    Some(PathBuf::from("artifacts/verify_report.json"))
+                );
+                assert!(spec.summary);
+            }
+            other => panic!("expected benchmark verify command, got {other:?}"),
         }
     }
 }

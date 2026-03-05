@@ -1121,10 +1121,22 @@ mod tests {
     fn full_profile_contains_all_16_capabilities() {
         use RuntimeCapability::*;
         let all = [
-            VmDispatch, GcInvoke, IrLowering, PolicyRead, PolicyWrite,
-            EvidenceEmit, DecisionInvoke, NetworkEgress, LeaseManagement,
-            IdempotencyDerive, ExtensionLifecycle, HeapAllocate, EnvRead,
-            ProcessSpawn, FsRead, FsWrite,
+            VmDispatch,
+            GcInvoke,
+            IrLowering,
+            PolicyRead,
+            PolicyWrite,
+            EvidenceEmit,
+            DecisionInvoke,
+            NetworkEgress,
+            LeaseManagement,
+            IdempotencyDerive,
+            ExtensionLifecycle,
+            HeapAllocate,
+            EnvRead,
+            ProcessSpawn,
+            FsRead,
+            FsWrite,
         ];
         let full = CapabilityProfile::full();
         for cap in &all {
@@ -1137,10 +1149,22 @@ mod tests {
     fn runtime_capability_display_all_unique() {
         use RuntimeCapability::*;
         let all = [
-            VmDispatch, GcInvoke, IrLowering, PolicyRead, PolicyWrite,
-            EvidenceEmit, DecisionInvoke, NetworkEgress, LeaseManagement,
-            IdempotencyDerive, ExtensionLifecycle, HeapAllocate, EnvRead,
-            ProcessSpawn, FsRead, FsWrite,
+            VmDispatch,
+            GcInvoke,
+            IrLowering,
+            PolicyRead,
+            PolicyWrite,
+            EvidenceEmit,
+            DecisionInvoke,
+            NetworkEgress,
+            LeaseManagement,
+            IdempotencyDerive,
+            ExtensionLifecycle,
+            HeapAllocate,
+            EnvRead,
+            ProcessSpawn,
+            FsRead,
+            FsWrite,
         ];
         let strings: BTreeSet<String> = all.iter().map(|c| c.to_string()).collect();
         assert_eq!(strings.len(), 16, "all display strings should be unique");
@@ -1232,10 +1256,7 @@ mod tests {
     fn custom_profile_has_and_len() {
         let profile = CapabilityProfile {
             kind: ProfileKind::ComputeOnly,
-            capabilities: BTreeSet::from([
-                RuntimeCapability::FsRead,
-                RuntimeCapability::FsWrite,
-            ]),
+            capabilities: BTreeSet::from([RuntimeCapability::FsRead, RuntimeCapability::FsWrite]),
         };
         assert_eq!(profile.len(), 2);
         assert!(profile.has(RuntimeCapability::FsRead));
@@ -1247,10 +1268,7 @@ mod tests {
     fn custom_profile_subsumption() {
         let fs_only = CapabilityProfile {
             kind: ProfileKind::ComputeOnly,
-            capabilities: BTreeSet::from([
-                RuntimeCapability::FsRead,
-                RuntimeCapability::FsWrite,
-            ]),
+            capabilities: BTreeSet::from([RuntimeCapability::FsRead, RuntimeCapability::FsWrite]),
         };
         let full = CapabilityProfile::full();
         assert!(full.subsumes(&fs_only));
@@ -1271,7 +1289,10 @@ mod tests {
         // Duplicate missing cap should produce duplicate denials.
         let result = require_all(
             &ec,
-            &[RuntimeCapability::NetworkEgress, RuntimeCapability::NetworkEgress],
+            &[
+                RuntimeCapability::NetworkEgress,
+                RuntimeCapability::NetworkEgress,
+            ],
             "test",
         );
         let denials = result.unwrap_err();
@@ -1298,15 +1319,23 @@ mod tests {
     fn require_all_partial_denials_specific_caps() {
         let ec = CapabilityProfile::engine_core();
         let caps = [
-            RuntimeCapability::VmDispatch,      // granted
-            RuntimeCapability::PolicyRead,       // denied
-            RuntimeCapability::HeapAllocate,     // granted
-            RuntimeCapability::NetworkEgress,    // denied
+            RuntimeCapability::VmDispatch,    // granted
+            RuntimeCapability::PolicyRead,    // denied
+            RuntimeCapability::HeapAllocate,  // granted
+            RuntimeCapability::NetworkEgress, // denied
         ];
         let denials = require_all(&ec, &caps, "mixed").unwrap_err();
         assert_eq!(denials.len(), 2);
-        assert!(denials.iter().any(|d| d.required == RuntimeCapability::PolicyRead));
-        assert!(denials.iter().any(|d| d.required == RuntimeCapability::NetworkEgress));
+        assert!(
+            denials
+                .iter()
+                .any(|d| d.required == RuntimeCapability::PolicyRead)
+        );
+        assert!(
+            denials
+                .iter()
+                .any(|d| d.required == RuntimeCapability::NetworkEgress)
+        );
     }
 
     // -- require_capability edge cases --------------------------------------
@@ -1376,14 +1405,31 @@ mod tests {
     fn runtime_capability_ordering_full_chain() {
         use RuntimeCapability::*;
         let ordered = [
-            VmDispatch, GcInvoke, IrLowering, PolicyRead, PolicyWrite,
-            EvidenceEmit, DecisionInvoke, NetworkEgress, LeaseManagement,
-            IdempotencyDerive, ExtensionLifecycle, HeapAllocate, EnvRead,
-            ProcessSpawn, FsRead, FsWrite,
+            VmDispatch,
+            GcInvoke,
+            IrLowering,
+            PolicyRead,
+            PolicyWrite,
+            EvidenceEmit,
+            DecisionInvoke,
+            NetworkEgress,
+            LeaseManagement,
+            IdempotencyDerive,
+            ExtensionLifecycle,
+            HeapAllocate,
+            EnvRead,
+            ProcessSpawn,
+            FsRead,
+            FsWrite,
         ];
         for i in 0..ordered.len() {
             for j in (i + 1)..ordered.len() {
-                assert!(ordered[i] < ordered[j], "{:?} should be < {:?}", ordered[i], ordered[j]);
+                assert!(
+                    ordered[i] < ordered[j],
+                    "{:?} should be < {:?}",
+                    ordered[i],
+                    ordered[j]
+                );
             }
         }
     }

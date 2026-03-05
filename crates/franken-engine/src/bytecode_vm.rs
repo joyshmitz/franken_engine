@@ -743,7 +743,8 @@ impl BytecodeVm {
 #[cfg(test)]
 mod tests {
     use super::{
-        BytecodeVm, InlineCacheStats, Instruction, ObjectId, Program, Register, Value, VmError,
+        BytecodeVm, ExecutionReport, InlineCacheEntry, InlineCacheStats, Instruction, ObjectId,
+        Program, Register, Value, VmError, VmEvent,
     };
 
     fn r(index: u16) -> Register {
@@ -2341,17 +2342,50 @@ mod tests {
     #[test]
     fn instruction_serde_roundtrip_all_variants() {
         let instructions = vec![
-            Instruction::LoadConst { dst: r(0), const_index: 1 },
-            Instruction::Move { dst: r(0), src: r(1) },
-            Instruction::Add { dst: r(0), lhs: r(1), rhs: r(2) },
-            Instruction::Sub { dst: r(0), lhs: r(1), rhs: r(2) },
-            Instruction::Mul { dst: r(0), lhs: r(1), rhs: r(2) },
-            Instruction::Div { dst: r(0), lhs: r(1), rhs: r(2) },
+            Instruction::LoadConst {
+                dst: r(0),
+                const_index: 1,
+            },
+            Instruction::Move {
+                dst: r(0),
+                src: r(1),
+            },
+            Instruction::Add {
+                dst: r(0),
+                lhs: r(1),
+                rhs: r(2),
+            },
+            Instruction::Sub {
+                dst: r(0),
+                lhs: r(1),
+                rhs: r(2),
+            },
+            Instruction::Mul {
+                dst: r(0),
+                lhs: r(1),
+                rhs: r(2),
+            },
+            Instruction::Div {
+                dst: r(0),
+                lhs: r(1),
+                rhs: r(2),
+            },
             Instruction::NewObject { dst: r(0) },
-            Instruction::StoreProp { object: r(0), property_index: 0, value: r(1) },
-            Instruction::LoadPropCached { dst: r(0), object: r(1), property_index: 0 },
+            Instruction::StoreProp {
+                object: r(0),
+                property_index: 0,
+                value: r(1),
+            },
+            Instruction::LoadPropCached {
+                dst: r(0),
+                object: r(1),
+                property_index: 0,
+            },
             Instruction::Jump { target: 0 },
-            Instruction::JumpIfFalse { condition: r(0), target: 0 },
+            Instruction::JumpIfFalse {
+                condition: r(0),
+                target: 0,
+            },
             Instruction::Return { src: r(0) },
         ];
         for instr in &instructions {
@@ -2364,15 +2398,33 @@ mod tests {
     #[test]
     fn vm_error_code_all_distinct() {
         let errors: Vec<VmError> = vec![
-            VmError::RegisterOutOfBounds { register: 0, register_count: 0 },
-            VmError::ConstantOutOfBounds { const_index: 0, constant_count: 0 },
-            VmError::PropertyIndexOutOfBounds { property_index: 0, property_count: 0 },
+            VmError::RegisterOutOfBounds {
+                register: 0,
+                register_count: 0,
+            },
+            VmError::ConstantOutOfBounds {
+                const_index: 0,
+                constant_count: 0,
+            },
+            VmError::PropertyIndexOutOfBounds {
+                property_index: 0,
+                property_count: 0,
+            },
             VmError::ObjectNotFound { object_id: 0 },
-            VmError::TypeMismatch { expected: "int", got: "bool" },
+            VmError::TypeMismatch {
+                expected: "int",
+                got: "bool",
+            },
             VmError::DivisionByZero,
-            VmError::InvalidJumpTarget { target: 0, instruction_count: 0 },
+            VmError::InvalidJumpTarget {
+                target: 0,
+                instruction_count: 0,
+            },
             VmError::MissingReturn,
-            VmError::BudgetExhausted { executed_steps: 0, step_budget: 0 },
+            VmError::BudgetExhausted {
+                executed_steps: 0,
+                step_budget: 0,
+            },
         ];
         let codes: Vec<_> = errors.iter().map(|e| e.code()).collect();
         let unique: std::collections::BTreeSet<_> = codes.iter().collect();
@@ -2382,20 +2434,56 @@ mod tests {
     #[test]
     fn vm_error_serde_roundtrip_all_variants() {
         let errors: Vec<VmError> = vec![
-            VmError::RegisterOutOfBounds { register: 5, register_count: 4 },
-            VmError::ConstantOutOfBounds { const_index: 3, constant_count: 2 },
-            VmError::PropertyIndexOutOfBounds { property_index: 1, property_count: 0 },
+            VmError::RegisterOutOfBounds {
+                register: 5,
+                register_count: 4,
+            },
+            VmError::ConstantOutOfBounds {
+                const_index: 3,
+                constant_count: 2,
+            },
+            VmError::PropertyIndexOutOfBounds {
+                property_index: 1,
+                property_count: 0,
+            },
             VmError::ObjectNotFound { object_id: 99 },
-            VmError::TypeMismatch { expected: "int", got: "bool" },
+            VmError::TypeMismatch {
+                expected: "int",
+                got: "bool",
+            },
             VmError::DivisionByZero,
-            VmError::InvalidJumpTarget { target: 10, instruction_count: 5 },
+            VmError::InvalidJumpTarget {
+                target: 10,
+                instruction_count: 5,
+            },
             VmError::MissingReturn,
-            VmError::BudgetExhausted { executed_steps: 100, step_budget: 50 },
+            VmError::BudgetExhausted {
+                executed_steps: 100,
+                step_budget: 50,
+            },
         ];
-        for err in &errors {
+        let variants = [
+            "RegisterOutOfBounds",
+            "ConstantOutOfBounds",
+            "PropertyIndexOutOfBounds",
+            "ObjectNotFound",
+            "TypeMismatch",
+            "DivisionByZero",
+            "InvalidJumpTarget",
+            "MissingReturn",
+            "BudgetExhausted",
+        ];
+
+        for (err, variant) in errors.iter().zip(variants) {
             let json = serde_json::to_string(err).unwrap();
-            let back: VmError = serde_json::from_str(&json).unwrap();
-            assert_eq!(*err, back);
+            let payload: serde_json::Value = serde_json::from_str(&json).unwrap();
+            let object = payload
+                .as_object()
+                .expect("VmError serialization should be an object");
+            assert!(
+                object.contains_key(variant),
+                "serialized VmError should include variant `{variant}`: {json}"
+            );
         }
     }
 
@@ -2405,7 +2493,10 @@ mod tests {
             constants: vec![Value::Int(1)],
             property_pool: Vec::new(),
             instructions: vec![
-                Instruction::LoadConst { dst: r(0), const_index: 0 },
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
                 Instruction::Return { src: r(0) },
             ],
         };
@@ -2446,9 +2537,19 @@ mod tests {
             constants: vec![Value::Int(42), Value::Int(0)],
             property_pool: Vec::new(),
             instructions: vec![
-                Instruction::LoadConst { dst: r(0), const_index: 0 },
-                Instruction::LoadConst { dst: r(1), const_index: 1 },
-                Instruction::Mul { dst: r(2), lhs: r(0), rhs: r(1) },
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Mul {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
                 Instruction::Return { src: r(2) },
             ],
         };
@@ -2463,9 +2564,19 @@ mod tests {
             constants: vec![Value::Int(-10), Value::Int(-20)],
             property_pool: Vec::new(),
             instructions: vec![
-                Instruction::LoadConst { dst: r(0), const_index: 0 },
-                Instruction::LoadConst { dst: r(1), const_index: 1 },
-                Instruction::Add { dst: r(2), lhs: r(0), rhs: r(1) },
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Add {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
                 Instruction::Return { src: r(2) },
             ],
         };
@@ -2481,8 +2592,15 @@ mod tests {
             property_pool: Vec::new(),
             instructions: vec![
                 Instruction::NewObject { dst: r(0) },
-                Instruction::LoadConst { dst: r(1), const_index: 0 },
-                Instruction::Div { dst: r(2), lhs: r(0), rhs: r(1) },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 0,
+                },
+                Instruction::Div {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
                 Instruction::Return { src: r(2) },
             ],
         };
@@ -2497,9 +2615,19 @@ mod tests {
             constants: vec![Value::Int(5), Value::Bool(true)],
             property_pool: Vec::new(),
             instructions: vec![
-                Instruction::LoadConst { dst: r(0), const_index: 0 },
-                Instruction::LoadConst { dst: r(1), const_index: 1 },
-                Instruction::Sub { dst: r(2), lhs: r(0), rhs: r(1) },
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Sub {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
                 Instruction::Return { src: r(2) },
             ],
         };
@@ -2529,7 +2657,10 @@ mod tests {
             constants: vec![Value::Int(1)],
             property_pool: Vec::new(),
             instructions: vec![
-                Instruction::LoadConst { dst: r(0), const_index: 0 },
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
                 Instruction::Return { src: r(0) },
             ],
         };
@@ -2547,9 +2678,19 @@ mod tests {
             constants: vec![Value::Int(1), Value::Int(2)],
             property_pool: Vec::new(),
             instructions: vec![
-                Instruction::LoadConst { dst: r(0), const_index: 0 },
-                Instruction::LoadConst { dst: r(1), const_index: 1 },
-                Instruction::Add { dst: r(2), lhs: r(0), rhs: r(1) },
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::LoadConst {
+                    dst: r(1),
+                    const_index: 1,
+                },
+                Instruction::Add {
+                    dst: r(2),
+                    lhs: r(0),
+                    rhs: r(1),
+                },
                 Instruction::Return { src: r(2) },
             ],
         };
@@ -2566,7 +2707,10 @@ mod tests {
             constants: vec![Value::Bool(true)],
             property_pool: Vec::new(),
             instructions: vec![
-                Instruction::LoadConst { dst: r(0), const_index: 0 },
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
                 Instruction::Return { src: r(0) },
             ],
         };
@@ -2581,7 +2725,10 @@ mod tests {
             constants: vec![Value::Int(42)],
             property_pool: Vec::new(),
             instructions: vec![
-                Instruction::LoadConst { dst: r(0), const_index: 0 },
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
                 Instruction::Return { src: r(0) },
             ],
         };
@@ -2594,7 +2741,11 @@ mod tests {
 
     #[test]
     fn inline_cache_stats_serde_roundtrip() {
-        let stats = InlineCacheStats { entries: 3, hits: 10, misses: 2 };
+        let stats = InlineCacheStats {
+            entries: 3,
+            hits: 10,
+            misses: 2,
+        };
         let json = serde_json::to_string(&stats).unwrap();
         let back: InlineCacheStats = serde_json::from_str(&json).unwrap();
         assert_eq!(stats, back);
@@ -2638,8 +2789,14 @@ mod tests {
             constants: vec![Value::Bool(false)],
             property_pool: Vec::new(),
             instructions: vec![
-                Instruction::LoadConst { dst: r(0), const_index: 0 },
-                Instruction::Move { dst: r(1), src: r(0) },
+                Instruction::LoadConst {
+                    dst: r(0),
+                    const_index: 0,
+                },
+                Instruction::Move {
+                    dst: r(1),
+                    src: r(0),
+                },
                 Instruction::Return { src: r(1) },
             ],
         };

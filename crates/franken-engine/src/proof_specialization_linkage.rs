@@ -144,6 +144,34 @@ impl LinkageRecord {
         self.proof_inputs.iter().all(|p| p.proof_epoch == epoch)
     }
 
+    fn expiry_tick_for_window(&self, validity_window_ticks: u64) -> Option<u64> {
+        if validity_window_ticks == 0 {
+            None
+        } else {
+            Some(
+                self.rollback
+                    .activation_tick
+                    .saturating_add(validity_window_ticks),
+            )
+        }
+    }
+
+    /// Returns the first expired proof window with its computed expiry tick.
+    ///
+    /// Proof windows with `validity_window_ticks == 0` are treated as
+    /// unbounded and never expire.
+    pub fn first_expired_proof_window(&self, current_tick: u64) -> Option<(String, u64)> {
+        self.proof_inputs.iter().find_map(|proof_input| {
+            let expiry_tick = self.expiry_tick_for_window(proof_input.validity_window_ticks)?;
+            (current_tick >= expiry_tick).then(|| (proof_input.proof_id.clone(), expiry_tick))
+        })
+    }
+
+    /// Check whether every bounded proof window remains valid at `current_tick`.
+    pub fn proof_windows_valid_at(&self, current_tick: u64) -> bool {
+        self.first_expired_proof_window(current_tick).is_none()
+    }
+
     /// Convert to the IR3 `SpecializationLinkage` format.
     pub fn to_ir3_linkage(&self) -> SpecializationLinkage {
         SpecializationLinkage {
@@ -515,6 +543,53 @@ impl LinkageEngine {
         }
 
         self.emit_event(trace_id, "on_epoch_change", "ok", None);
+        rollbacks
+    }
+
+    /// Invalidate active linkages whose proof validity windows have expired at
+    /// `current_tick`.
+    ///
+    /// `validity_window_ticks == 0` is treated as unbounded and does not
+    /// trigger invalidation.
+    pub fn invalidate_expired_proof_windows(
+        &mut self,
+        current_tick: u64,
+        trace_id: &str,
+    ) -> Vec<(LinkageId, ContentHash)> {
+        let mut rollbacks = Vec::new();
+
+        let to_invalidate: Vec<(LinkageId, String, u64)> = self
+            .linkages
+            .iter()
+            .filter_map(|(id, record)| {
+                if !record.active {
+                    return None;
+                }
+                record
+                    .first_expired_proof_window(current_tick)
+                    .map(|(proof_id, expiry_tick)| (id.clone(), proof_id, expiry_tick))
+            })
+            .collect();
+
+        for (id, proof_id, expiry_tick) in to_invalidate {
+            if let Some(record) = self.linkages.get_mut(&id) {
+                record.active = false;
+                let baseline_hash = record.rollback.baseline_ir3_hash.clone();
+                rollbacks.push((id.clone(), baseline_hash));
+                self.invalidations.push((
+                    id,
+                    InvalidationCause::PolicyChange {
+                        reason: format!(
+                            "proof_window_expired(proof_id={proof_id}, expiry_tick={expiry_tick}, observed_tick={current_tick})"
+                        ),
+                    },
+                ));
+            }
+        }
+
+        if !rollbacks.is_empty() {
+            self.emit_event(trace_id, "invalidate_expired_proof_windows", "ok", None);
+        }
         rollbacks
     }
 
@@ -2293,6 +2368,63 @@ mod tests {
         // Second call: already inactive, should not match
         let r2 = engine.invalidate_by_proof("proof-a", "t3");
         assert!(r2.is_empty());
+    }
+
+    #[test]
+    fn invalidate_expired_proof_windows_deactivates_and_records_reason() {
+        let mut engine = make_engine(5);
+        let mut linkage = make_linkage("link-expire", 5, &["proof-a"]);
+        linkage.rollback.activation_tick = 50;
+        linkage.proof_inputs[0].validity_window_ticks = 10; // expires at 60
+        engine.register(linkage, "t1").unwrap();
+
+        let rollbacks = engine.invalidate_expired_proof_windows(60, "t2");
+        assert_eq!(rollbacks.len(), 1);
+        assert_eq!(rollbacks[0].0, LinkageId::new("link-expire"));
+
+        let stored = engine.get(&LinkageId::new("link-expire")).unwrap();
+        assert!(!stored.active);
+
+        let (_, cause) = engine.invalidations().last().unwrap();
+        match cause {
+            InvalidationCause::PolicyChange { reason } => {
+                assert!(reason.contains("proof_window_expired"));
+                assert!(reason.contains("proof-a"));
+                assert!(reason.contains("expiry_tick=60"));
+                assert!(reason.contains("observed_tick=60"));
+            }
+            other => panic!("expected PolicyChange, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn invalidate_expired_proof_windows_skips_unbounded_windows() {
+        let mut engine = make_engine(5);
+        let mut linkage = make_linkage("link-unbounded", 5, &["proof-a"]);
+        linkage.proof_inputs[0].validity_window_ticks = 0; // unbounded
+        engine.register(linkage, "t1").unwrap();
+
+        let rollbacks = engine.invalidate_expired_proof_windows(u64::MAX, "t2");
+        assert!(rollbacks.is_empty());
+        assert_eq!(engine.active_count(), 1);
+        assert!(engine.invalidations().is_empty());
+    }
+
+    #[test]
+    fn invalidate_expired_proof_windows_uses_saturating_expiry_tick() {
+        let mut engine = make_engine(5);
+        let mut linkage = make_linkage("link-saturating", 5, &["proof-a"]);
+        linkage.rollback.activation_tick = u64::MAX - 5;
+        linkage.proof_inputs[0].validity_window_ticks = 100; // saturates to u64::MAX
+        engine.register(linkage, "t1").unwrap();
+
+        let before_max = engine.invalidate_expired_proof_windows(u64::MAX - 1, "t2");
+        assert!(before_max.is_empty());
+        assert_eq!(engine.active_count(), 1);
+
+        let at_max = engine.invalidate_expired_proof_windows(u64::MAX, "t3");
+        assert_eq!(at_max.len(), 1);
+        assert_eq!(engine.active_count(), 0);
     }
 
     #[test]

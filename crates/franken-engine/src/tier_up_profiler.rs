@@ -853,8 +853,8 @@ mod tests {
     fn profile_observed_events_counts_only_candidates() {
         let events = vec![
             make_vm_event(0, "add", None),
-            make_vm_event(1, "budget", None),  // excluded
-            make_vm_event(2, "eof", None),     // excluded
+            make_vm_event(1, "budget", None), // excluded
+            make_vm_event(2, "eof", None),    // excluded
         ];
         let report = make_report(100, events);
         let profile = build_hot_path_profile(&report, 10);
@@ -890,10 +890,7 @@ mod tests {
 
     #[test]
     fn profile_top_k_zero_becomes_one() {
-        let events = vec![
-            make_vm_event(0, "a", None),
-            make_vm_event(1, "b", None),
-        ];
+        let events = vec![make_vm_event(0, "a", None), make_vm_event(1, "b", None)];
         let report = make_report(100, events);
         let profile = build_hot_path_profile(&report, 0);
         assert_eq!(profile.top_paths.len(), 1);
@@ -915,10 +912,7 @@ mod tests {
 
     #[test]
     fn profile_tiebreak_by_ip_for_equal_invocations() {
-        let events = vec![
-            make_vm_event(10, "op", None),
-            make_vm_event(5, "op", None),
-        ];
+        let events = vec![make_vm_event(10, "op", None), make_vm_event(5, "op", None)];
         let report = make_report(100, events);
         let profile = build_hot_path_profile(&report, 10);
         // Equal invocations, tiebreak ascending by ip
@@ -936,7 +930,12 @@ mod tests {
         let report = make_report(100, events);
         let decision = evaluate_tier_up_eligibility(&report, &TierUpPolicy::default());
         assert!(decision.events.iter().any(|e| e.event == "tier_up_started"));
-        assert!(decision.events.iter().any(|e| e.event == "tier_up_completed"));
+        assert!(
+            decision
+                .events
+                .iter()
+                .any(|e| e.event == "tier_up_completed")
+        );
     }
 
     #[test]
@@ -944,7 +943,11 @@ mod tests {
         let report = make_report(1, Vec::new());
         let decision = evaluate_tier_up_eligibility(&report, &TierUpPolicy::default());
         assert!(!decision.eligible);
-        let completed = decision.events.iter().find(|e| e.event == "tier_up_completed").unwrap();
+        let completed = decision
+            .events
+            .iter()
+            .find(|e| e.event == "tier_up_completed")
+            .unwrap();
         assert_eq!(completed.outcome, "deny");
         assert_eq!(completed.reason, "insufficient_total_steps");
     }
@@ -968,7 +971,10 @@ mod tests {
         let report = make_report(100, events);
         let decision = evaluate_tier_up_eligibility(&report, &policy);
         assert_eq!(decision.rejected_paths.len(), 1);
-        assert_eq!(decision.rejected_paths[0].reason, "insufficient_invocations");
+        assert_eq!(
+            decision.rejected_paths[0].reason,
+            "insufficient_invocations"
+        );
     }
 
     #[test]
@@ -987,7 +993,12 @@ mod tests {
         ];
         let report = make_report(100, events);
         let decision = evaluate_tier_up_eligibility(&report, &policy);
-        assert!(decision.rejected_paths.iter().any(|r| r.reason == "cache_hit_rate_below_threshold"));
+        assert!(
+            decision
+                .rejected_paths
+                .iter()
+                .any(|r| r.reason == "cache_hit_rate_below_threshold")
+        );
     }
 
     #[test]
@@ -1002,7 +1013,12 @@ mod tests {
         let events = vec![make_vm_event(0, "add", None)];
         let report = make_report(100, events);
         let decision = evaluate_tier_up_eligibility(&report, &policy);
-        assert!(decision.rejected_paths.iter().any(|r| r.reason == "missing_cache_signal"));
+        assert!(
+            decision
+                .rejected_paths
+                .iter()
+                .any(|r| r.reason == "missing_cache_signal")
+        );
     }
 
     #[test]
@@ -1037,7 +1053,11 @@ mod tests {
         let report = make_report(100, events);
         let decision = evaluate_tier_up_eligibility(&report, &policy);
         assert!(decision.eligible);
-        let completed = decision.events.iter().find(|e| e.event == "tier_up_completed").unwrap();
+        let completed = decision
+            .events
+            .iter()
+            .find(|e| e.event == "tier_up_completed")
+            .unwrap();
         assert_eq!(completed.outcome, "allow");
     }
 

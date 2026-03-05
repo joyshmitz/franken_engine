@@ -1891,6 +1891,7 @@ mod tests {
         let mut cloned = original.clone();
         cloned.null_mean_millionths = 1_000_000;
         assert_eq!(original.null_mean_millionths, 500_000);
+        assert_eq!(cloned.null_mean_millionths, 1_000_000);
     }
 
     // -- Category 5: JSON field-name stability --

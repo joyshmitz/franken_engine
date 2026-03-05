@@ -2718,13 +2718,9 @@ mod tests {
         assert_eq!(fs_ev.analysis_method, AnalysisMethod::LatticeReachability);
 
         // net_send via ManifestFallback (dead path, but declared)
-        let net_ev = report
-            .per_capability_evidence
-            .iter()
-            .find(|e| {
-                e.capability == cap("net_send")
-                    && e.analysis_method == AnalysisMethod::ManifestFallback
-            });
+        let net_ev = report.per_capability_evidence.iter().find(|e| {
+            e.capability == cap("net_send") && e.analysis_method == AnalysisMethod::ManifestFallback
+        });
         assert!(net_ev.is_some());
 
         // Both in upper bound

@@ -131,6 +131,7 @@ pub mod module_resolver;
 pub mod monitor_scheduler;
 pub mod moonshot_contract;
 pub mod northstar_scorecard;
+pub mod npm_compatibility_matrix;
 pub mod object_model;
 pub mod obligation_channel;
 pub mod obligation_integration;

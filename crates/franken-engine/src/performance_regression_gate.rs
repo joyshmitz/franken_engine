@@ -314,7 +314,11 @@ pub fn evaluate_performance_regression_gate(
     waivers.sort_by(|left, right| {
         left.workload_id
             .cmp(&right.workload_id)
-            .then_with(|| right.expires_at_unix_seconds.cmp(&left.expires_at_unix_seconds))
+            .then_with(|| {
+                right
+                    .expires_at_unix_seconds
+                    .cmp(&left.expires_at_unix_seconds)
+            })
             .then_with(|| left.waiver_id.cmp(&right.waiver_id))
     });
     let waivers_by_workload = waivers
@@ -788,10 +792,12 @@ mod tests {
         assert!(report.blocking);
         assert_eq!(report.highest_severity, RegressionSeverity::High);
         assert_eq!(report.regressions.len(), 2);
-        assert!(report
-            .regressions
-            .iter()
-            .any(|finding| finding.error_code == ERROR_WAIVER_EXPIRED));
+        assert!(
+            report
+                .regressions
+                .iter()
+                .any(|finding| finding.error_code == ERROR_WAIVER_EXPIRED)
+        );
     }
 
     #[test]
@@ -994,7 +1000,12 @@ mod tests {
         );
         assert!(report.blocking);
         assert_eq!(report.highest_severity, RegressionSeverity::Critical);
-        assert!(report.regressions.iter().any(|f| f.error_code == ERROR_ZERO_BASELINE));
+        assert!(
+            report
+                .regressions
+                .iter()
+                .any(|f| f.error_code == ERROR_ZERO_BASELINE)
+        );
     }
 
     #[test]
@@ -1005,7 +1016,12 @@ mod tests {
             &baseline_policy(),
         );
         assert!(report.blocking);
-        assert!(report.regressions.iter().any(|f| f.error_code == ERROR_MISSING_METADATA));
+        assert!(
+            report
+                .regressions
+                .iter()
+                .any(|f| f.error_code == ERROR_MISSING_METADATA)
+        );
     }
 
     #[test]
@@ -1015,7 +1031,12 @@ mod tests {
             &RegressionGateInput::new("t", "d", "p", 100, vec![obs], Vec::new()),
             &baseline_policy(),
         );
-        assert!(report.regressions.iter().any(|f| f.error_code == ERROR_MISSING_METADATA));
+        assert!(
+            report
+                .regressions
+                .iter()
+                .any(|f| f.error_code == ERROR_MISSING_METADATA)
+        );
     }
 
     #[test]
@@ -1025,7 +1046,12 @@ mod tests {
             &RegressionGateInput::new("t", "d", "p", 100, vec![obs], Vec::new()),
             &baseline_policy(),
         );
-        assert!(report.regressions.iter().any(|f| f.error_code == ERROR_LOW_CONFIDENCE));
+        assert!(
+            report
+                .regressions
+                .iter()
+                .any(|f| f.error_code == ERROR_LOW_CONFIDENCE)
+        );
     }
 
     #[test]
@@ -1036,7 +1062,12 @@ mod tests {
             &baseline_policy(),
         );
         assert_eq!(report.highest_severity, RegressionSeverity::Critical);
-        assert!(report.regressions.iter().any(|f| f.error_code == ERROR_CRITICAL_REGRESSION));
+        assert!(
+            report
+                .regressions
+                .iter()
+                .any(|f| f.error_code == ERROR_CRITICAL_REGRESSION)
+        );
     }
 
     #[test]
@@ -1048,7 +1079,12 @@ mod tests {
             &baseline_policy(),
         );
         assert_eq!(report.highest_severity, RegressionSeverity::High);
-        assert!(report.regressions.iter().any(|f| f.error_code == ERROR_FAIL_REGRESSION));
+        assert!(
+            report
+                .regressions
+                .iter()
+                .any(|f| f.error_code == ERROR_FAIL_REGRESSION)
+        );
     }
 
     #[test]
@@ -1060,7 +1096,12 @@ mod tests {
             &baseline_policy(),
         );
         assert_eq!(report.highest_severity, RegressionSeverity::Warning);
-        assert!(report.regressions.iter().any(|f| f.error_code == WARN_REGRESSION));
+        assert!(
+            report
+                .regressions
+                .iter()
+                .any(|f| f.error_code == WARN_REGRESSION)
+        );
     }
 
     #[test]
@@ -1080,9 +1121,7 @@ mod tests {
     fn waiver_exactly_at_expiry_is_not_expired() {
         let waiver = RegressionWaiver::new("w-id", "w-a", "owner", 1_700_000_000, "reason");
         let obs = mk_obs("w-a", 100_000, 160_000, 10_000);
-        let input = RegressionGateInput::new(
-            "t", "d", "p", 1_700_000_000, vec![obs], vec![waiver],
-        );
+        let input = RegressionGateInput::new("t", "d", "p", 1_700_000_000, vec![obs], vec![waiver]);
         let report = evaluate_performance_regression_gate(&input, &baseline_policy());
         assert!(!report.blocking);
         assert_eq!(report.regressions[0].status, RegressionStatus::Waived);
@@ -1092,9 +1131,7 @@ mod tests {
     fn waiver_one_second_after_expiry_is_expired() {
         let waiver = RegressionWaiver::new("w-id", "w-a", "owner", 1_700_000_000, "reason");
         let obs = mk_obs("w-a", 100_000, 160_000, 10_000);
-        let input = RegressionGateInput::new(
-            "t", "d", "p", 1_700_000_001, vec![obs], vec![waiver],
-        );
+        let input = RegressionGateInput::new("t", "d", "p", 1_700_000_001, vec![obs], vec![waiver]);
         let report = evaluate_performance_regression_gate(&input, &baseline_policy());
         assert!(report.blocking);
     }
@@ -1112,16 +1149,17 @@ mod tests {
         assert!(!report.blocking);
         assert_eq!(report.regressions.len(), 1);
         assert_eq!(report.regressions[0].status, RegressionStatus::Waived);
-        assert_eq!(report.regressions[0].waiver_id.as_deref(), Some("waiver-z-active"));
+        assert_eq!(
+            report.regressions[0].waiver_id.as_deref(),
+            Some("waiver-z-active")
+        );
     }
 
     #[test]
     fn waiver_for_wrong_workload_is_ignored() {
         let waiver = RegressionWaiver::new("w-id", "other-workload", "owner", 1_800_000_000, "r");
         let obs = mk_obs("w-a", 100_000, 160_000, 10_000);
-        let input = RegressionGateInput::new(
-            "t", "d", "p", 1_700_000_000, vec![obs], vec![waiver],
-        );
+        let input = RegressionGateInput::new("t", "d", "p", 1_700_000_000, vec![obs], vec![waiver]);
         let report = evaluate_performance_regression_gate(&input, &baseline_policy());
         assert!(report.blocking);
         assert_eq!(report.regressions[0].status, RegressionStatus::Active);
@@ -1132,20 +1170,21 @@ mod tests {
         let waiver = RegressionWaiver::new("w-id", "w-a", "owner", 1_600_000_000, "expired");
         // 2.5% = warning level, not blocking
         let obs = mk_obs("w-a", 1_000_000, 1_025_000, 10_000);
-        let input = RegressionGateInput::new(
-            "t", "d", "p", 1_700_000_000, vec![obs], vec![waiver],
-        );
+        let input = RegressionGateInput::new("t", "d", "p", 1_700_000_000, vec![obs], vec![waiver]);
         let report = evaluate_performance_regression_gate(&input, &baseline_policy());
-        assert!(!report.regressions.iter().any(|f| f.error_code == ERROR_WAIVER_EXPIRED));
+        assert!(
+            !report
+                .regressions
+                .iter()
+                .any(|f| f.error_code == ERROR_WAIVER_EXPIRED)
+        );
     }
 
     #[test]
     fn waived_finding_populates_waiver_fields() {
         let waiver = RegressionWaiver::new("wv-1", "w-a", "alice", 1_800_000_000, "noisy");
         let obs = mk_obs("w-a", 100_000, 160_000, 10_000);
-        let input = RegressionGateInput::new(
-            "t", "d", "p", 1_700_000_000, vec![obs], vec![waiver],
-        );
+        let input = RegressionGateInput::new("t", "d", "p", 1_700_000_000, vec![obs], vec![waiver]);
         let report = evaluate_performance_regression_gate(&input, &baseline_policy());
         let finding = &report.regressions[0];
         assert_eq!(finding.waiver_id.as_deref(), Some("wv-1"));
@@ -1226,9 +1265,7 @@ mod tests {
     fn waived_findings_excluded_from_culprit_ranking() {
         let waiver = RegressionWaiver::new("wv", "w-a", "owner", 1_800_000_000, "r");
         let obs = mk_obs("w-a", 100_000, 160_000, 10_000);
-        let input = RegressionGateInput::new(
-            "t", "d", "p", 1_700_000_000, vec![obs], vec![waiver],
-        );
+        let input = RegressionGateInput::new("t", "d", "p", 1_700_000_000, vec![obs], vec![waiver]);
         let report = evaluate_performance_regression_gate(&input, &baseline_policy());
         assert!(report.culprit_ranking.is_empty());
     }
@@ -1242,7 +1279,10 @@ mod tests {
             &RegressionGateInput::new("t", "d", "p", 100, vec![obs], Vec::new()),
             &baseline_policy(),
         );
-        assert_eq!(report.schema_version, PERFORMANCE_REGRESSION_GATE_SCHEMA_VERSION);
+        assert_eq!(
+            report.schema_version,
+            PERFORMANCE_REGRESSION_GATE_SCHEMA_VERSION
+        );
     }
 
     #[test]
@@ -1307,7 +1347,11 @@ mod tests {
             &RegressionGateInput::new("t", "d", "p", 100, vec![obs], Vec::new()),
             &baseline_policy(),
         );
-        let decision = report.logs.iter().find(|l| l.event == "gate_decision").unwrap();
+        let decision = report
+            .logs
+            .iter()
+            .find(|l| l.event == "gate_decision")
+            .unwrap();
         assert_eq!(decision.outcome, "promote");
     }
 
@@ -1318,7 +1362,11 @@ mod tests {
             &RegressionGateInput::new("t", "d", "p", 100, vec![obs], Vec::new()),
             &baseline_policy(),
         );
-        let decision = report.logs.iter().find(|l| l.event == "gate_decision").unwrap();
+        let decision = report
+            .logs
+            .iter()
+            .find(|l| l.event == "gate_decision")
+            .unwrap();
         assert_eq!(decision.outcome, "hold");
     }
 
@@ -1354,7 +1402,10 @@ mod tests {
     #[test]
     fn input_serde_roundtrip() {
         let input = RegressionGateInput::new(
-            "t", "d", "p", 100,
+            "t",
+            "d",
+            "p",
+            100,
             vec![mk_obs("w", 100, 200, 5000)],
             vec![RegressionWaiver::new("wv", "w", "o", 200, "r")],
         );
@@ -1448,7 +1499,10 @@ mod tests {
         let obs_warn = mk_obs("w-warn", 1_000_000, 1_025_000, 10_000);
         let obs_crit = mk_obs("w-crit", 100_000, 200_000, 10_000);
         let input = RegressionGateInput::new(
-            "t", "d", "p", 1_700_000_000,
+            "t",
+            "d",
+            "p",
+            1_700_000_000,
             vec![obs_warn, obs_crit],
             vec![waiver],
         );

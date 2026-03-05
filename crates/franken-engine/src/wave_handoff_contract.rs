@@ -1160,7 +1160,7 @@ mod tests {
     #[test]
     fn required_bead_status_copy_in_vec() {
         let s = RequiredBeadStatus::InProgress;
-        let v = vec![s, s, s]; // Copy into vec multiple times
+        let v = [s, s, s]; // Copy into array multiple times
         assert_eq!(v.len(), 3);
         assert!(v.iter().all(|x| *x == RequiredBeadStatus::InProgress));
     }
@@ -1347,6 +1347,8 @@ mod tests {
         let mut cloned = original.clone();
         cloned.criterion_id = "c2".to_string();
         cloned.mandatory = false;
+        assert_eq!(cloned.criterion_id, "c2");
+        assert!(!cloned.mandatory);
         assert_eq!(original.criterion_id, "c1");
         assert!(original.mandatory);
     }
@@ -1358,6 +1360,9 @@ mod tests {
         cloned.wave_id = WaveId::Wave3;
         cloned.minimum_handoff_score_milli = 999;
         cloned.entry_criteria.clear();
+        assert_eq!(cloned.wave_id, WaveId::Wave3);
+        assert_eq!(cloned.minimum_handoff_score_milli, 999);
+        assert!(cloned.entry_criteria.is_empty());
         assert_eq!(original.wave_id, WaveId::Wave0);
         assert_eq!(original.minimum_handoff_score_milli, 850);
         assert!(!original.entry_criteria.is_empty());
@@ -1370,6 +1375,9 @@ mod tests {
         cloned.packet_id = "pkt-modified".to_string();
         cloned.changed_beads.clear();
         cloned.completeness_score_milli = 0;
+        assert_eq!(cloned.packet_id, "pkt-modified");
+        assert!(cloned.changed_beads.is_empty());
+        assert_eq!(cloned.completeness_score_milli, 0);
         assert_eq!(original.packet_id, "pkt-rgc-wave-1-demo");
         assert!(!original.changed_beads.is_empty());
         assert_eq!(original.completeness_score_milli, 920);
@@ -1386,6 +1394,8 @@ mod tests {
         let mut cloned = original.clone();
         cloned.bead_status = RequiredBeadStatus::Closed;
         cloned.artifact_ref = "other.json".to_string();
+        assert_eq!(cloned.bead_status, RequiredBeadStatus::Closed);
+        assert_eq!(cloned.artifact_ref, "other.json");
         assert_eq!(original.bead_status, RequiredBeadStatus::InProgress);
         assert_eq!(original.artifact_ref, "art.json");
     }
@@ -1399,6 +1409,8 @@ mod tests {
         let mut cloned = original.clone();
         cloned.code = HandoffValidationErrorCode::WeakHandoffPackage;
         cloned.message = "modified".to_string();
+        assert_eq!(cloned.code, HandoffValidationErrorCode::WeakHandoffPackage);
+        assert_eq!(cloned.message, "modified");
         assert_eq!(
             original.code,
             HandoffValidationErrorCode::MissingRequiredField
@@ -1427,6 +1439,9 @@ mod tests {
             code: HandoffValidationErrorCode::WeakHandoffPackage,
             message: "weak".to_string(),
         });
+        assert!(!cloned.valid);
+        assert_eq!(cloned.outcome, "fail");
+        assert_eq!(cloned.failures.len(), 1);
         assert!(original.valid);
         assert_eq!(original.outcome, "pass");
         assert!(original.failures.is_empty());
@@ -1449,6 +1464,8 @@ mod tests {
         let mut cloned = original.clone();
         cloned.event = "modified".to_string();
         cloned.error_code = Some("err".to_string());
+        assert_eq!(cloned.event, "modified");
+        assert_eq!(cloned.error_code.as_deref(), Some("err"));
         assert_eq!(original.event, "evt");
         assert_eq!(original.error_code, None);
     }

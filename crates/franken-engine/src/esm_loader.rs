@@ -1467,7 +1467,10 @@ mod tests {
     fn module_status_display_all_variants() {
         assert_eq!(format!("{}", ModuleStatus::Linked), "linked");
         assert_eq!(format!("{}", ModuleStatus::Evaluating), "evaluating");
-        assert_eq!(format!("{}", ModuleStatus::EvaluationError), "evaluation_error");
+        assert_eq!(
+            format!("{}", ModuleStatus::EvaluationError),
+            "evaluation_error"
+        );
     }
 
     #[test]
@@ -1922,7 +1925,11 @@ mod tests {
 
     #[test]
     fn binding_type_serde_roundtrip() {
-        for bt in [BindingType::Direct, BindingType::ReExport, BindingType::StarReExport] {
+        for bt in [
+            BindingType::Direct,
+            BindingType::ReExport,
+            BindingType::StarReExport,
+        ] {
             let json = serde_json::to_string(&bt).unwrap();
             let bt2: BindingType = serde_json::from_str(&json).unwrap();
             assert_eq!(bt, bt2);
@@ -2038,7 +2045,10 @@ mod tests {
         graph.add_module(m).unwrap();
         graph.link().unwrap();
         graph.evaluate().unwrap();
-        assert_eq!(graph.get_module("main.js").unwrap().content_hash, hash_before);
+        assert_eq!(
+            graph.get_module("main.js").unwrap().content_hash,
+            hash_before
+        );
     }
 
     // -- Determinism ---------------------------------------------------------
