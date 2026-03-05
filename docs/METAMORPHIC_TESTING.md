@@ -70,6 +70,7 @@ Each run writes deterministic metadata under:
 - `artifacts/metamorphic/<timestamp>/seed_transcript.jsonl`
 - `artifacts/metamorphic/<timestamp>/seed_manifest.json`
 - `artifacts/metamorphic/<timestamp>/triage_report.json`
+- `artifacts/metamorphic/<timestamp>/repro_governance_actions.json`
 - `artifacts/metamorphic/<timestamp>/failures/`
 - `artifacts/metamorphic/<timestamp>/commands.txt`
 
@@ -129,6 +130,18 @@ Triage report rows capture severity-classified and owner-routed findings:
 - `deterministic_evidence_link`
 - `replay_command`
 
+Repro governance actions rows map deterministic findings to follow-up bead IDs:
+- `action` (`create`)
+- `bead_id` (`bd-auto-<fingerprint-prefix>`)
+- `fingerprint` (`sha256:<...>`, deduplicated)
+- `counterexample_id`
+- `priority`
+- `owner_track`
+- `owner_hint`
+- `deterministic_evidence_link`
+- `replay_command`
+- `minimized_reproduction_id`
+
 ## Meta-Tests
 
 The crate includes infrastructure self-tests for:
@@ -156,6 +169,7 @@ cat artifacts/metamorphic/<timestamp>/metamorphic_evidence.jsonl
 cat artifacts/metamorphic/<timestamp>/seed_transcript.jsonl
 cat artifacts/metamorphic/<timestamp>/seed_manifest.json
 cat artifacts/metamorphic/<timestamp>/triage_report.json
+cat artifacts/metamorphic/<timestamp>/repro_governance_actions.json
 ls artifacts/metamorphic/<timestamp>/failures
 ./scripts/e2e/metamorphic_suite_replay.sh ci
 ```

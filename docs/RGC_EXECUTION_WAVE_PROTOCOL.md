@@ -136,3 +136,4 @@ Artifacts are emitted to:
 - `artifacts/rgc_execution_waves_coordination/<timestamp>/run_manifest.json`
 - `artifacts/rgc_execution_waves_coordination/<timestamp>/events.jsonl`
 - `artifacts/rgc_execution_waves_coordination/<timestamp>/commands.txt`
+- `artifacts/rgc_execution_waves_coordination/<timestamp>/step_logs/step_*.log`

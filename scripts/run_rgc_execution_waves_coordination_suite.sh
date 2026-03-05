@@ -18,6 +18,7 @@ run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
 events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
+step_logs_dir="${run_dir}/step_logs"
 
 trace_id="trace-rgc-execution-waves-${timestamp}"
 decision_id="decision-rgc-execution-waves-${timestamp}"
@@ -25,7 +26,7 @@ policy_id="policy-rgc-execution-waves-v1"
 component="rgc_execution_waves_coordination_gate"
 replay_command="./scripts/e2e/rgc_execution_waves_coordination_replay.sh ${mode}"
 
-mkdir -p "$run_dir"
+mkdir -p "$step_logs_dir"
 
 if ! command -v rch >/dev/null 2>&1; then
   echo "rch is required for RGC execution-wave coordination heavy commands" >&2
@@ -73,27 +74,32 @@ rch_reject_local_fallback() {
 }
 
 declare -a commands_run=()
+declare -a step_log_paths=()
 failed_command=""
 manifest_written=false
 
 run_step() {
   local command_text="$1"
-  local log_path remote_exit_code rch_exit_code
+  local log_path remote_exit_code rch_exit_code step_number
   shift
 
+  step_number=$(( ${#commands_run[@]} + 1 ))
   commands_run+=("$command_text")
-  echo "==> $command_text"
-  log_path="$(mktemp)"
+  log_path="${step_logs_dir}/step_$(printf '%02d' "$step_number").log"
+  : >"$log_path"
+  printf '==> %s\n' "$command_text" | tee -a "$log_path"
+  step_log_paths+=("$log_path")
   rch_exit_code=0
 
-  if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
+  if run_rch "$@" > >(tee -a "$log_path") 2>&1; then
+    :
+  else
     rch_exit_code=$?
     if rch_strip_ansi "$log_path" | rg -q "Remote command finished: exit=0"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" \
         | tee -a "$log_path"
     else
       remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
-      rm -f "$log_path"
       if [[ -n "$remote_exit_code" ]]; then
         failed_command="${command_text} (rch-exit=${rch_exit_code}; remote-exit=${remote_exit_code})"
       else
@@ -104,25 +110,20 @@ run_step() {
   fi
 
   if ! rch_reject_local_fallback "$log_path"; then
-    rm -f "$log_path"
     failed_command="${command_text} (rch-local-fallback-detected)"
     return 1
   fi
 
   remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
   if [[ -z "$remote_exit_code" ]]; then
-    rm -f "$log_path"
     failed_command="${command_text} (missing-remote-exit-marker)"
     return 1
   fi
 
   if [[ "$remote_exit_code" != "0" ]]; then
-    rm -f "$log_path"
     failed_command="${command_text} (remote-exit=${remote_exit_code})"
     return 1
   fi
-
-  rm -f "$log_path"
 }
 
 run_mode() {
@@ -239,10 +240,20 @@ write_manifest() {
       echo "    \"$(parser_frontier_json_escape "${commands_run[$idx]}")\"${comma}"
     done
     echo "  ],"
+    echo '  "step_logs": ['
+    for idx in "${!step_log_paths[@]}"; do
+      comma=","
+      if [[ "$idx" == "$(( ${#step_log_paths[@]} - 1 ))" ]]; then
+        comma=""
+      fi
+      echo "    \"$(parser_frontier_json_escape "${step_log_paths[$idx]}")\"${comma}"
+    done
+    echo "  ],"
     echo '  "artifacts": {'
     echo "    \"manifest\": \"${manifest_path}\","
     echo "    \"events\": \"${events_path}\","
     echo "    \"commands\": \"${commands_path}\","
+    echo "    \"step_logs_dir\": \"${step_logs_dir}\","
     echo '    "protocol_doc": "docs/RGC_EXECUTION_WAVE_PROTOCOL.md",'
     echo '    "module": "crates/franken-engine/src/rgc_execution_waves.rs",'
     echo '    "integration_tests": "crates/franken-engine/tests/rgc_execution_waves_integration.rs",'
@@ -253,6 +264,7 @@ write_manifest() {
     echo "    \"cat ${manifest_path}\","
     echo "    \"cat ${events_path}\","
     echo "    \"cat ${commands_path}\","
+    echo "    \"ls -1 ${step_logs_dir}\","
     echo "    \"${replay_command}\""
     echo "  ]"
     echo "}"

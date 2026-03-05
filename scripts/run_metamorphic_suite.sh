@@ -13,6 +13,7 @@ relation_filter_csv="${METAMORPHIC_RELATIONS:-}"
 artifact_root="${METAMORPHIC_ARTIFACT_ROOT:-artifacts/metamorphic}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_dir="$artifact_root/$timestamp"
+runner_run_dir="$target_dir/debug/metamorphic_artifacts/$timestamp"
 manifest_path="$run_dir/run_manifest.json"
 events_path="$run_dir/events.jsonl"
 relation_events_path="$run_dir/relation_events.jsonl"
@@ -20,7 +21,15 @@ evidence_path="$run_dir/metamorphic_evidence.jsonl"
 seed_transcript_path="$run_dir/seed_transcript.jsonl"
 seed_manifest_path="$run_dir/seed_manifest.json"
 triage_report_path="$run_dir/triage_report.json"
+governance_actions_path="$run_dir/repro_governance_actions.json"
 failures_dir="$run_dir/failures"
+runner_relation_events_path="$runner_run_dir/relation_events.jsonl"
+runner_evidence_path="$runner_run_dir/metamorphic_evidence.jsonl"
+runner_seed_transcript_path="$runner_run_dir/seed_transcript.jsonl"
+runner_seed_manifest_path="$runner_run_dir/seed_manifest.json"
+runner_triage_report_path="$runner_run_dir/triage_report.json"
+runner_governance_actions_path="$runner_run_dir/repro_governance_actions.json"
+runner_failures_dir="$runner_run_dir/failures"
 trace_id="trace-metamorphic-$timestamp"
 decision_id="decision-metamorphic-$timestamp"
 policy_id="policy-metamorphic-v1"
@@ -100,15 +109,31 @@ configure_relation_filters() {
 declare -a commands_run=()
 failed_command=""
 manifest_written=false
+step_log_index=0
 
 run_step() {
   local command_text="$1"
   shift
+  local step_log_path="${run_dir}/step_$(printf '%03d' "$step_log_index").log"
+  local rc
+  step_log_index=$((step_log_index + 1))
   commands_run+=("$command_text")
   echo "==> $command_text"
-  if ! run_rch "$@"; then
+  set +e
+  run_rch "$@" > >(tee "$step_log_path") 2>&1
+  rc=$?
+  set -e
+  if ! reject_local_fallback "$step_log_path"; then
+    failed_command="${command_text} (rch-local-fallback-detected)"
+    return 86
+  fi
+  if [[ "$rc" -ne 0 ]]; then
     failed_command="$command_text"
-    return 1
+    return "$rc"
+  fi
+  if ! require_remote_success_marker "$step_log_path"; then
+    failed_command="${command_text} (rch-success-marker-missing)"
+    return 87
   fi
 }
 
@@ -132,26 +157,38 @@ run_mode() {
     test)
       run_step "cargo test -p frankenengine-metamorphic" \
         cargo test -p frankenengine-metamorphic
-      run_step "cargo run -p frankenengine-metamorphic --bin run_metamorphic_suite -- --pairs=$pairs --seed=$seed --trace-id=$trace_id --decision-id=$decision_id --policy-id=$policy_id --evidence=$evidence_path --events=$relation_events_path --seed-transcript=$seed_transcript_path --seed-manifest=$seed_manifest_path --triage-report=$triage_report_path --failures-dir=$failures_dir${relation_command_suffix}" \
+      run_step "cargo run -p frankenengine-metamorphic --bin run_metamorphic_suite -- --pairs=$pairs --seed=$seed --trace-id=$trace_id --decision-id=$decision_id --policy-id=$policy_id --evidence=$runner_evidence_path --events=$runner_relation_events_path --seed-transcript=$runner_seed_transcript_path --seed-manifest=$runner_seed_manifest_path --triage-report=$runner_triage_report_path --governance-actions=$runner_governance_actions_path --failures-dir=$runner_failures_dir${relation_command_suffix}" \
         cargo run -p frankenengine-metamorphic --bin run_metamorphic_suite -- \
         --pairs "$pairs" --seed "$seed" --trace-id "$trace_id" --decision-id "$decision_id" \
-        --policy-id "$policy_id" --evidence "$evidence_path" --events "$relation_events_path" \
-        --seed-transcript "$seed_transcript_path" --seed-manifest "$seed_manifest_path" \
-        --triage-report "$triage_report_path" \
-        --failures-dir "$failures_dir" "${relation_args[@]}"
+        --policy-id "$policy_id" --evidence "$runner_evidence_path" --events "$runner_relation_events_path" \
+        --seed-transcript "$runner_seed_transcript_path" --seed-manifest "$runner_seed_manifest_path" \
+        --triage-report "$runner_triage_report_path" --governance-actions "$runner_governance_actions_path" \
+        --failures-dir "$runner_failures_dir" "${relation_args[@]}"
+      hydrate_local_metamorphic_artifacts
+      if ! ensure_metamorphic_artifacts_complete; then
+        echo "error: metamorphic artifact contract missing after test mode" >&2
+        failed_command="test_artifact_validation"
+        return 1
+      fi
       ;;
     ci)
       run_step "cargo check -p frankenengine-metamorphic --all-targets" \
         cargo check -p frankenengine-metamorphic --all-targets
       run_step "cargo test -p frankenengine-metamorphic" \
         cargo test -p frankenengine-metamorphic
-      run_step "cargo run -p frankenengine-metamorphic --bin run_metamorphic_suite -- --pairs=$pairs --seed=$seed --trace-id=$trace_id --decision-id=$decision_id --policy-id=$policy_id --evidence=$evidence_path --events=$relation_events_path --seed-transcript=$seed_transcript_path --seed-manifest=$seed_manifest_path --triage-report=$triage_report_path --failures-dir=$failures_dir${relation_command_suffix}" \
+      run_step "cargo run -p frankenengine-metamorphic --bin run_metamorphic_suite -- --pairs=$pairs --seed=$seed --trace-id=$trace_id --decision-id=$decision_id --policy-id=$policy_id --evidence=$runner_evidence_path --events=$runner_relation_events_path --seed-transcript=$runner_seed_transcript_path --seed-manifest=$runner_seed_manifest_path --triage-report=$runner_triage_report_path --governance-actions=$runner_governance_actions_path --failures-dir=$runner_failures_dir${relation_command_suffix}" \
         cargo run -p frankenengine-metamorphic --bin run_metamorphic_suite -- \
         --pairs "$pairs" --seed "$seed" --trace-id "$trace_id" --decision-id "$decision_id" \
-        --policy-id "$policy_id" --evidence "$evidence_path" --events "$relation_events_path" \
-        --seed-transcript "$seed_transcript_path" --seed-manifest "$seed_manifest_path" \
-        --triage-report "$triage_report_path" \
-        --failures-dir "$failures_dir" "${relation_args[@]}"
+        --policy-id "$policy_id" --evidence "$runner_evidence_path" --events "$runner_relation_events_path" \
+        --seed-transcript "$runner_seed_transcript_path" --seed-manifest "$runner_seed_manifest_path" \
+        --triage-report "$runner_triage_report_path" --governance-actions "$runner_governance_actions_path" \
+        --failures-dir "$runner_failures_dir" "${relation_args[@]}"
+      hydrate_local_metamorphic_artifacts
+      if ! ensure_metamorphic_artifacts_complete; then
+        echo "error: metamorphic artifact contract missing after ci mode" >&2
+        failed_command="ci_artifact_validation"
+        return 1
+      fi
       ;;
     *)
       echo "usage: $0 [check|test|ci]" >&2
@@ -236,6 +273,7 @@ write_manifest() {
     echo "    \"seed_transcript\": \"${seed_transcript_path}\"," 
     echo "    \"seed_manifest\": \"${seed_manifest_path}\"," 
     echo "    \"triage_report\": \"${triage_report_path}\"," 
+    echo "    \"governance_actions\": \"${governance_actions_path}\"," 
     echo "    \"failures_dir\": \"${failures_dir}\"," 
     echo "    \"command_log\": \"${run_dir}/commands.txt\""
     echo '  },'
@@ -247,6 +285,7 @@ write_manifest() {
     echo "    \"cat ${seed_transcript_path}\"," 
     echo "    \"cat ${seed_manifest_path}\"," 
     echo "    \"cat ${triage_report_path}\"," 
+    echo "    \"cat ${governance_actions_path}\"," 
     echo "    \"${replay_command}\""
     echo '  ]'
     echo "}"
@@ -262,6 +301,140 @@ write_manifest() {
 }
 
 configure_relation_filters
+
+hydrate_local_metamorphic_artifacts() {
+  local runner_file local_file
+
+  mkdir -p "$run_dir" "$failures_dir"
+
+  local runner_files=(
+    "$runner_relation_events_path"
+    "$runner_evidence_path"
+    "$runner_seed_transcript_path"
+    "$runner_seed_manifest_path"
+    "$runner_triage_report_path"
+    "$runner_governance_actions_path"
+  )
+  local local_files=(
+    "$relation_events_path"
+    "$evidence_path"
+    "$seed_transcript_path"
+    "$seed_manifest_path"
+    "$triage_report_path"
+    "$governance_actions_path"
+  )
+
+  local idx
+  for idx in "${!runner_files[@]}"; do
+    runner_file="${runner_files[$idx]}"
+    local_file="${local_files[$idx]}"
+    if [[ -f "$runner_file" ]]; then
+      mkdir -p "$(dirname "$local_file")"
+      cp "$runner_file" "$local_file"
+    fi
+  done
+
+  if [[ -d "$runner_failures_dir" ]]; then
+    mkdir -p "$failures_dir"
+    while IFS= read -r -d '' runner_file; do
+      cp "$runner_file" "$failures_dir/"
+    done < <(find "$runner_failures_dir" -maxdepth 1 -mindepth 1 -type f -print0)
+  fi
+}
+
+metamorphic_artifacts_complete() {
+  local required
+  for required in \
+    "$relation_events_path" \
+    "$evidence_path" \
+    "$seed_transcript_path" \
+    "$seed_manifest_path" \
+    "$triage_report_path" \
+    "$governance_actions_path"; do
+    if [[ ! -f "$required" ]]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+pull_remote_file_if_missing() {
+  local path="$1"
+  local remote_path
+  local tmp_path
+
+  if [[ -f "$path" ]]; then
+    return 0
+  fi
+
+  if [[ "$path" = /* ]]; then
+    remote_path="$path"
+  else
+    remote_path="$root_dir/$path"
+  fi
+
+  if ! RCH_LOG_LEVEL=error run_rch test -f "$remote_path" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$path")"
+  tmp_path="${path}.remote.$$"
+  if ! RCH_LOG_LEVEL=error run_rch cat "$remote_path" >"$tmp_path"; then
+    rm -f "$tmp_path"
+    return 1
+  fi
+
+  mv "$tmp_path" "$path"
+}
+
+sync_metamorphic_artifacts_from_remote() {
+  local required
+  local missing_any=false
+
+  for required in \
+    "$relation_events_path" \
+    "$evidence_path" \
+    "$seed_transcript_path" \
+    "$seed_manifest_path" \
+    "$triage_report_path" \
+    "$governance_actions_path"; do
+    if [[ -f "$required" ]]; then
+      continue
+    fi
+    if ! pull_remote_file_if_missing "$required"; then
+      missing_any=true
+    fi
+  done
+
+  [[ "$missing_any" == false ]]
+}
+
+ensure_metamorphic_artifacts_complete() {
+  hydrate_local_metamorphic_artifacts
+  if metamorphic_artifacts_complete; then
+    return 0
+  fi
+
+  sync_metamorphic_artifacts_from_remote || true
+  metamorphic_artifacts_complete
+}
+
+reject_local_fallback() {
+  local log_path="$1"
+  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|running locally|Failed to query daemon:.*running locally|RCH-E326' "$log_path"; then
+    echo "error: rch reported local fallback; refusing local execution for heavy command" >&2
+    return 1
+  fi
+}
+
+require_remote_success_marker() {
+  local log_path="$1"
+  if ! grep -Eq 'Remote command finished: exit=0' "$log_path"; then
+    echo "error: missing successful remote completion marker in ${log_path}" >&2
+    return 1
+  fi
+}
+
 trap 'write_manifest $?' EXIT
 ensure_rch
 run_mode

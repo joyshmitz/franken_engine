@@ -9,7 +9,7 @@ parser_frontier_bootstrap_env
 
 mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
-target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_parser_phase1_arena}"
+target_dir="${CARGO_TARGET_DIR:-${root_dir}/target_rch_parser_phase1_arena}"
 artifact_root="${PARSER_PHASE1_ARENA_ARTIFACT_ROOT:-artifacts/parser_phase1_arena}"
 scenario="${PARSER_PHASE1_ARENA_SCENARIO:-full}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -20,6 +20,8 @@ commands_path="${run_dir}/commands.txt"
 step_logs_dir="${run_dir}/step_logs"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
 rch_build_timeout_sec="${RCH_BUILD_TIMEOUT_SEC:-${RCH_BUILD_TIMEOUT_SECONDS:-${rch_timeout_seconds}}}"
+rch_artifact_grace_seconds="${RCH_ARTIFACT_GRACE_SECONDS:-120}"
+rch_wrapper_timeout_seconds=$((rch_timeout_seconds + rch_artifact_grace_seconds))
 cargo_build_jobs="${CARGO_BUILD_JOBS:-2}"
 trace_id="trace-parser-phase1-arena-${scenario}-${timestamp}"
 decision_id="decision-parser-phase1-arena-${scenario}-${timestamp}"
@@ -45,7 +47,7 @@ run_rch() {
     return 127
   fi
   RCH_BUILD_TIMEOUT_SEC="${rch_build_timeout_sec}" \
-    timeout "${rch_timeout_seconds}" \
+    timeout "${rch_wrapper_timeout_seconds}" \
     rch exec -- env \
     "RUSTUP_TOOLCHAIN=${toolchain}" \
     "CARGO_TARGET_DIR=${target_dir}" \
@@ -279,6 +281,8 @@ write_manifest() {
     echo "  \"cargo_target_dir\": \"${target_dir}\","
     echo "  \"rch_exec_timeout_seconds\": ${rch_timeout_seconds},"
     echo "  \"rch_build_timeout_seconds\": ${rch_build_timeout_sec},"
+    echo "  \"rch_artifact_grace_seconds\": ${rch_artifact_grace_seconds},"
+    echo "  \"rch_wrapper_timeout_seconds\": ${rch_wrapper_timeout_seconds},"
     echo "  \"cargo_build_jobs\": ${cargo_build_jobs},"
     echo "  \"trace_id\": \"${trace_id}\","
     echo "  \"decision_id\": \"${decision_id}\","

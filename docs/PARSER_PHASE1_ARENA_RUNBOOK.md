@@ -32,6 +32,11 @@ Run all commands from repository root.
 
 Each command routes heavy cargo work through `rch` in `scripts/run_parser_phase1_arena_suite.sh`.
 
+Default compile target directory:
+
+- `target_rch_parser_phase1_arena` under repo root (`${root_dir}/target_rch_parser_phase1_arena` in script runtime)
+- override with `CARGO_TARGET_DIR=/absolute/path` when you need lane-specific isolation
+
 ## Scenario Mapping
 
 - `smoke`: `arena_alloc_order_is_deterministic`

@@ -6,10 +6,17 @@ cd "$root_dir"
 
 mode="${1:-ci}"
 toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
-target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_benchmark_e2e_suite}"
+# Use a per-process workspace target dir by default to avoid remote /tmp
+# exhaustion and cross-agent cargo lock contention on shared targets.
+default_target_dir="/data/projects/franken_engine/target_rch_benchmark_e2e_suite_${$}"
+target_dir="${CARGO_TARGET_DIR:-${default_target_dir}}"
 artifact_root="${BENCHMARK_E2E_ARTIFACT_ROOT:-artifacts/benchmark_e2e_suite}"
 component="${BENCHMARK_E2E_COMPONENT:-benchmark_e2e_suite}"
 bead_id="${BENCHMARK_E2E_BEAD_ID:-bd-1lsy.8.1}"
+check_timeout_seconds="${BENCHMARK_E2E_CHECK_TIMEOUT_SECONDS:-900}"
+test_timeout_seconds="${BENCHMARK_E2E_TEST_TIMEOUT_SECONDS:-1800}"
+clippy_timeout_seconds="${BENCHMARK_E2E_CLIPPY_TIMEOUT_SECONDS:-1200}"
+report_timeout_seconds="${BENCHMARK_E2E_REPORT_TIMEOUT_SECONDS:-900}"
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_dir="${artifact_root}/${timestamp}"
@@ -50,59 +57,45 @@ benchmark_artifacts_complete() {
 }
 
 pull_remote_file_if_missing() {
-  local path="$1"
-  local tmp_path
-
-  if [[ -f "$path" ]]; then
-    return 0
-  fi
-
-  if ! RCH_LOG_LEVEL=error run_rch test -f "$path" >/dev/null 2>&1; then
-    return 1
-  fi
-
-  mkdir -p "$(dirname "$path")"
-  tmp_path="${path}.remote.$$"
-  if ! RCH_LOG_LEVEL=error run_rch cat "$path" >"$tmp_path"; then
-    rm -f "$tmp_path"
-    return 1
-  fi
-
-  mv "$tmp_path" "$path"
+  : # deprecated shim retained to avoid function-not-found in older call paths
 }
 
-sync_benchmark_artifacts_from_remote() {
-  local required
-  local missing_any=false
-  for required in \
-    "$benchmark_manifest_path" \
-    "$benchmark_events_path" \
-    "$benchmark_commands_path" \
-    "$benchmark_env_manifest_path" \
-    "$raw_results_archive_path"; do
-    if [[ -f "$required" ]]; then
-      continue
-    fi
-    if ! pull_remote_file_if_missing "$required"; then
-      missing_any=true
-    fi
+decode_benchmark_artifacts_from_logs() {
+  local log_path line artifact_path content_buffer
+  local extracted_any=false
+
+  for log_path in "${run_dir}"/step_*.log; do
+    [[ -f "$log_path" ]] || continue
+    artifact_path=""
+    content_buffer=""
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" == __BENCH_ARTIFACT_BEGIN__:* ]]; then
+        artifact_path="${line#__BENCH_ARTIFACT_BEGIN__:}"
+        content_buffer=""
+        continue
+      fi
+      if [[ "$line" == __BENCH_ARTIFACT_END__:* ]]; then
+        if [[ -n "$artifact_path" ]]; then
+          mkdir -p "$(dirname "$artifact_path")"
+          printf '%s' "$content_buffer" >"$artifact_path"
+          extracted_any=true
+        fi
+        artifact_path=""
+        content_buffer=""
+        continue
+      fi
+      if [[ -n "$artifact_path" ]]; then
+        content_buffer+="${line//$'\r'/}"$'\n'
+      fi
+    done <"$log_path"
   done
 
-  [[ "$missing_any" == false ]]
-}
-
-ensure_benchmark_artifacts_complete() {
-  if benchmark_artifacts_complete; then
-    return 0
-  fi
-
-  sync_benchmark_artifacts_from_remote || true
-  benchmark_artifacts_complete
+  [[ "$extracted_any" == true ]]
 }
 
 reject_local_fallback() {
   local log_path="$1"
-  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|running locally|Failed to query daemon:.*running locally|RCH-E326' "$log_path"; then
+  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|running locally|\[RCH\] local \(|Failed to query daemon:.*running locally|Dependency preflight blocked remote execution|RCH-E326' "$log_path"; then
     echo "error: rch reported local fallback; refusing local execution for heavy command" >&2
     return 1
   fi
@@ -130,7 +123,80 @@ failed_command=""
 manifest_written=false
 step_log_index=0
 
+run_rch_strict_logged() {
+  local log_path="$1"
+  shift
+  local step_timeout_seconds="$1"
+  shift
+
+  local fifo_path fallback_flag_path reader_pid rch_pid rch_status=0
+  local line
+
+  kill_fallback_processes() {
+    local attempt
+    for attempt in 1 2 3 4 5; do
+      pkill -f "CARGO_TARGET_DIR=${target_dir}" 2>/dev/null || true
+      pkill -f "${target_dir}" 2>/dev/null || true
+      sleep 0.2
+    done
+  }
+
+  fifo_path="$(mktemp -u "${run_dir}/rch-stream.XXXXXX")"
+  fallback_flag_path="$(mktemp "${run_dir}/rch-fallback.XXXXXX")"
+  rm -f "$fallback_flag_path"
+  mkfifo "$fifo_path"
+  : >"$log_path"
+
+  {
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      printf '%s\n' "$line" | tee -a "$log_path"
+      if [[ "$line" == *"Remote toolchain failure, falling back to local"* ||
+        "$line" == *"falling back to local"* ||
+        "$line" == *"fallback to local"* ||
+        "$line" == *"local fallback"* ||
+        "$line" == *"running locally"* ||
+        "$line" == *"[RCH] local ("* ||
+        "$line" == *"Failed to query daemon:"*"running locally"* ||
+        "$line" == *"Dependency preflight blocked remote execution"* ||
+        "$line" == *"RCH-E326"* ]]; then
+        : >"$fallback_flag_path"
+        kill_fallback_processes
+        if [[ -n "${rch_pid:-}" ]]; then
+          kill "$rch_pid" 2>/dev/null || true
+        fi
+      fi
+    done <"$fifo_path"
+  } &
+  reader_pid=$!
+
+  if [[ "$step_timeout_seconds" -gt 0 ]]; then
+    timeout --signal=TERM --kill-after=30s "${step_timeout_seconds}" \
+      rch exec -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@" >"$fifo_path" 2>&1 &
+  else
+    run_rch "$@" >"$fifo_path" 2>&1 &
+  fi
+  rch_pid=$!
+  if [[ -f "$fallback_flag_path" ]]; then
+    kill_fallback_processes
+    kill "$rch_pid" 2>/dev/null || true
+  fi
+  wait "$rch_pid" || rch_status=$?
+  wait "$reader_pid" || true
+  rm -f "$fifo_path"
+
+  if [[ -f "$fallback_flag_path" ]]; then
+    rm -f "$fallback_flag_path"
+    kill_fallback_processes
+    return 125
+  fi
+
+  rm -f "$fallback_flag_path"
+  return "$rch_status"
+}
+
 run_step() {
+  local step_timeout_seconds="$1"
+  shift
   local command_text="$1"
   shift
   local step_log_path="${run_dir}/step_$(printf '%03d' "$step_log_index").log"
@@ -138,9 +204,17 @@ run_step() {
   commands_run+=("$command_text")
   echo "==> $command_text"
   set +e
-  run_rch "$@" > >(tee "$step_log_path") 2>&1
+  run_rch_strict_logged "$step_log_path" "$step_timeout_seconds" "$@"
   local rc=$?
   set -e
+  if [[ "$rc" -eq 125 ]]; then
+    failed_command="${command_text} (rch-local-fallback-detected)"
+    return 86
+  fi
+  if [[ "$rc" -eq 124 ]]; then
+    failed_command="${command_text} (step-timeout-${step_timeout_seconds}s)"
+    return 88
+  fi
   if ! reject_local_fallback "$step_log_path"; then
     failed_command="${command_text} (rch-local-fallback-detected)"
     return 86
@@ -155,13 +229,35 @@ run_step() {
   fi
 }
 
+run_report_bridge() {
+  run_step "$report_timeout_seconds" "FRANKEN_BENCH_E2E_OUTPUT_DIR=${run_dir} cargo test -p frankenengine-engine --test benchmark_e2e_integration benchmark_e2e_script_emits_artifacts_to_env_dir -- --exact --nocapture (+ artifact bridge)" \
+    env FRANKEN_BENCH_E2E_OUTPUT_DIR="${run_dir}" \
+    FRANKEN_BENCH_E2E_ARTIFACT_BRIDGE=1 \
+    cargo test -p frankenengine-engine --test benchmark_e2e_integration \
+    benchmark_e2e_script_emits_artifacts_to_env_dir -- --exact --nocapture || return 1
+
+  decode_benchmark_artifacts_from_logs || true
+  benchmark_artifacts_complete
+}
+
+ensure_benchmark_artifacts_complete() {
+  if benchmark_artifacts_complete; then
+    return 0
+  fi
+  decode_benchmark_artifacts_from_logs || true
+  if benchmark_artifacts_complete; then
+    return 0
+  fi
+  run_report_bridge
+}
+
 run_check() {
-  run_step "cargo check -p frankenengine-engine --test benchmark_e2e --test benchmark_e2e_integration" \
+  run_step "$check_timeout_seconds" "cargo check -p frankenengine-engine --test benchmark_e2e --test benchmark_e2e_integration" \
     cargo check -p frankenengine-engine --test benchmark_e2e --test benchmark_e2e_integration
 }
 
 run_test() {
-  run_step "FRANKEN_BENCH_E2E_OUTPUT_DIR=${run_dir} cargo test -p frankenengine-engine --test benchmark_e2e --test benchmark_e2e_integration" \
+  run_step "$test_timeout_seconds" "FRANKEN_BENCH_E2E_OUTPUT_DIR=${run_dir} cargo test -p frankenengine-engine --test benchmark_e2e --test benchmark_e2e_integration" \
     env FRANKEN_BENCH_E2E_OUTPUT_DIR="${run_dir}" \
     cargo test -p frankenengine-engine --test benchmark_e2e --test benchmark_e2e_integration
   if ! ensure_benchmark_artifacts_complete; then
@@ -172,19 +268,16 @@ run_test() {
 }
 
 run_clippy() {
-  run_step "cargo clippy -p frankenengine-engine --test benchmark_e2e --test benchmark_e2e_integration -- -D warnings" \
+  run_step "$clippy_timeout_seconds" "cargo clippy -p frankenengine-engine --test benchmark_e2e --test benchmark_e2e_integration -- -D warnings" \
     cargo clippy -p frankenengine-engine --test benchmark_e2e --test benchmark_e2e_integration -- -D warnings
 }
 
 run_report() {
-  run_step "FRANKEN_BENCH_E2E_OUTPUT_DIR=${run_dir} cargo test -p frankenengine-engine --test benchmark_e2e_integration benchmark_e2e_script_emits_artifacts_to_env_dir -- --exact --nocapture" \
-    env FRANKEN_BENCH_E2E_OUTPUT_DIR="${run_dir}" \
-    cargo test -p frankenengine-engine --test benchmark_e2e_integration \
-    benchmark_e2e_script_emits_artifacts_to_env_dir -- --exact --nocapture
-
-  if ! ensure_benchmark_artifacts_complete; then
+  if ! run_report_bridge; then
     echo "error: benchmark artifact contract missing after report mode" >&2
-    failed_command="report_artifact_validation"
+    if [[ -z "$failed_command" ]]; then
+      failed_command="report_artifact_validation"
+    fi
     return 1
   fi
 }
