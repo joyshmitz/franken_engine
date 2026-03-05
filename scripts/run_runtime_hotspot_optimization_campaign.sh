@@ -59,6 +59,14 @@ rch_last_remote_exit_code() {
   echo "${exit_line##*=}"
 }
 
+rch_reject_missing_remote_exit() {
+  local log_path="$1"
+  if ! grep -Eq 'Remote command finished: exit=[0-9]+' "$log_path"; then
+    echo "rch log missing remote exit marker; refusing to mark heavy command as successful" >&2
+    return 1
+  fi
+}
+
 rch_has_recoverable_artifact_timeout() {
   local log_path="$1"
   grep -Eiq 'artifact retrieval timed out|artifact transfer timed out|timed out waiting for artifacts|failed to retrieve artifacts|failed to download artifacts' "$log_path"
@@ -74,7 +82,8 @@ rch_reject_artifact_retrieval_failure() {
 
 rch_failure_is_retryable() {
   [[ "$failed_command" == *"(rch-local-fallback-detected)"* ]] || \
-    [[ "$failed_command" == *"(rch-artifact-retrieval-failed)"* ]]
+    [[ "$failed_command" == *"(rch-artifact-retrieval-failed)"* ]] || \
+    [[ "$failed_command" == *"(rch-remote-exit-missing)"* ]]
 }
 
 declare -a commands_run=()
@@ -84,7 +93,7 @@ manifest_written=false
 
 run_step_once() {
   local command_text="$1"
-  local log_path safe_command_text
+  local log_path safe_command_text remote_exit_code
   local run_status=0
   shift
   commands_run+=("$command_text")
@@ -111,15 +120,24 @@ run_step_once() {
     return 1
   fi
 
+  if ! rch_reject_missing_remote_exit "$log_path"; then
+    failed_command="${command_text} (rch-remote-exit-missing; log=${log_path})"
+    return 1
+  fi
+
   if ! rch_reject_artifact_retrieval_failure "$log_path"; then
     failed_command="${command_text} (rch-artifact-retrieval-failed; log=${log_path})"
     return 1
   fi
 
+  remote_exit_code="$(rch_last_remote_exit_code "$log_path")"
+  if [[ "$remote_exit_code" != "0" ]]; then
+    failed_command="${command_text} (remote-exit=${remote_exit_code}; log=${log_path})"
+    return 1
+  fi
+
   if [[ "$run_status" -ne 0 ]]; then
-    local remote_exit_code
-    remote_exit_code="$(rch_last_remote_exit_code "$log_path")"
-    if [[ "$remote_exit_code" == "0" ]] && rch_has_recoverable_artifact_timeout "$log_path"; then
+    if rch_has_recoverable_artifact_timeout "$log_path"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
     else
       failed_command="${command_text} (log=${log_path})"

@@ -14,6 +14,9 @@ run_dir="$artifact_root/$timestamp"
 manifest_path="$run_dir/run_manifest.json"
 commands_path="$run_dir/commands.txt"
 events_path="$run_dir/events.jsonl"
+compat_scenario_fixture="${RUNTIME_DIAGNOSTICS_SCENARIO_FIXTURE:-crates/franken-engine/tests/fixtures/runtime_compatibility_scenario_report_v1.json}"
+compat_source_report="${RUNTIME_DIAGNOSTICS_SOURCE_REPORT:-$compat_scenario_fixture}"
+compat_advisory_output="${run_dir}/compatibility_advisories.json"
 
 trace_id="trace-runtime-diagnostics-${timestamp}"
 decision_id="decision-runtime-diagnostics-${timestamp}"
@@ -43,6 +46,7 @@ declare -a commands_run=()
 failed_command=""
 manifest_written=false
 step_log_index=0
+compatibility_advisory_generated=false
 
 run_step() {
   local command_text="$1"
@@ -62,6 +66,13 @@ run_step() {
 }
 
 run_mode() {
+  if [[ "$mode" == "test" || "$mode" == "ci" ]]; then
+    if [[ ! -f "$compat_scenario_fixture" ]]; then
+      echo "error: compatibility scenario fixture not found: $compat_scenario_fixture" >&2
+      return 1
+    fi
+  fi
+
   case "$mode" in
     check)
       run_step "cargo check -p frankenengine-engine --bin runtime_diagnostics --test runtime_diagnostics_cli" \
@@ -70,6 +81,19 @@ run_mode() {
     test)
       run_step "cargo test -p frankenengine-engine --test runtime_diagnostics_cli" \
         cargo test -p frankenengine-engine --test runtime_diagnostics_cli
+      run_step "cargo test -p frankenengine-engine --bin runtime_diagnostics compatibility -- --nocapture" \
+        cargo test -p frankenengine-engine --bin runtime_diagnostics compatibility -- --nocapture
+      run_step "cargo run -p frankenengine-engine --bin runtime_diagnostics -- compatibility-advisories --scenario-report ${compat_scenario_fixture} --source-report ${compat_source_report} --out ${compat_advisory_output} --summary" \
+        cargo run -p frankenengine-engine --bin runtime_diagnostics -- compatibility-advisories --scenario-report "${compat_scenario_fixture}" --source-report "${compat_source_report}" --out "${compat_advisory_output}" --summary
+      if [[ ! -s "$compat_advisory_output" ]]; then
+        failed_command="compatibility-advisories output validation (missing output)"
+        return 1
+      fi
+      if ! grep -q '"advisory_count"' "$compat_advisory_output"; then
+        failed_command="compatibility-advisories output validation (missing advisory_count)"
+        return 1
+      fi
+      compatibility_advisory_generated=true
       ;;
     clippy)
       run_step "cargo clippy -p frankenengine-engine --bin runtime_diagnostics --test runtime_diagnostics_cli -- -D warnings" \
@@ -80,6 +104,19 @@ run_mode() {
         cargo check -p frankenengine-engine --bin runtime_diagnostics --test runtime_diagnostics_cli
       run_step "cargo test -p frankenengine-engine --test runtime_diagnostics_cli" \
         cargo test -p frankenengine-engine --test runtime_diagnostics_cli
+      run_step "cargo test -p frankenengine-engine --bin runtime_diagnostics compatibility -- --nocapture" \
+        cargo test -p frankenengine-engine --bin runtime_diagnostics compatibility -- --nocapture
+      run_step "cargo run -p frankenengine-engine --bin runtime_diagnostics -- compatibility-advisories --scenario-report ${compat_scenario_fixture} --source-report ${compat_source_report} --out ${compat_advisory_output} --summary" \
+        cargo run -p frankenengine-engine --bin runtime_diagnostics -- compatibility-advisories --scenario-report "${compat_scenario_fixture}" --source-report "${compat_source_report}" --out "${compat_advisory_output}" --summary
+      if [[ ! -s "$compat_advisory_output" ]]; then
+        failed_command="compatibility-advisories output validation (missing output)"
+        return 1
+      fi
+      if ! grep -q '"advisory_count"' "$compat_advisory_output"; then
+        failed_command="compatibility-advisories output validation (missing advisory_count)"
+        return 1
+      fi
+      compatibility_advisory_generated=true
       ;;
     *)
       echo "usage: $0 [check|test|clippy|ci]" >&2
@@ -114,6 +151,9 @@ write_manifest() {
 
   printf '%s\n' "${commands_run[@]}" >"$commands_path"
   echo "{\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"${component}\",\"event\":\"suite_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}" >"$events_path"
+  if [[ "$compatibility_advisory_generated" == true ]]; then
+    echo "{\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"${component}\",\"event\":\"compatibility_advisory_generated\",\"outcome\":\"pass\",\"error_code\":null,\"artifact\":\"${compat_advisory_output}\"}" >>"$events_path"
+  fi
 
   {
     echo "{"
@@ -145,12 +185,18 @@ write_manifest() {
     echo '  "artifacts": {'
     echo "    \"command_log\": \"${commands_path}\"," 
     echo "    \"events\": \"${events_path}\"," 
+    if [[ "$compatibility_advisory_generated" == true ]]; then
+      echo "    \"compatibility_advisories\": \"${compat_advisory_output}\"," 
+    fi
     echo "    \"manifest\": \"${manifest_path}\""
     echo '  },'
     echo '  "operator_verification": ['
     echo "    \"cat ${manifest_path}\"," 
     echo "    \"cat ${events_path}\"," 
     echo "    \"cat ${commands_path}\"," 
+    if [[ "$compatibility_advisory_generated" == true ]]; then
+      echo "    \"cat ${compat_advisory_output}\"," 
+    fi
     echo "    \"${0} ci\""
     echo '  ]'
     echo "}"

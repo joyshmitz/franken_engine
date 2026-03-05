@@ -1,14 +1,17 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use frankenengine_engine::module_compatibility_matrix::CompatibilityScenarioReport;
 use frankenengine_engine::runtime_diagnostics_cli::{
-    EvidenceExportFilter, OnboardingScorecardInput, OnboardingScorecardSignal,
-    RolloutDecisionArtifactInput, RuntimeDiagnosticsCliInput, SupportBundleOutput,
-    SupportBundleRedactionPolicy, build_onboarding_scorecard, build_rollout_decision_artifact,
+    CompatibilityAdvisoryInput, CompatibilityAdvisoryOutput, EvidenceExportFilter,
+    OnboardingScorecardInput, OnboardingScorecardSignal, RolloutDecisionArtifactInput,
+    RuntimeDiagnosticsCliInput, SupportBundleOutput, SupportBundleRedactionPolicy,
+    build_compatibility_advisories, build_onboarding_scorecard, build_rollout_decision_artifact,
     collect_runtime_diagnostics, export_evidence_bundle, export_support_bundle,
-    parse_decision_type, parse_evidence_severity, render_diagnostics_summary,
-    render_evidence_summary, render_onboarding_scorecard_summary, render_preflight_summary,
-    render_rollout_decision_artifact_summary, render_support_bundle_summary, run_preflight_doctor,
+    parse_decision_type, parse_evidence_severity, render_compatibility_advisory_summary,
+    render_diagnostics_summary, render_evidence_summary, render_onboarding_scorecard_summary,
+    render_preflight_summary, render_rollout_decision_artifact_summary,
+    render_support_bundle_summary, run_preflight_doctor,
 };
 
 fn main() {
@@ -28,6 +31,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "export-evidence" => run_export(&args[1..]),
         "support-bundle" => run_support_bundle(&args[1..]),
         "doctor" => run_doctor(&args[1..]),
+        "compatibility-advisories" => run_compatibility_advisories(&args[1..]),
         "onboarding-scorecard" => run_onboarding_scorecard(&args[1..]),
         "rollout-decision-artifact" => run_rollout_decision_artifact(&args[1..]),
         "help" | "--help" | "-h" => {
@@ -53,6 +57,8 @@ fn usage() -> String {
         "      [--extension-id <id>] [--trace-id <id>] [--start-ns <u64>] [--end-ns <u64>]",
         "      [--severity info|warning|critical] [--decision-type <snake_case_decision_type>]",
         "      [--redact-key <key_fragment>]...",
+        "  runtime_diagnostics compatibility-advisories --scenario-report <path> [--summary]",
+        "      [--source-report <path_or_url>] [--out <path>]",
         "  runtime_diagnostics onboarding-scorecard --input <path> [--summary] [--out-dir <path>]",
         "      [--workload-id <id>] [--package-name <name>] [--target-platform <value>]...",
         "      [--signals <signals_json_path>]",
@@ -431,6 +437,89 @@ fn run_doctor(args: &[String]) -> Result<(), String> {
             "{}",
             serde_json::to_string_pretty(&output)
                 .map_err(|error| format!("failed to encode preflight doctor output: {error}"))?
+        );
+    }
+
+    Ok(())
+}
+
+fn run_compatibility_advisories(args: &[String]) -> Result<(), String> {
+    let mut scenario_report_path: Option<&str> = None;
+    let mut source_report: Option<String> = None;
+    let mut out_path: Option<PathBuf> = None;
+    let mut summary = false;
+
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--scenario-report" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--scenario-report requires a path".to_string())?;
+                scenario_report_path = Some(value);
+            }
+            "--source-report" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--source-report requires a value".to_string())?;
+                source_report = Some(value.clone());
+            }
+            "--out" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--out requires a path".to_string())?;
+                out_path = Some(PathBuf::from(value));
+            }
+            "--summary" => summary = true,
+            flag => {
+                return Err(format!("unknown flag for compatibility-advisories: {flag}"));
+            }
+        }
+        index += 1;
+    }
+
+    let scenario_report_path = scenario_report_path
+        .ok_or_else(|| "missing required --scenario-report <path>".to_string())?;
+    let scenario_report = load_compatibility_scenario_report(scenario_report_path)?;
+    let output = build_compatibility_advisories(&CompatibilityAdvisoryInput {
+        source_report: source_report.unwrap_or_else(|| scenario_report_path.to_string()),
+        scenario_report,
+    });
+
+    if let Some(path) = out_path {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "failed to create compatibility advisory output directory '{}': {error}",
+                    parent.display()
+                )
+            })?;
+        }
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&output).map_err(|error| {
+                format!("failed to encode compatibility advisory output: {error}")
+            })?,
+        )
+        .map_err(|error| {
+            format!(
+                "failed to write compatibility advisory output '{}': {error}",
+                path.display()
+            )
+        })?;
+    }
+
+    if summary {
+        println!("{}", render_compatibility_advisory_summary(&output));
+    } else {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output).map_err(|error| format!(
+                "failed to encode compatibility advisory output: {error}"
+            ))?
         );
     }
 
@@ -923,9 +1012,158 @@ fn load_input(path: &str) -> Result<RuntimeDiagnosticsCliInput, String> {
         .map_err(|error| format!("failed to parse input file '{path}' as JSON: {error}"))
 }
 
+fn load_compatibility_scenario_report(path: &str) -> Result<CompatibilityScenarioReport, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read scenario report file '{path}': {error}"))?;
+    serde_json::from_str::<CompatibilityScenarioReport>(&content)
+        .map_err(|error| format!("failed to parse scenario report file '{path}' as JSON: {error}"))
+}
+
 fn load_onboarding_signals(path: &str) -> Result<Vec<OnboardingScorecardSignal>, String> {
     let content = fs::read_to_string(path)
         .map_err(|error| format!("failed to read signal file '{path}': {error}"))?;
-    serde_json::from_str::<Vec<OnboardingScorecardSignal>>(&content)
-        .map_err(|error| format!("failed to parse signal file '{path}' as JSON array: {error}"))
+    if let Ok(signals) = serde_json::from_str::<Vec<OnboardingScorecardSignal>>(&content) {
+        return Ok(signals);
+    }
+    if let Ok(bundle) = serde_json::from_str::<CompatibilityAdvisoryOutput>(&content) {
+        return Ok(bundle.signals);
+    }
+    Err(format!(
+        "failed to parse signal file '{path}' as JSON array or compatibility advisory bundle"
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use frankenengine_engine::module_compatibility_matrix::{
+        CompatibilityEvent, CompatibilityMode, CompatibilityObservationOutcome,
+        CompatibilityRuntime, DivergenceCategory,
+    };
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after UNIX_EPOCH")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "frankenengine-runtime-diagnostics-{label}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
+    fn sample_scenario_report() -> CompatibilityScenarioReport {
+        let case_id = "case-engine-bug".to_string();
+        let mut divergence_category_counts = BTreeMap::new();
+        divergence_category_counts.insert(DivergenceCategory::EngineBug.as_str().to_string(), 1);
+        let mut actionable_guidance = BTreeMap::new();
+        actionable_guidance.insert(
+            case_id.clone(),
+            "patch runtime lane semantics and replay matrix".to_string(),
+        );
+
+        CompatibilityScenarioReport {
+            schema_version: "franken-engine.module-interop-scenario-report.v1".to_string(),
+            scenario_id: "scenario-e2e".to_string(),
+            trace_id: "trace-e2e".to_string(),
+            decision_id: "decision-e2e".to_string(),
+            policy_id: "policy-e2e".to_string(),
+            generated_at_unix_ms: 1_111,
+            total_observations: 1,
+            matched_observations: 0,
+            divergence_category_counts,
+            actionable_guidance,
+            outcomes: vec![CompatibilityObservationOutcome {
+                case_id,
+                runtime: CompatibilityRuntime::FrankenEngine,
+                mode: CompatibilityMode::Native,
+                observed_behavior: "franken_behavior".to_string(),
+                expected_behavior: "reference_behavior".to_string(),
+                matched: false,
+                divergence: None,
+                divergence_category: Some(DivergenceCategory::EngineBug),
+                actionable_guidance: Some(
+                    "patch runtime lane semantics and replay matrix".to_string(),
+                ),
+                event: CompatibilityEvent {
+                    seq: 1,
+                    trace_id: "trace-e2e".to_string(),
+                    decision_id: "decision-e2e".to_string(),
+                    policy_id: "policy-e2e".to_string(),
+                    component: "module_compatibility_matrix".to_string(),
+                    event: "compatibility_observation".to_string(),
+                    outcome: "deny".to_string(),
+                    error_code: "FE-MODCOMP-0008".to_string(),
+                    case_id: "case-engine-bug".to_string(),
+                    runtime: "franken_engine".to_string(),
+                    mode: "native".to_string(),
+                    detail: "deterministic synthetic divergence".to_string(),
+                },
+            }],
+        }
+    }
+
+    #[test]
+    fn compatibility_advisories_command_writes_bundle_json() {
+        let temp_dir = unique_temp_dir("compat-advisories");
+        fs::create_dir_all(&temp_dir).expect("temp directory should be created");
+
+        let scenario_path = temp_dir.join("scenario_report.json");
+        fs::write(
+            &scenario_path,
+            serde_json::to_vec_pretty(&sample_scenario_report())
+                .expect("scenario report should encode"),
+        )
+        .expect("scenario report should be written");
+
+        let out_path = temp_dir.join("compatibility_advisories.json");
+        let args = vec![
+            "--scenario-report".to_string(),
+            scenario_path.display().to_string(),
+            "--source-report".to_string(),
+            "artifacts/compat/scenario_report.json".to_string(),
+            "--out".to_string(),
+            out_path.display().to_string(),
+            "--summary".to_string(),
+        ];
+        run_compatibility_advisories(&args)
+            .expect("compatibility-advisories command should complete successfully");
+
+        let output = fs::read_to_string(&out_path).expect("output bundle should exist");
+        let decoded = serde_json::from_str::<CompatibilityAdvisoryOutput>(&output)
+            .expect("output bundle should decode");
+        assert_eq!(decoded.advisory_count, 1);
+        assert_eq!(decoded.advisories.len(), 1);
+        assert_eq!(decoded.signals.len(), 1);
+        assert_eq!(decoded.signals[0].source, "compatibility_advisory");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn load_onboarding_signals_accepts_compatibility_advisory_bundle() {
+        let temp_dir = unique_temp_dir("compat-bundle-signals");
+        fs::create_dir_all(&temp_dir).expect("temp directory should be created");
+
+        let advisory_bundle = build_compatibility_advisories(&CompatibilityAdvisoryInput {
+            source_report: "artifacts/compat/scenario_report.json".to_string(),
+            scenario_report: sample_scenario_report(),
+        });
+        let advisory_path = temp_dir.join("compatibility_advisories.json");
+        fs::write(
+            &advisory_path,
+            serde_json::to_vec_pretty(&advisory_bundle).expect("bundle should encode"),
+        )
+        .expect("bundle should be written");
+
+        let signals = load_onboarding_signals(&advisory_path.display().to_string())
+            .expect("bundle should decode as onboarding signals");
+        assert_eq!(signals.len(), advisory_bundle.signals.len());
+        assert_eq!(signals[0].source, "compatibility_advisory");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
 }

@@ -13,6 +13,7 @@ Subcommands:
 - `diagnostics`: emit runtime-state diagnostics
 - `export-evidence`: export evidence bundle with deterministic filtering/sorting
 - `doctor`: produce fail-closed preflight readiness report + support bundle pointers
+- `compatibility-advisories`: synthesize deterministic compatibility advisory rows/signals from module-compatibility scenario reports
 - `onboarding-scorecard`: derive deterministic onboarding readiness scorecard
 - `rollout-decision-artifact`: consolidate onboarding/advisory/platform evidence into explicit rollout recommendation (`promote|canary_hold|rollback|defer`)
 
@@ -83,6 +84,16 @@ runtime_diagnostics onboarding-scorecard \
   --summary
 ```
 
+Compatibility advisories from module-compatibility scenario report:
+
+```bash
+runtime_diagnostics compatibility-advisories \
+  --scenario-report artifacts/module_compat/scenario_report.json \
+  --source-report artifacts/module_compat/scenario_report.json \
+  --out artifacts/module_compat/compatibility_advisories.json \
+  --summary
+```
+
 Rollout decision artifact:
 
 ```bash
@@ -93,6 +104,10 @@ runtime_diagnostics rollout-decision-artifact \
   --platform-signals artifacts/platform_matrix_signals.json \
   --summary
 ```
+
+`--signals`, `--advisories`, and `--platform-signals` accept either:
+- JSON array of `OnboardingScorecardSignal`
+- Compatibility-advisory bundle JSON emitted by `compatibility-advisories` (the embedded `signals` are consumed)
 
 ## Determinism Rules
 
@@ -120,6 +135,12 @@ Both diagnostics and export emit log events with required stable fields:
 ./scripts/run_runtime_diagnostics_suite.sh ci
 ```
 
+Replay wrapper:
+
+```bash
+./scripts/e2e/runtime_diagnostics_suite_replay.sh ci
+```
+
 Modes:
 
 - `check`
@@ -127,8 +148,13 @@ Modes:
 - `clippy`
 - `ci`
 
-Runner uses `rch` when available and falls back to local execution where `rch`
-is unavailable (for hosted CI environments).
+Runner is `rch`-gated for heavy Rust commands and fails closed if remote
+execution falls back to local.
+
+In `test` and `ci`, the suite also runs a fixture-backed advisory generation
+step using:
+
+- `crates/franken-engine/tests/fixtures/runtime_compatibility_scenario_report_v1.json`
 
 ## Reproducibility Artifacts
 
@@ -136,6 +162,7 @@ Each run writes:
 
 - `artifacts/runtime_diagnostics/<timestamp>/commands.txt`
 - `artifacts/runtime_diagnostics/<timestamp>/events.jsonl`
+- `artifacts/runtime_diagnostics/<timestamp>/compatibility_advisories.json` (test/ci modes)
 - `artifacts/runtime_diagnostics/<timestamp>/run_manifest.json`
 
 `run_manifest.json` includes operator verification commands.

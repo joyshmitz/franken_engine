@@ -197,6 +197,8 @@ fn runtime_hotspot_gate_script_fail_closed_guards_are_present() {
         "Dependency preflight blocked remote execution",
         "RCH-E326",
         "rch-local-fallback-detected",
+        "rch_reject_missing_remote_exit",
+        "rch-remote-exit-missing",
         "rch_reject_artifact_retrieval_failure",
         "rch_has_recoverable_artifact_timeout",
         "rch-artifact-retrieval-failed",
@@ -236,9 +238,9 @@ fn runtime_hotspot_gate_script_emits_step_log_artifacts() {
         "step_logs_dir=\"${run_dir}/step_logs\"",
         "step_logs_index_path=\"${run_dir}/step_logs.txt\"",
         "printf '%s\\n' \"${step_logs[@]}\" >\"$step_logs_index_path\"",
-        "\"step_logs_index\": \"${step_logs_index_path}\"",
-        "\"step_logs_dir\": \"${step_logs_dir}\"",
-        "\"cat ${step_logs_index_path}\"",
+        "echo \"    \\\"step_logs_index\\\": \\\"${step_logs_index_path}\\\",\"",
+        "echo \"    \\\"step_logs_dir\\\": \\\"${step_logs_dir}\\\",\"",
+        "echo \"    \\\"cat ${step_logs_index_path}\\\",\"",
     ] {
         assert!(
             script.contains(marker),

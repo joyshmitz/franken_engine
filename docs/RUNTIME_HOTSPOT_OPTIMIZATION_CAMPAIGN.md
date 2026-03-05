@@ -108,6 +108,9 @@ Canonical replay wrapper:
 ## Deterministic Execution Contract
 
 All heavy Rust checks/tests for this lane must run through `rch`.
+Gate runs are fail-closed unless each heavy step log includes
+`Remote command finished: exit=...` with exit `0`; missing remote-exit markers
+or local-fallback signatures are treated as blocking failures.
 
 Canonical gate command:
 

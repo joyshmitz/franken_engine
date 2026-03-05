@@ -16,6 +16,7 @@ use crate::containment_executor::{ContainmentReceipt, ContainmentState};
 use crate::evidence_ledger::{DecisionType, EvidenceEntry};
 use crate::expected_loss_selector::ContainmentAction;
 use crate::hostcall_telemetry::{HostcallResult, HostcallTelemetryRecord};
+use crate::module_compatibility_matrix::{CompatibilityScenarioReport, DivergenceCategory};
 use crate::security_epoch::SecurityEpoch;
 
 const COMPONENT: &str = "runtime_diagnostics_cli";
@@ -24,6 +25,8 @@ const DEFAULT_SUPPORT_BUNDLE_REDACTION_MARKER: &str = "sha256:REDACTED";
 const PREFLIGHT_DOCTOR_FAILURE_CODE: &str = "FE-RUNTIME-DIAGNOSTICS-DOCTOR-0001";
 const ONBOARDING_SCORECARD_SCHEMA_VERSION: &str =
     "franken-engine.runtime-diagnostics.onboarding-scorecard.v1";
+const COMPATIBILITY_ADVISORY_SCHEMA_VERSION: &str =
+    "franken-engine.runtime-diagnostics.compatibility-advisory.v1";
 const ROLLOUT_DECISION_ARTIFACT_SCHEMA_VERSION: &str =
     "franken-engine.runtime-diagnostics.rollout-decision-artifact.v1";
 const ROLLOUT_DECISION_FAILURE_CODE: &str = "FE-RUNTIME-DIAGNOSTICS-ROLLOUT-0001";
@@ -630,6 +633,63 @@ pub struct OnboardingScorecardSignal {
     pub evidence_links: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_hint: Option<String>,
+}
+
+/// Coarse user-impact class for compatibility advisories.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompatibilityUserImpactClass {
+    BreakingBehavior,
+    MigrationRequired,
+    CompatibilityGap,
+    EcosystemInconsistency,
+    UpstreamRuntimeDrift,
+}
+
+impl fmt::Display for CompatibilityUserImpactClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BreakingBehavior => f.write_str("breaking_behavior"),
+            Self::MigrationRequired => f.write_str("migration_required"),
+            Self::CompatibilityGap => f.write_str("compatibility_gap"),
+            Self::EcosystemInconsistency => f.write_str("ecosystem_inconsistency"),
+            Self::UpstreamRuntimeDrift => f.write_str("upstream_runtime_drift"),
+        }
+    }
+}
+
+/// Deterministic advisory row generated from one compatibility divergence case.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompatibilityAdvisoryRecord {
+    pub signal_id: String,
+    pub case_id: String,
+    pub divergence_category: String,
+    pub severity: EvidenceSeverity,
+    pub user_impact: CompatibilityUserImpactClass,
+    pub remediation_complexity: OnboardingRemediationEffort,
+    pub guidance: String,
+    pub summary: String,
+    pub reproducible_command: String,
+    pub evidence_links: Vec<String>,
+}
+
+/// Input contract for compatibility-advisory synthesis.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompatibilityAdvisoryInput {
+    pub source_report: String,
+    pub scenario_report: CompatibilityScenarioReport,
+}
+
+/// Output contract for compatibility-advisory synthesis.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompatibilityAdvisoryOutput {
+    pub schema_version: String,
+    pub scenario_id: String,
+    pub source_report: String,
+    pub advisory_count: usize,
+    pub advisories: Vec<CompatibilityAdvisoryRecord>,
+    pub signals: Vec<OnboardingScorecardSignal>,
+    pub logs: Vec<StructuredLogEvent>,
 }
 
 /// Input surface for deterministic onboarding-scorecard generation.
@@ -1291,6 +1351,193 @@ pub fn render_preflight_summary(output: &PreflightDoctorOutput) -> String {
     for command in &output.support_bundle.index.reproducible_commands {
         lines.push(format!("  - {command}"));
     }
+    lines.join("\n")
+}
+
+fn compatibility_advisory_profile(
+    category: DivergenceCategory,
+) -> (
+    EvidenceSeverity,
+    CompatibilityUserImpactClass,
+    OnboardingRemediationEffort,
+    &'static str,
+) {
+    match category {
+        DivergenceCategory::EngineBug => (
+            EvidenceSeverity::Critical,
+            CompatibilityUserImpactClass::BreakingBehavior,
+            OnboardingRemediationEffort::High,
+            "treat as release blocker; patch FrankenEngine behavior and rerun lockstep evidence",
+        ),
+        DivergenceCategory::IntentionalImprovement => (
+            EvidenceSeverity::Warning,
+            CompatibilityUserImpactClass::MigrationRequired,
+            OnboardingRemediationEffort::Medium,
+            "document strictness/security intent and provide compat-mode migration guidance",
+        ),
+        DivergenceCategory::CompatibilityDebt => (
+            EvidenceSeverity::Warning,
+            CompatibilityUserImpactClass::CompatibilityGap,
+            OnboardingRemediationEffort::High,
+            "schedule compatibility remediation and add focused parity vectors before promotion",
+        ),
+        DivergenceCategory::EcosystemAmbiguity => (
+            EvidenceSeverity::Warning,
+            CompatibilityUserImpactClass::EcosystemInconsistency,
+            OnboardingRemediationEffort::Medium,
+            "pin deterministic policy for this edge and track upstream consensus progress",
+        ),
+        DivergenceCategory::ReferenceRuntimeBug => (
+            EvidenceSeverity::Info,
+            CompatibilityUserImpactClass::UpstreamRuntimeDrift,
+            OnboardingRemediationEffort::Low,
+            "link upstream bug, preserve local workaround, and keep replay evidence attached",
+        ),
+    }
+}
+
+/// Build deterministic compatibility advisories from scenario-report outcomes.
+pub fn build_compatibility_advisories(
+    input: &CompatibilityAdvisoryInput,
+) -> CompatibilityAdvisoryOutput {
+    let scenario_id = normalize_or_default(&input.scenario_report.scenario_id, "unknown-scenario");
+    let source_report = normalize_or_default(&input.source_report, "<scenario-report.json>");
+    let reproducible_command = format!(
+        "runtime_diagnostics compatibility-advisories --scenario-report {} --summary",
+        source_report
+    );
+
+    let mut advisories = Vec::<CompatibilityAdvisoryRecord>::new();
+    let mut signals = Vec::<OnboardingScorecardSignal>::new();
+
+    for outcome in &input.scenario_report.outcomes {
+        let Some(category) = outcome.divergence_category else {
+            continue;
+        };
+        let (severity, user_impact, remediation_complexity, fallback_guidance) =
+            compatibility_advisory_profile(category);
+        let guidance = normalize_or_default(
+            outcome
+                .actionable_guidance
+                .as_deref()
+                .unwrap_or(fallback_guidance),
+            fallback_guidance,
+        );
+        let case_id = normalize_or_default(&outcome.case_id, "unknown-case");
+        let signal_id = format!("compatibility:{}:{}", scenario_id, case_id);
+        let summary = format!(
+            "case={} category={} impact={}",
+            case_id,
+            category.as_str(),
+            user_impact
+        );
+        let evidence_links = vec![
+            format!("{}#scenario={}", source_report, scenario_id),
+            format!("{}#case={}", source_report, case_id),
+        ];
+        let remediation = format!(
+            "{} [impact={} remediation_complexity={}]",
+            guidance, user_impact, remediation_complexity
+        );
+
+        advisories.push(CompatibilityAdvisoryRecord {
+            signal_id: signal_id.clone(),
+            case_id: case_id.clone(),
+            divergence_category: category.as_str().to_string(),
+            severity,
+            user_impact,
+            remediation_complexity,
+            guidance: guidance.clone(),
+            summary: summary.clone(),
+            reproducible_command: reproducible_command.clone(),
+            evidence_links: evidence_links.clone(),
+        });
+
+        signals.push(OnboardingScorecardSignal {
+            signal_id,
+            source: "compatibility_advisory".to_string(),
+            severity,
+            summary,
+            remediation,
+            reproducible_command: reproducible_command.clone(),
+            evidence_links,
+            owner_hint: Some(default_owner_for_source("compatibility_advisory", severity)),
+        });
+    }
+
+    advisories.sort_by(|left, right| {
+        right
+            .severity
+            .cmp(&left.severity)
+            .then(left.case_id.cmp(&right.case_id))
+            .then(left.signal_id.cmp(&right.signal_id))
+    });
+    signals.sort_by(|left, right| {
+        right
+            .severity
+            .cmp(&left.severity)
+            .then(left.signal_id.cmp(&right.signal_id))
+            .then(left.source.cmp(&right.source))
+    });
+
+    let advisory_count = advisories.len();
+    let logs = vec![StructuredLogEvent {
+        trace_id: input.scenario_report.trace_id.clone(),
+        decision_id: input.scenario_report.decision_id.clone(),
+        policy_id: input.scenario_report.policy_id.clone(),
+        component: COMPONENT.to_string(),
+        event: "compatibility_advisory".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+    }];
+
+    CompatibilityAdvisoryOutput {
+        schema_version: COMPATIBILITY_ADVISORY_SCHEMA_VERSION.to_string(),
+        scenario_id,
+        source_report,
+        advisory_count,
+        advisories,
+        signals,
+        logs,
+    }
+}
+
+/// Render compatibility-advisory output in deterministic human-readable form.
+pub fn render_compatibility_advisory_summary(output: &CompatibilityAdvisoryOutput) -> String {
+    let mut severity_counts = BTreeMap::<String, u64>::new();
+    let mut category_counts = BTreeMap::<String, u64>::new();
+    for advisory in &output.advisories {
+        *severity_counts
+            .entry(advisory.severity.to_string())
+            .or_insert(0) += 1;
+        *category_counts
+            .entry(advisory.divergence_category.clone())
+            .or_insert(0) += 1;
+    }
+
+    let mut lines = vec![
+        format!("schema_version: {}", output.schema_version),
+        format!("scenario_id: {}", output.scenario_id),
+        format!("source_report: {}", output.source_report),
+        format!("advisory_count: {}", output.advisory_count),
+    ];
+
+    lines.push("severity_counts:".to_string());
+    for (severity, count) in severity_counts {
+        lines.push(format!("  - {}: {}", severity, count));
+    }
+    lines.push("divergence_category_counts:".to_string());
+    for (category, count) in category_counts {
+        lines.push(format!("  - {}: {}", category, count));
+    }
+    lines.push("signals:".to_string());
+    for signal in &output.signals {
+        lines.push(format!(
+            "  - [{}] {} :: {}",
+            signal.severity, signal.signal_id, signal.summary
+        ));
+    }
+
     lines.join("\n")
 }
 
@@ -2114,6 +2361,10 @@ mod tests {
     use crate::hostcall_telemetry::{
         FlowLabel, HostcallResult, HostcallType, RecordInput, RecorderConfig, ResourceDelta,
         TelemetryRecorder,
+    };
+    use crate::module_compatibility_matrix::{
+        CompatibilityEvent, CompatibilityMode, CompatibilityObservationOutcome,
+        CompatibilityRuntime, DivergenceCategory, DivergencePolicy, ReferenceRuntime,
     };
 
     fn sample_runtime_state() -> RuntimeStateInput {
@@ -3756,6 +4007,153 @@ mod tests {
         assert!(rendered.contains("total_records:"));
         assert!(rendered.contains("reproducible_commands:"));
         assert!(rendered.contains("runtime_diagnostics support-bundle --input <path> --summary"));
+    }
+
+    fn sample_compatibility_outcome(
+        case_id: &str,
+        category: DivergenceCategory,
+        guidance: &str,
+    ) -> CompatibilityObservationOutcome {
+        CompatibilityObservationOutcome {
+            case_id: case_id.to_string(),
+            runtime: CompatibilityRuntime::FrankenEngine,
+            mode: CompatibilityMode::Native,
+            observed_behavior: "native behavior".to_string(),
+            expected_behavior: "native behavior".to_string(),
+            matched: true,
+            divergence: Some(DivergencePolicy {
+                diverges_from: vec![ReferenceRuntime::Node],
+                reason: category.as_str().to_string(),
+                impact: "detected in synthetic compatibility report".to_string(),
+                waiver_id: "waiver-1".to_string(),
+                migration_guidance: guidance.to_string(),
+            }),
+            divergence_category: Some(category),
+            actionable_guidance: Some(guidance.to_string()),
+            event: CompatibilityEvent {
+                seq: 0,
+                trace_id: "trace-compat".to_string(),
+                decision_id: "decision-compat".to_string(),
+                policy_id: "policy-compat".to_string(),
+                component: "module_compatibility_matrix".to_string(),
+                event: "compatibility_observation".to_string(),
+                outcome: "allow".to_string(),
+                error_code: "none".to_string(),
+                case_id: case_id.to_string(),
+                runtime: "franken_engine".to_string(),
+                mode: "native".to_string(),
+                detail: "deterministic synthetic observation".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn compatibility_advisories_map_categories_to_expected_profiles() {
+        let report = CompatibilityScenarioReport {
+            schema_version: "franken-engine.module-interop-scenario-report.v1".to_string(),
+            scenario_id: "scenario-compat".to_string(),
+            trace_id: "trace-compat".to_string(),
+            decision_id: "decision-compat".to_string(),
+            policy_id: "policy-compat".to_string(),
+            generated_at_unix_ms: 1_234,
+            total_observations: 2,
+            matched_observations: 2,
+            divergence_category_counts: BTreeMap::new(),
+            actionable_guidance: BTreeMap::new(),
+            outcomes: vec![
+                sample_compatibility_outcome(
+                    "case-engine-bug",
+                    DivergenceCategory::EngineBug,
+                    "patch runtime lane semantics",
+                ),
+                sample_compatibility_outcome(
+                    "case-reference-runtime",
+                    DivergenceCategory::ReferenceRuntimeBug,
+                    "track upstream bug and keep workaround",
+                ),
+            ],
+        };
+
+        let output = build_compatibility_advisories(&CompatibilityAdvisoryInput {
+            source_report: "artifacts/compat/scenario_report.json".to_string(),
+            scenario_report: report,
+        });
+
+        assert_eq!(output.advisory_count, 2);
+        assert_eq!(output.signals.len(), 2);
+        assert!(
+            output
+                .signals
+                .iter()
+                .all(|signal| signal.source == "compatibility_advisory")
+        );
+
+        let critical = output
+            .advisories
+            .iter()
+            .find(|advisory| advisory.case_id == "case-engine-bug")
+            .expect("critical advisory should exist");
+        assert_eq!(critical.severity, EvidenceSeverity::Critical);
+        assert_eq!(
+            critical.user_impact,
+            CompatibilityUserImpactClass::BreakingBehavior
+        );
+        assert_eq!(
+            critical.remediation_complexity,
+            OnboardingRemediationEffort::High
+        );
+        assert!(
+            critical
+                .reproducible_command
+                .contains("runtime_diagnostics compatibility-advisories")
+        );
+
+        let info = output
+            .advisories
+            .iter()
+            .find(|advisory| advisory.case_id == "case-reference-runtime")
+            .expect("reference-runtime advisory should exist");
+        assert_eq!(info.severity, EvidenceSeverity::Info);
+        assert_eq!(
+            info.user_impact,
+            CompatibilityUserImpactClass::UpstreamRuntimeDrift
+        );
+        assert_eq!(
+            info.remediation_complexity,
+            OnboardingRemediationEffort::Low
+        );
+    }
+
+    #[test]
+    fn compatibility_advisory_summary_includes_counts() {
+        let report = CompatibilityScenarioReport {
+            schema_version: "franken-engine.module-interop-scenario-report.v1".to_string(),
+            scenario_id: "scenario-compat-summary".to_string(),
+            trace_id: "trace-compat".to_string(),
+            decision_id: "decision-compat".to_string(),
+            policy_id: "policy-compat".to_string(),
+            generated_at_unix_ms: 4_321,
+            total_observations: 1,
+            matched_observations: 1,
+            divergence_category_counts: BTreeMap::new(),
+            actionable_guidance: BTreeMap::new(),
+            outcomes: vec![sample_compatibility_outcome(
+                "case-compat-debt",
+                DivergenceCategory::CompatibilityDebt,
+                "close parity gap in module resolver",
+            )],
+        };
+
+        let output = build_compatibility_advisories(&CompatibilityAdvisoryInput {
+            source_report: "artifacts/compat/summary_report.json".to_string(),
+            scenario_report: report,
+        });
+        let rendered = render_compatibility_advisory_summary(&output);
+        assert!(rendered.contains("schema_version:"));
+        assert!(rendered.contains("advisory_count: 1"));
+        assert!(rendered.contains("divergence_category_counts:"));
+        assert!(rendered.contains("compatibility_debt"));
+        assert!(rendered.contains("signals:"));
     }
 
     #[test]
