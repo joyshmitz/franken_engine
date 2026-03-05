@@ -4,8 +4,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use frankenengine_engine::performance_regression_gate::{
-    evaluate_performance_regression_gate, RegressionGateInput, RegressionGatePolicy,
-    RegressionObservation, RegressionWaiver,
+    RegressionGateInput, RegressionGatePolicy, RegressionObservation, RegressionWaiver,
+    evaluate_performance_regression_gate,
 };
 use serde::Deserialize;
 
@@ -37,10 +37,12 @@ fn rgc_703_contract_is_parseable_and_points_to_expected_surfaces() {
         "franken-engine.rgc-performance-regression-gate.contract.v1"
     );
     assert_eq!(contract.bead_id, "bd-1lsy.8.3");
-    assert!(contract
-        .required_artifacts
-        .iter()
-        .any(|artifact| artifact == "regression_report.json"));
+    assert!(
+        contract
+            .required_artifacts
+            .iter()
+            .any(|artifact| artifact == "regression_report.json")
+    );
 
     let root = repo_root();
     assert!(root.join(&contract.gate_runner.script).is_file());

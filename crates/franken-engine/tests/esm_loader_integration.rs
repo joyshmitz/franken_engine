@@ -41,8 +41,7 @@ fn default_graph_is_empty() {
 #[test]
 fn add_single_module_sets_entry_point() {
     let mut g = ModuleGraph::new();
-    g.add_module(esm("./main.js", "export default 42"))
-        .unwrap();
+    g.add_module(esm("./main.js", "export default 42")).unwrap();
     assert_eq!(g.len(), 1);
     assert_eq!(g.entry_point(), Some("./main.js"));
 }
@@ -231,14 +230,8 @@ fn link_detects_cycle() {
     let result = g.link().unwrap();
     assert!(result.cycle_count > 0);
     // Both modules should still be Linked (cycles are handled per ES2020).
-    assert_eq!(
-        g.get_module("./a.js").unwrap().status,
-        ModuleStatus::Linked
-    );
-    assert_eq!(
-        g.get_module("./b.js").unwrap().status,
-        ModuleStatus::Linked
-    );
+    assert_eq!(g.get_module("./a.js").unwrap().status, ModuleStatus::Linked);
+    assert_eq!(g.get_module("./b.js").unwrap().status, ModuleStatus::Linked);
 }
 
 #[test]
@@ -382,10 +375,26 @@ fn evaluate_diamond_dependency_order() {
     let result = g.evaluate().unwrap();
     assert_eq!(result.evaluated_count, 4);
     // d must be evaluated before both b and c, and a must be last
-    let d_pos = result.eval_order.iter().position(|s| s == "./d.js").unwrap();
-    let b_pos = result.eval_order.iter().position(|s| s == "./b.js").unwrap();
-    let c_pos = result.eval_order.iter().position(|s| s == "./c.js").unwrap();
-    let a_pos = result.eval_order.iter().position(|s| s == "./a.js").unwrap();
+    let d_pos = result
+        .eval_order
+        .iter()
+        .position(|s| s == "./d.js")
+        .unwrap();
+    let b_pos = result
+        .eval_order
+        .iter()
+        .position(|s| s == "./b.js")
+        .unwrap();
+    let c_pos = result
+        .eval_order
+        .iter()
+        .position(|s| s == "./c.js")
+        .unwrap();
+    let a_pos = result
+        .eval_order
+        .iter()
+        .position(|s| s == "./a.js")
+        .unwrap();
     assert!(d_pos < b_pos);
     assert!(d_pos < c_pos);
     assert!(b_pos < a_pos);
@@ -718,7 +727,10 @@ fn error_display_unresolved_dependency() {
         specifier: "./a.js".into(),
         dependency: "./b.js".into(),
     };
-    assert_eq!(err.to_string(), "unresolved dependency: ./a.js imports ./b.js");
+    assert_eq!(
+        err.to_string(),
+        "unresolved dependency: ./a.js imports ./b.js"
+    );
 }
 
 #[test]
@@ -983,7 +995,10 @@ fn full_pipeline_three_modules() {
     let mut main = esm("./main.js", "import { render } from './lib.js'");
     main.add_import(ImportEntry::new("./lib.js", "render", "render"));
 
-    let mut lib = esm("./lib.js", "import { h } from './vdom.js'; export function render() {}");
+    let mut lib = esm(
+        "./lib.js",
+        "import { h } from './vdom.js'; export function render() {}",
+    );
     lib.add_import(ImportEntry::new("./vdom.js", "h", "h"));
     lib.add_export(ExportEntry::direct("render", "render"));
 

@@ -4,12 +4,12 @@
 //! statistical analysis → verdict/promotion decisions → report serialization.
 
 use frankenengine_engine::performance_statistical_validation::{
-    ConfidenceIntervalNs, FindingCode, OutlierPolicy, OutlierSummary, SampleStatsNs,
-    StatisticalThresholds, StatisticalValidationError, StatisticalValidationInput,
-    StatisticalValidationLogEvent, StatisticalValidationPolicy, StatisticalValidationReport,
-    ValidationFinding, WorkloadOutcome, WorkloadSamples, WorkloadValidationVerdict,
-    evaluate_statistical_validation, write_stats_verdict_report,
-    PERFORMANCE_STATISTICAL_VALIDATION_COMPONENT,
+    ConfidenceIntervalNs, FindingCode, OutlierPolicy, OutlierSummary,
+    PERFORMANCE_STATISTICAL_VALIDATION_COMPONENT, SampleStatsNs, StatisticalThresholds,
+    StatisticalValidationError, StatisticalValidationInput, StatisticalValidationLogEvent,
+    StatisticalValidationPolicy, StatisticalValidationReport, ValidationFinding, WorkloadOutcome,
+    WorkloadSamples, WorkloadValidationVerdict, evaluate_statistical_validation,
+    write_stats_verdict_report,
 };
 
 // ---------------------------------------------------------------------------
@@ -70,12 +70,8 @@ fn regressing_workload() -> WorkloadSamples {
         "gc_hot_path",
         "regression",
         "sha256:gc-hot-path",
-        vec![
-            1000, 1002, 998, 1001, 999, 1000, 1001, 999, 1000, 1001,
-        ],
-        vec![
-            1300, 1302, 1298, 1301, 1299, 1300, 1301, 1299, 1300, 1301,
-        ],
+        vec![1000, 1002, 998, 1001, 999, 1000, 1001, 999, 1000, 1001],
+        vec![1300, 1302, 1298, 1301, 1299, 1300, 1301, 1299, 1300, 1301],
     )
 }
 
@@ -99,7 +95,10 @@ fn full_pipeline_single_stable_workload_passes() {
     assert_eq!(report.trace_id, "trace-full-01");
     assert_eq!(report.decision_id, "decision-full-01");
     assert_eq!(report.policy_id, "policy-permissive");
-    assert_eq!(report.component, PERFORMANCE_STATISTICAL_VALIDATION_COMPONENT);
+    assert_eq!(
+        report.component,
+        PERFORMANCE_STATISTICAL_VALIDATION_COMPONENT
+    );
     assert_eq!(report.verdicts.len(), 1);
     assert_eq!(report.verdicts[0].outcome, WorkloadOutcome::Pass);
     assert!(report.failed_workloads.is_empty());
@@ -124,7 +123,12 @@ fn full_pipeline_multiple_workloads_all_pass() {
 
     assert!(report.promote_allowed);
     assert_eq!(report.verdicts.len(), 2);
-    assert!(report.verdicts.iter().all(|v| v.outcome == WorkloadOutcome::Pass));
+    assert!(
+        report
+            .verdicts
+            .iter()
+            .all(|v| v.outcome == WorkloadOutcome::Pass)
+    );
 }
 
 #[test]
@@ -144,7 +148,11 @@ fn full_pipeline_one_failure_blocks_promotion() {
     let report = evaluate_statistical_validation(&input, &policy);
 
     assert!(!report.promote_allowed);
-    assert!(report.failed_workloads.contains(&"bad_workload".to_string()));
+    assert!(
+        report
+            .failed_workloads
+            .contains(&"bad_workload".to_string())
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +190,12 @@ fn regression_above_fail_threshold_fails() {
     assert!(!report.promote_allowed);
     let verdict = &report.verdicts[0];
     assert_eq!(verdict.outcome, WorkloadOutcome::Fail);
-    assert!(verdict.findings.iter().any(|f| f.code == FindingCode::RegressionFail));
+    assert!(
+        verdict
+            .findings
+            .iter()
+            .any(|f| f.code == FindingCode::RegressionFail)
+    );
     assert!(verdict.effect_size_millionths > 0);
 }
 
@@ -198,8 +211,8 @@ fn regression_above_warn_but_below_fail_warns() {
         },
         thresholds: StatisticalThresholds {
             max_cv_millionths: 500_000,
-            warning_regression_millionths: 10_000,  // 1%
-            fail_regression_millionths: 50_000,     // 5%
+            warning_regression_millionths: 10_000, // 1%
+            fail_regression_millionths: 50_000,    // 5%
             max_p_value_millionths: 999_999,
             min_effect_size_millionths: 1_000,
             confidence_level_millionths: 950_000,
@@ -242,7 +255,11 @@ fn high_variance_workload_quarantined() {
 
     assert!(!report.promote_allowed);
     assert_eq!(report.verdicts[0].outcome, WorkloadOutcome::Quarantine);
-    assert!(report.quarantined_workloads.contains(&"noisy_path".to_string()));
+    assert!(
+        report
+            .quarantined_workloads
+            .contains(&"noisy_path".to_string())
+    );
     assert!(
         report.verdicts[0]
             .findings
@@ -358,7 +375,11 @@ fn workloads_sorted_by_id_in_verdicts() {
     let input = StatisticalValidationInput::new("t", "d", "p", vec![w_z, w_a, w_m]);
     let report = evaluate_statistical_validation(&input, &policy);
 
-    let ids: Vec<&str> = report.verdicts.iter().map(|v| v.workload_id.as_str()).collect();
+    let ids: Vec<&str> = report
+        .verdicts
+        .iter()
+        .map(|v| v.workload_id.as_str())
+        .collect();
     assert_eq!(ids, vec!["aaa_first", "mmm_middle", "zzz_last"]);
 }
 
@@ -486,8 +507,7 @@ fn write_and_read_back_report() {
     );
     let report = evaluate_statistical_validation(&input, &policy);
 
-    let temp_path =
-        std::env::temp_dir().join("franken_engine_psv_integration_report.json");
+    let temp_path = std::env::temp_dir().join("franken_engine_psv_integration_report.json");
 
     write_stats_verdict_report(&report, &temp_path).expect("write should succeed");
 
@@ -507,10 +527,8 @@ fn write_to_nonexistent_directory_fails() {
     let input = StatisticalValidationInput::new("t", "d", "p", vec![stable_workload()]);
     let report = evaluate_statistical_validation(&input, &policy);
 
-    let result = write_stats_verdict_report(
-        &report,
-        "/nonexistent/path/that/does/not/exist/report.json",
-    );
+    let result =
+        write_stats_verdict_report(&report, "/nonexistent/path/that/does/not/exist/report.json");
     assert!(result.is_err());
 }
 
@@ -777,7 +795,10 @@ fn default_policy_sensible_defaults() {
     assert!(policy.warmup_drop_samples > 0);
     assert!(policy.min_samples_after_filter > 0);
     assert!(policy.thresholds.max_cv_millionths > 0);
-    assert!(policy.thresholds.fail_regression_millionths > policy.thresholds.warning_regression_millionths);
+    assert!(
+        policy.thresholds.fail_regression_millionths
+            > policy.thresholds.warning_regression_millionths
+    );
     assert!(policy.thresholds.max_p_value_millionths > 0);
     assert!(policy.thresholds.confidence_level_millionths > 500_000);
 }
@@ -814,7 +835,7 @@ fn low_confidence_regression_quarantined() {
             max_cv_millionths: 500_000,
             warning_regression_millionths: 5_000,
             fail_regression_millionths: 200_000,
-            max_p_value_millionths: 10_000,         // very strict p-value threshold
+            max_p_value_millionths: 10_000, // very strict p-value threshold
             min_effect_size_millionths: 1_000,
             confidence_level_millionths: 950_000,
         },

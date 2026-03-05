@@ -14,15 +14,11 @@ use frankenengine_engine::privacy_learning_contract::{
     CoordinatorTrustModel, CreateContractInput, DataRetentionPolicy, DeterministicPrng,
     DpBudgetSemantics, FeatureField, FeatureFieldType, FeatureSchema, PrivacyLearningContract,
     PrngAlgorithm, RandomnessTranscript, SafetyMetric, SafetyMetricSnapshot, SecretSharingScheme,
-    SecureAggregationRequirements, SeedEscrowRecord, ShadowBurnInScorecardEntry,
-    ShadowBurnInThresholdProfile, ShadowEvaluationCandidate, ShadowEvaluationGate,
-    ShadowEvaluationGateConfig, ShadowExtensionClass, ShadowGateEvent,
-    ShadowPromotionDecisionArtifact, ShadowPromotionVerdict, ShadowReplayReference,
-    ShadowRollbackIncidentReceipt, ShadowRollbackReadinessArtifacts, UpdatePolicy, contract_schema,
-    contract_schema_id,
+    SecureAggregationRequirements, SeedEscrowRecord, ShadowExtensionClass, ShadowPromotionVerdict,
+    UpdatePolicy, contract_schema, contract_schema_id,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
-use frankenengine_engine::signature_preimage::{SigningKey, VerificationKey};
+use frankenengine_engine::signature_preimage::SigningKey;
 
 // ===========================================================================
 // Helpers
@@ -30,18 +26,6 @@ use frankenengine_engine::signature_preimage::{SigningKey, VerificationKey};
 
 fn test_signing_key() -> SigningKey {
     SigningKey::from_bytes([42u8; 32])
-}
-
-fn field(name: &str, ft: FeatureFieldType) -> (String, FeatureField) {
-    (
-        name.to_string(),
-        FeatureField {
-            name: name.to_string(),
-            field_type: ft,
-            description: format!("{name} field"),
-            existed_in_prior_version: false,
-        },
-    )
 }
 
 fn valid_schema() -> FeatureSchema {

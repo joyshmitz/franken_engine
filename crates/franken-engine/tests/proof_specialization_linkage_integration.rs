@@ -496,6 +496,49 @@ fn invalidate_by_proof_returns_empty_for_unknown_proof() {
     assert!(rollbacks.is_empty());
 }
 
+#[test]
+fn invalidate_expired_proof_windows_boundary_is_deterministic() {
+    let mut eng = engine(5);
+    let mut rec = linkage_record("lnk-expiring", 5, &["p1"]);
+    rec.rollback.activation_tick = 100;
+    rec.proof_inputs[0].validity_window_ticks = 25; // expires at 125
+    eng.register(rec, "t").unwrap();
+
+    let before = eng.invalidate_expired_proof_windows(124, "t-window-1");
+    assert!(before.is_empty());
+    assert_eq!(eng.active_count(), 1);
+
+    let at_boundary = eng.invalidate_expired_proof_windows(125, "t-window-2");
+    assert_eq!(at_boundary.len(), 1);
+    assert_eq!(at_boundary[0].0, LinkageId::new("lnk-expiring"));
+    assert_eq!(eng.active_count(), 0);
+    assert_eq!(eng.inactive_count(), 1);
+
+    let cause = &eng.invalidations()[0].1;
+    match cause {
+        InvalidationCause::PolicyChange { reason } => {
+            assert!(reason.contains("proof_window_expired"));
+            assert!(reason.contains("proof_id=p1"));
+            assert!(reason.contains("expiry_tick=125"));
+            assert!(reason.contains("observed_tick=125"));
+        }
+        other => panic!("expected PolicyChange, got {other:?}"),
+    }
+}
+
+#[test]
+fn invalidate_expired_proof_windows_ignores_unbounded_input() {
+    let mut eng = engine(5);
+    let mut rec = linkage_record("lnk-unbounded", 5, &["p1"]);
+    rec.proof_inputs[0].validity_window_ticks = 0; // unbounded
+    eng.register(rec, "t").unwrap();
+
+    let rollbacks = eng.invalidate_expired_proof_windows(u64::MAX, "t-window");
+    assert!(rollbacks.is_empty());
+    assert_eq!(eng.active_count(), 1);
+    assert!(eng.invalidations().is_empty());
+}
+
 // =========================================================================
 // 7. invalidate_manual
 // =========================================================================

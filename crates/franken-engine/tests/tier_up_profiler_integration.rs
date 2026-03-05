@@ -6,8 +6,8 @@
 
 use frankenengine_engine::bytecode_vm::{BytecodeVm, Instruction, Program, Register, Value};
 use frankenengine_engine::tier_up_profiler::{
-    HotPathProfile, TierUpCandidate, TierUpDecision, TierUpDecisionEvent, TierUpPolicy,
-    TierUpRejection, TIER_UP_POLICY_SCHEMA_VERSION, build_hot_path_profile,
+    HotPathProfile, TIER_UP_POLICY_SCHEMA_VERSION, TierUpCandidate, TierUpDecision,
+    TierUpDecisionEvent, TierUpPolicy, TierUpRejection, build_hot_path_profile,
     evaluate_tier_up_eligibility,
 };
 
@@ -305,7 +305,10 @@ fn profile_deterministic_across_three_runs() {
         let mut vm = BytecodeVm::new("trace-determinism", 8, 256);
         let report = vm.execute(&program).unwrap();
         profiles.push(build_hot_path_profile(&report, 16));
-        decisions.push(evaluate_tier_up_eligibility(&report, &TierUpPolicy::default()));
+        decisions.push(evaluate_tier_up_eligibility(
+            &report,
+            &TierUpPolicy::default(),
+        ));
     }
 
     assert_eq!(profiles[0].profile_hash, profiles[1].profile_hash);
@@ -507,12 +510,7 @@ fn decision_events_contain_start_and_complete() {
     let report = vm.execute(&program).unwrap();
     let decision = evaluate_tier_up_eligibility(&report, &TierUpPolicy::default());
 
-    assert!(
-        decision
-            .events
-            .iter()
-            .any(|e| e.event == "tier_up_started")
-    );
+    assert!(decision.events.iter().any(|e| e.event == "tier_up_started"));
     assert!(
         decision
             .events

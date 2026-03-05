@@ -4,10 +4,12 @@
 //! registry completeness, math/string/number/JSON method execution, determinism,
 //! serde round-trips, and error taxonomy coverage.
 
-use frankenengine_engine::object_model::{JsValue, ObjectHeap, PropertyKey};
+use frankenengine_engine::object_model::{JsValue, ObjectHeap, PropertyKey, SymbolId};
 use frankenengine_engine::stdlib::{
-    BuiltinId, GlobalEnvironment, StdlibError, exec_math, exec_number_method, exec_string_method,
-    install_stdlib, json_parse, json_stringify,
+    ArrayMethodResult, BuiltinId, GlobalEnvironment, StdlibError, exec_array_method,
+    exec_boolean_method, exec_date_method, exec_error_constructor, exec_global_function, exec_math,
+    exec_number_method, exec_object_static, exec_string_method, exec_string_static,
+    exec_symbol_static, install_stdlib, json_parse, json_stringify,
 };
 
 const FP_SCALE: i64 = 1_000_000;
@@ -55,7 +57,7 @@ fn install_stdlib_returns_valid_global_environment() {
 fn install_stdlib_registers_builtins_in_registry() {
     let mut heap = ObjectHeap::new();
     let env = install_stdlib(&mut heap);
-    assert!(env.registry.len() > 0, "registry should not be empty");
+    assert!(!env.registry.is_empty(), "registry should not be empty");
 }
 
 #[test]
@@ -158,7 +160,7 @@ fn math_sign() {
         JsValue::Int(FP_SCALE)
     );
     assert_eq!(
-        exec_math(BuiltinId::MathSign, &[JsValue::Int(-1 * FP_SCALE)]).unwrap(),
+        exec_math(BuiltinId::MathSign, &[JsValue::Int(-FP_SCALE)]).unwrap(),
         JsValue::Int(-FP_SCALE)
     );
     assert_eq!(
@@ -171,7 +173,7 @@ fn math_sign() {
 fn math_max_min() {
     let args = vec![
         JsValue::Int(3 * FP_SCALE),
-        JsValue::Int(1 * FP_SCALE),
+        JsValue::Int(FP_SCALE),
         JsValue::Int(5 * FP_SCALE),
     ];
     assert_eq!(
@@ -180,7 +182,7 @@ fn math_max_min() {
     );
     assert_eq!(
         exec_math(BuiltinId::MathMin, &args).unwrap(),
-        JsValue::Int(1 * FP_SCALE)
+        JsValue::Int(FP_SCALE)
     );
 }
 
@@ -196,7 +198,7 @@ fn math_pow() {
 
 #[test]
 fn math_clz32() {
-    let result = exec_math(BuiltinId::MathClz32, &[JsValue::Int(1 * FP_SCALE)]).unwrap();
+    let result = exec_math(BuiltinId::MathClz32, &[JsValue::Int(FP_SCALE)]).unwrap();
     assert_eq!(result, JsValue::Int(31 * FP_SCALE));
 }
 
@@ -386,7 +388,7 @@ fn string_index_of() {
             &[JsValue::Str("xyz".into())]
         )
         .unwrap(),
-        JsValue::Int(-1 * FP_SCALE)
+        JsValue::Int(-FP_SCALE)
     );
 }
 
@@ -409,7 +411,7 @@ fn string_substring() {
         exec_string_method(
             BuiltinId::StringPrototypeSubstring,
             "hello",
-            &[JsValue::Int(1 * FP_SCALE), JsValue::Int(3 * FP_SCALE)]
+            &[JsValue::Int(FP_SCALE), JsValue::Int(3 * FP_SCALE)]
         )
         .unwrap(),
         JsValue::Str("el".into())
@@ -746,4 +748,971 @@ fn number_epsilon_is_one() {
         .get_property(number_ctor, &PropertyKey::from("EPSILON"))
         .unwrap();
     assert_eq!(epsilon, JsValue::Int(1));
+}
+
+// ---------------------------------------------------------------------------
+// exec_global_function tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn global_is_nan_undefined_returns_true() {
+    let result = exec_global_function(BuiltinId::GlobalIsNaN, &[JsValue::Undefined]).unwrap();
+    assert_eq!(result, JsValue::Bool(true));
+}
+
+#[test]
+fn global_is_nan_number_returns_false() {
+    let result = exec_global_function(BuiltinId::GlobalIsNaN, &[JsValue::Int(42 * FP_SCALE)]).unwrap();
+    assert_eq!(result, JsValue::Bool(false));
+}
+
+#[test]
+fn global_is_nan_numeric_string_returns_false() {
+    let result =
+        exec_global_function(BuiltinId::GlobalIsNaN, &[JsValue::Str("123".into())]).unwrap();
+    assert_eq!(result, JsValue::Bool(false));
+}
+
+#[test]
+fn global_is_nan_non_numeric_string_returns_true() {
+    let result =
+        exec_global_function(BuiltinId::GlobalIsNaN, &[JsValue::Str("abc".into())]).unwrap();
+    assert_eq!(result, JsValue::Bool(true));
+}
+
+#[test]
+fn global_is_finite_number_returns_true() {
+    let result =
+        exec_global_function(BuiltinId::GlobalIsFinite, &[JsValue::Int(99 * FP_SCALE)]).unwrap();
+    assert_eq!(result, JsValue::Bool(true));
+}
+
+#[test]
+fn global_is_finite_undefined_returns_false() {
+    let result =
+        exec_global_function(BuiltinId::GlobalIsFinite, &[JsValue::Undefined]).unwrap();
+    assert_eq!(result, JsValue::Bool(false));
+}
+
+#[test]
+fn global_parse_int_decimal() {
+    let result = exec_global_function(
+        BuiltinId::GlobalParseInt,
+        &[JsValue::Str("42".into())],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Int(42 * FP_SCALE));
+}
+
+#[test]
+fn global_parse_int_with_radix() {
+    let result = exec_global_function(
+        BuiltinId::GlobalParseInt,
+        &[JsValue::Str("ff".into()), JsValue::Int(16 * FP_SCALE)],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Int(255 * FP_SCALE));
+}
+
+#[test]
+fn global_parse_int_negative() {
+    let result = exec_global_function(
+        BuiltinId::GlobalParseInt,
+        &[JsValue::Str("-10".into())],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Int(-10 * FP_SCALE));
+}
+
+#[test]
+fn global_parse_int_invalid_returns_zero() {
+    let result = exec_global_function(
+        BuiltinId::GlobalParseInt,
+        &[JsValue::Str("not_a_number".into())],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Int(0));
+}
+
+#[test]
+fn global_parse_float_integer() {
+    let result = exec_global_function(
+        BuiltinId::GlobalParseFloat,
+        &[JsValue::Str("99".into())],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Int(99 * FP_SCALE));
+}
+
+#[test]
+fn global_encode_uri_preserves_safe_chars() {
+    let result = exec_global_function(
+        BuiltinId::GlobalEncodeURI,
+        &[JsValue::Str("http://example.com/path?q=1".into())],
+    )
+    .unwrap();
+    if let JsValue::Str(s) = &result {
+        assert!(s.contains("http"));
+        assert!(s.contains("example.com"));
+    } else {
+        panic!("expected string result");
+    }
+}
+
+#[test]
+fn global_encode_uri_component_encodes_special_chars() {
+    let result = exec_global_function(
+        BuiltinId::GlobalEncodeURIComponent,
+        &[JsValue::Str("hello world".into())],
+    )
+    .unwrap();
+    if let JsValue::Str(s) = &result {
+        assert!(s.contains("%20") || s.contains("+"), "space should be encoded: {s}");
+    } else {
+        panic!("expected string result");
+    }
+}
+
+#[test]
+fn global_decode_uri_round_trips() {
+    let encoded = exec_global_function(
+        BuiltinId::GlobalEncodeURIComponent,
+        &[JsValue::Str("hello world!".into())],
+    )
+    .unwrap();
+    if let JsValue::Str(encoded_str) = &encoded {
+        let decoded = exec_global_function(
+            BuiltinId::GlobalDecodeURIComponent,
+            &[JsValue::Str(encoded_str.clone())],
+        )
+        .unwrap();
+        assert_eq!(decoded, JsValue::Str("hello world!".into()));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// exec_boolean_method tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn boolean_to_string_true() {
+    let result = exec_boolean_method(BuiltinId::BooleanPrototypeToString, true).unwrap();
+    assert_eq!(result, JsValue::Str("true".into()));
+}
+
+#[test]
+fn boolean_to_string_false() {
+    let result = exec_boolean_method(BuiltinId::BooleanPrototypeToString, false).unwrap();
+    assert_eq!(result, JsValue::Str("false".into()));
+}
+
+#[test]
+fn boolean_value_of_true() {
+    let result = exec_boolean_method(BuiltinId::BooleanPrototypeValueOf, true).unwrap();
+    assert_eq!(result, JsValue::Bool(true));
+}
+
+#[test]
+fn boolean_value_of_false() {
+    let result = exec_boolean_method(BuiltinId::BooleanPrototypeValueOf, false).unwrap();
+    assert_eq!(result, JsValue::Bool(false));
+}
+
+#[test]
+fn boolean_method_wrong_builtin_returns_error() {
+    let result = exec_boolean_method(BuiltinId::MathAbs, true);
+    assert!(result.is_err());
+}
+
+// ---------------------------------------------------------------------------
+// exec_object_static tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn object_is_same_value_ints() {
+    let result = exec_object_static(
+        BuiltinId::ObjectIs,
+        &[JsValue::Int(42), JsValue::Int(42)],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Bool(true));
+}
+
+#[test]
+fn object_is_different_values() {
+    let result = exec_object_static(
+        BuiltinId::ObjectIs,
+        &[JsValue::Int(1), JsValue::Int(2)],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Bool(false));
+}
+
+#[test]
+fn object_is_null_null() {
+    let result = exec_object_static(
+        BuiltinId::ObjectIs,
+        &[JsValue::Null, JsValue::Null],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Bool(true));
+}
+
+#[test]
+fn object_is_undefined_undefined() {
+    let result = exec_object_static(
+        BuiltinId::ObjectIs,
+        &[JsValue::Undefined, JsValue::Undefined],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Bool(true));
+}
+
+#[test]
+fn object_is_null_vs_undefined() {
+    let result = exec_object_static(
+        BuiltinId::ObjectIs,
+        &[JsValue::Null, JsValue::Undefined],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Bool(false));
+}
+
+#[test]
+fn object_is_no_args_defaults_to_undefined() {
+    let result = exec_object_static(BuiltinId::ObjectIs, &[]).unwrap();
+    assert_eq!(result, JsValue::Bool(true), "both default to undefined");
+}
+
+// ---------------------------------------------------------------------------
+// exec_string_static tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_from_char_code_single() {
+    let result = exec_string_static(
+        BuiltinId::StringFromCharCode,
+        &[JsValue::Int(65 * FP_SCALE)],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Str("A".into()));
+}
+
+#[test]
+fn string_from_char_code_multiple() {
+    let result = exec_string_static(
+        BuiltinId::StringFromCharCode,
+        &[
+            JsValue::Int(72 * FP_SCALE),
+            JsValue::Int(105 * FP_SCALE),
+        ],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Str("Hi".into()));
+}
+
+#[test]
+fn string_from_code_point_single() {
+    let result = exec_string_static(
+        BuiltinId::StringFromCodePoint,
+        &[JsValue::Int(9731 * FP_SCALE)],
+    )
+    .unwrap();
+    if let JsValue::Str(s) = &result {
+        assert_eq!(s.chars().count(), 1);
+    } else {
+        panic!("expected string");
+    }
+}
+
+#[test]
+fn string_from_code_point_invalid_returns_error() {
+    let result = exec_string_static(
+        BuiltinId::StringFromCodePoint,
+        &[JsValue::Int(0x11_0000_i64 * FP_SCALE)],
+    );
+    assert!(result.is_err(), "code point above U+10FFFF should fail");
+}
+
+// ---------------------------------------------------------------------------
+// exec_array_method tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn array_index_of_found() {
+    let elements = vec![
+        JsValue::Int(FP_SCALE),
+        JsValue::Int(2 * FP_SCALE),
+        JsValue::Int(3 * FP_SCALE),
+    ];
+    let result = exec_array_method(
+        BuiltinId::ArrayPrototypeIndexOf,
+        &elements,
+        &[JsValue::Int(2 * FP_SCALE)],
+    )
+    .unwrap();
+    assert!(matches!(result, ArrayMethodResult::Value(JsValue::Int(v)) if v == FP_SCALE));
+}
+
+#[test]
+fn array_index_of_not_found() {
+    let elements = vec![JsValue::Int(FP_SCALE)];
+    let result = exec_array_method(
+        BuiltinId::ArrayPrototypeIndexOf,
+        &elements,
+        &[JsValue::Int(99 * FP_SCALE)],
+    )
+    .unwrap();
+    assert!(matches!(result, ArrayMethodResult::Value(JsValue::Int(v)) if v == -FP_SCALE));
+}
+
+#[test]
+fn array_last_index_of_found() {
+    let elements = vec![
+        JsValue::Int(FP_SCALE),
+        JsValue::Int(2 * FP_SCALE),
+        JsValue::Int(FP_SCALE),
+    ];
+    let result = exec_array_method(
+        BuiltinId::ArrayPrototypeLastIndexOf,
+        &elements,
+        &[JsValue::Int(FP_SCALE)],
+    )
+    .unwrap();
+    assert!(matches!(result, ArrayMethodResult::Value(JsValue::Int(v)) if v == 2 * FP_SCALE));
+}
+
+#[test]
+fn array_includes_true() {
+    let elements = vec![JsValue::Int(10 * FP_SCALE), JsValue::Int(20 * FP_SCALE)];
+    let result = exec_array_method(
+        BuiltinId::ArrayPrototypeIncludes,
+        &elements,
+        &[JsValue::Int(20 * FP_SCALE)],
+    )
+    .unwrap();
+    assert!(matches!(result, ArrayMethodResult::Value(JsValue::Bool(true))));
+}
+
+#[test]
+fn array_includes_false() {
+    let elements = vec![JsValue::Int(10 * FP_SCALE)];
+    let result = exec_array_method(
+        BuiltinId::ArrayPrototypeIncludes,
+        &elements,
+        &[JsValue::Int(99 * FP_SCALE)],
+    )
+    .unwrap();
+    assert!(matches!(result, ArrayMethodResult::Value(JsValue::Bool(false))));
+}
+
+#[test]
+fn array_join_default_separator() {
+    let elements = vec![
+        JsValue::Int(FP_SCALE),
+        JsValue::Int(2 * FP_SCALE),
+        JsValue::Int(3 * FP_SCALE),
+    ];
+    let result = exec_array_method(BuiltinId::ArrayPrototypeJoin, &elements, &[]).unwrap();
+    if let ArrayMethodResult::Value(JsValue::Str(s)) = &result {
+        assert!(s.contains(','), "default separator should be comma: {s}");
+    } else {
+        panic!("expected string value result");
+    }
+}
+
+#[test]
+fn array_join_custom_separator() {
+    let elements = vec![JsValue::Str("a".into()), JsValue::Str("b".into())];
+    let result = exec_array_method(
+        BuiltinId::ArrayPrototypeJoin,
+        &elements,
+        &[JsValue::Str("-".into())],
+    )
+    .unwrap();
+    assert!(matches!(result, ArrayMethodResult::Value(JsValue::Str(s)) if s == "a-b"));
+}
+
+#[test]
+fn array_reverse() {
+    let elements = vec![
+        JsValue::Int(FP_SCALE),
+        JsValue::Int(2 * FP_SCALE),
+        JsValue::Int(3 * FP_SCALE),
+    ];
+    let result = exec_array_method(BuiltinId::ArrayPrototypeReverse, &elements, &[]).unwrap();
+    if let ArrayMethodResult::NewArray(arr) = result {
+        assert_eq!(arr.len(), 3);
+        assert_eq!(arr[0], JsValue::Int(3 * FP_SCALE));
+        assert_eq!(arr[2], JsValue::Int(FP_SCALE));
+    } else {
+        panic!("expected NewArray result");
+    }
+}
+
+#[test]
+fn array_slice_basic() {
+    let elements = vec![
+        JsValue::Int(10 * FP_SCALE),
+        JsValue::Int(20 * FP_SCALE),
+        JsValue::Int(30 * FP_SCALE),
+        JsValue::Int(40 * FP_SCALE),
+    ];
+    let result = exec_array_method(
+        BuiltinId::ArrayPrototypeSlice,
+        &elements,
+        &[JsValue::Int(FP_SCALE), JsValue::Int(3 * FP_SCALE)],
+    )
+    .unwrap();
+    if let ArrayMethodResult::NewArray(arr) = result {
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0], JsValue::Int(20 * FP_SCALE));
+        assert_eq!(arr[1], JsValue::Int(30 * FP_SCALE));
+    } else {
+        panic!("expected NewArray result");
+    }
+}
+
+#[test]
+fn array_concat() {
+    let elements = vec![JsValue::Int(FP_SCALE)];
+    let result = exec_array_method(
+        BuiltinId::ArrayPrototypeConcat,
+        &elements,
+        &[JsValue::Int(2 * FP_SCALE), JsValue::Int(3 * FP_SCALE)],
+    )
+    .unwrap();
+    if let ArrayMethodResult::NewArray(arr) = result {
+        assert_eq!(arr.len(), 3);
+    } else {
+        panic!("expected NewArray result");
+    }
+}
+
+#[test]
+fn array_fill() {
+    let elements = vec![
+        JsValue::Int(0),
+        JsValue::Int(0),
+        JsValue::Int(0),
+    ];
+    let result = exec_array_method(
+        BuiltinId::ArrayPrototypeFill,
+        &elements,
+        &[JsValue::Int(7 * FP_SCALE)],
+    )
+    .unwrap();
+    if let ArrayMethodResult::NewArray(arr) = result {
+        assert!(arr.iter().all(|v| *v == JsValue::Int(7 * FP_SCALE)));
+    } else {
+        panic!("expected NewArray result");
+    }
+}
+
+#[test]
+fn array_empty_index_of() {
+    let result = exec_array_method(
+        BuiltinId::ArrayPrototypeIndexOf,
+        &[],
+        &[JsValue::Int(FP_SCALE)],
+    )
+    .unwrap();
+    assert!(matches!(result, ArrayMethodResult::Value(JsValue::Int(v)) if v == -FP_SCALE));
+}
+
+// ---------------------------------------------------------------------------
+// exec_date_method tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn date_now_returns_deterministic_value() {
+    let r1 = exec_date_method(BuiltinId::DateNow, None).unwrap();
+    let r2 = exec_date_method(BuiltinId::DateNow, None).unwrap();
+    assert_eq!(r1, r2, "Date.now() should be deterministic");
+    if let JsValue::Int(v) = r1 {
+        assert!(v > 0, "Date.now() should return positive value");
+    }
+}
+
+#[test]
+fn date_get_time_returns_timestamp() {
+    let ts = 1_000_000_i64 * FP_SCALE;
+    let result = exec_date_method(BuiltinId::DatePrototypeGetTime, Some(ts)).unwrap();
+    assert_eq!(result, JsValue::Int(ts));
+}
+
+#[test]
+fn date_value_of_returns_timestamp() {
+    let ts = 500_000_i64 * FP_SCALE;
+    let result = exec_date_method(BuiltinId::DatePrototypeValueOf, Some(ts)).unwrap();
+    assert_eq!(result, JsValue::Int(ts));
+}
+
+#[test]
+fn date_to_string_contains_date_prefix() {
+    let result =
+        exec_date_method(BuiltinId::DatePrototypeToString, Some(1000 * FP_SCALE)).unwrap();
+    if let JsValue::Str(s) = &result {
+        assert!(s.starts_with("Date("), "should start with Date(: {s}");
+    } else {
+        panic!("expected string");
+    }
+}
+
+#[test]
+fn date_to_iso_string_contains_t_and_z() {
+    let result =
+        exec_date_method(BuiltinId::DatePrototypeToISOString, Some(86400000 * FP_SCALE)).unwrap();
+    if let JsValue::Str(s) = &result {
+        assert!(s.contains('T'), "ISO string should contain T: {s}");
+        assert!(s.ends_with('Z'), "ISO string should end with Z: {s}");
+    } else {
+        panic!("expected string");
+    }
+}
+
+#[test]
+fn date_method_none_timestamp_uses_zero() {
+    let result = exec_date_method(BuiltinId::DatePrototypeGetTime, None).unwrap();
+    assert_eq!(result, JsValue::Int(0));
+}
+
+// ---------------------------------------------------------------------------
+// exec_error_constructor tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_constructor_with_message() {
+    let result = exec_error_constructor(
+        BuiltinId::ErrorConstructor,
+        &[JsValue::Str("something went wrong".into())],
+    )
+    .unwrap();
+    if let JsValue::Str(s) = &result {
+        assert!(s.contains("Error"), "should contain Error: {s}");
+        assert!(s.contains("something went wrong"), "should contain message: {s}");
+    } else {
+        panic!("expected string");
+    }
+}
+
+#[test]
+fn type_error_constructor() {
+    let result = exec_error_constructor(
+        BuiltinId::TypeErrorConstructor,
+        &[JsValue::Str("bad type".into())],
+    )
+    .unwrap();
+    if let JsValue::Str(s) = &result {
+        assert!(s.starts_with("TypeError:"), "should start with TypeError: {s}");
+    } else {
+        panic!("expected string");
+    }
+}
+
+#[test]
+fn range_error_constructor() {
+    let result = exec_error_constructor(
+        BuiltinId::RangeErrorConstructor,
+        &[JsValue::Str("out of range".into())],
+    )
+    .unwrap();
+    if let JsValue::Str(s) = &result {
+        assert!(s.starts_with("RangeError:"));
+    } else {
+        panic!("expected string");
+    }
+}
+
+#[test]
+fn reference_error_constructor() {
+    let result = exec_error_constructor(
+        BuiltinId::ReferenceErrorConstructor,
+        &[JsValue::Str("not defined".into())],
+    )
+    .unwrap();
+    if let JsValue::Str(s) = &result {
+        assert!(s.starts_with("ReferenceError:"));
+    } else {
+        panic!("expected string");
+    }
+}
+
+#[test]
+fn syntax_error_constructor() {
+    let result = exec_error_constructor(
+        BuiltinId::SyntaxErrorConstructor,
+        &[JsValue::Str("unexpected token".into())],
+    )
+    .unwrap();
+    if let JsValue::Str(s) = &result {
+        assert!(s.starts_with("SyntaxError:"));
+    } else {
+        panic!("expected string");
+    }
+}
+
+#[test]
+fn error_constructor_no_args_empty_message() {
+    let result = exec_error_constructor(BuiltinId::ErrorConstructor, &[]).unwrap();
+    if let JsValue::Str(s) = &result {
+        assert!(s.starts_with("Error:"), "should start with Error: {s}");
+    } else {
+        panic!("expected string");
+    }
+}
+
+#[test]
+fn error_constructor_wrong_builtin_returns_error() {
+    let result = exec_error_constructor(BuiltinId::MathAbs, &[]);
+    assert!(result.is_err());
+}
+
+// ---------------------------------------------------------------------------
+// exec_symbol_static tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn symbol_for_returns_symbol() {
+    let result =
+        exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("myKey".into())]).unwrap();
+    assert!(matches!(result, JsValue::Symbol(_)));
+}
+
+#[test]
+fn symbol_for_deterministic_same_key() {
+    let r1 =
+        exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("key".into())]).unwrap();
+    let r2 =
+        exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("key".into())]).unwrap();
+    assert_eq!(r1, r2, "same key should produce same symbol");
+}
+
+#[test]
+fn symbol_for_different_keys_produce_different_symbols() {
+    let r1 =
+        exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("key1".into())]).unwrap();
+    let r2 =
+        exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("key2".into())]).unwrap();
+    assert_ne!(r1, r2, "different keys should produce different symbols");
+}
+
+#[test]
+fn symbol_key_for_returns_undefined() {
+    let result =
+        exec_symbol_static(BuiltinId::SymbolKeyFor, &[JsValue::Symbol(SymbolId(42))]).unwrap();
+    assert_eq!(result, JsValue::Undefined);
+}
+
+// ---------------------------------------------------------------------------
+// Additional number method tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn number_is_safe_integer_true() {
+    let result = exec_number_method(BuiltinId::NumberIsSafeInteger, 100 * FP_SCALE, &[]).unwrap();
+    assert_eq!(result, JsValue::Bool(true));
+}
+
+#[test]
+fn number_is_safe_integer_false_for_fractional() {
+    let result = exec_number_method(BuiltinId::NumberIsSafeInteger, 500_000, &[]).unwrap();
+    assert_eq!(result, JsValue::Bool(false));
+}
+
+#[test]
+fn number_to_fixed_zero_digits() {
+    let result =
+        exec_number_method(BuiltinId::NumberPrototypeToFixed, 3_141_593, &[JsValue::Int(0)])
+            .unwrap();
+    assert_eq!(result, JsValue::Str("3".into()));
+}
+
+#[test]
+fn number_to_fixed_two_digits() {
+    let result = exec_number_method(
+        BuiltinId::NumberPrototypeToFixed,
+        3_141_593,
+        &[JsValue::Int(2 * FP_SCALE)],
+    )
+    .unwrap();
+    if let JsValue::Str(s) = &result {
+        assert!(s.starts_with("3.14"), "expected 3.14..., got {s}");
+    }
+}
+
+#[test]
+fn number_to_fixed_out_of_range_returns_error() {
+    let result = exec_number_method(
+        BuiltinId::NumberPrototypeToFixed,
+        FP_SCALE,
+        &[JsValue::Int(21 * FP_SCALE)],
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn number_to_string_integer() {
+    let result =
+        exec_number_method(BuiltinId::NumberPrototypeToString, 42 * FP_SCALE, &[]).unwrap();
+    assert_eq!(result, JsValue::Str("42".into()));
+}
+
+#[test]
+fn number_to_string_fractional() {
+    let result =
+        exec_number_method(BuiltinId::NumberPrototypeToString, 3_500_000, &[]).unwrap();
+    if let JsValue::Str(s) = &result {
+        assert!(s.contains('.'), "should contain decimal point: {s}");
+    }
+}
+
+#[test]
+fn number_value_of() {
+    let result =
+        exec_number_method(BuiltinId::NumberPrototypeValueOf, 42 * FP_SCALE, &[]).unwrap();
+    assert_eq!(result, JsValue::Int(42 * FP_SCALE));
+}
+
+// ---------------------------------------------------------------------------
+// Additional math edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn math_sqrt_four() {
+    let result = exec_math(BuiltinId::MathSqrt, &[JsValue::Int(4 * FP_SCALE)]).unwrap();
+    assert_eq!(result, JsValue::Int(2 * FP_SCALE));
+}
+
+#[test]
+fn math_pow_zero_exponent() {
+    let result = exec_math(
+        BuiltinId::MathPow,
+        &[JsValue::Int(5 * FP_SCALE), JsValue::Int(0)],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Int(FP_SCALE));
+}
+
+#[test]
+fn math_max_no_args() {
+    let result = exec_math(BuiltinId::MathMax, &[]).unwrap();
+    if let JsValue::Int(v) = result {
+        assert!(v < 0, "Math.max() with no args should return -Infinity equivalent");
+    }
+}
+
+#[test]
+fn math_min_no_args() {
+    let result = exec_math(BuiltinId::MathMin, &[]).unwrap();
+    if let JsValue::Int(v) = result {
+        assert!(v > 0, "Math.min() with no args should return +Infinity equivalent");
+    }
+}
+
+#[test]
+fn math_hypot_3_4() {
+    let result = exec_math(
+        BuiltinId::MathHypot,
+        &[JsValue::Int(3 * FP_SCALE), JsValue::Int(4 * FP_SCALE)],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Int(5 * FP_SCALE));
+}
+
+// ---------------------------------------------------------------------------
+// Additional string method tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_replace_basic() {
+    let result = exec_string_method(
+        BuiltinId::StringPrototypeReplace,
+        "hello world",
+        &[JsValue::Str("world".into()), JsValue::Str("rust".into())],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Str("hello rust".into()));
+}
+
+#[test]
+fn string_search_found() {
+    let result = exec_string_method(
+        BuiltinId::StringPrototypeSearch,
+        "hello world",
+        &[JsValue::Str("world".into())],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Int(6 * FP_SCALE));
+}
+
+#[test]
+fn string_search_not_found() {
+    let result = exec_string_method(
+        BuiltinId::StringPrototypeSearch,
+        "hello",
+        &[JsValue::Str("xyz".into())],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Int(-FP_SCALE));
+}
+
+#[test]
+fn string_last_index_of() {
+    let result = exec_string_method(
+        BuiltinId::StringPrototypeLastIndexOf,
+        "abcabc",
+        &[JsValue::Str("abc".into())],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Int(3 * FP_SCALE));
+}
+
+#[test]
+fn string_char_code_at() {
+    let result = exec_string_method(
+        BuiltinId::StringPrototypeCharCodeAt,
+        "A",
+        &[JsValue::Int(0)],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Int(65 * FP_SCALE));
+}
+
+#[test]
+fn string_repeat_zero() {
+    let result = exec_string_method(
+        BuiltinId::StringPrototypeRepeat,
+        "x",
+        &[JsValue::Int(0)],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Str(String::new()));
+}
+
+#[test]
+fn string_normalize_ascii() {
+    let result = exec_string_method(
+        BuiltinId::StringPrototypeNormalize,
+        "hello",
+        &[],
+    )
+    .unwrap();
+    assert_eq!(result, JsValue::Str("hello".into()));
+}
+
+// ---------------------------------------------------------------------------
+// Additional JSON tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn json_parse_negative_number() {
+    let result = json_parse("-42").unwrap();
+    assert_eq!(result, JsValue::Int(-42 * FP_SCALE));
+}
+
+#[test]
+fn json_stringify_negative_number() {
+    let result = json_stringify(&JsValue::Int(-10 * FP_SCALE)).unwrap();
+    assert_eq!(result, JsValue::Str("-10".into()));
+}
+
+#[test]
+fn json_stringify_string() {
+    let result = json_stringify(&JsValue::Str("hello".into())).unwrap();
+    assert_eq!(result, JsValue::Str("\"hello\"".into()));
+}
+
+#[test]
+fn json_roundtrip_string() {
+    let original = JsValue::Str("test value".into());
+    let stringified = json_stringify(&original).unwrap();
+    if let JsValue::Str(s) = &stringified {
+        let parsed = json_parse(s).unwrap();
+        assert_eq!(parsed, original);
+    }
+}
+
+#[test]
+fn json_roundtrip_number() {
+    let original = JsValue::Int(42 * FP_SCALE);
+    let stringified = json_stringify(&original).unwrap();
+    if let JsValue::Str(s) = &stringified {
+        let parsed = json_parse(s).unwrap();
+        assert_eq!(parsed, original);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Prototype chain verification
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_prototype_inherits_from_object_prototype() {
+    let mut heap = ObjectHeap::new();
+    let env = install_stdlib(&mut heap);
+    let parent = heap
+        .get_prototype_of(env.prototypes.string_prototype)
+        .unwrap();
+    assert_eq!(parent, Some(env.prototypes.object_prototype));
+}
+
+#[test]
+fn error_prototype_inherits_from_object_prototype() {
+    let mut heap = ObjectHeap::new();
+    let env = install_stdlib(&mut heap);
+    let parent = heap
+        .get_prototype_of(env.prototypes.error_prototype)
+        .unwrap();
+    assert_eq!(parent, Some(env.prototypes.object_prototype));
+}
+
+#[test]
+fn type_error_prototype_inherits_from_error_prototype() {
+    let mut heap = ObjectHeap::new();
+    let env = install_stdlib(&mut heap);
+    let parent = heap
+        .get_prototype_of(env.prototypes.type_error_prototype)
+        .unwrap();
+    assert_eq!(parent, Some(env.prototypes.error_prototype));
+}
+
+#[test]
+fn map_prototype_inherits_from_object_prototype() {
+    let mut heap = ObjectHeap::new();
+    let env = install_stdlib(&mut heap);
+    let parent = heap
+        .get_prototype_of(env.prototypes.map_prototype)
+        .unwrap();
+    assert_eq!(parent, Some(env.prototypes.object_prototype));
+}
+
+#[test]
+fn set_prototype_inherits_from_object_prototype() {
+    let mut heap = ObjectHeap::new();
+    let env = install_stdlib(&mut heap);
+    let parent = heap
+        .get_prototype_of(env.prototypes.set_prototype)
+        .unwrap();
+    assert_eq!(parent, Some(env.prototypes.object_prototype));
+}
+
+// ---------------------------------------------------------------------------
+// Registry tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn registry_lookup_returns_none_for_invalid_slot() {
+    let mut heap = ObjectHeap::new();
+    let env = install_stdlib(&mut heap);
+    assert!(env.registry.lookup(u32::MAX).is_none());
+}
+
+#[test]
+fn registry_entries_all_have_valid_names() {
+    let mut heap = ObjectHeap::new();
+    let env = install_stdlib(&mut heap);
+    for (_slot, id) in env.registry.entries() {
+        assert!(!id.name().is_empty(), "builtin {id:?} should have a non-empty name");
+    }
 }

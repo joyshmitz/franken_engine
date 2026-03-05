@@ -4,11 +4,11 @@
 //! deterministic ordering, fail-closed semantics, and serde round-trips.
 
 use frankenengine_engine::performance_regression_gate::{
-    CulpritCandidate, RegressionFinding, RegressionGateError, RegressionGateInput,
-    RegressionGateLogEvent, RegressionGatePolicy, RegressionGateReport, RegressionObservation,
-    RegressionSeverity, RegressionStatus, RegressionWaiver, evaluate_performance_regression_gate,
-    write_regression_report, PERFORMANCE_REGRESSION_GATE_COMPONENT,
-    PERFORMANCE_REGRESSION_GATE_SCHEMA_VERSION,
+    CulpritCandidate, PERFORMANCE_REGRESSION_GATE_COMPONENT,
+    PERFORMANCE_REGRESSION_GATE_SCHEMA_VERSION, RegressionFinding, RegressionGateError,
+    RegressionGateInput, RegressionGateLogEvent, RegressionGatePolicy, RegressionGateReport,
+    RegressionObservation, RegressionSeverity, RegressionStatus, RegressionWaiver,
+    evaluate_performance_regression_gate, write_regression_report,
 };
 
 // ---------------------------------------------------------------------------
@@ -76,10 +76,7 @@ fn no_regressions_non_blocking() {
 
 #[test]
 fn improvement_does_not_trigger_findings() {
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 80_000, 5_000)],
-        Vec::new(),
-    );
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 80_000, 5_000)], Vec::new());
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
     assert!(!report.blocking);
@@ -93,10 +90,7 @@ fn improvement_does_not_trigger_findings() {
 #[test]
 fn warning_regression_does_not_block() {
     // +3% regression, above warning (2%) but below fail (4%)
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 103_000, 10_000)],
-        Vec::new(),
-    );
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 103_000, 10_000)], Vec::new());
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
     assert!(!report.blocking);
@@ -113,10 +107,7 @@ fn warning_regression_does_not_block() {
 #[test]
 fn high_regression_blocks() {
     // +6% regression, above fail (4%) but below critical (9%)
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 106_000, 10_000)],
-        Vec::new(),
-    );
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 106_000, 10_000)], Vec::new());
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
     assert!(report.blocking);
@@ -131,10 +122,7 @@ fn high_regression_blocks() {
 #[test]
 fn critical_regression_blocks() {
     // +100% regression, well above critical (9%)
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 200_000, 10_000)],
-        Vec::new(),
-    );
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 200_000, 10_000)], Vec::new());
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
     assert!(report.blocking);
@@ -148,10 +136,7 @@ fn critical_regression_blocks() {
 
 #[test]
 fn zero_baseline_is_critical() {
-    let input = mk_input(
-        vec![mk_obs("w-a", 0, 100_000, 10_000)],
-        Vec::new(),
-    );
+    let input = mk_input(vec![mk_obs("w-a", 0, 100_000, 10_000)], Vec::new());
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
     assert!(report.blocking);
@@ -165,15 +150,7 @@ fn zero_baseline_is_critical() {
 
 #[test]
 fn missing_metadata_is_high() {
-    let obs = RegressionObservation::new(
-        "w-a",
-        "scenario",
-        "",
-        100_000,
-        100_000,
-        10_000,
-        None,
-    );
+    let obs = RegressionObservation::new("w-a", "scenario", "", 100_000, 100_000, 10_000, None);
     let input = mk_input(vec![obs], Vec::new());
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
@@ -189,10 +166,7 @@ fn missing_metadata_is_high() {
 #[test]
 fn low_confidence_high_p_value_is_high() {
     // +3% regression with p_value > max (above warning, but p_value too high)
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 103_000, 80_000)],
-        Vec::new(),
-    );
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 103_000, 80_000)], Vec::new());
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
     assert!(report.blocking);
@@ -213,33 +187,24 @@ fn valid_waiver_suppresses_blocking() {
         1_800_000_000,
         "temporary jitter",
     );
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 160_000, 10_000)],
-        vec![waiver],
-    );
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 160_000, 10_000)], vec![waiver]);
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
     assert!(!report.blocking);
     assert_eq!(report.regressions[0].status, RegressionStatus::Waived);
     assert_eq!(report.regressions[0].waiver_id.as_deref(), Some("waiver-1"));
-    assert_eq!(report.regressions[0].waiver_owner.as_deref(), Some("oncall"));
+    assert_eq!(
+        report.regressions[0].waiver_owner.as_deref(),
+        Some("oncall")
+    );
     assert!(report.regressions[0].message.contains("waiver-1"));
     assert!(report.culprit_ranking.is_empty());
 }
 
 #[test]
 fn expired_waiver_produces_waiver_expired_finding() {
-    let waiver = RegressionWaiver::new(
-        "waiver-old",
-        "w-a",
-        "oncall",
-        1_600_000_000,
-        "expired",
-    );
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 160_000, 10_000)],
-        vec![waiver],
-    );
+    let waiver = RegressionWaiver::new("waiver-old", "w-a", "oncall", 1_600_000_000, "expired");
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 160_000, 10_000)], vec![waiver]);
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
     assert!(report.blocking);
@@ -254,17 +219,8 @@ fn expired_waiver_produces_waiver_expired_finding() {
 
 #[test]
 fn waiver_for_warning_regression_still_waives() {
-    let waiver = RegressionWaiver::new(
-        "waiver-w",
-        "w-a",
-        "oncall",
-        1_800_000_000,
-        "known",
-    );
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 103_000, 10_000)],
-        vec![waiver],
-    );
+    let waiver = RegressionWaiver::new("waiver-w", "w-a", "oncall", 1_800_000_000, "known");
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 103_000, 10_000)], vec![waiver]);
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
     assert!(!report.blocking);
@@ -280,10 +236,7 @@ fn waiver_for_unrelated_workload_has_no_effect() {
         1_800_000_000,
         "different workload",
     );
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 160_000, 10_000)],
-        vec![waiver],
-    );
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 160_000, 10_000)], vec![waiver]);
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
     assert!(report.blocking);
@@ -336,10 +289,7 @@ fn culprit_ranking_zero_max_produces_empty_list() {
         max_culprits: 0,
         ..default_policy()
     };
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 200_000, 5_000)],
-        Vec::new(),
-    );
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 200_000, 5_000)], Vec::new());
     let report = evaluate_performance_regression_gate(&input, &policy);
 
     assert!(report.culprit_ranking.is_empty());
@@ -362,17 +312,8 @@ fn culprit_ranks_start_at_one() {
 
 #[test]
 fn culprit_excludes_waived_findings() {
-    let waiver = RegressionWaiver::new(
-        "waiver-1",
-        "w-a",
-        "oncall",
-        1_800_000_000,
-        "known",
-    );
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 200_000, 5_000)],
-        vec![waiver],
-    );
+    let waiver = RegressionWaiver::new("waiver-1", "w-a", "oncall", 1_800_000_000, "known");
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 200_000, 5_000)], vec![waiver]);
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
     assert!(report.culprit_ranking.is_empty());
@@ -427,13 +368,13 @@ fn deterministic_across_repeated_runs() {
 
 #[test]
 fn report_has_expected_metadata() {
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 100_000, 5_000)],
-        Vec::new(),
-    );
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 100_000, 5_000)], Vec::new());
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
-    assert_eq!(report.schema_version, PERFORMANCE_REGRESSION_GATE_SCHEMA_VERSION);
+    assert_eq!(
+        report.schema_version,
+        PERFORMANCE_REGRESSION_GATE_SCHEMA_VERSION
+    );
     assert_eq!(report.component, PERFORMANCE_REGRESSION_GATE_COMPONENT);
     assert_eq!(report.trace_id, "trace-test");
     assert_eq!(report.decision_id, "decision-test");
@@ -442,54 +383,51 @@ fn report_has_expected_metadata() {
 
 #[test]
 fn log_events_contain_gate_decision() {
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 100_000, 5_000)],
-        Vec::new(),
-    );
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 100_000, 5_000)], Vec::new());
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
-    assert!(
-        report
-            .logs
-            .iter()
-            .any(|l| l.event == "gate_decision")
-    );
+    assert!(report.logs.iter().any(|l| l.event == "gate_decision"));
 }
 
 #[test]
 fn blocking_report_gate_decision_is_hold() {
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 200_000, 5_000)],
-        Vec::new(),
-    );
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 200_000, 5_000)], Vec::new());
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
-    let gate_log = report.logs.iter().find(|l| l.event == "gate_decision").unwrap();
+    let gate_log = report
+        .logs
+        .iter()
+        .find(|l| l.event == "gate_decision")
+        .unwrap();
     assert_eq!(gate_log.outcome, "hold");
 }
 
 #[test]
 fn non_blocking_report_gate_decision_is_promote() {
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 100_000, 5_000)],
-        Vec::new(),
-    );
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 100_000, 5_000)], Vec::new());
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
-    let gate_log = report.logs.iter().find(|l| l.event == "gate_decision").unwrap();
+    let gate_log = report
+        .logs
+        .iter()
+        .find(|l| l.event == "gate_decision")
+        .unwrap();
     assert_eq!(gate_log.outcome, "promote");
 }
 
 #[test]
 fn finding_with_commit_id_propagated() {
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 200_000, 5_000)],
-        Vec::new(),
-    );
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 200_000, 5_000)], Vec::new());
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
-    assert_eq!(report.regressions[0].commit_id.as_deref(), Some("commit-w-a"));
-    assert_eq!(report.culprit_ranking[0].commit_id.as_deref(), Some("commit-w-a"));
+    assert_eq!(
+        report.regressions[0].commit_id.as_deref(),
+        Some("commit-w-a")
+    );
+    assert_eq!(
+        report.culprit_ranking[0].commit_id.as_deref(),
+        Some("commit-w-a")
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -498,10 +436,7 @@ fn finding_with_commit_id_propagated() {
 
 #[test]
 fn write_and_read_back_report() {
-    let input = mk_input(
-        vec![mk_obs("w-a", 100_000, 160_000, 10_000)],
-        Vec::new(),
-    );
+    let input = mk_input(vec![mk_obs("w-a", 100_000, 160_000, 10_000)], Vec::new());
     let report = evaluate_performance_regression_gate(&input, &default_policy());
 
     let path = std::env::temp_dir().join("prg_integration_report.json");
@@ -592,7 +527,13 @@ fn default_policy_has_sensible_thresholds() {
 fn input_serde_roundtrip() {
     let input = mk_input(
         vec![mk_obs("w-a", 100_000, 160_000, 10_000)],
-        vec![RegressionWaiver::new("w-1", "w-a", "oncall", 1_800_000_000, "test")],
+        vec![RegressionWaiver::new(
+            "w-1",
+            "w-a",
+            "oncall",
+            1_800_000_000,
+            "test",
+        )],
     );
     let json = serde_json::to_string(&input).unwrap();
     let back: RegressionGateInput = serde_json::from_str(&json).unwrap();
@@ -630,7 +571,13 @@ fn report_serde_roundtrip() {
             mk_obs("w-a", 100_000, 200_000, 5_000),
             mk_obs("w-b", 100_000, 103_000, 10_000),
         ],
-        vec![RegressionWaiver::new("w-1", "w-b", "oncall", 1_800_000_000, "test")],
+        vec![RegressionWaiver::new(
+            "w-1",
+            "w-b",
+            "oncall",
+            1_800_000_000,
+            "test",
+        )],
     );
     let report = evaluate_performance_regression_gate(&input, &default_policy());
     let json = serde_json::to_string(&report).unwrap();
@@ -711,10 +658,22 @@ fn empty_observations_non_blocking() {
 fn multiple_findings_per_workload_accumulate_in_culprit() {
     // Same workload with two different scenarios
     let obs1 = RegressionObservation::new(
-        "w-a", "scenario-1", "sha256:meta1", 100_000, 200_000, 5_000, Some("commit-a".to_string()),
+        "w-a",
+        "scenario-1",
+        "sha256:meta1",
+        100_000,
+        200_000,
+        5_000,
+        Some("commit-a".to_string()),
     );
     let obs2 = RegressionObservation::new(
-        "w-a", "scenario-2", "sha256:meta2", 100_000, 160_000, 10_000, Some("commit-a".to_string()),
+        "w-a",
+        "scenario-2",
+        "sha256:meta2",
+        100_000,
+        160_000,
+        10_000,
+        Some("commit-a".to_string()),
     );
     let input = mk_input(vec![obs1, obs2], Vec::new());
     let report = evaluate_performance_regression_gate(&input, &default_policy());
@@ -727,7 +686,10 @@ fn multiple_findings_per_workload_accumulate_in_culprit() {
 
 #[test]
 fn constant_values() {
-    assert_eq!(PERFORMANCE_REGRESSION_GATE_COMPONENT, "performance_regression_gate");
+    assert_eq!(
+        PERFORMANCE_REGRESSION_GATE_COMPONENT,
+        "performance_regression_gate"
+    );
     assert!(PERFORMANCE_REGRESSION_GATE_SCHEMA_VERSION.contains("v1"));
 }
 
@@ -739,9 +701,9 @@ fn constant_values() {
 fn mixed_severity_takes_highest() {
     let input = mk_input(
         vec![
-            mk_obs("w-warn", 100_000, 103_000, 10_000),    // warning
-            mk_obs("w-crit", 100_000, 200_000, 5_000),     // critical
-            mk_obs("w-pass", 100_000, 100_000, 50_000),    // pass
+            mk_obs("w-warn", 100_000, 103_000, 10_000), // warning
+            mk_obs("w-crit", 100_000, 200_000, 5_000),  // critical
+            mk_obs("w-pass", 100_000, 100_000, 50_000), // pass
         ],
         Vec::new(),
     );

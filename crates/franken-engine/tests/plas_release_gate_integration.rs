@@ -9,8 +9,9 @@ use frankenengine_engine::engine_object_id::{self, EngineObjectId, ObjectDomain,
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::plas_release_gate::{
     PlasActivationMode, PlasCohortExtension, PlasEscrowReplayEvidence, PlasGrantCheckRecord,
-    PlasReleaseGateFailureCode, PlasReleaseGateInput, PlasReleaseGateTrustAnchors,
-    PlasRevocationCheckRecord, evaluate_plas_release_gate,
+    PlasReleaseGateDecisionArtifact, PlasReleaseGateError, PlasReleaseGateFailureCode,
+    PlasReleaseGateFinding, PlasReleaseGateInput, PlasReleaseGateLogEvent,
+    PlasReleaseGateTrustAnchors, PlasRevocationCheckRecord, evaluate_plas_release_gate,
 };
 use frankenengine_engine::policy_theorem_compiler::Capability;
 use frankenengine_engine::security_epoch::SecurityEpoch;
@@ -500,4 +501,364 @@ fn plas_escrow_replay_evidence_serde_round_trip() {
     let json = serde_json::to_string(&evidence).expect("serialize");
     let recovered: PlasEscrowReplayEvidence = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(evidence, recovered);
+}
+
+// ────────────────────────────────────────────────────────────
+// Input validation
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn gate_rejects_empty_trace_id() {
+    let (mut input, trust_anchors) = base_gate_fixture();
+    input.trace_id = String::new();
+    let err = evaluate_plas_release_gate(&input, &trust_anchors).expect_err("should fail");
+    assert!(matches!(err, PlasReleaseGateError::InvalidInput { .. }));
+}
+
+#[test]
+fn gate_rejects_whitespace_only_decision_id() {
+    let (mut input, trust_anchors) = base_gate_fixture();
+    input.decision_id = "   ".to_string();
+    let err = evaluate_plas_release_gate(&input, &trust_anchors).expect_err("should fail");
+    assert!(matches!(err, PlasReleaseGateError::InvalidInput { .. }));
+}
+
+#[test]
+fn gate_rejects_empty_policy_id() {
+    let (mut input, trust_anchors) = base_gate_fixture();
+    input.policy_id = String::new();
+    let err = evaluate_plas_release_gate(&input, &trust_anchors).expect_err("should fail");
+    assert!(matches!(err, PlasReleaseGateError::InvalidInput { .. }));
+}
+
+#[test]
+fn gate_rejects_empty_cohort_id() {
+    let (mut input, trust_anchors) = base_gate_fixture();
+    input.cohort_id = "  ".to_string();
+    let err = evaluate_plas_release_gate(&input, &trust_anchors).expect_err("should fail");
+    assert!(matches!(err, PlasReleaseGateError::InvalidInput { .. }));
+}
+
+#[test]
+fn gate_rejects_no_extensions() {
+    let (mut input, trust_anchors) = base_gate_fixture();
+    input.extensions.clear();
+    let err = evaluate_plas_release_gate(&input, &trust_anchors).expect_err("should fail");
+    assert!(matches!(err, PlasReleaseGateError::InvalidInput { ref detail } if detail.contains("extension")));
+}
+
+// ────────────────────────────────────────────────────────────
+// Decision artifact fields
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn decision_artifact_has_correct_ids() {
+    let (input, trust_anchors) = base_gate_fixture();
+    let artifact = evaluate_plas_release_gate(&input, &trust_anchors).expect("gate evaluation");
+    assert_eq!(artifact.decision_id, input.decision_id);
+    assert_eq!(artifact.cohort_id, input.cohort_id);
+}
+
+#[test]
+fn decision_artifact_hash_is_non_empty() {
+    let (input, trust_anchors) = base_gate_fixture();
+    let artifact = evaluate_plas_release_gate(&input, &trust_anchors).expect("gate evaluation");
+    assert!(!artifact.decision_hash.as_bytes().is_empty());
+}
+
+#[test]
+fn decision_artifact_serde_round_trip() {
+    let (input, trust_anchors) = base_gate_fixture();
+    let artifact = evaluate_plas_release_gate(&input, &trust_anchors).expect("gate evaluation");
+    let json = serde_json::to_string_pretty(&artifact).expect("serialize");
+    let recovered: PlasReleaseGateDecisionArtifact =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(artifact.pass, recovered.pass);
+    assert_eq!(artifact.decision_id, recovered.decision_id);
+    assert_eq!(artifact.findings, recovered.findings);
+    assert_eq!(artifact.decision_hash, recovered.decision_hash);
+}
+
+#[test]
+fn decision_artifact_logs_contain_component_and_event() {
+    let (input, trust_anchors) = base_gate_fixture();
+    let artifact = evaluate_plas_release_gate(&input, &trust_anchors).expect("gate evaluation");
+    for log in &artifact.logs {
+        assert!(!log.component.is_empty());
+        assert!(!log.event.is_empty());
+        assert!(!log.trace_id.is_empty());
+    }
+}
+
+// ────────────────────────────────────────────────────────────
+// Error display and types
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn plas_release_gate_error_invalid_input_display() {
+    let err = PlasReleaseGateError::InvalidInput {
+        detail: "test detail".to_string(),
+    };
+    let msg = err.to_string();
+    assert!(msg.contains("test detail"));
+    assert!(msg.contains("invalid") || msg.contains("PLAS"));
+}
+
+#[test]
+fn plas_release_gate_error_serialization_display() {
+    let err = PlasReleaseGateError::Serialization {
+        detail: "json error".to_string(),
+    };
+    let msg = err.to_string();
+    assert!(msg.contains("json error"));
+}
+
+#[test]
+fn plas_release_gate_error_serde_round_trip() {
+    for err in [
+        PlasReleaseGateError::InvalidInput {
+            detail: "bad input".to_string(),
+        },
+        PlasReleaseGateError::Serialization {
+            detail: "bad serial".to_string(),
+        },
+    ] {
+        let json = serde_json::to_string(&err).expect("serialize");
+        let recovered: PlasReleaseGateError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(err, recovered);
+    }
+}
+
+#[test]
+fn plas_release_gate_error_is_std_error() {
+    let err = PlasReleaseGateError::InvalidInput {
+        detail: "test".to_string(),
+    };
+    let std_err: &dyn std::error::Error = &err;
+    assert!(!std_err.to_string().is_empty());
+}
+
+// ────────────────────────────────────────────────────────────
+// Failure code coverage
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn failure_code_error_code_strings_are_unique() {
+    let codes = [
+        PlasReleaseGateFailureCode::CohortPlasNotActive,
+        PlasReleaseGateFailureCode::CohortCoverageMissingGrantExercise,
+        PlasReleaseGateFailureCode::MissingCapabilityWitness,
+        PlasReleaseGateFailureCode::WitnessSignatureVerificationFailed,
+        PlasReleaseGateFailureCode::EscrowReplayEvidenceMissing,
+        PlasReleaseGateFailureCode::EscrowReplayMismatch,
+        PlasReleaseGateFailureCode::RevocationWitnessMissing,
+        PlasReleaseGateFailureCode::RevocationEscrowEventMissing,
+        PlasReleaseGateFailureCode::AmbientAuthorityDetected,
+    ];
+    let unique: BTreeSet<&str> = codes.iter().map(|c| c.error_code()).collect();
+    assert_eq!(unique.len(), codes.len(), "all error codes should be unique");
+}
+
+#[test]
+fn failure_code_display_matches_error_code() {
+    for code in [
+        PlasReleaseGateFailureCode::CohortPlasNotActive,
+        PlasReleaseGateFailureCode::EscrowReplayMismatch,
+        PlasReleaseGateFailureCode::AmbientAuthorityDetected,
+    ] {
+        assert_eq!(code.to_string(), code.error_code());
+    }
+}
+
+// ────────────────────────────────────────────────────────────
+// Activation mode coverage
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn activation_mode_as_str_is_non_empty() {
+    for mode in [
+        PlasActivationMode::Active,
+        PlasActivationMode::Shadow,
+        PlasActivationMode::AuditOnly,
+        PlasActivationMode::Disabled,
+    ] {
+        assert!(!mode.as_str().is_empty());
+    }
+}
+
+#[test]
+fn activation_mode_disabled_also_rejects() {
+    let (mut input, trust_anchors) = base_gate_fixture();
+    input.extensions[0].activation_mode = PlasActivationMode::Disabled;
+    let artifact = evaluate_plas_release_gate(&input, &trust_anchors).expect("gate evaluation");
+    assert!(!artifact.pass);
+}
+
+#[test]
+fn activation_mode_audit_only_also_rejects() {
+    let (mut input, trust_anchors) = base_gate_fixture();
+    input.extensions[0].activation_mode = PlasActivationMode::AuditOnly;
+    let artifact = evaluate_plas_release_gate(&input, &trust_anchors).expect("gate evaluation");
+    assert!(!artifact.pass);
+}
+
+// ────────────────────────────────────────────────────────────
+// Replay evidence edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn gate_rejects_when_replay_decision_kind_mismatches() {
+    let (mut input, trust_anchors) = base_gate_fixture();
+    input.extensions[0].grants[0]
+        .replay_evidence
+        .as_mut()
+        .expect("replay evidence")
+        .replay_decision_kind = "revoke".to_string();
+
+    let artifact = evaluate_plas_release_gate(&input, &trust_anchors).expect("gate evaluation");
+    assert!(!artifact.pass);
+}
+
+#[test]
+fn gate_rejects_when_replay_nondeterministic() {
+    let (mut input, trust_anchors) = base_gate_fixture();
+    input.extensions[0].grants[0]
+        .replay_evidence
+        .as_mut()
+        .expect("replay evidence")
+        .deterministic_replay = false;
+
+    let artifact = evaluate_plas_release_gate(&input, &trust_anchors).expect("gate evaluation");
+    assert!(!artifact.pass);
+}
+
+// ────────────────────────────────────────────────────────────
+// Coverage gap: missing capability witness for manifest capability
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn gate_passes_when_manifest_has_extra_inactive_capability() {
+    let (mut input, trust_anchors) = base_gate_fixture();
+    // Add a manifest capability that is NOT active — gate should still pass
+    input.extensions[0]
+        .manifest_capabilities
+        .insert(Capability::new("net.outbound"));
+
+    let artifact = evaluate_plas_release_gate(&input, &trust_anchors).expect("gate evaluation");
+    assert!(artifact.pass, "extra inactive manifest capability should not cause failure");
+}
+
+// ────────────────────────────────────────────────────────────
+// Log structure
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn failing_gate_logs_contain_error_code() {
+    let (mut input, trust_anchors) = base_gate_fixture();
+    input.extensions[0].activation_mode = PlasActivationMode::Shadow;
+
+    let artifact = evaluate_plas_release_gate(&input, &trust_anchors).expect("gate evaluation");
+    assert!(!artifact.pass);
+    let decision_log = artifact.logs.last().expect("last log is decision");
+    assert_eq!(decision_log.outcome, "fail");
+    assert!(decision_log.error_code.is_some());
+}
+
+#[test]
+fn passing_gate_last_log_has_pass_outcome() {
+    let (input, trust_anchors) = base_gate_fixture();
+    let artifact = evaluate_plas_release_gate(&input, &trust_anchors).expect("gate evaluation");
+    let decision_log = artifact.logs.last().expect("last log");
+    assert_eq!(decision_log.outcome, "pass");
+    assert!(decision_log.error_code.is_none());
+}
+
+// ────────────────────────────────────────────────────────────
+// Determinism
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn gate_is_deterministic_across_multiple_evaluations() {
+    let (input, trust_anchors) = base_gate_fixture();
+    let results: Vec<_> = (0..3)
+        .map(|_| evaluate_plas_release_gate(&input, &trust_anchors).expect("gate evaluation"))
+        .collect();
+    for r in &results[1..] {
+        assert_eq!(results[0].pass, r.pass);
+        assert_eq!(results[0].decision_hash, r.decision_hash);
+        assert_eq!(results[0].findings, r.findings);
+    }
+}
+
+// ────────────────────────────────────────────────────────────
+// Serde of finding
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn plas_finding_serde_round_trip() {
+    let finding = PlasReleaseGateFinding {
+        code: PlasReleaseGateFailureCode::AmbientAuthorityDetected,
+        extension_id: "ext-1".to_string(),
+        receipt_id: Some("receipt-1".to_string()),
+        detail: "ambient authority found".to_string(),
+    };
+    let json = serde_json::to_string(&finding).expect("serialize");
+    let recovered: PlasReleaseGateFinding = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(finding, recovered);
+}
+
+#[test]
+fn plas_log_event_serde_round_trip() {
+    let log = PlasReleaseGateLogEvent {
+        trace_id: "t".to_string(),
+        decision_id: "d".to_string(),
+        policy_id: "p".to_string(),
+        component: "plas_release_gate".to_string(),
+        event: "release_gate_decision".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        extension_id: Some("ext-1".to_string()),
+        receipt_id: None,
+        capability: Some("fs.read".to_string()),
+    };
+    let json = serde_json::to_string(&log).expect("serialize");
+    let recovered: PlasReleaseGateLogEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(log, recovered);
+}
+
+// ────────────────────────────────────────────────────────────
+// Trust anchor structs
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn trust_anchors_serde_round_trip() {
+    let (_, trust_anchors) = base_gate_fixture();
+    let json = serde_json::to_string(&trust_anchors).expect("serialize");
+    let recovered: PlasReleaseGateTrustAnchors = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(trust_anchors, recovered);
+}
+
+// ────────────────────────────────────────────────────────────
+// Grant check record and cohort extension serde
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn plas_cohort_extension_serde_round_trip() {
+    let (input, _) = base_gate_fixture();
+    let ext = &input.extensions[0];
+    let json = serde_json::to_string(ext).expect("serialize");
+    let recovered: PlasCohortExtension = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(ext.extension_id, recovered.extension_id);
+    assert_eq!(ext.activation_mode, recovered.activation_mode);
+    assert_eq!(ext.manifest_capabilities, recovered.manifest_capabilities);
+}
+
+#[test]
+fn plas_release_gate_input_serde_round_trip() {
+    let (input, _) = base_gate_fixture();
+    let json = serde_json::to_string(&input).expect("serialize");
+    let recovered: PlasReleaseGateInput = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(input.trace_id, recovered.trace_id);
+    assert_eq!(input.decision_id, recovered.decision_id);
+    assert_eq!(input.extensions.len(), recovered.extensions.len());
 }
