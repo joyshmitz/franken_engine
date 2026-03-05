@@ -4427,6 +4427,7 @@ const GUARDPLANE_TERMINATE_THRESHOLD_MICROS: u64 = 700_000;
 const GUARDPLANE_QUARANTINE_THRESHOLD_MICROS: u64 = 850_000;
 const GUARDPLANE_DECISION_LOG_SCHEMA_VERSION: &str = "franken-engine.guardplane-decision-log.v1";
 const CONTAINMENT_WORKFLOW_LOG_SCHEMA_VERSION: &str = "franken-engine.containment-workflow-log.v1";
+const DELEGATE_MESH_PROPAGATION_DEGRADED_ERROR_CODE: &str = "FE-DELEGATE-0008";
 
 impl Default for DelegateCellPolicy {
     fn default() -> Self {
@@ -4529,7 +4530,9 @@ pub struct ContainmentWorkflowLogEntry {
     pub action: GuardplanePolicyAction,
     pub lifecycle_transition: Option<LifecycleTransition>,
     pub resulting_state: ExtensionState,
+    pub mesh_attempted_targets: Vec<String>,
     pub mesh_targets: Vec<String>,
+    pub mesh_failed_targets: Vec<String>,
     pub mesh_propagated: bool,
 }
 
@@ -4561,7 +4564,9 @@ pub enum DelegateCellEvidence {
         delegate_id: String,
         action: GuardplanePolicyAction,
         lifecycle_transition: Option<LifecycleTransition>,
+        mesh_attempted_targets: Vec<String>,
         mesh_targets: Vec<String>,
+        mesh_failed_targets: Vec<String>,
         mesh_propagated: bool,
         timestamp_ns: u64,
     },
@@ -4682,6 +4687,7 @@ pub struct DelegateCell {
     lifetime_expired_recorded: bool,
     events: Vec<DelegateCellEvent>,
     quarantine_mesh_peers: BTreeSet<String>,
+    quarantine_mesh_unreachable_peers: BTreeSet<String>,
     guardplane_decision_log: Vec<GuardplaneDecisionLogEntry>,
     containment_workflow_log: Vec<ContainmentWorkflowLogEntry>,
     evidence: Vec<DelegateCellEvidence>,
@@ -4908,6 +4914,10 @@ impl DelegateCell {
         &self.quarantine_mesh_peers
     }
 
+    pub fn quarantine_mesh_unreachable_peers(&self) -> &BTreeSet<String> {
+        &self.quarantine_mesh_unreachable_peers
+    }
+
     pub fn set_quarantine_mesh_peers<I, S>(&mut self, peers: I)
     where
         I: IntoIterator<Item = S>,
@@ -4921,6 +4931,23 @@ impl DelegateCell {
             }
         }
         self.quarantine_mesh_peers = normalized;
+        self.quarantine_mesh_unreachable_peers
+            .retain(|peer| self.quarantine_mesh_peers.contains(peer));
+    }
+
+    pub fn set_quarantine_mesh_unreachable_peers<I, S>(&mut self, peers: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut normalized = BTreeSet::new();
+        for peer in peers {
+            let peer = peer.into();
+            if !peer.trim().is_empty() && self.quarantine_mesh_peers.contains(&peer) {
+                normalized.insert(peer);
+            }
+        }
+        self.quarantine_mesh_unreachable_peers = normalized;
     }
 
     pub const fn adaptive_components_available(&self) -> bool {
@@ -5473,7 +5500,7 @@ impl DelegateCell {
             return;
         }
 
-        let mesh_targets = if action == GuardplanePolicyAction::Quarantine {
+        let mesh_attempted_targets = if action == GuardplanePolicyAction::Quarantine {
             self.quarantine_mesh_peers
                 .iter()
                 .cloned()
@@ -5481,30 +5508,64 @@ impl DelegateCell {
         } else {
             Vec::new()
         };
+        let mesh_failed_targets = if action == GuardplanePolicyAction::Quarantine {
+            mesh_attempted_targets
+                .iter()
+                .filter(|peer| self.quarantine_mesh_unreachable_peers.contains(*peer))
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let mesh_targets = if action == GuardplanePolicyAction::Quarantine {
+            mesh_attempted_targets
+                .iter()
+                .filter(|peer| !self.quarantine_mesh_unreachable_peers.contains(*peer))
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let mesh_propagated =
             action == GuardplanePolicyAction::Quarantine && !mesh_targets.is_empty();
-        let event_name = if action == GuardplanePolicyAction::Quarantine {
-            if mesh_propagated {
-                "delegate_quarantine_mesh_propagated"
+        let (event_name, outcome, error_code) = if action == GuardplanePolicyAction::Quarantine {
+            if !mesh_failed_targets.is_empty() {
+                if mesh_propagated {
+                    (
+                        "delegate_quarantine_mesh_partial_propagation",
+                        "degraded",
+                        Some(DELEGATE_MESH_PROPAGATION_DEGRADED_ERROR_CODE),
+                    )
+                } else {
+                    (
+                        "delegate_quarantine_mesh_propagation_failed",
+                        "degraded",
+                        Some(DELEGATE_MESH_PROPAGATION_DEGRADED_ERROR_CODE),
+                    )
+                }
+            } else if mesh_propagated {
+                ("delegate_quarantine_mesh_propagated", "ok", None)
             } else {
-                "delegate_quarantine_mesh_local_only"
+                ("delegate_quarantine_mesh_local_only", "ok", None)
             }
         } else {
-            "delegate_containment_action"
+            ("delegate_containment_action", "ok", None)
         };
         self.record_event(
             flow_context.trace_id,
             flow_context.decision_id,
             flow_context.policy_id,
             event_name,
-            "ok",
-            None,
+            outcome,
+            error_code,
         );
         self.evidence.push(DelegateCellEvidence::ContainmentAction {
             delegate_id: self.delegate_id.clone(),
             action,
             lifecycle_transition,
+            mesh_attempted_targets: mesh_attempted_targets.clone(),
             mesh_targets: mesh_targets.clone(),
+            mesh_failed_targets: mesh_failed_targets.clone(),
             mesh_propagated,
             timestamp_ns,
         });
@@ -5516,15 +5577,17 @@ impl DelegateCell {
                 policy_id: flow_context.policy_id.to_string(),
                 component: DELEGATE_COMPONENT.to_string(),
                 event: event_name.to_string(),
-                outcome: "ok".to_string(),
-                error_code: None,
+                outcome: outcome.to_string(),
+                error_code: error_code.map(str::to_string),
                 source_event: source_event.to_string(),
                 delegate_id: self.delegate_id.clone(),
                 timestamp_ns,
                 action,
                 lifecycle_transition,
                 resulting_state,
+                mesh_attempted_targets,
                 mesh_targets,
+                mesh_failed_targets,
                 mesh_propagated,
             });
     }
@@ -5626,6 +5689,7 @@ impl DelegateCellFactory {
             lifetime_expired_recorded: false,
             events: Vec::new(),
             quarantine_mesh_peers: BTreeSet::new(),
+            quarantine_mesh_unreachable_peers: BTreeSet::new(),
             guardplane_decision_log: Vec::new(),
             containment_workflow_log: Vec::new(),
             evidence: Vec::new(),
@@ -7294,7 +7358,9 @@ mod delegate_cell_tests {
         );
         assert_eq!(last_containment.outcome, "ok");
         assert!(last_containment.error_code.is_none());
+        assert!(last_containment.mesh_attempted_targets.is_empty());
         assert!(last_containment.mesh_targets.is_empty());
+        assert!(last_containment.mesh_failed_targets.is_empty());
         assert!(!last_containment.mesh_propagated);
     }
 
@@ -7348,7 +7414,9 @@ mod delegate_cell_tests {
             .iter()
             .find(|entry| entry.action == GuardplanePolicyAction::Quarantine)
             .expect("quarantine containment record");
+        assert_eq!(quarantine_record.mesh_attempted_targets, expected_targets);
         assert_eq!(quarantine_record.mesh_targets, expected_targets);
+        assert!(quarantine_record.mesh_failed_targets.is_empty());
         assert!(quarantine_record.mesh_propagated);
         assert_eq!(
             quarantine_record.resulting_state,
@@ -7391,6 +7459,153 @@ mod delegate_cell_tests {
             })
             .expect("quarantine evidence");
         assert_eq!(quarantine_evidence_targets, expected_targets);
+    }
+
+    #[test]
+    fn quarantine_mesh_partial_failures_are_recorded() {
+        let factory = DelegateCellFactory::default();
+        let mut delegate = factory
+            .create_delegate_cell(
+                "delegate-mesh-partial",
+                delegate_manifest(&[Capability::FsRead, Capability::NetClient], 1_000_000),
+                ResourceBudget::new(1_000_000_000, 64 * 1024 * 1024, 100),
+                BudgetExhaustionPolicy::Suspend,
+                775,
+                &lifecycle_context(),
+            )
+            .expect("delegate created");
+        delegate.set_quarantine_mesh_peers(["peer-z", "peer-a", "peer-m"]);
+        delegate.set_quarantine_mesh_unreachable_peers(["peer-m", "peer-ghost"]);
+
+        for index in 0..6 {
+            let _ = delegate
+                .request_declassification(
+                    DeclassificationRequest {
+                        request_id: format!("delegate-mesh-partial-denied-{index}"),
+                        requester: "delegate-mesh-partial".to_string(),
+                        data_ref: DataRef::new("memory", "token"),
+                        current_label: FlowLabel::new(
+                            SecrecyLevel::Secret,
+                            IntegrityLevel::Validated,
+                        ),
+                        target_label: FlowLabel::new(
+                            SecrecyLevel::Internal,
+                            IntegrityLevel::Validated,
+                        ),
+                        purpose: DeclassificationPurpose::DiagnosticExport,
+                        justification: "expected denial".to_string(),
+                        timestamp_ns: 780 + index as u64,
+                    },
+                    &flow_context(),
+                    &lifecycle_context(),
+                )
+                .expect("declassification outcome");
+        }
+
+        let quarantine_record = delegate
+            .containment_workflow_log()
+            .iter()
+            .find(|entry| entry.action == GuardplanePolicyAction::Quarantine)
+            .expect("quarantine containment record");
+        assert_eq!(
+            quarantine_record.mesh_attempted_targets,
+            vec![
+                "peer-a".to_string(),
+                "peer-m".to_string(),
+                "peer-z".to_string(),
+            ]
+        );
+        assert_eq!(
+            quarantine_record.mesh_targets,
+            vec!["peer-a".to_string(), "peer-z".to_string()]
+        );
+        assert_eq!(
+            quarantine_record.mesh_failed_targets,
+            vec!["peer-m".to_string()]
+        );
+        assert!(quarantine_record.mesh_propagated);
+        assert_eq!(
+            quarantine_record.event,
+            "delegate_quarantine_mesh_partial_propagation"
+        );
+        assert_eq!(quarantine_record.outcome, "degraded");
+        assert_eq!(
+            quarantine_record.error_code.as_deref(),
+            Some(DELEGATE_MESH_PROPAGATION_DEGRADED_ERROR_CODE)
+        );
+        assert!(delegate.events().iter().any(|event| {
+            event.event == "delegate_quarantine_mesh_partial_propagation"
+                && event.outcome == "degraded"
+                && event.error_code.as_deref()
+                    == Some(DELEGATE_MESH_PROPAGATION_DEGRADED_ERROR_CODE)
+        }));
+    }
+
+    #[test]
+    fn quarantine_mesh_total_failure_is_recorded() {
+        let factory = DelegateCellFactory::default();
+        let mut delegate = factory
+            .create_delegate_cell(
+                "delegate-mesh-failed",
+                delegate_manifest(&[Capability::FsRead, Capability::NetClient], 1_000_000),
+                ResourceBudget::new(1_000_000_000, 64 * 1024 * 1024, 100),
+                BudgetExhaustionPolicy::Suspend,
+                790,
+                &lifecycle_context(),
+            )
+            .expect("delegate created");
+        delegate.set_quarantine_mesh_peers(["peer-a", "peer-m"]);
+        delegate.set_quarantine_mesh_unreachable_peers(["peer-a", "peer-m"]);
+
+        for index in 0..6 {
+            let _ = delegate
+                .request_declassification(
+                    DeclassificationRequest {
+                        request_id: format!("delegate-mesh-failed-denied-{index}"),
+                        requester: "delegate-mesh-failed".to_string(),
+                        data_ref: DataRef::new("memory", "token"),
+                        current_label: FlowLabel::new(
+                            SecrecyLevel::Secret,
+                            IntegrityLevel::Validated,
+                        ),
+                        target_label: FlowLabel::new(
+                            SecrecyLevel::Internal,
+                            IntegrityLevel::Validated,
+                        ),
+                        purpose: DeclassificationPurpose::DiagnosticExport,
+                        justification: "expected denial".to_string(),
+                        timestamp_ns: 795 + index as u64,
+                    },
+                    &flow_context(),
+                    &lifecycle_context(),
+                )
+                .expect("declassification outcome");
+        }
+
+        let quarantine_record = delegate
+            .containment_workflow_log()
+            .iter()
+            .find(|entry| entry.action == GuardplanePolicyAction::Quarantine)
+            .expect("quarantine containment record");
+        assert_eq!(
+            quarantine_record.mesh_attempted_targets,
+            vec!["peer-a".to_string(), "peer-m".to_string()]
+        );
+        assert!(quarantine_record.mesh_targets.is_empty());
+        assert_eq!(
+            quarantine_record.mesh_failed_targets,
+            vec!["peer-a".to_string(), "peer-m".to_string()]
+        );
+        assert!(!quarantine_record.mesh_propagated);
+        assert_eq!(
+            quarantine_record.event,
+            "delegate_quarantine_mesh_propagation_failed"
+        );
+        assert_eq!(quarantine_record.outcome, "degraded");
+        assert_eq!(
+            quarantine_record.error_code.as_deref(),
+            Some(DELEGATE_MESH_PROPAGATION_DEGRADED_ERROR_CODE)
+        );
     }
 
     #[test]
