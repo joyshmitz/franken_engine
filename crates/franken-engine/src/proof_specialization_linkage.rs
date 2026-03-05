@@ -462,6 +462,88 @@ impl LinkageEngine {
         Ok(())
     }
 
+    /// Attach a specialization linkage to an IR3 module with proof-window
+    /// validity enforcement at `current_tick`.
+    ///
+    /// If any bounded proof window has expired, this method fails closed:
+    /// the linkage is deterministically invalidated and `AlreadyInactive` is
+    /// returned.
+    pub fn attach_to_ir3_at_tick(
+        &mut self,
+        linkage_id: &LinkageId,
+        ir3: &mut Ir3Module,
+        current_tick: u64,
+        trace_id: &str,
+    ) -> Result<(), LinkageError> {
+        if ir3.specialization.is_some() {
+            self.emit_event(
+                trace_id,
+                "attach_to_ir3_at_tick",
+                "rejected",
+                Some("LINKAGE_IR3_ALREADY_SPECIALIZED"),
+            );
+            return Err(LinkageError::Ir3AlreadySpecialized);
+        }
+
+        let record =
+            self.linkages
+                .get(linkage_id)
+                .ok_or_else(|| LinkageError::LinkageNotFound {
+                    id: linkage_id.0.clone(),
+                })?;
+
+        if !record.active {
+            self.emit_event(
+                trace_id,
+                "attach_to_ir3_at_tick",
+                "rejected",
+                Some("LINKAGE_ALREADY_INACTIVE"),
+            );
+            return Err(LinkageError::AlreadyInactive {
+                id: linkage_id.0.clone(),
+            });
+        }
+
+        if record.validity_epoch != self.current_epoch {
+            let linkage_epoch = record.validity_epoch;
+            let current_epoch = self.current_epoch;
+            self.emit_event(
+                trace_id,
+                "attach_to_ir3_at_tick",
+                "rejected",
+                Some("LINKAGE_EPOCH_MISMATCH"),
+            );
+            return Err(LinkageError::EpochMismatch {
+                linkage_epoch,
+                current_epoch,
+            });
+        }
+
+        if let Some((proof_id, expiry_tick)) = record.first_expired_proof_window(current_tick) {
+            let reason = Self::expired_proof_window_reason(&proof_id, expiry_tick, current_tick);
+            if let Some(record_mut) = self.linkages.get_mut(linkage_id) {
+                record_mut.active = false;
+            }
+            self.invalidations.push((
+                linkage_id.clone(),
+                InvalidationCause::PolicyChange { reason },
+            ));
+            self.emit_event(
+                trace_id,
+                "attach_to_ir3_at_tick",
+                "rejected",
+                Some("LINKAGE_ALREADY_INACTIVE"),
+            );
+            return Err(LinkageError::AlreadyInactive {
+                id: linkage_id.0.clone(),
+            });
+        }
+
+        ir3.specialization = Some(record.to_ir3_linkage());
+        self.emit_event(trace_id, "attach_to_ir3_at_tick", "ok", None);
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // Record execution in IR4
     // -----------------------------------------------------------------------
@@ -475,31 +557,94 @@ impl LinkageEngine {
         performance: PerformanceDelta,
         trace_id: &str,
     ) -> Result<ExecutionRecord, LinkageError> {
+        let result = self.record_execution_internal(linkage_id, ir4, performance);
+        match &result {
+            Ok(_) => self.emit_event(trace_id, "record_execution", "ok", None),
+            Err(err) => self.emit_event(
+                trace_id,
+                "record_execution",
+                "rejected",
+                Some(error_code(err)),
+            ),
+        }
+        result
+    }
+
+    /// Record specialized execution at `current_tick`, fail-closing if any
+    /// bounded proof window has expired.
+    pub fn record_execution_at_tick(
+        &mut self,
+        linkage_id: &LinkageId,
+        ir4: &mut Ir4Module,
+        performance: PerformanceDelta,
+        current_tick: u64,
+        trace_id: &str,
+    ) -> Result<ExecutionRecord, LinkageError> {
         let record =
             self.linkages
-                .get_mut(linkage_id)
+                .get(linkage_id)
                 .ok_or_else(|| LinkageError::LinkageNotFound {
                     id: linkage_id.0.clone(),
                 })?;
 
-        record.execution_count += 1;
-        record.performance_delta = Some(performance);
-
-        // Add to IR4 active specialization IDs
-        if !ir4.active_specialization_ids.contains(&linkage_id.0) {
-            ir4.active_specialization_ids.push(linkage_id.0.clone());
+        if !record.active {
+            self.emit_event(
+                trace_id,
+                "record_execution_at_tick",
+                "rejected",
+                Some("LINKAGE_ALREADY_INACTIVE"),
+            );
+            return Err(LinkageError::AlreadyInactive {
+                id: linkage_id.0.clone(),
+            });
         }
 
-        let exec_record = ExecutionRecord {
-            linkage_id: linkage_id.clone(),
-            witness_hash: ir4.content_hash(),
-            performance_delta: performance,
-            instructions_executed: ir4.instructions_executed,
-            duration_ticks: ir4.duration_ticks,
-        };
+        if record.validity_epoch != self.current_epoch {
+            let linkage_epoch = record.validity_epoch;
+            let current_epoch = self.current_epoch;
+            self.emit_event(
+                trace_id,
+                "record_execution_at_tick",
+                "rejected",
+                Some("LINKAGE_EPOCH_MISMATCH"),
+            );
+            return Err(LinkageError::EpochMismatch {
+                linkage_epoch,
+                current_epoch,
+            });
+        }
 
-        self.emit_event(trace_id, "record_execution", "ok", None);
-        Ok(exec_record)
+        if let Some((proof_id, expiry_tick)) = record.first_expired_proof_window(current_tick) {
+            let reason = Self::expired_proof_window_reason(&proof_id, expiry_tick, current_tick);
+            if let Some(record_mut) = self.linkages.get_mut(linkage_id) {
+                record_mut.active = false;
+            }
+            self.invalidations.push((
+                linkage_id.clone(),
+                InvalidationCause::PolicyChange { reason },
+            ));
+            self.emit_event(
+                trace_id,
+                "record_execution_at_tick",
+                "rejected",
+                Some("LINKAGE_ALREADY_INACTIVE"),
+            );
+            return Err(LinkageError::AlreadyInactive {
+                id: linkage_id.0.clone(),
+            });
+        }
+
+        let result = self.record_execution_internal(linkage_id, ir4, performance);
+        match &result {
+            Ok(_) => self.emit_event(trace_id, "record_execution_at_tick", "ok", None),
+            Err(err) => self.emit_event(
+                trace_id,
+                "record_execution_at_tick",
+                "rejected",
+                Some(error_code(err)),
+            ),
+        }
+        result
     }
 
     // -----------------------------------------------------------------------
@@ -579,8 +724,10 @@ impl LinkageEngine {
                 self.invalidations.push((
                     id,
                     InvalidationCause::PolicyChange {
-                        reason: format!(
-                            "proof_window_expired(proof_id={proof_id}, expiry_tick={expiry_tick}, observed_tick={current_tick})"
+                        reason: Self::expired_proof_window_reason(
+                            &proof_id,
+                            expiry_tick,
+                            current_tick,
                         ),
                     },
                 ));
@@ -751,6 +898,55 @@ impl LinkageEngine {
             outcome: outcome.to_string(),
             error_code: error_code.map(String::from),
         });
+    }
+
+    fn expired_proof_window_reason(proof_id: &str, expiry_tick: u64, observed_tick: u64) -> String {
+        format!(
+            "proof_window_expired(proof_id={proof_id}, expiry_tick={expiry_tick}, observed_tick={observed_tick})"
+        )
+    }
+
+    fn record_execution_internal(
+        &mut self,
+        linkage_id: &LinkageId,
+        ir4: &mut Ir4Module,
+        performance: PerformanceDelta,
+    ) -> Result<ExecutionRecord, LinkageError> {
+        let record =
+            self.linkages
+                .get_mut(linkage_id)
+                .ok_or_else(|| LinkageError::LinkageNotFound {
+                    id: linkage_id.0.clone(),
+                })?;
+
+        if !record.active {
+            return Err(LinkageError::AlreadyInactive {
+                id: linkage_id.0.clone(),
+            });
+        }
+
+        if record.validity_epoch != self.current_epoch {
+            return Err(LinkageError::EpochMismatch {
+                linkage_epoch: record.validity_epoch,
+                current_epoch: self.current_epoch,
+            });
+        }
+
+        record.execution_count += 1;
+        record.performance_delta = Some(performance);
+
+        // Add to IR4 active specialization IDs
+        if !ir4.active_specialization_ids.contains(&linkage_id.0) {
+            ir4.active_specialization_ids.push(linkage_id.0.clone());
+        }
+
+        Ok(ExecutionRecord {
+            linkage_id: linkage_id.clone(),
+            witness_hash: ir4.content_hash(),
+            performance_delta: performance,
+            instructions_executed: ir4.instructions_executed,
+            duration_ticks: ir4.duration_ticks,
+        })
     }
 }
 
@@ -1119,6 +1315,55 @@ mod tests {
         assert_eq!(error_code(&err), "LINKAGE_NOT_FOUND");
     }
 
+    #[test]
+    fn attach_to_ir3_at_tick_rejects_expired_window_and_invalidates() {
+        let mut engine = make_engine(5);
+        let mut record = make_linkage("link-expire", 5, &["proof-a"]);
+        record.rollback.activation_tick = 100;
+        record.proof_inputs[0].validity_window_ticks = 10; // expires at 110
+        engine.register(record, "t1").unwrap();
+
+        let mut ir3 = make_ir3();
+        let lid = LinkageId::new("link-expire");
+        let err = engine
+            .attach_to_ir3_at_tick(&lid, &mut ir3, 110, "t2")
+            .unwrap_err();
+
+        assert_eq!(error_code(&err), "LINKAGE_ALREADY_INACTIVE");
+        assert!(ir3.specialization.is_none());
+        assert!(!engine.get(&lid).unwrap().active);
+
+        let (_, cause) = engine.invalidations().last().unwrap();
+        match cause {
+            InvalidationCause::PolicyChange { reason } => {
+                assert!(reason.contains("proof_window_expired"));
+                assert!(reason.contains("proof-a"));
+                assert!(reason.contains("expiry_tick=110"));
+                assert!(reason.contains("observed_tick=110"));
+            }
+            other => panic!("expected PolicyChange, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn attach_to_ir3_at_tick_accepts_before_expiry() {
+        let mut engine = make_engine(5);
+        let mut record = make_linkage("link-safe", 5, &["proof-a"]);
+        record.rollback.activation_tick = 100;
+        record.proof_inputs[0].validity_window_ticks = 20; // expires at 120
+        engine.register(record, "t1").unwrap();
+
+        let mut ir3 = make_ir3();
+        let lid = LinkageId::new("link-safe");
+        engine
+            .attach_to_ir3_at_tick(&lid, &mut ir3, 119, "t2")
+            .unwrap();
+
+        assert!(ir3.specialization.is_some());
+        assert!(engine.get(&lid).unwrap().active);
+        assert!(engine.invalidations().is_empty());
+    }
+
     // -----------------------------------------------------------------------
     // Record execution in IR4
     // -----------------------------------------------------------------------
@@ -1146,10 +1391,9 @@ mod tests {
         assert_eq!(exec.performance_delta.speedup_millionths, 1_200_000);
 
         // IR4 updated
-        assert!(
-            ir4.active_specialization_ids
-                .contains(&"link-1".to_string())
-        );
+        assert!(ir4
+            .active_specialization_ids
+            .contains(&"link-1".to_string()));
 
         // Engine updated
         let stored = engine.get(&lid).unwrap();
@@ -1169,6 +1413,95 @@ mod tests {
             .record_execution(&lid, &mut ir4, PerformanceDelta::NEUTRAL, "t1")
             .unwrap_err();
         assert_eq!(error_code(&err), "LINKAGE_NOT_FOUND");
+    }
+
+    #[test]
+    fn record_execution_inactive_rejected() {
+        let mut engine = make_engine(5);
+        let mut record = make_linkage("link-inactive", 5, &["proof-a"]);
+        record.active = false;
+        engine.register(record, "t1").unwrap();
+
+        let mut ir4 = make_ir4();
+        let lid = LinkageId::new("link-inactive");
+        let err = engine
+            .record_execution(&lid, &mut ir4, PerformanceDelta::NEUTRAL, "t2")
+            .unwrap_err();
+        assert_eq!(error_code(&err), "LINKAGE_ALREADY_INACTIVE");
+    }
+
+    #[test]
+    fn record_execution_epoch_mismatch_rejected() {
+        let mut engine = make_engine(5);
+        let record = make_linkage("link-epoch3", 3, &["proof-a"]);
+        engine.register(record, "t1").unwrap();
+
+        let mut ir4 = make_ir4();
+        let lid = LinkageId::new("link-epoch3");
+        let err = engine
+            .record_execution(&lid, &mut ir4, PerformanceDelta::NEUTRAL, "t2")
+            .unwrap_err();
+        assert_eq!(error_code(&err), "LINKAGE_EPOCH_MISMATCH");
+    }
+
+    #[test]
+    fn record_execution_at_tick_rejects_expired_window_and_invalidates() {
+        let mut engine = make_engine(5);
+        let mut record = make_linkage("link-expire-exec", 5, &["proof-a"]);
+        record.rollback.activation_tick = 100;
+        record.proof_inputs[0].validity_window_ticks = 10; // expires at 110
+        engine.register(record, "t1").unwrap();
+
+        let mut ir4 = make_ir4();
+        let lid = LinkageId::new("link-expire-exec");
+        let err = engine
+            .record_execution_at_tick(&lid, &mut ir4, PerformanceDelta::NEUTRAL, 110, "t2")
+            .unwrap_err();
+
+        assert_eq!(error_code(&err), "LINKAGE_ALREADY_INACTIVE");
+        assert!(!engine.get(&lid).unwrap().active);
+
+        let (_, cause) = engine.invalidations().last().unwrap();
+        match cause {
+            InvalidationCause::PolicyChange { reason } => {
+                assert!(reason.contains("proof_window_expired"));
+                assert!(reason.contains("proof-a"));
+                assert!(reason.contains("expiry_tick=110"));
+                assert!(reason.contains("observed_tick=110"));
+            }
+            other => panic!("expected PolicyChange, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn record_execution_at_tick_before_expiry_succeeds() {
+        let mut engine = make_engine(5);
+        let mut record = make_linkage("link-safe-exec", 5, &["proof-a"]);
+        record.rollback.activation_tick = 100;
+        record.proof_inputs[0].validity_window_ticks = 10; // expires at 110
+        engine.register(record, "t1").unwrap();
+
+        let mut ir4 = make_ir4();
+        ir4.instructions_executed = 55;
+        ir4.duration_ticks = 12;
+        let lid = LinkageId::new("link-safe-exec");
+
+        let exec = engine
+            .record_execution_at_tick(
+                &lid,
+                &mut ir4,
+                PerformanceDelta {
+                    speedup_millionths: 1_100_000,
+                    instruction_ratio_millionths: 950_000,
+                },
+                109,
+                "t2",
+            )
+            .unwrap();
+
+        assert_eq!(exec.instructions_executed, 55);
+        assert_eq!(exec.duration_ticks, 12);
+        assert_eq!(engine.get(&lid).unwrap().execution_count, 1);
     }
 
     #[test]
@@ -1511,10 +1844,9 @@ mod tests {
         };
         let exec = engine.record_execution(&lid, &mut ir4, perf, "t3").unwrap();
         assert_eq!(exec.instructions_executed, 1000);
-        assert!(
-            ir4.active_specialization_ids
-                .contains(&"link-1".to_string())
-        );
+        assert!(ir4
+            .active_specialization_ids
+            .contains(&"link-1".to_string()));
 
         // 4. Epoch change → invalidate
         let rollbacks = engine.on_epoch_change(test_epoch(6), "t4");

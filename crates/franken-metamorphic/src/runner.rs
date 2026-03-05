@@ -70,6 +70,16 @@ pub struct FailureArtifact {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FailureRecord {
+    pub relation_id: String,
+    pub pair_index: u32,
+    pub seed: u64,
+    pub divergence_detail: String,
+    pub minimized: bool,
+    pub failure_file: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelationExecution {
     pub relation_id: String,
     pub subsystem: Subsystem,
@@ -79,6 +89,7 @@ pub struct RelationExecution {
     pub min_failure_size: Option<usize>,
     pub duration_us: u64,
     pub outcomes: Vec<RelationRunOutcome>,
+    pub failure_records: Vec<FailureRecord>,
     pub failure_files: Vec<String>,
     pub log_event: RelationLogEvent,
 }
@@ -91,6 +102,127 @@ impl RelationExecution {
             "fail"
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeedScheduleEntry {
+    pub relation_id: String,
+    pub subsystem: String,
+    pub oracle: String,
+    pub pairs_tested: u32,
+    pub start_seed: u64,
+    pub end_seed: u64,
+    pub schedule_policy: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeedManifest {
+    pub schema_version: String,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub relation_catalog_hash: String,
+    pub corpus_version: String,
+    pub base_seed: u64,
+    pub relation_count: usize,
+    pub relation_seed_schedule: Vec<SeedScheduleEntry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingClass {
+    Correctness,
+    Security,
+    Determinism,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingSeverity {
+    Critical,
+    High,
+    Medium,
+}
+
+impl FindingSeverity {
+    pub fn as_priority(self) -> &'static str {
+        match self {
+            Self::Critical => "p0",
+            Self::High => "p1",
+            Self::Medium => "p2",
+        }
+    }
+
+    fn rank(self) -> u8 {
+        match self {
+            Self::Critical => 3,
+            Self::High => 2,
+            Self::Medium => 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PriorityPolicyRule {
+    pub rule_id: String,
+    pub description: String,
+    pub finding_class: FindingClass,
+    pub severity: FindingSeverity,
+    pub priority: String,
+    pub owner_track: String,
+    pub owner_hint: String,
+    pub escalation_required: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnerAssignment {
+    pub owner_track: String,
+    pub owner_hint: String,
+    pub escalation_required: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CampaignFinding {
+    pub counterexample_id: String,
+    pub relation_id: String,
+    pub subsystem: String,
+    pub oracle: String,
+    pub pair_index: u32,
+    pub run_seed: u64,
+    pub finding_class: FindingClass,
+    pub severity: FindingSeverity,
+    pub priority: String,
+    pub owner_assignment: OwnerAssignment,
+    pub divergence_detail: String,
+    pub minimized_reproduction_id: Option<String>,
+    pub deterministic_evidence_link: String,
+    pub replay_command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CampaignTriageSummary {
+    pub total_findings: u32,
+    pub blocking_findings: u32,
+    pub highest_severity: Option<FindingSeverity>,
+    pub correctness_findings: u32,
+    pub security_findings: u32,
+    pub determinism_findings: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CampaignTriageReport {
+    pub schema_version: String,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub relation_catalog_hash: String,
+    pub seed: u64,
+    pub replay_command: String,
+    pub priority_policy: Vec<PriorityPolicyRule>,
+    pub summary: CampaignTriageSummary,
+    pub findings: Vec<CampaignFinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,6 +378,7 @@ pub fn run_relation_with_budget(
     let mut outcomes = Vec::with_capacity(pairs as usize);
     let mut violations_found = 0u32;
     let mut min_failure_size = None::<usize>;
+    let mut failure_records = Vec::<FailureRecord>::new();
     let mut failure_files = Vec::<String>::new();
 
     if let Some(path) = failure_output_dir {
@@ -267,11 +400,17 @@ pub fn run_relation_with_budget(
             let minimized_pair = minimize_failure_pair(relation, &outcome.pair, minimizer);
             let minimized = minimized_pair.size_metric() < outcome.pair.size_metric();
             let pair_size = minimized_pair.ast_node_metric();
+            let divergence_detail = outcome
+                .equivalence
+                .detail()
+                .unwrap_or("unknown divergence")
+                .to_string();
             min_failure_size = Some(match min_failure_size {
                 Some(existing) => existing.min(pair_size),
                 None => pair_size,
             });
 
+            let mut failure_file = None::<String>;
             if let Some(path) = failure_output_dir {
                 let artifact = FailureArtifact {
                     relation_id: relation.spec().id.clone(),
@@ -279,17 +418,24 @@ pub fn run_relation_with_budget(
                     input_source: minimized_pair.input_source.clone(),
                     variant_source: minimized_pair.variant_source.clone(),
                     expected_equivalence: "equivalent".to_string(),
-                    actual_divergence: outcome
-                        .equivalence
-                        .detail()
-                        .unwrap_or("unknown divergence")
-                        .to_string(),
+                    actual_divergence: divergence_detail.clone(),
                     minimized,
                 };
 
                 let file = write_failure_artifact(path, &artifact)?;
-                failure_files.push(file.display().to_string());
+                let display = file.display().to_string();
+                failure_file = Some(display.clone());
+                failure_files.push(display);
             }
+
+            failure_records.push(FailureRecord {
+                relation_id: relation.spec().id.clone(),
+                pair_index: offset,
+                seed: run_seed,
+                divergence_detail,
+                minimized,
+                failure_file,
+            });
         }
 
         outcomes.push(outcome);
@@ -329,6 +475,7 @@ pub fn run_relation_with_budget(
         min_failure_size,
         duration_us,
         outcomes,
+        failure_records,
         failure_files,
         log_event,
     })
@@ -476,6 +623,165 @@ pub fn write_seed_transcript_jsonl(
     }
 
     fs::write(path, lines)
+}
+
+pub fn seed_manifest_for_suite(suite: &SuiteExecution) -> SeedManifest {
+    let relation_seed_schedule = suite
+        .relation_executions
+        .iter()
+        .map(|execution| {
+            let end_seed = if execution.pairs_tested == 0 {
+                suite.seed
+            } else {
+                suite
+                    .seed
+                    .wrapping_add(u64::from(execution.pairs_tested.saturating_sub(1)))
+            };
+            SeedScheduleEntry {
+                relation_id: execution.relation_id.clone(),
+                subsystem: execution.subsystem.as_str().to_string(),
+                oracle: execution.oracle.as_str().to_string(),
+                pairs_tested: execution.pairs_tested,
+                start_seed: suite.seed,
+                end_seed,
+                schedule_policy: "run_seed = base_seed.wrapping_add(pair_index)".to_string(),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    SeedManifest {
+        schema_version: "franken-engine.metamorphic.seed-manifest.v1".to_string(),
+        trace_id: suite.trace_id.clone(),
+        decision_id: suite.decision_id.clone(),
+        policy_id: suite.policy_id.clone(),
+        component: suite.component.clone(),
+        relation_catalog_hash: suite.relation_catalog_hash.clone(),
+        corpus_version: suite.relation_catalog_hash.clone(),
+        base_seed: suite.seed,
+        relation_count: suite.relation_executions.len(),
+        relation_seed_schedule,
+    }
+}
+
+pub fn write_seed_manifest_json(path: &Path, manifest: &SeedManifest) -> std::io::Result<()> {
+    let payload =
+        serde_json::to_vec_pretty(manifest).expect("seed manifest serialization should succeed");
+    fs::write(path, payload)
+}
+
+pub fn campaign_triage_report_for_suite(
+    suite: &SuiteExecution,
+    replay_command: &str,
+) -> CampaignTriageReport {
+    let mut findings = suite
+        .relation_executions
+        .iter()
+        .flat_map(|execution| {
+            execution.failure_records.iter().map(move |failure| {
+                let (finding_class, severity, owner_assignment) =
+                    classify_failure(execution.subsystem, &failure.divergence_detail);
+                let counterexample_id = stable_counterexample_id(
+                    &suite.trace_id,
+                    &execution.relation_id,
+                    failure.seed,
+                    failure.pair_index,
+                    &failure.divergence_detail,
+                );
+                let deterministic_evidence_link = format!(
+                    "repro://metamorphic/{}/{}/{}/{}",
+                    suite.relation_catalog_hash,
+                    execution.relation_id,
+                    failure.seed,
+                    counterexample_id
+                );
+
+                CampaignFinding {
+                    counterexample_id,
+                    relation_id: execution.relation_id.clone(),
+                    subsystem: execution.subsystem.as_str().to_string(),
+                    oracle: execution.oracle.as_str().to_string(),
+                    pair_index: failure.pair_index,
+                    run_seed: failure.seed,
+                    finding_class,
+                    severity,
+                    priority: severity.as_priority().to_string(),
+                    owner_assignment,
+                    divergence_detail: failure.divergence_detail.clone(),
+                    minimized_reproduction_id: failure.failure_file.clone(),
+                    deterministic_evidence_link,
+                    replay_command: replay_command.to_string(),
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    findings.sort_by(|left, right| {
+        right
+            .severity
+            .rank()
+            .cmp(&left.severity.rank())
+            .then_with(|| left.relation_id.cmp(&right.relation_id))
+            .then_with(|| left.run_seed.cmp(&right.run_seed))
+            .then_with(|| left.pair_index.cmp(&right.pair_index))
+            .then_with(|| left.counterexample_id.cmp(&right.counterexample_id))
+    });
+
+    let total_findings = findings.len() as u32;
+    let blocking_findings = findings
+        .iter()
+        .filter(|finding| {
+            matches!(
+                finding.severity,
+                FindingSeverity::Critical | FindingSeverity::High
+            )
+        })
+        .count() as u32;
+    let highest_severity = findings
+        .iter()
+        .map(|finding| finding.severity)
+        .max_by_key(|severity| severity.rank());
+    let correctness_findings = findings
+        .iter()
+        .filter(|finding| matches!(finding.finding_class, FindingClass::Correctness))
+        .count() as u32;
+    let security_findings = findings
+        .iter()
+        .filter(|finding| matches!(finding.finding_class, FindingClass::Security))
+        .count() as u32;
+    let determinism_findings = findings
+        .iter()
+        .filter(|finding| matches!(finding.finding_class, FindingClass::Determinism))
+        .count() as u32;
+
+    CampaignTriageReport {
+        schema_version: "franken-engine.metamorphic.triage-report.v1".to_string(),
+        trace_id: suite.trace_id.clone(),
+        decision_id: suite.decision_id.clone(),
+        policy_id: suite.policy_id.clone(),
+        component: suite.component.clone(),
+        relation_catalog_hash: suite.relation_catalog_hash.clone(),
+        seed: suite.seed,
+        replay_command: replay_command.to_string(),
+        priority_policy: priority_policy_rules(),
+        summary: CampaignTriageSummary {
+            total_findings,
+            blocking_findings,
+            highest_severity,
+            correctness_findings,
+            security_findings,
+            determinism_findings,
+        },
+        findings,
+    }
+}
+
+pub fn write_campaign_triage_report_json(
+    path: &Path,
+    report: &CampaignTriageReport,
+) -> std::io::Result<()> {
+    let payload =
+        serde_json::to_vec_pretty(report).expect("triage report serialization should succeed");
+    fs::write(path, payload)
 }
 
 pub fn minimize_failure_pair(
@@ -844,6 +1150,153 @@ fn sanitize_relation_id(relation_id: &str) -> String {
         .collect()
 }
 
+fn priority_policy_rules() -> Vec<PriorityPolicyRule> {
+    vec![
+        PriorityPolicyRule {
+            rule_id: "security-critical".to_string(),
+            description: "Security-relevant divergence routes to security lane with immediate escalation.".to_string(),
+            finding_class: FindingClass::Security,
+            severity: FindingSeverity::Critical,
+            priority: FindingSeverity::Critical.as_priority().to_string(),
+            owner_track: "frx-security-lane".to_string(),
+            owner_hint: "security-oncall".to_string(),
+            escalation_required: true,
+        },
+        PriorityPolicyRule {
+            rule_id: "determinism-high".to_string(),
+            description:
+                "Determinism drift routes to verification lane and blocks promotion pending rerun evidence."
+                    .to_string(),
+            finding_class: FindingClass::Determinism,
+            severity: FindingSeverity::High,
+            priority: FindingSeverity::High.as_priority().to_string(),
+            owner_track: "frx-verification-lane".to_string(),
+            owner_hint: "verification-oncall".to_string(),
+            escalation_required: true,
+        },
+        PriorityPolicyRule {
+            rule_id: "correctness-parser-ir".to_string(),
+            description: "Parser/IR correctness drifts route to compiler lane for remediation.".to_string(),
+            finding_class: FindingClass::Correctness,
+            severity: FindingSeverity::Medium,
+            priority: FindingSeverity::Medium.as_priority().to_string(),
+            owner_track: "frx-compiler-lane".to_string(),
+            owner_hint: "compiler-oncall".to_string(),
+            escalation_required: false,
+        },
+        PriorityPolicyRule {
+            rule_id: "correctness-execution".to_string(),
+            description: "Execution correctness drifts route to runtime lane for remediation.".to_string(),
+            finding_class: FindingClass::Correctness,
+            severity: FindingSeverity::Medium,
+            priority: FindingSeverity::Medium.as_priority().to_string(),
+            owner_track: "frx-js-runtime-lane".to_string(),
+            owner_hint: "runtime-oncall".to_string(),
+            escalation_required: false,
+        },
+    ]
+}
+
+fn classify_failure(
+    subsystem: Subsystem,
+    detail: &str,
+) -> (FindingClass, FindingSeverity, OwnerAssignment) {
+    let lowered = detail.to_ascii_lowercase();
+    let security_keywords = [
+        "capability",
+        "permission",
+        "ifc",
+        "containment",
+        "isolation",
+        "sandbox",
+        "escape",
+        "authority",
+        "privilege",
+        "secret",
+        "taint",
+        "policy",
+    ];
+    let determinism_keywords = [
+        "nondetermin",
+        "determin",
+        "flaky",
+        "race",
+        "ordering",
+        "schedule",
+        "timing",
+        "clock",
+        "random",
+        "heisen",
+        "interleav",
+    ];
+
+    if security_keywords
+        .iter()
+        .any(|keyword| lowered.contains(keyword))
+    {
+        return (
+            FindingClass::Security,
+            FindingSeverity::Critical,
+            OwnerAssignment {
+                owner_track: "frx-security-lane".to_string(),
+                owner_hint: "security-oncall".to_string(),
+                escalation_required: true,
+            },
+        );
+    }
+
+    if determinism_keywords
+        .iter()
+        .any(|keyword| lowered.contains(keyword))
+    {
+        return (
+            FindingClass::Determinism,
+            FindingSeverity::High,
+            OwnerAssignment {
+                owner_track: "frx-verification-lane".to_string(),
+                owner_hint: "verification-oncall".to_string(),
+                escalation_required: true,
+            },
+        );
+    }
+
+    let owner_assignment = match subsystem {
+        Subsystem::Execution => OwnerAssignment {
+            owner_track: "frx-js-runtime-lane".to_string(),
+            owner_hint: "runtime-oncall".to_string(),
+            escalation_required: false,
+        },
+        Subsystem::Parser | Subsystem::Ir => OwnerAssignment {
+            owner_track: "frx-compiler-lane".to_string(),
+            owner_hint: "compiler-oncall".to_string(),
+            escalation_required: false,
+        },
+    };
+
+    (
+        FindingClass::Correctness,
+        FindingSeverity::Medium,
+        owner_assignment,
+    )
+}
+
+fn stable_counterexample_id(
+    trace_id: &str,
+    relation_id: &str,
+    seed: u64,
+    pair_index: u32,
+    divergence_detail: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(trace_id.as_bytes());
+    hasher.update(relation_id.as_bytes());
+    hasher.update(seed.to_le_bytes());
+    hasher.update(pair_index.to_le_bytes());
+    hasher.update(divergence_detail.as_bytes());
+    let digest = hex::encode(hasher.finalize());
+    format!("cex-{}", &digest[..16])
+}
+
 pub fn environment_fingerprint() -> String {
     let toolchain = std::env::var("RUSTUP_TOOLCHAIN").unwrap_or_else(|_| "unknown".to_string());
     let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "default".to_string());
@@ -871,9 +1324,10 @@ mod tests {
     use crate::{build_enabled_relations, build_relation};
 
     use super::{
-        MinimizerConfig, RelationEvidenceEntry, RunContext, evidence_entries_for_suite,
-        minimize_failure_pair, relation_log_events_for_suite, run_relation_with_budget, run_suite,
-        seed_transcript_entries_for_suite,
+        FindingClass, FindingSeverity, MinimizerConfig, RelationEvidenceEntry, RunContext,
+        campaign_triage_report_for_suite, evidence_entries_for_suite, minimize_failure_pair,
+        relation_log_events_for_suite, run_relation_with_budget, run_suite,
+        seed_manifest_for_suite, seed_transcript_entries_for_suite,
     };
 
     struct AlwaysPassRelation {
@@ -932,6 +1386,37 @@ mod tests {
                 }
             } else {
                 Equivalence::Equivalent
+            }
+        }
+
+        fn validate_program(&self, source: &str) -> bool {
+            !source.trim().is_empty()
+        }
+    }
+
+    struct PatternViolationRelation {
+        spec: RelationSpec,
+        divergence_detail: &'static str,
+    }
+
+    impl MetamorphicRelation for PatternViolationRelation {
+        fn spec(&self) -> &RelationSpec {
+            &self.spec
+        }
+
+        fn generate_pair(&self, seed: u64) -> GeneratedPair {
+            GeneratedPair {
+                input_source: format!("let value_{seed} = 1; return value_{seed};"),
+                variant_source: format!(
+                    "let value_{seed} = 1; return value_{seed}; // {}",
+                    self.divergence_detail
+                ),
+            }
+        }
+
+        fn oracle(&self, _pair: &GeneratedPair) -> Equivalence {
+            Equivalence::Diverged {
+                detail: self.divergence_detail.to_string(),
             }
         }
 
@@ -1000,6 +1485,7 @@ mod tests {
             min_failure_size: Some(5),
             duration_us: 100,
             outcomes: Vec::new(),
+            failure_records: Vec::new(),
             failure_files: Vec::new(),
             log_event: super::RelationLogEvent {
                 trace_id: "trace".to_string(),
@@ -1130,7 +1616,18 @@ mod tests {
         .expect("synthetic relation should execute");
 
         assert_eq!(execution.violations_found, 1);
+        assert_eq!(execution.failure_records.len(), 1);
         assert_eq!(execution.failure_files.len(), 1);
+        assert_eq!(execution.failure_records[0].pair_index, 0);
+        assert_eq!(execution.failure_records[0].seed, 7);
+        assert_eq!(
+            execution.failure_records[0].divergence_detail,
+            "synthetic divergence"
+        );
+        assert_eq!(
+            execution.failure_records[0].failure_file.as_deref(),
+            Some(execution.failure_files[0].as_str())
+        );
 
         let failure_path = PathBuf::from(&execution.failure_files[0]);
         assert!(failure_path.exists(), "failure artifact path must exist");
@@ -1189,6 +1686,7 @@ mod tests {
         assert_eq!(first.failure_files.len(), 1);
         assert_eq!(second.failure_files.len(), 1);
         assert_eq!(first.failure_files[0], second.failure_files[0]);
+        assert_eq!(first.failure_records, second.failure_records);
 
         fs::remove_dir_all(&output_dir).expect("temp output dir should be removable");
     }
@@ -1423,5 +1921,183 @@ mod tests {
                 .iter()
                 .all(|line| line.contains("\"event\":\"pair_seed_evaluated\""))
         );
+    }
+
+    #[test]
+    fn seed_manifest_is_stable_for_identical_suite_inputs() {
+        let relation = AlwaysPassRelation {
+            spec: RelationSpec {
+                id: "seed_manifest_relation".to_string(),
+                subsystem: Subsystem::Ir,
+                description: "seed manifest".to_string(),
+                oracle: OracleKind::IrEquality,
+                budget_pairs: 3,
+                enabled: true,
+            },
+        };
+        let context = test_context();
+        let relation_refs: Vec<&dyn MetamorphicRelation> = vec![&relation];
+
+        let first = run_suite(
+            &relation_refs,
+            &context,
+            Some(3),
+            None,
+            MinimizerConfig::default(),
+        )
+        .expect("first suite should run");
+        let second = run_suite(
+            &relation_refs,
+            &context,
+            Some(3),
+            None,
+            MinimizerConfig::default(),
+        )
+        .expect("second suite should run");
+
+        let first_manifest = seed_manifest_for_suite(&first);
+        let second_manifest = seed_manifest_for_suite(&second);
+        assert_eq!(first_manifest, second_manifest);
+        assert_eq!(first_manifest.base_seed, 7);
+        assert_eq!(first_manifest.relation_seed_schedule.len(), 1);
+        assert_eq!(first_manifest.relation_seed_schedule[0].start_seed, 7);
+        assert_eq!(first_manifest.relation_seed_schedule[0].end_seed, 9);
+    }
+
+    #[test]
+    fn campaign_triage_report_routes_and_prioritizes_findings() {
+        let security_relation = PatternViolationRelation {
+            spec: RelationSpec {
+                id: "security_relation".to_string(),
+                subsystem: Subsystem::Execution,
+                description: "security".to_string(),
+                oracle: OracleKind::SideEffectTraceEquality,
+                budget_pairs: 1,
+                enabled: true,
+            },
+            divergence_detail: "capability containment escape detected",
+        };
+        let determinism_relation = PatternViolationRelation {
+            spec: RelationSpec {
+                id: "determinism_relation".to_string(),
+                subsystem: Subsystem::Execution,
+                description: "determinism".to_string(),
+                oracle: OracleKind::CanonicalOutputEquality,
+                budget_pairs: 1,
+                enabled: true,
+            },
+            divergence_detail: "nondeterministic ordering drift observed",
+        };
+        let correctness_relation = PatternViolationRelation {
+            spec: RelationSpec {
+                id: "correctness_relation".to_string(),
+                subsystem: Subsystem::Parser,
+                description: "correctness".to_string(),
+                oracle: OracleKind::AstEquality,
+                budget_pairs: 1,
+                enabled: true,
+            },
+            divergence_detail: "semantic mismatch in parser output",
+        };
+        let context = test_context();
+        let relation_refs: Vec<&dyn MetamorphicRelation> = vec![
+            &correctness_relation,
+            &security_relation,
+            &determinism_relation,
+        ];
+
+        let suite = run_suite(
+            &relation_refs,
+            &context,
+            Some(1),
+            None,
+            MinimizerConfig::default(),
+        )
+        .expect("suite should run");
+        let report = campaign_triage_report_for_suite(
+            &suite,
+            "./scripts/e2e/metamorphic_suite_replay.sh ci",
+        );
+
+        assert_eq!(report.summary.total_findings, 3);
+        assert_eq!(report.summary.blocking_findings, 2);
+        assert_eq!(report.summary.security_findings, 1);
+        assert_eq!(report.summary.determinism_findings, 1);
+        assert_eq!(report.summary.correctness_findings, 1);
+        assert_eq!(
+            report.summary.highest_severity,
+            Some(FindingSeverity::Critical)
+        );
+        assert_eq!(report.findings.len(), 3);
+
+        let security = &report.findings[0];
+        assert_eq!(security.finding_class, FindingClass::Security);
+        assert_eq!(security.severity, FindingSeverity::Critical);
+        assert_eq!(security.priority, "p0");
+        assert_eq!(security.owner_assignment.owner_track, "frx-security-lane");
+        assert!(security.owner_assignment.escalation_required);
+
+        let determinism = &report.findings[1];
+        assert_eq!(determinism.finding_class, FindingClass::Determinism);
+        assert_eq!(determinism.severity, FindingSeverity::High);
+        assert_eq!(determinism.priority, "p1");
+        assert_eq!(
+            determinism.owner_assignment.owner_track,
+            "frx-verification-lane"
+        );
+        assert!(determinism.owner_assignment.escalation_required);
+
+        let correctness = &report.findings[2];
+        assert_eq!(correctness.finding_class, FindingClass::Correctness);
+        assert_eq!(correctness.severity, FindingSeverity::Medium);
+        assert_eq!(correctness.priority, "p2");
+        assert_eq!(
+            correctness.owner_assignment.owner_track,
+            "frx-compiler-lane"
+        );
+        assert!(!correctness.owner_assignment.escalation_required);
+    }
+
+    #[test]
+    fn campaign_triage_report_is_stable_for_identical_suite_inputs() {
+        let relation = SyntheticViolationRelation {
+            spec: RelationSpec {
+                id: "stable_triage_relation".to_string(),
+                subsystem: Subsystem::Parser,
+                description: "stable triage".to_string(),
+                oracle: OracleKind::AstEquality,
+                budget_pairs: 1,
+                enabled: true,
+            },
+        };
+        let context = test_context();
+        let relation_refs: Vec<&dyn MetamorphicRelation> = vec![&relation];
+
+        let first = run_suite(
+            &relation_refs,
+            &context,
+            Some(1),
+            None,
+            MinimizerConfig::default(),
+        )
+        .expect("first suite should run");
+        let second = run_suite(
+            &relation_refs,
+            &context,
+            Some(1),
+            None,
+            MinimizerConfig::default(),
+        )
+        .expect("second suite should run");
+
+        let first_report = campaign_triage_report_for_suite(
+            &first,
+            "./scripts/e2e/metamorphic_suite_replay.sh ci",
+        );
+        let second_report = campaign_triage_report_for_suite(
+            &second,
+            "./scripts/e2e/metamorphic_suite_replay.sh ci",
+        );
+        assert_eq!(first_report, second_report);
     }
 }

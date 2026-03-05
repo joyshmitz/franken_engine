@@ -8,9 +8,10 @@ use frankenengine_metamorphic::catalog::RelationCatalog;
 use frankenengine_metamorphic::relation::MetamorphicRelation;
 use frankenengine_metamorphic::relations::CatalogBackedRelation;
 use frankenengine_metamorphic::runner::{
-    MinimizerConfig, RunContext, evidence_entries_for_suite, relation_log_events_for_suite,
-    run_suite, seed_transcript_entries_for_suite, write_evidence_jsonl,
-    write_seed_transcript_jsonl,
+    MinimizerConfig, RunContext, campaign_triage_report_for_suite, evidence_entries_for_suite,
+    relation_log_events_for_suite, run_suite, seed_manifest_for_suite,
+    seed_transcript_entries_for_suite, write_campaign_triage_report_json, write_evidence_jsonl,
+    write_seed_manifest_json, write_seed_transcript_jsonl,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -22,7 +23,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut evidence_path = PathBuf::from("artifacts/metamorphic/metamorphic_evidence.jsonl");
     let mut events_path = PathBuf::from("artifacts/metamorphic/relation_events.jsonl");
     let mut seed_transcript_path = PathBuf::from("artifacts/metamorphic/seed_transcript.jsonl");
+    let mut seed_manifest_path = PathBuf::from("artifacts/metamorphic/seed_manifest.json");
+    let mut triage_report_path = PathBuf::from("artifacts/metamorphic/triage_report.json");
     let mut failures_dir = PathBuf::from("artifacts/metamorphic/failures");
+    let mut replay_command = String::from("./scripts/e2e/metamorphic_suite_replay.sh ci");
     let mut relation_filters = Vec::<String>::new();
 
     let mut args = std::env::args().skip(1);
@@ -76,6 +80,24 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
                 seed_transcript_path = PathBuf::from(value);
             }
+            "--seed-manifest" => {
+                let Some(value) = args.next() else {
+                    return Err("missing value for --seed-manifest".into());
+                };
+                seed_manifest_path = PathBuf::from(value);
+            }
+            "--triage-report" => {
+                let Some(value) = args.next() else {
+                    return Err("missing value for --triage-report".into());
+                };
+                triage_report_path = PathBuf::from(value);
+            }
+            "--replay-command" => {
+                let Some(value) = args.next() else {
+                    return Err("missing value for --replay-command".into());
+                };
+                replay_command = value;
+            }
             "--failures-dir" => {
                 let Some(value) = args.next() else {
                     return Err("missing value for --failures-dir".into());
@@ -113,6 +135,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Some(parent) = seed_transcript_path.parent() {
         fs::create_dir_all(parent)?;
     }
+    if let Some(parent) = seed_manifest_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if let Some(parent) = triage_report_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     fs::create_dir_all(&failures_dir)?;
 
     let context = RunContext::new(
@@ -144,15 +172,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     write_events_jsonl(&events_path, &events)?;
     let seed_transcript = seed_transcript_entries_for_suite(&suite);
     write_seed_transcript_jsonl(&seed_transcript_path, &seed_transcript)?;
+    let seed_manifest = seed_manifest_for_suite(&suite);
+    write_seed_manifest_json(&seed_manifest_path, &seed_manifest)?;
+    let triage_report = campaign_triage_report_for_suite(&suite, &replay_command);
+    write_campaign_triage_report_json(&triage_report_path, &triage_report)?;
 
     println!(
-        "metamorphic suite relations={} total_pairs={} violations={} evidence={} events={} seed_transcript={} failures_dir={}",
+        "metamorphic suite relations={} total_pairs={} violations={} evidence={} events={} seed_transcript={} seed_manifest={} triage_report={} failures_dir={}",
         suite.relation_executions.len(),
         suite.total_pairs,
         suite.total_violations,
         evidence_path.display(),
         events_path.display(),
         seed_transcript_path.display(),
+        seed_manifest_path.display(),
+        triage_report_path.display(),
         failures_dir.display()
     );
 

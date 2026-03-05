@@ -1409,6 +1409,9 @@ mod tests {
         cloned.max_candidates = 999;
         cloned.max_witnesses = 888;
         cloned.max_constraints = 777;
+        assert_eq!(cloned.max_candidates, 999);
+        assert_eq!(cloned.max_witnesses, 888);
+        assert_eq!(cloned.max_constraints, 777);
         assert_eq!(original.max_candidates, 10);
         assert_eq!(original.max_witnesses, 20);
         assert_eq!(original.max_constraints, 5);
@@ -1425,6 +1428,8 @@ mod tests {
         let mut cloned = original.clone();
         cloned.list_name = "witnesses".to_string();
         cloned.original_count = 999;
+        assert_eq!(cloned.list_name, "witnesses");
+        assert_eq!(cloned.original_count, 999);
         assert_eq!(original.list_name, "candidates");
         assert_eq!(original.original_count, 100);
     }
@@ -1456,6 +1461,8 @@ mod tests {
         let mut cloned = original.clone();
         cloned.duplicates_removed = 999;
         cloned.truncations.clear();
+        assert_eq!(cloned.duplicates_removed, 999);
+        assert!(cloned.truncations.is_empty());
         assert_eq!(original.duplicates_removed, 5);
         assert_eq!(original.truncations.len(), 1);
     }
