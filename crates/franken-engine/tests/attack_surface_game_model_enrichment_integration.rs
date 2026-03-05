@@ -5,12 +5,12 @@
 //! JSON field-name stability, serde roundtrips, builder pattern,
 //! and factory function validation beyond the existing 30 integration tests.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use frankenengine_engine::attack_surface_game_model::{
     ActionId, ActionSpace, AdmissibleActionAutomaton, GameModel, GameModelBuilder, GameModelReport,
     HardConstraint, LossDimension, LossEntry, LossTensor, Player, SCHEMA_VERSION, StrategicAction,
-    Subsystem, SubsystemSummary, generate_report,
+    Subsystem, generate_report,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 

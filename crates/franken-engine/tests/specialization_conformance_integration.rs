@@ -9,7 +9,7 @@
 use frankenengine_engine::engine_object_id::{self, ObjectDomain, SchemaId};
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::proof_specialization_receipt::{
-    OptimizationClass, ProofInput, ProofType,
+    OptimizationClass, ProofInput, ProofType, ReceiptSchemaVersion,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::specialization_conformance::*;
@@ -732,4 +732,407 @@ fn evidence_artifact_deterministic_serialization() {
     let back: ConformanceEvidenceArtifact = serde_json::from_str(&json1).unwrap();
     assert_eq!(back.run_id, artifact.run_id);
     assert_eq!(back.ci_gate_passed, artifact.ci_gate_passed);
+}
+
+// ---------------------------------------------------------------------------
+// Enum serde round-trips
+// ---------------------------------------------------------------------------
+
+#[test]
+fn transformation_type_serde_round_trip_all() {
+    for tt in TransformationType::ALL {
+        let json = serde_json::to_string(&tt).expect("serialize");
+        let recovered: TransformationType = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(tt, &recovered);
+        assert!(!tt.as_str().is_empty());
+    }
+}
+
+#[test]
+fn corpus_category_serde_round_trip_all() {
+    for cat in [
+        CorpusCategory::SemanticParity,
+        CorpusCategory::EdgeCase,
+        CorpusCategory::EpochTransition,
+    ] {
+        let json = serde_json::to_string(&cat).expect("serialize");
+        let recovered: CorpusCategory = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(cat, recovered);
+        assert!(!cat.as_str().is_empty());
+        assert!(cat.min_count() > 0);
+    }
+}
+
+#[test]
+fn comparison_verdict_serde_round_trip() {
+    for v in [ComparisonVerdict::Match, ComparisonVerdict::Diverge] {
+        let json = serde_json::to_string(&v).expect("serialize");
+        let recovered: ComparisonVerdict = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(v, recovered);
+        assert!(!v.as_str().is_empty());
+    }
+}
+
+#[test]
+fn comparison_verdict_predicates() {
+    assert!(ComparisonVerdict::Match.is_match());
+    assert!(!ComparisonVerdict::Match.is_diverge());
+    assert!(ComparisonVerdict::Diverge.is_diverge());
+    assert!(!ComparisonVerdict::Diverge.is_match());
+}
+
+#[test]
+fn divergence_kind_serde_round_trip_all() {
+    for kind in [
+        DivergenceKind::ReturnValue,
+        DivergenceKind::SideEffectTrace,
+        DivergenceKind::ExceptionSequence,
+        DivergenceKind::EvidenceEmission,
+    ] {
+        let json = serde_json::to_string(&kind).expect("serialize");
+        let recovered: DivergenceKind = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(kind, recovered);
+        assert!(!kind.as_str().is_empty());
+    }
+}
+
+#[test]
+fn fallback_outcome_serde_round_trip() {
+    let success = FallbackOutcome::Success {
+        invalidation_evidence_id: "ev-1".to_string(),
+    };
+    assert!(success.is_success());
+    assert!(!success.is_failure());
+    let json = serde_json::to_string(&success).expect("serialize");
+    let recovered: FallbackOutcome = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(success, recovered);
+
+    let failure = FallbackOutcome::Failure {
+        reason: "crash".to_string(),
+    };
+    assert!(failure.is_failure());
+    assert!(!failure.is_success());
+    let json = serde_json::to_string(&failure).expect("serialize");
+    let recovered: FallbackOutcome = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(failure, recovered);
+}
+
+// ---------------------------------------------------------------------------
+// ConformanceError serde and Display
+// ---------------------------------------------------------------------------
+
+#[test]
+fn conformance_error_serde_round_trip_all_variants() {
+    let errors = vec![
+        ConformanceError::InsufficientCorpus {
+            specialization_id: "spec-1".to_string(),
+            category: CorpusCategory::EdgeCase,
+            required: 10,
+            found: 3,
+        },
+        ConformanceError::SpecializationNotFound {
+            specialization_id: "spec-2".to_string(),
+        },
+        ConformanceError::ReceiptInvalid {
+            receipt_id: "receipt-1".to_string(),
+            reasons: vec!["bad hash".to_string()],
+        },
+        ConformanceError::MissingCorpus {
+            specialization_id: "spec-3".to_string(),
+        },
+        ConformanceError::ExecutionError {
+            message: "timeout".to_string(),
+        },
+    ];
+    for err in &errors {
+        let json = serde_json::to_string(&err).expect("serialize");
+        let recovered: ConformanceError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(err, &recovered);
+        assert!(!err.to_string().is_empty());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WorkloadOutcome content_hash
+// ---------------------------------------------------------------------------
+
+#[test]
+fn workload_outcome_content_hash_is_deterministic() {
+    let outcome = ok_outcome("42");
+    let h1 = outcome.content_hash();
+    let h2 = outcome.content_hash();
+    assert_eq!(h1, h2);
+}
+
+#[test]
+fn workload_outcome_different_values_have_different_hashes() {
+    let a = ok_outcome("42");
+    let b = ok_outcome("43");
+    assert_ne!(a.content_hash(), b.content_hash());
+}
+
+// ---------------------------------------------------------------------------
+// Engine accessor methods
+// ---------------------------------------------------------------------------
+
+#[test]
+fn engine_policy_id_and_epoch_accessors() {
+    let ep = epoch(7);
+    let engine = SpecializationConformanceEngine::new("my-policy", ep);
+    assert_eq!(engine.policy_id(), "my-policy");
+    assert_eq!(engine.current_epoch(), ep);
+    assert_eq!(engine.specialization_count(), 0);
+    assert_eq!(engine.total_workloads_run(), 0);
+    assert_eq!(engine.total_matches(), 0);
+    assert_eq!(engine.total_divergences(), 0);
+    assert!(engine.inventory().is_empty());
+    assert!(engine.results().is_empty());
+    assert!(engine.logs().is_empty());
+    assert!(engine.errors().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Performance delta edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn performance_delta_zero_unspecialized_returns_zero() {
+    let delta = SpecializationConformanceEngine::compute_performance_delta(100, 0);
+    assert_eq!(delta.speedup_millionths, 0);
+}
+
+#[test]
+fn performance_delta_zero_specialized() {
+    let delta = SpecializationConformanceEngine::compute_performance_delta(0, 100);
+    assert_eq!(delta.speedup_millionths, 1_000_000); // 100% speedup
+}
+
+// ---------------------------------------------------------------------------
+// Determinism edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn determinism_check_empty_returns_true() {
+    assert!(SpecializationConformanceEngine::check_determinism(&[]));
+}
+
+#[test]
+fn determinism_check_single_returns_true() {
+    assert!(SpecializationConformanceEngine::check_determinism(&[
+        ok_outcome("42")
+    ]));
+}
+
+// ---------------------------------------------------------------------------
+// Evidence artifact methods
+// ---------------------------------------------------------------------------
+
+#[test]
+fn evidence_artifact_is_passed_when_no_divergences() {
+    let ep = epoch(5);
+    let engine = SpecializationConformanceEngine::new("policy-pass", ep);
+    let artifact = engine.produce_evidence(
+        "pass-run",
+        ContentHash::compute(b"reg"),
+        "test",
+        1_000_000,
+    );
+    assert!(artifact.is_passed());
+    assert_eq!(artifact.failed_specialization_count(), 0);
+}
+
+#[test]
+fn evidence_artifact_to_jsonl_is_valid_json() {
+    let ep = epoch(5);
+    let engine = SpecializationConformanceEngine::new("policy-jsonl", ep);
+    let artifact = engine.produce_evidence(
+        "jsonl-run",
+        ContentHash::compute(b"reg"),
+        "test",
+        1_000_000,
+    );
+    let jsonl = artifact.to_jsonl();
+    let _: serde_json::Value = serde_json::from_str(&jsonl).expect("should be valid JSON");
+}
+
+// ---------------------------------------------------------------------------
+// SpecializationInventoryEntry serde
+// ---------------------------------------------------------------------------
+
+#[test]
+fn inventory_entry_serde_round_trip() {
+    let entry = inventory_entry("serde-test", epoch(3), TransformationType::PathRemoval);
+    let json = serde_json::to_string(&entry).expect("serialize");
+    let recovered: SpecializationInventoryEntry =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(entry, recovered);
+}
+
+// ---------------------------------------------------------------------------
+// DifferentialResult serde
+// ---------------------------------------------------------------------------
+
+#[test]
+fn differential_result_serde_round_trip() {
+    let ep = epoch(5);
+    let mut engine = SpecializationConformanceEngine::new("policy-dr", ep);
+    let spec_id = test_id("spec-dr");
+    let outcome = ok_outcome("42");
+
+    let result = engine.compare_outcomes(&CompareOutcomesInput {
+        specialization_id: &spec_id,
+        workload_id: "w-dr",
+        category: CorpusCategory::SemanticParity,
+        specialized: &outcome,
+        unspecialized: &outcome,
+        specialized_duration_us: 80,
+        unspecialized_duration_us: 100,
+        epoch_transition_tested: false,
+        fallback_outcome: None,
+        receipt_valid: true,
+    });
+
+    let json = serde_json::to_string(&result).expect("serialize");
+    let recovered: DifferentialResult = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(result.outcome, recovered.outcome);
+    assert_eq!(result.workload_id, recovered.workload_id);
+}
+
+// ---------------------------------------------------------------------------
+// Conformance log serde
+// ---------------------------------------------------------------------------
+
+#[test]
+fn conformance_log_serde_round_trip() {
+    let log = ConformanceLog {
+        trace_id: "t-1".to_string(),
+        specialization_id: "spec-1".to_string(),
+        workload_id: "w-1".to_string(),
+        corpus_category: CorpusCategory::EdgeCase,
+        outcome: ComparisonVerdict::Match,
+        specialized_duration_us: 80,
+        unspecialized_duration_us: 100,
+        epoch_transition_tested: false,
+        fallback_outcome: None,
+        receipt_valid: true,
+    };
+    let json = serde_json::to_string(&log).expect("serialize");
+    let recovered: ConformanceLog = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(log, recovered);
+}
+
+// ---------------------------------------------------------------------------
+// DivergenceDetail serde
+// ---------------------------------------------------------------------------
+
+#[test]
+fn divergence_detail_serde_round_trip() {
+    let detail = DivergenceDetail {
+        divergence_kind: DivergenceKind::SideEffectTrace,
+        specialized_summary: "spec: 1 effect".to_string(),
+        unspecialized_summary: "unspec: 2 effects".to_string(),
+    };
+    let json = serde_json::to_string(&detail).expect("serialize");
+    let recovered: DivergenceDetail = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(detail, recovered);
+}
+
+// ---------------------------------------------------------------------------
+// SideEffect serde
+// ---------------------------------------------------------------------------
+
+#[test]
+fn side_effect_serde_round_trip() {
+    let effect = SideEffect {
+        effect_type: "hostcall".to_string(),
+        description: "read file".to_string(),
+        sequence: 5,
+    };
+    let json = serde_json::to_string(&effect).expect("serialize");
+    let recovered: SideEffect = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(effect, recovered);
+}
+
+// ---------------------------------------------------------------------------
+// EpochTransitionSimulation serde
+// ---------------------------------------------------------------------------
+
+#[test]
+fn epoch_transition_simulation_serde_round_trip() {
+    let sim = EpochTransitionSimulation {
+        old_epoch: epoch(1),
+        new_epoch: epoch(2),
+        invalidated_specialization_ids: vec![test_id("spec-1")],
+        proof_revoked: true,
+        transition_timestamp_ns: 1_000,
+    };
+    let json = serde_json::to_string(&sim).expect("serialize");
+    let recovered: EpochTransitionSimulation = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(sim, recovered);
+}
+
+// ---------------------------------------------------------------------------
+// InvalidationEvidence serde
+// ---------------------------------------------------------------------------
+
+#[test]
+fn invalidation_evidence_serde_round_trip() {
+    let evidence = InvalidationEvidence {
+        specialization_id: test_id("spec-inv"),
+        invalidation_reason: "epoch expired".to_string(),
+        epoch_old: epoch(1),
+        epoch_new: epoch(2),
+        rollback_token: ContentHash::compute(b"rollback"),
+        fallback_outcome: FallbackOutcome::Success {
+            invalidation_evidence_id: "ev-inv".to_string(),
+        },
+    };
+    let json = serde_json::to_string(&evidence).expect("serialize");
+    let recovered: InvalidationEvidence = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(evidence, recovered);
+}
+
+// ---------------------------------------------------------------------------
+// PerformanceDelta serde
+// ---------------------------------------------------------------------------
+
+#[test]
+fn performance_delta_serde_round_trip() {
+    let delta = SpecializationConformanceEngine::compute_performance_delta(80, 100);
+    let json = serde_json::to_string(&delta).expect("serialize");
+    let recovered: PerformanceDelta = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(delta, recovered);
+}
+
+// ---------------------------------------------------------------------------
+// Corpus category min counts
+// ---------------------------------------------------------------------------
+
+#[test]
+fn corpus_category_min_count_values() {
+    assert!(CorpusCategory::SemanticParity.min_count() >= 10);
+    assert!(CorpusCategory::EdgeCase.min_count() >= 5);
+    assert!(CorpusCategory::EpochTransition.min_count() >= 2);
+}
+
+// ---------------------------------------------------------------------------
+// ReceiptValidationResult
+// ---------------------------------------------------------------------------
+
+#[test]
+fn receipt_validation_result_serde_round_trip() {
+    let result = ReceiptValidationResult {
+        receipt_id: test_id("receipt-serde"),
+        well_formed: true,
+        equivalence_hash_matches: true,
+        rollback_validated: true,
+        proof_inputs_consistent: true,
+        schema_version: ReceiptSchemaVersion::CURRENT,
+        valid: true,
+        failure_reasons: vec![],
+    };
+    let json = serde_json::to_string(&result).expect("serialize");
+    let recovered: ReceiptValidationResult = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(result, recovered);
+    assert!(result.is_valid());
 }

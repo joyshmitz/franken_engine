@@ -1,9 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::sibling_integration_benchmark_gate::{
-    BaselineLedger, BenchmarkGateFailureCode, BenchmarkGateInput, BenchmarkGateThresholds,
-    BenchmarkSnapshot, ControlPlaneOperation, OperationLatencySamples, SiblingIntegration,
-    evaluate_sibling_integration_benchmark,
+    BaselineLedger, BaselineLedgerEntry, BaselineLedgerError, BenchmarkGateDecision,
+    BenchmarkGateFailureCode, BenchmarkGateFinding, BenchmarkGateInput, BenchmarkGateLogEvent,
+    BenchmarkGateThresholds, BenchmarkSnapshot, ControlPlaneOperation,
+    OperationBenchmarkEvaluation, OperationLatencySamples, OperationSloThreshold,
+    SiblingIntegration, evaluate_sibling_integration_benchmark,
 };
 
 fn required_integrations() -> BTreeSet<SiblingIntegration> {
