@@ -672,3 +672,117 @@ fn fixture_deterministic_triple_parse() {
     assert_eq!(b.schema_version, c.schema_version);
     assert_eq!(a.bead_id, c.bead_id);
 }
+
+// ---------- explain_delta missing_input with allow_missing=true on both sides ----------
+
+#[test]
+fn explain_delta_both_sides_missing_input_with_allow() {
+    let x86 = LaneRunSummary {
+        lane_id: "lane1".to_string(),
+        arch_profile: "x86".to_string(),
+        outcome: "unknown".to_string(),
+        error_code: None,
+        witness_digest: "missing-input".to_string(),
+        toolchain_fingerprint: "fp".to_string(),
+    };
+    let arm = LaneRunSummary {
+        lane_id: "lane1".to_string(),
+        arch_profile: "arm".to_string(),
+        outcome: "unknown".to_string(),
+        error_code: None,
+        witness_digest: "missing-input".to_string(),
+        toolchain_fingerprint: "fp".to_string(),
+    };
+    let delta = explain_delta(&x86, &arm, true);
+    assert_eq!(delta.class_id, "missing_input");
+    assert_eq!(delta.severity, "critical");
+}
+
+// ---------- build_lane_delta_event upstream_lane_regression error code ----------
+
+#[test]
+fn build_lane_delta_event_upstream_regression_has_correct_error_code() {
+    let fixture = load_fixture();
+    let delta = DeltaExplanation {
+        class_id: "upstream_lane_regression".to_string(),
+        severity: "critical".to_string(),
+        reason: "diverged".to_string(),
+    };
+    let event = build_lane_delta_event(&fixture, "lane1", &delta);
+    assert_eq!(event["error_code"], "FE-PARSER-CROSS-ARCH-MATRIX-0002");
+    assert_eq!(event["outcome"], "fail");
+}
+
+// ---------- build_lane_delta_event toolchain delta has null error_code ----------
+
+#[test]
+fn build_lane_delta_event_toolchain_delta_has_null_error_code() {
+    let fixture = load_fixture();
+    let delta = DeltaExplanation {
+        class_id: "toolchain_fingerprint_delta".to_string(),
+        severity: "warning".to_string(),
+        reason: "fp differs".to_string(),
+    };
+    let event = build_lane_delta_event(&fixture, "lane1", &delta);
+    assert!(event["error_code"].is_null());
+    assert_eq!(event["outcome"], "pass");
+}
+
+// ---------- classify_matrix_input_status boundary: complete with many critical deltas ----------
+
+#[test]
+fn classify_matrix_status_complete_with_many_critical_deltas() {
+    assert_eq!(
+        classify_matrix_input_status(true, true, 100),
+        "blocked_critical_deltas"
+    );
+    assert_eq!(
+        classify_matrix_input_status(true, false, 100),
+        "blocked_critical_deltas"
+    );
+}
+
+// ---------- fixture delta_classes all have nonempty descriptions ----------
+
+#[test]
+fn fixture_delta_classes_have_nonempty_descriptions() {
+    let fixture = load_fixture();
+    for dc in &fixture.delta_classes {
+        assert!(!dc.description.trim().is_empty(), "delta class {} has empty description", dc.class_id);
+        assert!(!dc.severity.trim().is_empty(), "delta class {} has empty severity", dc.class_id);
+    }
+}
+
+// ---------- fixture required_lanes have nonempty replay commands ----------
+
+#[test]
+fn fixture_required_lanes_have_nonempty_replay_commands() {
+    let fixture = load_fixture();
+    for lane in &fixture.required_lanes {
+        assert!(
+            !lane.replay_command.trim().is_empty(),
+            "lane {} has empty replay_command",
+            lane.lane_id
+        );
+        assert!(
+            !lane.manifest_schema_version.trim().is_empty(),
+            "lane {} has empty manifest_schema_version",
+            lane.lane_id
+        );
+    }
+}
+
+// ---------- build_lane_delta_event unknown class gets fallback error code ----------
+
+#[test]
+fn build_lane_delta_event_unknown_class_gets_fallback_error_code() {
+    let fixture = load_fixture();
+    let delta = DeltaExplanation {
+        class_id: "some_unknown_class".to_string(),
+        severity: "critical".to_string(),
+        reason: "unknown".to_string(),
+    };
+    let event = build_lane_delta_event(&fixture, "lane1", &delta);
+    assert_eq!(event["error_code"], "FE-PARSER-CROSS-ARCH-MATRIX-0099");
+    assert_eq!(event["outcome"], "fail");
+}

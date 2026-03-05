@@ -508,3 +508,207 @@ fn regression_observation_all_fields_serde_roundtrip() {
     let recovered: RegressionObservation = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.workload_id, "w1");
 }
+
+// ---------- multiple waivers ----------
+
+#[test]
+fn waiver_only_suppresses_matching_workload() {
+    let input = RegressionGateInput::new(
+        "trace-partial",
+        "decision-partial",
+        "policy-partial",
+        1_700_000_000,
+        vec![
+            RegressionObservation::new(
+                "workload-a",
+                "scenario",
+                "sha256:a",
+                100_000,
+                200_000,
+                10_000,
+                None,
+            ),
+            RegressionObservation::new(
+                "workload-b",
+                "scenario",
+                "sha256:b",
+                100_000,
+                200_000,
+                10_000,
+                None,
+            ),
+        ],
+        vec![RegressionWaiver::new(
+            "waiver-a-only",
+            "workload-a",
+            "oncall",
+            1_800_000_000,
+            "suppress a only",
+        )],
+    );
+    let report = evaluate_performance_regression_gate(&input, &RegressionGatePolicy::default());
+    // workload-b is still unwaived → should still block
+    assert!(
+        report.blocking,
+        "unwaived workload-b should still cause blocking"
+    );
+}
+
+// ---------- report serde roundtrip ----------
+
+#[test]
+fn gate_report_serde_roundtrip() {
+    let input = RegressionGateInput::new(
+        "trace-rt",
+        "decision-rt",
+        "policy-rt",
+        1_700_000_000,
+        vec![RegressionObservation::new(
+            "wl-rt",
+            "scen",
+            "sha256:rt",
+            100_000,
+            120_000,
+            10_000,
+            Some("commit-rt".to_string()),
+        )],
+        Vec::new(),
+    );
+    let report = evaluate_performance_regression_gate(&input, &RegressionGatePolicy::default());
+    let json = serde_json::to_string(&report).expect("serialize report");
+    let value: serde_json::Value = serde_json::from_str(&json).expect("parse as value");
+    assert!(value.is_object());
+    assert!(value.get("schema_version").is_some());
+    assert!(value.get("blocking").is_some());
+    assert!(value.get("regressions").is_some());
+}
+
+// ---------- contract required_artifacts nonempty ----------
+
+#[test]
+fn contract_required_artifacts_are_nonempty() {
+    let contract: Contract = serde_json::from_str(CONTRACT_JSON).expect("parse");
+    assert!(!contract.required_artifacts.is_empty());
+    for artifact in &contract.required_artifacts {
+        assert!(
+            !artifact.trim().is_empty(),
+            "required_artifact must not be blank"
+        );
+    }
+}
+
+// ---------- critical regression produces blocking ----------
+
+#[test]
+fn critical_regression_produces_blocking_decision() {
+    let policy = RegressionGatePolicy {
+        warning_regression_millionths: 10_000,
+        fail_regression_millionths: 50_000,
+        critical_regression_millionths: 200_000,
+        max_p_value_millionths: 50_000,
+        max_culprits: 10,
+    };
+    // 5x regression (400%) → well above critical
+    let input = RegressionGateInput::new(
+        "trace-crit",
+        "decision-crit",
+        "policy-crit",
+        1_700_000_000,
+        vec![RegressionObservation::new(
+            "wl-critical",
+            "scen",
+            "sha256:c",
+            100_000,
+            500_000,
+            5_000,
+            None,
+        )],
+        Vec::new(),
+    );
+    let report = evaluate_performance_regression_gate(&input, &policy);
+    assert!(report.blocking, "critical regression must block");
+    assert!(!report.culprit_ranking.is_empty());
+}
+
+// ---------- improvement does not block ----------
+
+#[test]
+fn performance_improvement_does_not_block() {
+    let input = RegressionGateInput::new(
+        "trace-improve",
+        "decision-improve",
+        "policy-improve",
+        1_700_000_000,
+        vec![RegressionObservation::new(
+            "wl-improved",
+            "scen",
+            "sha256:imp",
+            200_000,
+            100_000,
+            10_000,
+            None,
+        )],
+        Vec::new(),
+    );
+    let report = evaluate_performance_regression_gate(&input, &RegressionGatePolicy::default());
+    assert!(!report.blocking, "improvement should not block");
+    assert!(report.culprit_ranking.is_empty());
+}
+
+// ---------- waiver with commit_id roundtrip ----------
+
+#[test]
+fn regression_waiver_fields_preserved_in_serde() {
+    let waiver = RegressionWaiver::new(
+        "waiver-field-check",
+        "workload-fc",
+        "oncall-zara",
+        1_900_000_000,
+        "approved perf hit for new feature",
+    );
+    let json = serde_json::to_string(&waiver).expect("serialize");
+    let recovered: RegressionWaiver = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.workload_id, "workload-fc");
+    assert_eq!(recovered.expires_at_unix_seconds, 1_900_000_000);
+    assert_eq!(recovered.reason, "approved perf hit for new feature");
+}
+
+// ---------- multiple observations sorted by severity in culprit ranking ----------
+
+#[test]
+fn culprit_ranking_sorted_by_regression_magnitude() {
+    let input = RegressionGateInput::new(
+        "trace-sort",
+        "decision-sort",
+        "policy-sort",
+        1_700_000_000,
+        vec![
+            RegressionObservation::new(
+                "small-regression",
+                "scen",
+                "sha256:s",
+                100_000,
+                160_000,
+                10_000,
+                Some("commit-s".to_string()),
+            ),
+            RegressionObservation::new(
+                "large-regression",
+                "scen",
+                "sha256:l",
+                100_000,
+                300_000,
+                10_000,
+                Some("commit-l".to_string()),
+            ),
+        ],
+        Vec::new(),
+    );
+    let report = evaluate_performance_regression_gate(&input, &RegressionGatePolicy::default());
+    assert!(report.blocking);
+    if report.culprit_ranking.len() >= 2 {
+        // The most severe regression should appear first
+        assert_eq!(report.culprit_ranking[0].workload_id, "large-regression");
+        assert_eq!(report.culprit_ranking[1].workload_id, "small-regression");
+    }
+}

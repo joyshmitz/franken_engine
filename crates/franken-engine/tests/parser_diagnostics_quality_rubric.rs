@@ -686,3 +686,88 @@ fn doc_has_more_than_50_lines() {
     let doc = load_doc();
     assert!(doc.lines().count() > 50);
 }
+
+// ---------- parse_error_code edge case ----------
+
+#[test]
+#[should_panic(expected = "unknown parse error code")]
+fn rubric_parse_error_code_panics_on_unknown() {
+    parse_error_code("nonexistent_code");
+}
+
+// ---------- parse_budget_kind edge case ----------
+
+#[test]
+#[should_panic(expected = "unknown budget kind")]
+fn rubric_parse_budget_kind_panics_on_unknown() {
+    parse_budget_kind("heap_limit");
+}
+
+// ---------- weighted_composite_score edge cases ----------
+
+#[test]
+fn rubric_weighted_composite_half_score() {
+    let dims = vec![
+        ScoreDimension {
+            dimension_id: "a".to_string(),
+            description: "dim a".to_string(),
+            weight_millionths: 500_000,
+        },
+        ScoreDimension {
+            dimension_id: "b".to_string(),
+            description: "dim b".to_string(),
+            weight_millionths: 500_000,
+        },
+    ];
+    let mut scores = BTreeMap::new();
+    scores.insert("a".to_string(), 1_000_000_u32);
+    scores.insert("b".to_string(), 0_u32);
+    assert_eq!(weighted_composite_score(&scores, &dims), 500_000);
+}
+
+// ---------- CaseEvaluation determinism ----------
+
+#[test]
+fn case_evaluation_clone_eq() {
+    let fixture = load_fixture();
+    let parser = CanonicalEs2020Parser;
+    let case = &fixture.cases[0];
+    let eval = evaluate_case(&parser, case, &fixture);
+    let cloned = eval.clone();
+    assert_eq!(eval, cloned);
+}
+
+// ---------- build_structured_log edge cases ----------
+
+#[test]
+fn structured_log_decision_id_has_rubric_prefix() {
+    let fixture = load_fixture();
+    let evaluations = evaluate_all_cases(&fixture);
+    let log = build_structured_log(&evaluations[0]);
+    let decision_id = log["decision_id"].as_str().unwrap();
+    assert!(decision_id.starts_with("decision-parser-diagnostics-rubric-"));
+}
+
+#[test]
+fn structured_log_policy_id_is_rubric_v1() {
+    let fixture = load_fixture();
+    let evaluations = evaluate_all_cases(&fixture);
+    let log = build_structured_log(&evaluations[0]);
+    assert_eq!(
+        log["policy_id"].as_str().unwrap(),
+        "policy-parser-diagnostics-rubric-v1"
+    );
+}
+
+// ---------- fixture field validation ----------
+
+#[test]
+fn fixture_baseline_scores_are_within_million() {
+    let fixture = load_fixture();
+    for (key, value) in &fixture.baseline_scores_millionths {
+        assert!(
+            *value <= 1_000_000,
+            "baseline score `{key}` exceeds 1_000_000: {value}"
+        );
+    }
+}

@@ -366,3 +366,26 @@ fn required_structured_log_fields_all_entries_are_nonempty() {
         assert!(!field.trim().is_empty());
     }
 }
+
+#[test]
+fn default_bundle_debug_is_nonempty() {
+    let bundle = default_frx20_bundle();
+    assert!(!format!("{bundle:?}").is_empty());
+}
+
+#[test]
+fn default_bundle_serde_is_deterministic() {
+    let bundle = default_frx20_bundle();
+    let a = serde_json::to_string(&bundle).expect("first");
+    let b = serde_json::to_string(&bundle).expect("second");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn unit_test_class_serde_is_deterministic() {
+    for class in UnitTestClass::ALL {
+        let a = serde_json::to_string(&class).expect("first");
+        let b = serde_json::to_string(&class).expect("second");
+        assert_eq!(a, b);
+    }
+}

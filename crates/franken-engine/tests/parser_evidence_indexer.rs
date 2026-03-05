@@ -528,3 +528,152 @@ fn parser_run_artifact_ref_debug_is_nonempty() {
     };
     assert!(!format!("{ref_:?}").is_empty());
 }
+
+// ---------- Enrichment: additional edge cases ----------
+
+#[test]
+fn correlation_key_with_none_fields_round_trips() {
+    let key = CorrelationKey {
+        component: "comp".to_string(),
+        event: "evt".to_string(),
+        scenario_id: None,
+        error_code: None,
+        outcome: "pass".to_string(),
+    };
+    let json = serde_json::to_string(&key).expect("serialize");
+    let recovered: CorrelationKey = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(key, recovered);
+    assert!(recovered.scenario_id.is_none());
+    assert!(recovered.error_code.is_none());
+}
+
+#[test]
+fn indexed_parser_event_sequence_ordering() {
+    let event_a = IndexedParserEvent {
+        run_id: "run-1".to_string(),
+        sequence: 0,
+        schema_version: PARSER_EVIDENCE_INDEX_SCHEMA_V1.to_string(),
+        trace_id: "t-a".to_string(),
+        decision_id: "d-a".to_string(),
+        policy_id: "p".to_string(),
+        component: "c".to_string(),
+        event: "e".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        replay_command: None,
+        scenario_id: None,
+    };
+    let event_b = IndexedParserEvent {
+        run_id: "run-1".to_string(),
+        sequence: 1,
+        schema_version: PARSER_EVIDENCE_INDEX_SCHEMA_V1.to_string(),
+        trace_id: "t-b".to_string(),
+        decision_id: "d-b".to_string(),
+        policy_id: "p".to_string(),
+        component: "c".to_string(),
+        event: "e".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        replay_command: None,
+        scenario_id: None,
+    };
+    assert!(event_a.sequence < event_b.sequence);
+}
+
+#[test]
+fn multiple_events_per_run_are_indexed() {
+    let mut builder = ParserEvidenceIndexBuilder::new();
+    builder
+        .add_run(
+            &manifest(
+                "run-multi",
+                "franken-engine.parser-evidence-index.run.v1",
+                "./scripts/replay_multi.sh",
+            ),
+            "artifacts/m/run_manifest.json",
+            "artifacts/m/events.jsonl",
+            "artifacts/m/commands.txt",
+        )
+        .unwrap();
+
+    let events = [
+        r#"{"schema_version":"franken-engine.parser-log-event.v1","trace_id":"t1","decision_id":"d1","policy_id":"p","component":"c","event":"start","outcome":"pass","error_code":null}"#,
+        r#"{"schema_version":"franken-engine.parser-log-event.v1","trace_id":"t2","decision_id":"d2","policy_id":"p","component":"c","event":"end","outcome":"pass","error_code":null}"#,
+    ]
+    .join("\n");
+    builder.add_events_jsonl("run-multi", &events).unwrap();
+
+    let index = builder.build();
+    assert_eq!(index.events.len(), 2);
+    assert_eq!(index.events[0].sequence, 0);
+    assert_eq!(index.events[1].sequence, 1);
+}
+
+#[test]
+fn parser_run_artifact_ref_optional_fields_none_serde() {
+    let ref_ = ParserRunArtifactRef {
+        run_id: "run-none-fields".to_string(),
+        manifest_schema_version: PARSER_EVIDENCE_INDEX_SCHEMA_V1.to_string(),
+        manifest_path: "m.json".to_string(),
+        events_path: "e.jsonl".to_string(),
+        commands_path: "c.txt".to_string(),
+        replay_command: "./replay.sh".to_string(),
+        generated_at_utc: None,
+        outcome: None,
+    };
+    let json = serde_json::to_string(&ref_).expect("serialize");
+    let recovered: ParserRunArtifactRef = serde_json::from_str(&json).expect("deserialize");
+    assert!(recovered.generated_at_utc.is_none());
+    assert!(recovered.outcome.is_none());
+}
+
+#[test]
+fn index_full_serde_roundtrip() {
+    let mut builder = ParserEvidenceIndexBuilder::new();
+    builder
+        .add_run(
+            &manifest(
+                "run-rt",
+                "franken-engine.parser-evidence-index.run.v1",
+                "./scripts/replay_rt.sh",
+            ),
+            "artifacts/rt/run_manifest.json",
+            "artifacts/rt/events.jsonl",
+            "artifacts/rt/commands.txt",
+        )
+        .unwrap();
+    builder
+        .add_events_jsonl(
+            "run-rt",
+            r#"{"schema_version":"franken-engine.parser-log-event.v1","trace_id":"trt","decision_id":"drt","policy_id":"prt","component":"crt","event":"done","outcome":"pass","error_code":null}"#,
+        )
+        .unwrap();
+
+    let index = builder.build();
+    let json = serde_json::to_string_pretty(&index).unwrap();
+    let recovered: frankenengine_engine::parser_evidence_indexer::ParserEvidenceIndex =
+        serde_json::from_str(&json).unwrap();
+    assert_eq!(index.schema_version, recovered.schema_version);
+    assert_eq!(index.runs.len(), recovered.runs.len());
+    assert_eq!(index.events.len(), recovered.events.len());
+}
+
+#[test]
+fn evidence_indexer_error_json_variant_display() {
+    let err = EvidenceIndexerError::Json("unexpected token at position 42".to_string());
+    let msg = err.to_string();
+    assert!(msg.contains("42"), "error message should contain detail");
+}
+
+#[test]
+fn correlation_key_equality() {
+    let key1 = CorrelationKey {
+        component: "parser".to_string(),
+        event: "drift".to_string(),
+        scenario_id: Some("s1".to_string()),
+        error_code: Some("E001".to_string()),
+        outcome: "fail".to_string(),
+    };
+    let key2 = key1.clone();
+    assert_eq!(key1, key2);
+}

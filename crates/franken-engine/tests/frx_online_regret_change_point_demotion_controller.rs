@@ -596,3 +596,98 @@ fn lane_observation_serde_roundtrip() {
     assert_eq!(recovered.lane, LaneChoice::Wasm);
     assert!(recovered.success);
 }
+
+// ---------- JSON contract field completeness ----------
+
+#[test]
+fn frx_15_3_json_contract_demotion_policy_has_required_subfields() {
+    let path = repo_root().join("docs/frx_online_regret_change_point_demotion_controller_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let dp = &value["demotion_policy"];
+    assert!(dp.is_object(), "demotion_policy must be an object");
+    assert!(
+        dp["mode"].as_str().is_some_and(|s| !s.is_empty()),
+        "demotion_policy.mode must be non-empty string"
+    );
+}
+
+#[test]
+fn frx_15_3_json_contract_integration_section_has_runtime_decision_core() {
+    let path = repo_root().join("docs/frx_online_regret_change_point_demotion_controller_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["integration"].is_object());
+    assert!(value["integration"]["runtime_decision_core"].is_object());
+}
+
+// ---------- make_input edge cases ----------
+
+#[test]
+fn make_input_zero_latency_and_zero_timestamp() {
+    let input = make_input(0, false, 0);
+    assert_eq!(input.observed_latency_us, 0);
+    assert!(!input.calibration_covered);
+    assert_eq!(input.timestamp_ns, 0);
+    assert_eq!(input.risk_posteriors.len(), 4);
+}
+
+// ---------- HybridLaneRouter manual_demote ----------
+
+#[test]
+fn hybrid_lane_router_manual_demote_on_conservative_is_noop_or_error() {
+    let mut router = HybridLaneRouter::new(RouterConfig::default_config());
+    assert_eq!(router.policy, RoutingPolicy::Conservative);
+    // manual_demote on already-conservative router should return an error
+    let result = router.manual_demote();
+    assert!(result.is_err());
+}
+
+// ---------- ChangePointConfig serde roundtrip ----------
+
+#[test]
+fn change_point_config_serde_roundtrip() {
+    let config = ChangePointConfig {
+        threshold_millionths: 750_000,
+        drift_millionths: 25_000,
+        min_observations: 42,
+    };
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: ChangePointConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.threshold_millionths, 750_000);
+    assert_eq!(recovered.drift_millionths, 25_000);
+    assert_eq!(recovered.min_observations, 42);
+}
+
+// ---------- ConformalConfig serde roundtrip ----------
+
+#[test]
+fn conformal_config_serde_roundtrip() {
+    let config = ConformalConfig {
+        target_coverage_millionths: 800_000,
+        min_observations: 100,
+        window_size: 50,
+    };
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: ConformalConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.target_coverage_millionths, 800_000);
+    assert_eq!(recovered.min_observations, 100);
+    assert_eq!(recovered.window_size, 50);
+}
+
+// ---------- RouterConfig serde roundtrip ----------
+
+#[test]
+fn router_config_default_serde_roundtrip() {
+    let config = RouterConfig::default_config();
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: RouterConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(
+        recovered.risk_budget.tail_latency_budget_us,
+        config.risk_budget.tail_latency_budget_us
+    );
+    assert_eq!(
+        recovered.change_point.threshold_millionths,
+        config.change_point.threshold_millionths
+    );
+}

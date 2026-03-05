@@ -517,3 +517,70 @@ fn write_file_overwrites_existing_content() {
     write_file(&path, "second");
     assert_eq!(fs::read_to_string(&path).unwrap(), "second");
 }
+
+#[test]
+fn sha256_hex_single_byte() {
+    let hash = sha256_hex(&[0x42]);
+    assert_eq!(hash.len(), 64);
+    assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    // Different from empty
+    assert_ne!(hash, sha256_hex(b""));
+}
+
+#[test]
+fn normalize_path_absolute_with_trailing_component() {
+    let path = PathBuf::from("/foo/bar/baz.json");
+    let result = normalize_path(path.clone());
+    assert_eq!(result, path);
+    assert!(result.is_absolute());
+}
+
+#[test]
+fn parse_evidence_path_ignores_other_lines() {
+    let stdout = "info: initializing\nstatus: ok\nsecurity evidence=/output/evidence.jsonl\ndone.\n";
+    let path = parse_evidence_path(stdout);
+    assert_eq!(path, PathBuf::from("/output/evidence.jsonl"));
+}
+
+#[test]
+fn test_temp_dir_cleaned_on_drop() {
+    let path_copy;
+    {
+        let guard = TestTempDir::new("drop-test");
+        path_copy = guard.path.clone();
+        assert!(path_copy.exists());
+    }
+    // After drop, directory should be removed
+    assert!(!path_copy.exists());
+}
+
+#[test]
+fn build_fixture_benign_label_contains_expected_fields() {
+    let fixture = build_fixture();
+    let benign_path = fixture
+        .labels_root
+        .join("benign/echo_read/workload_label.toml");
+    let content = fs::read_to_string(&benign_path).unwrap();
+    assert!(content.contains("corpus = \"benign\""));
+    assert!(content.contains("expected_outcome = \"allow\""));
+    assert!(content.contains("semantic_domain"));
+}
+
+#[test]
+fn build_fixture_malicious_label_contains_attack_taxonomy() {
+    let fixture = build_fixture();
+    let malicious_path = fixture
+        .labels_root
+        .join("malicious/credential_exfil/workload_label.toml");
+    let content = fs::read_to_string(&malicious_path).unwrap();
+    assert!(content.contains("attack_taxonomy = \"exfil\""));
+    assert!(content.contains("corpus = \"malicious\""));
+}
+
+#[test]
+fn build_fixture_observations_contain_both_workloads() {
+    let fixture = build_fixture();
+    let content = fs::read_to_string(&fixture.observations_jsonl).unwrap();
+    assert!(content.contains("benign-echo-read"));
+    assert!(content.contains("malicious-credential-exfil"));
+}

@@ -640,3 +640,119 @@ fn rgc_060_contract_deterministic_double_parse() {
     let b = parse_contract();
     assert_eq!(a, b);
 }
+
+// ---------- regression_millionths boundary values ----------
+
+#[test]
+fn rgc_060_regression_millionths_equal_values_returns_zero() {
+    assert_eq!(regression_millionths(500_000, 500_000), 0);
+}
+
+#[test]
+fn rgc_060_regression_millionths_one_ns_regression() {
+    // 1 ns out of 1_000_000 → 1 millionth
+    assert_eq!(regression_millionths(1_000_000, 1_000_001), 1);
+}
+
+// ---------- evaluate_regression_gate with None profiler_receipt_id ----------
+
+#[test]
+fn rgc_060_regression_gate_blocks_none_profiler_receipt() {
+    let contract = parse_contract();
+    let observations = vec![BenchmarkObservation {
+        workload_id: "no_receipt".to_string(),
+        baseline_ns: 100_000,
+        observed_ns: 101_000,
+        p_value_millionths: 10_000,
+        profiler_receipt_id: None,
+        benchmark_metadata_hash: "sha256:abc".to_string(),
+    }];
+    let decision = evaluate_regression_gate(&observations, &contract.regression_thresholds);
+    assert_eq!(decision.outcome, "hold");
+    assert!(
+        decision
+            .findings
+            .iter()
+            .any(|f| f.error_code == "FE-RGC-060-PROFILER-0002"),
+        "None profiler receipt must be flagged"
+    );
+}
+
+// ---------- multiple culprits are deduplicated and sorted ----------
+
+#[test]
+fn rgc_060_culprits_are_sorted_and_unique() {
+    let contract = parse_contract();
+    let observations = vec![
+        BenchmarkObservation {
+            workload_id: "zebra".to_string(),
+            baseline_ns: 0,
+            observed_ns: 100_000,
+            p_value_millionths: 10_000,
+            profiler_receipt_id: Some("r".to_string()),
+            benchmark_metadata_hash: "sha256:z".to_string(),
+        },
+        BenchmarkObservation {
+            workload_id: "alpha".to_string(),
+            baseline_ns: 0,
+            observed_ns: 100_000,
+            p_value_millionths: 10_000,
+            profiler_receipt_id: Some("r".to_string()),
+            benchmark_metadata_hash: "sha256:a".to_string(),
+        },
+    ];
+    let decision = evaluate_regression_gate(&observations, &contract.regression_thresholds);
+    assert_eq!(decision.outcome, "hold");
+    assert_eq!(decision.culprits, vec!["alpha", "zebra"]);
+}
+
+// ---------- contract integrity_requirements nonempty strings ----------
+
+#[test]
+fn rgc_060_integrity_requirements_are_nonempty_strings() {
+    let contract = parse_contract();
+    assert!(!contract.integrity_requirements.is_empty());
+    for req in &contract.integrity_requirements {
+        assert!(
+            !req.trim().is_empty(),
+            "integrity requirement must not be blank"
+        );
+    }
+}
+
+// ---------- failure scenarios all have nonempty error codes ----------
+
+#[test]
+fn rgc_060_failure_scenarios_have_nonempty_error_codes() {
+    let contract = parse_contract();
+    for scenario in &contract.failure_scenarios {
+        assert!(
+            !scenario.expected_error_code.trim().is_empty(),
+            "scenario `{}` must have an error code",
+            scenario.scenario_id
+        );
+        assert!(
+            !scenario.expected_message_fragment.trim().is_empty(),
+            "scenario `{}` must have a message fragment",
+            scenario.scenario_id
+        );
+    }
+}
+
+// ---------- gate scripts exist on disk ----------
+
+#[test]
+fn rgc_060_gate_runner_scripts_exist() {
+    let contract = parse_contract();
+    let root = repo_root();
+    assert!(
+        root.join(&contract.gate_runner.script).is_file(),
+        "gate runner script not found: {}",
+        contract.gate_runner.script
+    );
+    assert!(
+        root.join(&contract.gate_runner.replay_wrapper).is_file(),
+        "replay wrapper not found: {}",
+        contract.gate_runner.replay_wrapper
+    );
+}

@@ -720,3 +720,117 @@ fn contract_deterministic_double_parse() {
     assert_eq!(a.bead_id, b.bead_id);
     assert_eq!(a.scenario_catalog.len(), b.scenario_catalog.len());
 }
+
+// ────────────────────────────────────────────────────────────
+// Batch enrichment: fixture validation, scenario expected outcomes,
+// replay seed uniqueness, scenario class coverage, chaos profile
+// fault injectors nonempty, differential baseline coverage,
+// operator verification replay command
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn all_generated_fixtures_pass_validation() {
+    let contract = parse_contract();
+    for spec in &contract.scenario_catalog {
+        let fixture = scenario_fixture(spec);
+        fixture.validate().unwrap_or_else(|err| {
+            panic!(
+                "fixture for scenario {} failed validation: {err:?}",
+                spec.scenario_id
+            )
+        });
+    }
+}
+
+#[test]
+fn scenario_replay_seeds_are_all_positive() {
+    let contract = parse_contract();
+    for spec in &contract.scenario_catalog {
+        assert!(
+            spec.replay_seed > 0,
+            "scenario {} has zero replay_seed",
+            spec.scenario_id
+        );
+    }
+}
+
+#[test]
+fn scenario_catalog_covers_all_required_classes() {
+    let contract = parse_contract();
+    let classes: BTreeSet<_> = contract
+        .scenario_catalog
+        .iter()
+        .map(|s| s.class.as_str())
+        .collect();
+    for required in ["baseline", "differential", "chaos"] {
+        assert!(
+            classes.contains(required),
+            "scenario catalog missing class: {required}"
+        );
+    }
+}
+
+#[test]
+fn chaos_profile_fault_injectors_are_nonempty_strings() {
+    let contract = parse_contract();
+    for profile in &contract.chaos_profiles {
+        assert!(!profile.fault_injectors.is_empty());
+        for injector in &profile.fault_injectors {
+            assert!(
+                !injector.trim().is_empty(),
+                "chaos profile {} has empty fault injector",
+                profile.profile_id
+            );
+        }
+    }
+}
+
+#[test]
+fn differential_scenarios_reference_existing_baselines() {
+    let contract = parse_contract();
+    let baseline_ids: BTreeSet<_> = contract
+        .scenario_catalog
+        .iter()
+        .filter(|s| s.class == "baseline")
+        .map(|s| s.scenario_id.as_str())
+        .collect();
+    for spec in &contract.scenario_catalog {
+        if spec.class == "differential" {
+            let baseline_ref = spec
+                .baseline_scenario_id
+                .as_deref()
+                .expect("differential must have baseline_scenario_id");
+            assert!(
+                baseline_ids.contains(baseline_ref),
+                "differential {} references missing baseline {}",
+                spec.scenario_id,
+                baseline_ref
+            );
+        }
+    }
+}
+
+#[test]
+fn scenario_fixture_determinism_check_is_enabled() {
+    let contract = parse_contract();
+    for spec in &contract.scenario_catalog {
+        let fixture = scenario_fixture(spec);
+        assert!(
+            fixture.determinism_check,
+            "fixture for {} should have determinism_check enabled",
+            spec.scenario_id
+        );
+    }
+}
+
+#[test]
+fn operator_verification_includes_replay_command() {
+    let contract = parse_contract();
+    assert!(
+        contract
+            .operator_verification
+            .iter()
+            .any(|entry| entry.contains("replay")),
+        "operator verification must include a replay command"
+    );
+}

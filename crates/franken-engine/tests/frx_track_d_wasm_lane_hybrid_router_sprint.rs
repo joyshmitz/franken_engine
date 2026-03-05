@@ -345,3 +345,93 @@ fn track_d_contract_deterministic_double_parse() {
     let b: Value = serde_json::from_str(&raw).expect("parse b");
     assert_eq!(a, b);
 }
+
+// ---------- JSON contract field coverage ----------
+
+#[test]
+fn track_d_contract_outputs_router_decision_fields_are_nonempty_strings() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let fields = value["outputs"]["router_decision_artifact"]["required_fields"]
+        .as_array()
+        .expect("required_fields array");
+    assert!(!fields.is_empty());
+    for field in fields {
+        let s = field.as_str().expect("field must be string");
+        assert!(!s.trim().is_empty(), "required field must be nonempty");
+    }
+}
+
+#[test]
+fn track_d_contract_activation_gate_has_boolean_fields() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let gate = &value["activation_gate"];
+    assert!(gate["block_on_missing_calibration_evidence"].is_boolean());
+    assert!(gate["block_on_missing_failover_replay_linkage"].is_boolean());
+    assert!(gate["requires_verification_and_governance_signoff"].is_boolean());
+}
+
+#[test]
+fn track_d_charter_mentions_fail_closed() {
+    let path = repo_root().join("docs/FRX_TRACK_D_WASM_LANE_HYBRID_ROUTER_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(
+        doc.to_ascii_lowercase().contains("fail closed"),
+        "charter must mention fail closed policy"
+    );
+}
+
+#[test]
+fn track_d_charter_mentions_calibration() {
+    let path = repo_root().join("docs/FRX_TRACK_D_WASM_LANE_HYBRID_ROUTER_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(
+        doc.to_ascii_lowercase().contains("calibration"),
+        "charter must mention calibration"
+    );
+}
+
+#[test]
+fn track_d_contract_top_level_keys_are_present() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    for key in [
+        "schema_version",
+        "generated_by",
+        "primary_bead",
+        "track",
+        "failure_policy",
+        "activation_gate",
+        "outputs",
+    ] {
+        assert!(
+            !value[key].is_null(),
+            "top-level key `{key}` must be present in contract JSON"
+        );
+    }
+}
+
+#[test]
+fn track_d_charter_doc_has_more_than_10_headings() {
+    let path = repo_root().join("docs/FRX_TRACK_D_WASM_LANE_HYBRID_ROUTER_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    let heading_count = doc.lines().filter(|line| line.starts_with('#')).count();
+    assert!(
+        heading_count >= 10,
+        "charter doc should have at least 10 headings, found {heading_count}"
+    );
+}
+
+#[test]
+fn track_d_charter_mentions_fallback_events() {
+    let path = repo_root().join("docs/FRX_TRACK_D_WASM_LANE_HYBRID_ROUTER_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(
+        doc.to_ascii_lowercase().contains("fallback events"),
+        "charter must mention fallback events"
+    );
+}

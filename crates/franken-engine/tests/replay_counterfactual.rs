@@ -485,3 +485,145 @@ fn verify_replay_identical_runs_match() {
     let verification = verify_replay(&run_a, &run_b);
     assert!(verification.matches);
 }
+
+#[test]
+fn golden_store_write_and_verify_baseline() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+    let run = runner.run_fixture(&fixture).expect("run");
+
+    let store_dir = test_temp_dir("golden-store");
+    let store = e2e_harness::GoldenStore::new(&store_dir).expect("golden store");
+    let baseline_path = store.write_baseline(&run).expect("write baseline");
+    assert!(baseline_path.exists());
+
+    // Verify same run passes golden verification
+    store.verify_run(&run).expect("verify run should pass");
+
+    fs::remove_dir_all(store_dir).ok();
+}
+
+#[test]
+fn golden_store_verify_detects_missing_baseline() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+    let run = runner.run_fixture(&fixture).expect("run");
+
+    let store_dir = test_temp_dir("golden-store-missing");
+    let store = e2e_harness::GoldenStore::new(&store_dir).expect("golden store");
+    let err = store.verify_run(&run).expect_err("missing baseline should fail");
+    let msg = format!("{err}");
+    assert!(msg.contains("missing golden baseline"));
+
+    fs::remove_dir_all(store_dir).ok();
+}
+
+#[test]
+fn run_report_from_result_captures_fields() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+    let run = runner.run_fixture(&fixture).expect("run");
+
+    let report = e2e_harness::RunReport::from_result(&run);
+    assert_eq!(report.fixture_id, run.fixture_id);
+    assert_eq!(report.run_id, run.run_id);
+    assert_eq!(report.event_count, run.events.len());
+    assert_eq!(report.output_digest, run.output_digest);
+    assert!(report.pass);
+}
+
+#[test]
+fn run_report_to_markdown_contains_status() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+    let run = runner.run_fixture(&fixture).expect("run");
+
+    let report = e2e_harness::RunReport::from_result(&run);
+    let md = report.to_markdown();
+    assert!(md.contains("# E2E Run Report"));
+    assert!(md.contains("status: `pass`"));
+    assert!(md.contains(&run.fixture_id));
+}
+
+#[test]
+fn replay_verification_serde_roundtrip() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+    let run_a = runner.run_fixture(&fixture).expect("run a");
+    let run_b = runner.run_fixture(&fixture).expect("run b");
+    let verification = verify_replay(&run_a, &run_b);
+
+    let json = serde_json::to_string(&verification).expect("serialize");
+    let recovered: e2e_harness::ReplayVerification =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(verification, recovered);
+}
+
+#[test]
+fn fixture_store_save_and_reload_roundtrip() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+
+    let roundtrip_dir = test_temp_dir("fixture-roundtrip");
+    let roundtrip_store = FixtureStore::new(&roundtrip_dir).expect("roundtrip store");
+    let saved_path = roundtrip_store.save_fixture(&fixture).expect("save");
+    assert!(saved_path.exists());
+
+    let reloaded = roundtrip_store.load_fixture(&saved_path).expect("reload");
+    // Deterministic: same fixture should produce identical runs
+    let run_orig = runner.run_fixture(&fixture).expect("run orig");
+    let run_reloaded = runner.run_fixture(&reloaded).expect("run reloaded");
+    let verification = verify_replay(&run_orig, &run_reloaded);
+    assert!(verification.matches);
+
+    fs::remove_dir_all(roundtrip_dir).ok();
+}
+
+#[test]
+fn counterfactual_delta_with_identical_runs_shows_no_changes() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+
+    let run_a = runner.run_fixture(&fixture).expect("run a");
+    let run_b = runner.run_fixture(&fixture).expect("run b");
+    let delta = compare_counterfactual(&run_a, &run_b);
+    assert!(!delta.digest_changed);
+    assert_eq!(delta.changed_events, 0);
+    assert_eq!(delta.changed_outcomes, 0);
+    assert!(delta.divergence_samples.is_empty());
+}

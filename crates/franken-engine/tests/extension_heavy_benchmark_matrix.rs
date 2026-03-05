@@ -560,7 +560,7 @@ fn is_sha256_hex_rejects_63_char_string() {
 
 #[test]
 fn is_sha256_hex_accepts_mixed_case_hex() {
-    let mixed = "aAbBcCdDeEfF0011223344556677889900aabbccddeeff0011223344556677".to_string();
+    let mixed = "aAbBcCdDeEfF001122334455667788990011aabbccddeeff0011223344556677".to_string();
     assert_eq!(mixed.len(), 64);
     assert!(
         is_sha256_hex(&mixed),

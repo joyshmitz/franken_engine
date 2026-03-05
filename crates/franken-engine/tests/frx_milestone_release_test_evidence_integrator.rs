@@ -564,3 +564,113 @@ fn test_evidence_integrator_input_debug_is_nonempty() {
     let input = baseline_input(10_000);
     assert!(!format!("{input:?}").is_empty());
 }
+
+#[test]
+fn frx_20_6_integration_is_fail_closed_on_stale_signals() {
+    let now_ns = 100_000_000_000_000_u64;
+    let mut input = baseline_input(now_ns);
+    // Make all signals very old (older than max_signal_age_ns)
+    for signal in &mut input.signals {
+        signal.collected_at_ns = 1;
+        for link in &mut signal.artifact_links {
+            link.generated_at_ns = 1;
+        }
+    }
+
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    assert!(!decision.allows_promotion());
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|finding| finding.message.contains("stale"))
+    );
+}
+
+#[test]
+fn frx_20_6_evidence_source_gate_categories_are_nonempty() {
+    for source in EvidenceSource::REQUIRED {
+        let categories = source.gate_categories();
+        assert!(
+            !categories.is_empty(),
+            "gate categories must not be empty for {:?}",
+            source
+        );
+    }
+}
+
+#[test]
+fn frx_20_6_evidence_source_release_checklist_binding_has_nonempty_id() {
+    for source in EvidenceSource::REQUIRED {
+        let (item_id, _category) = source.release_checklist_binding();
+        assert!(
+            !item_id.trim().is_empty(),
+            "checklist binding item_id must not be empty for {:?}",
+            source
+        );
+    }
+}
+
+#[test]
+fn frx_20_6_integrator_policy_serde_roundtrip() {
+    let policy = IntegratorPolicy::default();
+    let json = serde_json::to_string(&policy).expect("serialize");
+    let recovered: IntegratorPolicy = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(
+        recovered.max_signal_age_ns, policy.max_signal_age_ns,
+        "max_signal_age_ns should survive roundtrip"
+    );
+    assert_eq!(
+        recovered.require_signed_artifacts, policy.require_signed_artifacts,
+        "require_signed_artifacts should survive roundtrip"
+    );
+    assert_eq!(
+        recovered.threshold_for_cut_line(CutLine::C4),
+        policy.threshold_for_cut_line(CutLine::C4)
+    );
+}
+
+#[test]
+fn frx_20_6_integration_with_low_flake_burden_passes() {
+    let mut input = baseline_input(50_000);
+    // Set flake burden well under the 120_000 limit
+    input
+        .signals
+        .iter_mut()
+        .filter(|signal| signal.source == EvidenceSource::FlakeQuarantineWorkflow)
+        .for_each(|signal| {
+            signal
+                .metadata
+                .insert("flake_burden_millionths".to_string(), "10000".to_string());
+        });
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    assert!(decision.allows_promotion());
+}
+
+#[test]
+fn frx_20_6_integration_blocked_decision_emits_deny_event() {
+    let mut input = baseline_input(10_000);
+    input
+        .signals
+        .retain(|signal| signal.source != EvidenceSource::TestLoggingSchema);
+
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    assert!(!decision.allows_promotion());
+
+    let events = emit_integration_events(&decision);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].outcome, "deny");
+}
+
+#[test]
+fn frx_20_6_quality_summary_has_all_dimensional_scores() {
+    let input = baseline_input(30_000);
+    let decision = integrate_milestone_release_test_evidence(&input, &IntegratorPolicy::default());
+    let summary = &decision.quality_summary;
+    assert!(summary.unit_depth_score_millionths > 0);
+    assert!(summary.e2e_stability_score_millionths > 0);
+    assert!(summary.logging_integrity_score_millionths > 0);
+    assert!(summary.flake_resilience_score_millionths > 0);
+    assert!(summary.artifact_integrity_score_millionths > 0);
+    assert!(summary.aggregate_score_millionths > 0);
+}

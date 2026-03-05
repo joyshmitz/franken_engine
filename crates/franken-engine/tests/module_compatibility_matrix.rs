@@ -387,3 +387,95 @@ fn waiver_record_serde_roundtrip() {
     assert_eq!(recovered.waiver_id, "waiver-test");
     assert_eq!(recovered.valid_until_ns, Some(200));
 }
+
+// ---------- DEFAULT_MATRIX_JSON has schema_version ----------
+
+#[test]
+fn default_matrix_json_has_schema_version_field() {
+    let value: serde_json::Value =
+        serde_json::from_str(DEFAULT_MATRIX_JSON).expect("parse default matrix JSON");
+    let sv = value["schema_version"]
+        .as_str()
+        .expect("schema_version must be string");
+    assert!(!sv.trim().is_empty());
+}
+
+// ---------- CompatibilityMatrixErrorCode serde roundtrip ----------
+
+#[test]
+fn error_code_serde_roundtrip() {
+    for code in [
+        CompatibilityMatrixErrorCode::MatrixParseError,
+        CompatibilityMatrixErrorCode::DuplicateCaseId,
+        CompatibilityMatrixErrorCode::CaseNotFound,
+        CompatibilityMatrixErrorCode::HiddenShim,
+        CompatibilityMatrixErrorCode::MissingWaiver,
+        CompatibilityMatrixErrorCode::MissingMigrationGuidance,
+        CompatibilityMatrixErrorCode::InvalidMatrix,
+        CompatibilityMatrixErrorCode::ObservationMismatch,
+    ] {
+        let json = serde_json::to_string(&code).expect("serialize");
+        let recovered: CompatibilityMatrixErrorCode =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, code);
+    }
+}
+
+// ---------- matrix entries all have nonempty case_id ----------
+
+#[test]
+fn matrix_entries_all_have_nonempty_case_id() {
+    let matrix = ModuleCompatibilityMatrix::from_default_json().expect("load matrix");
+    for entry in matrix.entries() {
+        assert!(
+            !entry.case_id.trim().is_empty(),
+            "every matrix entry must have a non-empty case_id"
+        );
+    }
+}
+
+// ---------- matrix canonical_hash is nonempty ----------
+
+#[test]
+fn matrix_canonical_hash_is_stable() {
+    let a = ModuleCompatibilityMatrix::from_default_json().expect("load a");
+    let b = ModuleCompatibilityMatrix::from_default_json().expect("load b");
+    let hash_a = serde_json::to_string(&a.canonical_hash()).expect("serialize hash a");
+    let hash_b = serde_json::to_string(&b.canonical_hash()).expect("serialize hash b");
+    assert_eq!(hash_a, hash_b, "canonical_hash must be stable across loads");
+    assert!(!hash_a.is_empty());
+}
+
+// ---------- CompatibilityContext serde roundtrip ----------
+
+#[test]
+fn compatibility_context_serde_roundtrip() {
+    let ctx = CompatibilityContext::new("trace-1", "decision-1", "policy-1");
+    let json = serde_json::to_string(&ctx).expect("serialize");
+    let recovered: CompatibilityContext = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.trace_id, "trace-1");
+    assert_eq!(recovered.decision_id, "decision-1");
+    assert_eq!(recovered.policy_id, "policy-1");
+}
+
+// ---------- matrix required_waiver_ids are nonempty strings ----------
+
+#[test]
+fn matrix_required_waiver_ids_are_nonempty_strings() {
+    let matrix = ModuleCompatibilityMatrix::from_default_json().expect("load matrix");
+    let waivers = matrix.required_waiver_ids();
+    for waiver_id in &waivers {
+        assert!(
+            !waiver_id.trim().is_empty(),
+            "waiver_id must be non-empty"
+        );
+    }
+}
+
+// ---------- matrix entries have at least one entry ----------
+
+#[test]
+fn matrix_has_at_least_one_entry() {
+    let matrix = ModuleCompatibilityMatrix::from_default_json().expect("load matrix");
+    assert!(!matrix.entries().is_empty(), "matrix must have entries");
+}

@@ -518,3 +518,75 @@ fn matrix_scope_open_bead_ids_are_nonempty() {
     let matrix = parse_matrix();
     assert!(!matrix.scope.open_bead_ids.is_empty());
 }
+
+#[test]
+fn selector_matches_wildcard_does_not_match_longer_prefix() {
+    // "bd-1lsy.*" should NOT match "bd-1lsyX" (different prefix, not child)
+    assert!(!selector_matches("bd-1lsy.*", "bd-1lsyX"));
+    assert!(!selector_matches("bd-1lsy.*", "bd-1lsy2"));
+}
+
+#[test]
+fn selector_matches_exact_does_not_match_child() {
+    // Exact selector "bd-abc" must NOT match "bd-abc.1"
+    assert!(!selector_matches("bd-abc", "bd-abc.1"));
+    assert!(!selector_matches("bd-abc", "bd-abc.1.2"));
+}
+
+#[test]
+fn matched_row_ids_covers_all_open_beads_at_least_once() {
+    let matrix = parse_matrix();
+    for bead_id in &matrix.scope.open_bead_ids {
+        let rows = matched_row_ids(&matrix, bead_id);
+        assert!(
+            !rows.is_empty(),
+            "open bead {bead_id} should match at least one coverage row"
+        );
+    }
+}
+
+#[test]
+fn matrix_serde_roundtrip_preserves_all_row_ids() {
+    let matrix = parse_matrix();
+    let json = serde_json::to_string(&matrix).expect("serialize");
+    let recovered: CompatibilityMatrix = serde_json::from_str(&json).expect("deserialize");
+    let original_ids: Vec<&str> = matrix.coverage_rows.iter().map(|r| r.row_id.as_str()).collect();
+    let recovered_ids: Vec<&str> = recovered.coverage_rows.iter().map(|r| r.row_id.as_str()).collect();
+    assert_eq!(original_ids, recovered_ids);
+}
+
+#[test]
+fn matrix_critical_behavior_bead_ids_are_nonempty_and_unique() {
+    let matrix = parse_matrix();
+    assert!(
+        !matrix.critical_behavior_bead_ids.is_empty(),
+        "expected at least one critical behavior bead"
+    );
+    let unique: BTreeSet<_> = matrix.critical_behavior_bead_ids.iter().collect();
+    assert_eq!(
+        unique.len(),
+        matrix.critical_behavior_bead_ids.len(),
+        "critical behavior bead IDs must be unique"
+    );
+}
+
+#[test]
+fn matrix_waiver_governance_max_age_is_bounded() {
+    let matrix = parse_matrix();
+    // Waivers should expire in a reasonable timeframe (< 1 year = 8760 hours)
+    assert!(
+        matrix.waiver_governance.max_waiver_age_hours <= 8760,
+        "max waiver age should be bounded to at most 1 year"
+    );
+}
+
+#[test]
+fn matrix_coverage_rows_have_nonempty_row_ids() {
+    let matrix = parse_matrix();
+    for row in &matrix.coverage_rows {
+        assert!(
+            !row.row_id.trim().is_empty(),
+            "row_id must not be empty or whitespace"
+        );
+    }
+}

@@ -563,3 +563,100 @@ fn safe_mode_exit_check_input_debug_is_nonempty() {
     };
     assert!(!format!("{input:?}").is_empty());
 }
+
+#[test]
+fn startup_env_false_value_does_not_trigger_safe_mode() {
+    let mut environment = BTreeMap::new();
+    environment.insert("FRANKEN_SAFE_MODE".to_string(), "0".to_string());
+    let input = SafeModeStartupInput {
+        trace_id: "trace-env-false".to_string(),
+        decision_id: "decision-env-false".to_string(),
+        policy_id: "policy-safe-startup-v1".to_string(),
+        cli_safe_mode: false,
+        environment,
+    };
+    let artifact = evaluate_safe_mode_startup(&input).expect("startup artifact");
+    assert!(!artifact.safe_mode_active);
+}
+
+#[test]
+fn exit_artifact_serde_roundtrip() {
+    let exit = evaluate_safe_mode_exit(&SafeModeExitCheckInput {
+        trace_id: "trace-exit-rt".to_string(),
+        decision_id: "decision-exit-rt".to_string(),
+        policy_id: "policy-exit-rt".to_string(),
+        active_incidents: 0,
+        pending_quarantines: 0,
+        evidence_ledger_flushed: true,
+    })
+    .expect("exit artifact");
+    let json = serde_json::to_string(&exit).expect("serialize");
+    let recovered: serde_json::Value = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(
+        recovered["event"]["trace_id"].as_str(),
+        Some("trace-exit-rt")
+    );
+}
+
+#[test]
+fn startup_artifact_exit_procedure_is_nonempty_in_safe_mode() {
+    let input = SafeModeStartupInput {
+        trace_id: "trace-exit-proc".to_string(),
+        decision_id: "decision-exit-proc".to_string(),
+        policy_id: "policy-safe-startup-v1".to_string(),
+        cli_safe_mode: true,
+        environment: BTreeMap::new(),
+    };
+    let artifact = evaluate_safe_mode_startup(&input).expect("startup artifact");
+    assert!(
+        !artifact.exit_procedure.is_empty(),
+        "exit_procedure should list steps when safe mode is active"
+    );
+}
+
+#[test]
+fn startup_artifact_restricted_features_nonempty_when_safe() {
+    let input = SafeModeStartupInput {
+        trace_id: "trace-restrict-nonempty".to_string(),
+        decision_id: "decision-restrict-nonempty".to_string(),
+        policy_id: "policy-safe-startup-v1".to_string(),
+        cli_safe_mode: true,
+        environment: BTreeMap::new(),
+    };
+    let artifact = evaluate_safe_mode_startup(&input).expect("artifact");
+    assert!(
+        !artifact.restricted_features.is_empty(),
+        "safe mode must restrict at least one feature"
+    );
+}
+
+#[test]
+fn exit_blocked_with_all_three_blockers_has_fail_outcome() {
+    let exit = evaluate_safe_mode_exit(&SafeModeExitCheckInput {
+        trace_id: "trace-all-block".to_string(),
+        decision_id: "decision-all-block".to_string(),
+        policy_id: "policy-all-block".to_string(),
+        active_incidents: 5,
+        pending_quarantines: 3,
+        evidence_ledger_flushed: false,
+    })
+    .expect("exit artifact");
+    assert!(!exit.can_exit);
+    assert_eq!(exit.event.outcome, "fail");
+}
+
+#[test]
+fn startup_normal_mode_has_empty_restricted_features() {
+    let input = SafeModeStartupInput {
+        trace_id: "trace-normal-restrict".to_string(),
+        decision_id: "decision-normal-restrict".to_string(),
+        policy_id: "policy-safe-startup-v1".to_string(),
+        cli_safe_mode: false,
+        environment: BTreeMap::new(),
+    };
+    let artifact = evaluate_safe_mode_startup(&input).expect("artifact");
+    assert!(
+        artifact.restricted_features.is_empty(),
+        "normal mode should not restrict any features"
+    );
+}

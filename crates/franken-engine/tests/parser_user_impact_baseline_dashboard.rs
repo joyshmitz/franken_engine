@@ -695,3 +695,96 @@ fn doc_has_more_than_50_lines() {
     let doc = load_doc();
     assert!(doc.lines().count() > 50);
 }
+
+// ---------- parse_goal edge case ----------
+
+#[test]
+#[should_panic(expected = "unknown parse goal")]
+fn parse_goal_panics_on_empty_string() {
+    parse_goal("");
+}
+
+// ---------- weighted_composite_score edge cases ----------
+
+#[test]
+fn weighted_composite_score_asymmetric_weights() {
+    let dimensions = vec![
+        MetricDefinition {
+            metric_id: "heavy".to_string(),
+            description: "heavily weighted".to_string(),
+            unit: "score_millionths".to_string(),
+            direction: "higher_is_better".to_string(),
+            weight_millionths: 900_000,
+        },
+        MetricDefinition {
+            metric_id: "light".to_string(),
+            description: "lightly weighted".to_string(),
+            unit: "score_millionths".to_string(),
+            direction: "higher_is_better".to_string(),
+            weight_millionths: 100_000,
+        },
+    ];
+    let mut scores = BTreeMap::new();
+    scores.insert("heavy".to_string(), 1_000_000_u32);
+    scores.insert("light".to_string(), 0_u32);
+    assert_eq!(weighted_composite_score(&scores, &dimensions), 900_000);
+}
+
+// ---------- DashboardSnapshot clone & eq ----------
+
+#[test]
+fn dashboard_snapshot_clone_equals_original() {
+    let fixture = load_fixture();
+    let snapshot = evaluate_snapshot(&fixture);
+    let cloned = snapshot.clone();
+    assert_eq!(snapshot, cloned);
+}
+
+// ---------- fixture field validation ----------
+
+#[test]
+fn fixture_required_log_keys_are_unique() {
+    let fixture = load_fixture();
+    let set: BTreeSet<&str> = fixture
+        .required_log_keys
+        .iter()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        set.len(),
+        fixture.required_log_keys.len(),
+        "required_log_keys must have no duplicates"
+    );
+}
+
+#[test]
+fn fixture_baseline_scores_within_million() {
+    let fixture = load_fixture();
+    for (key, value) in &fixture.baseline_scores_millionths {
+        assert!(
+            *value <= 1_000_000,
+            "baseline score `{key}` exceeds 1_000_000: {value}"
+        );
+    }
+}
+
+#[test]
+fn baseline_scenarios_have_unique_ids() {
+    let fixture = load_fixture();
+    let mut ids = BTreeSet::new();
+    for scenario in &fixture.baseline_scenarios {
+        assert!(
+            ids.insert(scenario.scenario_id.clone()),
+            "duplicate baseline scenario id"
+        );
+    }
+}
+
+#[test]
+fn fixture_max_allowed_regression_is_positive() {
+    let fixture = load_fixture();
+    assert!(
+        fixture.max_allowed_regression_millionths > 0,
+        "max_allowed_regression_millionths must be > 0"
+    );
+}

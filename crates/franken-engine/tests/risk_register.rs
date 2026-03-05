@@ -474,3 +474,72 @@ fn risk_register_deterministic_double_read() {
     let b = read_risk_register();
     assert_eq!(a, b);
 }
+
+#[test]
+fn is_iso_date_rejects_extra_segments() {
+    assert!(!is_iso_date("2026-01-15-00"));
+    assert!(!is_iso_date("2026-01"));
+}
+
+#[test]
+fn parse_table_row_handles_single_cell() {
+    let row = parse_table_row("| Only |");
+    assert_eq!(row, vec!["Only"]);
+}
+
+#[test]
+fn parse_table_row_handles_empty_cells() {
+    let row = parse_table_row("|  |  |  |");
+    assert_eq!(row, vec!["", "", ""]);
+}
+
+#[test]
+fn active_risk_last_reviewed_dates_are_not_in_the_future() {
+    let register = read_risk_register();
+    let (_, rows) = parse_table_by_heading(&register, "## Active Risks");
+    for row in &rows {
+        assert!(row.len() > 10);
+        // Quick sanity: year should be <= 2026
+        let year: u32 = row[10][..4].parse().expect("year must parse");
+        assert!(
+            year <= 2026,
+            "last_reviewed date {} seems to be in the future for {}",
+            row[10],
+            row[0]
+        );
+    }
+}
+
+#[test]
+fn all_risk_evidence_fields_are_nonempty() {
+    let register = read_risk_register();
+    let (_, rows) = parse_table_by_heading(&register, "## Active Risks");
+    for row in &rows {
+        assert!(row.len() > 11);
+        assert!(
+            !row[11].trim().is_empty(),
+            "evidence pointer must not be empty for {}",
+            row[0]
+        );
+    }
+}
+
+#[test]
+fn phase_gate_phases_are_unique() {
+    let register = read_risk_register();
+    let (_, rows) = parse_table_by_heading(&register, "## Phase Gate Review Log");
+    let mut phases = BTreeSet::new();
+    for row in &rows {
+        assert!(
+            phases.insert(row[0].clone()),
+            "duplicate phase in gate table: {}",
+            row[0]
+        );
+    }
+}
+
+#[test]
+fn risk_register_contains_title_heading() {
+    let register = read_risk_register();
+    assert!(register.contains("# FrankenEngine Program Risk Register"));
+}

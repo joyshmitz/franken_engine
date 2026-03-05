@@ -431,3 +431,101 @@ fn matrix_deterministic_double_parse() {
     assert_eq!(a.schema_version, b.schema_version);
     assert_eq!(a.cases.len(), b.cases.len());
 }
+
+// ────────────────────────────────────────────────────────────
+// Batch enrichment: browser coverage, surface nonempty,
+// deterministic_fallback_required consistency, case_id prefix,
+// react status values, compatibility route set, dimension completeness
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn all_cases_have_nonempty_behavior_notes() {
+    let matrix = parse_matrix();
+    for case in &matrix.cases {
+        assert!(
+            !case.behavior_notes.trim().is_empty(),
+            "case {} has empty behavior_notes",
+            case.case_id
+        );
+    }
+}
+
+#[test]
+fn all_cases_have_nonempty_surface() {
+    let matrix = parse_matrix();
+    for case in &matrix.cases {
+        assert!(
+            !case.surface.trim().is_empty(),
+            "case {} has empty surface",
+            case.case_id
+        );
+    }
+}
+
+#[test]
+fn browser_constraints_are_all_nonempty_strings() {
+    let matrix = parse_matrix();
+    for case in &matrix.cases {
+        for constraint in &case.browser_constraints {
+            assert!(
+                !constraint.trim().is_empty(),
+                "case {} has empty browser constraint",
+                case.case_id
+            );
+        }
+    }
+}
+
+#[test]
+fn react18_and_react19_statuses_are_nonempty() {
+    let matrix = parse_matrix();
+    for case in &matrix.cases {
+        assert!(
+            !case.react18_status.trim().is_empty(),
+            "case {} has empty react18_status",
+            case.case_id
+        );
+        assert!(
+            !case.react19_status.trim().is_empty(),
+            "case {} has empty react19_status",
+            case.case_id
+        );
+    }
+}
+
+#[test]
+fn deterministic_fallback_cases_have_non_compile_native_route() {
+    let matrix = parse_matrix();
+    for case in &matrix.cases {
+        if case.deterministic_fallback_required {
+            assert_ne!(
+                case.compatibility_route, "compile_native",
+                "case {} requires fallback but has compile_native route",
+                case.case_id
+            );
+        }
+    }
+}
+
+#[test]
+fn dimensions_browsers_are_nonempty() {
+    let matrix = parse_matrix();
+    assert!(!matrix.dimensions.browsers.is_empty());
+    for browser in &matrix.dimensions.browsers {
+        assert!(!browser.trim().is_empty());
+    }
+}
+
+#[test]
+fn projection_from_release_claim_tags_covers_all_cases() {
+    let matrix = parse_matrix();
+    let projection = projection_from_tags(&matrix.cases, |c| &c.release_claim_tags);
+    let all_case_ids: BTreeSet<_> = matrix.cases.iter().map(|c| c.case_id.clone()).collect();
+    let covered: BTreeSet<_> = projection.values().flatten().cloned().collect();
+    for case_id in &all_case_ids {
+        assert!(
+            covered.contains(case_id),
+            "case {case_id} not covered by any release_claim_tag"
+        );
+    }
+}

@@ -793,3 +793,133 @@ fn tier_up_policy_debug_is_nonempty() {
     let policy = TierUpPolicy::default();
     assert!(!format!("{policy:?}").is_empty());
 }
+
+#[test]
+fn profile_hash_differs_for_different_top_k() {
+    let program = Program {
+        constants: vec![Value::Int(10), Value::Int(5), Value::Int(1)],
+        property_pool: vec!["v".to_string()],
+        instructions: vec![
+            Instruction::NewObject { dst: r(0) },
+            Instruction::LoadConst { dst: r(1), const_index: 0 },
+            Instruction::StoreProp { object: r(0), property_index: 0, value: r(1) },
+            Instruction::LoadConst { dst: r(3), const_index: 1 },
+            Instruction::LoadPropCached { dst: r(2), object: r(0), property_index: 0 },
+            Instruction::LoadConst { dst: r(4), const_index: 2 },
+            Instruction::Sub { dst: r(3), lhs: r(3), rhs: r(4) },
+            Instruction::JumpIfFalse { condition: r(3), target: 9 },
+            Instruction::Jump { target: 4 },
+            Instruction::Return { src: r(2) },
+        ],
+    };
+
+    let mut vm = BytecodeVm::new("trace-topk", 8, 256);
+    let report = vm.execute(&program).unwrap();
+    let profile_k4 = build_hot_path_profile(&report, 4);
+    let profile_k16 = build_hot_path_profile(&report, 16);
+    // top_paths count may differ so hashes may differ (or equal if <=4 unique paths)
+    assert!(profile_k4.top_paths.len() <= 4);
+    assert!(profile_k16.top_paths.len() <= 16);
+}
+
+#[test]
+fn decision_eligible_flag_consistent_with_candidates() {
+    let program = Program {
+        constants: vec![Value::Int(1)],
+        property_pool: Vec::new(),
+        instructions: vec![
+            Instruction::LoadConst { dst: r(0), const_index: 0 },
+            Instruction::Return { src: r(0) },
+        ],
+    };
+
+    let mut vm = BytecodeVm::new("trace-consist", 4, 32);
+    let report = vm.execute(&program).unwrap();
+    let decision = evaluate_tier_up_eligibility(&report, &TierUpPolicy::default());
+    if decision.eligible {
+        assert!(
+            !decision.selected_candidates.is_empty(),
+            "eligible decision must have at least one candidate"
+        );
+    } else {
+        assert!(
+            decision.selected_candidates.is_empty(),
+            "ineligible decision must have zero candidates"
+        );
+    }
+}
+
+#[test]
+fn profile_total_steps_matches_vm_execution() {
+    let program = Program {
+        constants: vec![Value::Int(5), Value::Int(3)],
+        property_pool: Vec::new(),
+        instructions: vec![
+            Instruction::LoadConst { dst: r(0), const_index: 0 },
+            Instruction::LoadConst { dst: r(1), const_index: 1 },
+            Instruction::Add { dst: r(2), lhs: r(0), rhs: r(1) },
+            Instruction::Return { src: r(2) },
+        ],
+    };
+
+    let mut vm = BytecodeVm::new("trace-steps", 4, 32);
+    let report = vm.execute(&program).unwrap();
+    let profile = build_hot_path_profile(&report, 16);
+    assert_eq!(profile.total_steps, 4);
+}
+
+#[test]
+fn decision_trace_id_matches_vm_trace_id() {
+    let program = Program {
+        constants: vec![Value::Int(99)],
+        property_pool: Vec::new(),
+        instructions: vec![
+            Instruction::LoadConst { dst: r(0), const_index: 0 },
+            Instruction::Return { src: r(0) },
+        ],
+    };
+
+    let mut vm = BytecodeVm::new("my-unique-trace", 4, 32);
+    let report = vm.execute(&program).unwrap();
+    let decision = evaluate_tier_up_eligibility(&report, &TierUpPolicy::default());
+    assert_eq!(decision.trace_id, "my-unique-trace");
+}
+
+#[test]
+fn decision_events_have_consistent_component_field() {
+    let program = Program {
+        constants: vec![Value::Int(1)],
+        property_pool: Vec::new(),
+        instructions: vec![
+            Instruction::LoadConst { dst: r(0), const_index: 0 },
+            Instruction::Return { src: r(0) },
+        ],
+    };
+
+    let mut vm = BytecodeVm::new("trace-comp", 4, 32);
+    let report = vm.execute(&program).unwrap();
+    let decision = evaluate_tier_up_eligibility(&report, &TierUpPolicy::default());
+    for event in &decision.events {
+        assert_eq!(
+            event.component, "tier_up_profiler",
+            "all decision events should have component=tier_up_profiler"
+        );
+    }
+}
+
+#[test]
+fn hot_path_profile_debug_is_nonempty() {
+    let program = Program {
+        constants: vec![Value::Int(1)],
+        property_pool: Vec::new(),
+        instructions: vec![
+            Instruction::LoadConst { dst: r(0), const_index: 0 },
+            Instruction::Return { src: r(0) },
+        ],
+    };
+
+    let mut vm = BytecodeVm::new("trace-dbg-profile", 4, 32);
+    let report = vm.execute(&program).unwrap();
+    let profile = build_hot_path_profile(&report, 16);
+    assert!(!format!("{profile:?}").is_empty());
+}

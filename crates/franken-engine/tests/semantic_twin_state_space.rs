@@ -1,6 +1,6 @@
 use frankenengine_engine::semantic_twin_state_space::{
-    SEMANTIC_TWIN_COMPONENT, SemanticTwinSpecification, TwinSpecError, TwinStateDomain,
-    TwinStateSnapshot,
+    SEMANTIC_TWIN_COMPONENT, SEMANTIC_TWIN_SCHEMA_VERSION, SemanticTwinSpecification,
+    TwinSpecError, TwinStateDomain, TwinStateSnapshot,
 };
 
 #[test]
@@ -274,4 +274,81 @@ fn default_spec_assumptions_have_nonempty_ids() {
     for assumption in &spec.assumptions {
         assert!(!assumption.id.trim().is_empty());
     }
+}
+
+#[test]
+fn snapshot_deterministic_digest_is_stable() {
+    let mut snap_a = TwinStateSnapshot::new("t", "d", "p", 1, 1);
+    snap_a.upsert_value("key_x", 100);
+    snap_a.upsert_value("key_y", 200);
+
+    let mut snap_b = TwinStateSnapshot::new("t", "d", "p", 1, 1);
+    snap_b.upsert_value("key_x", 100);
+    snap_b.upsert_value("key_y", 200);
+
+    assert_eq!(snap_a.deterministic_digest(), snap_b.deterministic_digest());
+    assert!(snap_a.deterministic_digest().starts_with("sha256:"));
+}
+
+#[test]
+fn snapshot_deterministic_digest_changes_with_value() {
+    let mut snap_a = TwinStateSnapshot::new("t", "d", "p", 1, 1);
+    snap_a.upsert_value("key_x", 100);
+
+    let mut snap_b = TwinStateSnapshot::new("t", "d", "p", 1, 1);
+    snap_b.upsert_value("key_x", 999);
+
+    assert_ne!(snap_a.deterministic_digest(), snap_b.deterministic_digest());
+}
+
+#[test]
+fn spec_deterministic_digest_is_stable_across_calls() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    let d1 = spec.deterministic_digest();
+    let d2 = spec.deterministic_digest();
+    assert_eq!(d1, d2);
+    assert!(d1.starts_with("sha256:"));
+}
+
+#[test]
+fn validate_snapshot_rejects_unknown_variable() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    let mut snapshot = TwinStateSnapshot::new("t", "d", "p", 1, 1);
+    // Fill all required variables with valid values
+    for contract in &spec.measurement_contracts {
+        if contract.required {
+            let value = contract.min_value_millionths.unwrap_or(0);
+            snapshot.upsert_value(&contract.variable_id, value);
+        }
+    }
+    // Now add an unknown variable
+    snapshot.upsert_value("completely_unknown_variable", 42);
+    let err = spec
+        .validate_snapshot(&snapshot)
+        .expect_err("unknown variable should fail");
+    assert!(matches!(err, TwinSpecError::UnknownVariable(ref id) if id == "completely_unknown_variable"));
+}
+
+#[test]
+fn default_spec_schema_version_matches_constant() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    assert_eq!(spec.schema_version, SEMANTIC_TWIN_SCHEMA_VERSION);
+}
+
+#[test]
+fn assumption_ledger_observation_with_passing_value_no_violation() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    let mut ledger = spec
+        .to_assumption_ledger("decision-pass", 11)
+        .expect("ledger");
+    // Observe with a value that satisfies the monitor (>= 1_000_000)
+    let actions = ledger.observe("nondeterminism_log_completeness", 1_000_000, 11, 5);
+    assert!(actions.is_empty(), "passing value should produce no actions");
+    assert_eq!(ledger.violated_count(), 0);
+}
+
+#[test]
+fn default_spec_validate_succeeds() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    spec.validate().expect("default spec should pass validation");
 }

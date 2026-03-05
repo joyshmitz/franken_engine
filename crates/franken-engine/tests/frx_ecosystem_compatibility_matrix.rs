@@ -509,3 +509,93 @@ fn ecosystem_matrix_deterministic_double_parse() {
     assert_eq!(a.entries.len(), b.entries.len());
     assert_eq!(a.known_gaps.len(), b.known_gaps.len());
 }
+
+// ────────────────────────────────────────────────────────────
+// Batch enrichment: notes nonempty, fallback route consistency,
+// known gap target milestones, track fields, structured log
+// decision_path nonempty, entry category coverage, gap owner_lane
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn frx_07_3_all_entries_have_nonempty_notes() {
+    let matrix = parse_matrix();
+    for entry in &matrix.entries {
+        assert!(
+            !entry.notes.trim().is_empty(),
+            "entry {} has empty notes",
+            entry.stack_id
+        );
+    }
+}
+
+#[test]
+fn frx_07_3_native_entries_have_none_fallback_route() {
+    let matrix = parse_matrix();
+    for entry in &matrix.entries {
+        if entry.compatibility_status == "native" {
+            assert_eq!(
+                entry.fallback_route, "none",
+                "native entry {} should have fallback_route 'none'",
+                entry.stack_id
+            );
+        }
+    }
+}
+
+#[test]
+fn frx_07_3_known_gap_owner_lanes_are_nonempty() {
+    let matrix = parse_matrix();
+    for gap in &matrix.known_gaps {
+        assert!(
+            !gap.owner_lane.trim().is_empty(),
+            "known gap {} has empty owner_lane",
+            gap.stack_id
+        );
+    }
+}
+
+#[test]
+fn frx_07_3_track_id_and_name_are_nonempty() {
+    let matrix = parse_matrix();
+    assert!(!matrix.track.id.trim().is_empty());
+    assert!(!matrix.track.name.trim().is_empty());
+}
+
+#[test]
+fn frx_07_3_structured_log_decision_paths_are_nonempty() {
+    let matrix = parse_matrix();
+    for entry in &matrix.entries {
+        assert!(
+            !entry.structured_log_template.decision_path.trim().is_empty(),
+            "entry {} has empty decision_path in log template",
+            entry.stack_id
+        );
+    }
+}
+
+#[test]
+fn frx_07_3_known_gap_blocking_issues_are_nonempty() {
+    let matrix = parse_matrix();
+    for gap in &matrix.known_gaps {
+        assert!(
+            !gap.blocking_issue.trim().is_empty(),
+            "known gap {} has empty blocking_issue",
+            gap.stack_id
+        );
+    }
+}
+
+#[test]
+fn frx_07_3_compatibility_entry_serde_round_trip() {
+    let matrix = parse_matrix();
+    let entry = &matrix.entries[0];
+    let json = serde_json::to_string(entry).expect("serialize");
+    let recovered: CompatibilityEntry = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(entry.stack_id, recovered.stack_id);
+    assert_eq!(entry.category, recovered.category);
+    assert_eq!(entry.surface, recovered.surface);
+    assert_eq!(
+        entry.structured_log_template.scenario_id,
+        recovered.structured_log_template.scenario_id
+    );
+}

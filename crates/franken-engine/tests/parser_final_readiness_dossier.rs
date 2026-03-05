@@ -835,3 +835,94 @@ fn risk_register_hash_deterministic_for_same_risks() {
     let b = compute_risk_register_hash(&fixture.residual_risks);
     assert_eq!(a, b);
 }
+
+#[test]
+fn rank_open_risks_empty_input_returns_empty() {
+    let ranked = rank_open_risks(&[]);
+    assert!(ranked.is_empty(), "empty risk slice should yield empty ranking");
+}
+
+#[test]
+fn open_risk_score_millionths_boundary_values() {
+    // Maximum likelihood and impact (both 1_000_000) should produce score = 1_000_000
+    let max_risk = ResidualRisk {
+        risk_id: "r-max".into(),
+        severity: "critical".into(),
+        likelihood_millionths: 1_000_000,
+        impact_millionths: 1_000_000,
+        owner: "owner".into(),
+        mitigation: "mitigate".into(),
+        trigger_threshold: "threshold".into(),
+        rollback_trigger_id: "t-1".into(),
+        status: "open".into(),
+    };
+    assert_eq!(open_risk_score_millionths(&max_risk), 1_000_000);
+
+    // Zero likelihood should produce zero score
+    let zero_risk = ResidualRisk {
+        risk_id: "r-zero".into(),
+        severity: "low".into(),
+        likelihood_millionths: 0,
+        impact_millionths: 1_000_000,
+        owner: "owner".into(),
+        mitigation: "mitigate".into(),
+        trigger_threshold: "threshold".into(),
+        rollback_trigger_id: "t-2".into(),
+        status: "open".into(),
+    };
+    assert_eq!(open_risk_score_millionths(&zero_risk), 0);
+}
+
+#[test]
+fn structured_event_error_code_null_for_hold_outcome() {
+    let fixture = load_fixture();
+    let evaluation = evaluate_dossier(&fixture);
+    let event = emit_structured_event(&fixture, &evaluation);
+    if evaluation.outcome == "hold" {
+        assert!(
+            event.error_code.is_none(),
+            "error_code should be None for hold outcome"
+        );
+    }
+}
+
+#[test]
+fn residual_risk_ids_are_unique() {
+    let fixture = load_fixture();
+    let mut seen = BTreeSet::new();
+    for risk in &fixture.residual_risks {
+        assert!(
+            seen.insert(&risk.risk_id),
+            "duplicate risk_id: {}",
+            risk.risk_id
+        );
+    }
+}
+
+#[test]
+fn rollback_trigger_ids_are_unique() {
+    let fixture = load_fixture();
+    let mut seen = BTreeSet::new();
+    for trigger in &fixture.rollback_triggers {
+        assert!(
+            seen.insert(&trigger.trigger_id),
+            "duplicate trigger_id: {}",
+            trigger.trigger_id
+        );
+    }
+}
+
+#[test]
+fn evidence_status_ordering_fail_after_pass() {
+    // EvidenceStatus derives Ord — verify that the ordering is sensible
+    assert!(EvidenceStatus::Pass < EvidenceStatus::Fail);
+    assert!(EvidenceStatus::InProgress < EvidenceStatus::Fail);
+}
+
+#[test]
+fn severity_parse_roundtrip_weight_consistency() {
+    for (label, expected_weight) in [("critical", 4), ("high", 3), ("medium", 2), ("low", 1)] {
+        let severity = Severity::parse(label);
+        assert_eq!(severity.weight(), expected_weight, "weight mismatch for {label}");
+    }
+}

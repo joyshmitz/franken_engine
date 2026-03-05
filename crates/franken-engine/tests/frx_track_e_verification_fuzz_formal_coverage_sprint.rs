@@ -324,3 +324,124 @@ fn track_e_contract_is_a_json_object() {
         serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("parse");
     assert!(value.is_object());
 }
+
+#[test]
+fn track_e_contract_logging_contract_has_required_fields() {
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+
+    let logging = &value["logging_contract"];
+    assert!(logging.is_object(), "logging_contract must be an object");
+    assert!(
+        !logging["component"]
+            .as_str()
+            .unwrap_or("")
+            .is_empty(),
+        "logging_contract.component must be non-empty"
+    );
+    let fields = logging["required_fields"]
+        .as_array()
+        .expect("required_fields must be an array");
+    for expected in ["trace_id", "decision_id", "policy_id", "component", "event", "outcome"] {
+        assert!(
+            fields.iter().any(|f| f.as_str() == Some(expected)),
+            "logging_contract missing field: {expected}"
+        );
+    }
+}
+
+#[test]
+fn track_e_contract_ownership_sections_are_required() {
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+
+    let ownership = &value["ownership"];
+    assert!(ownership.is_object(), "ownership must be an object");
+    for section in [
+        "lockstep_oracle_coverage",
+        "metamorphic_and_schedule_campaigns",
+        "formal_modelcheck_stewardship",
+    ] {
+        assert!(
+            ownership[section].is_object(),
+            "ownership missing section: {section}"
+        );
+        assert_eq!(
+            ownership[section]["required"].as_bool(),
+            Some(true),
+            "ownership.{section}.required must be true"
+        );
+    }
+}
+
+#[test]
+fn track_e_contract_inputs_are_nonempty_strings() {
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+
+    let inputs = value["inputs"]
+        .as_array()
+        .expect("inputs must be an array");
+    assert!(!inputs.is_empty(), "inputs must not be empty");
+    for input in inputs {
+        assert!(
+            input.as_str().is_some_and(|s| !s.trim().is_empty()),
+            "each input must be a non-empty string"
+        );
+    }
+}
+
+#[test]
+fn track_e_contract_outputs_promotion_gate_decision_exists() {
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+
+    assert!(
+        value["outputs"]["promotion_gate_decision"].is_object(),
+        "outputs.promotion_gate_decision must exist"
+    );
+    assert!(
+        value["outputs"]["confidence_trajectory_bundle"].is_object(),
+        "outputs.confidence_trajectory_bundle must exist"
+    );
+}
+
+#[test]
+fn track_e_contract_activation_gate_requires_ownership_routing() {
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert_eq!(
+        value["activation_gate"]["requires_ownership_routing"].as_bool(),
+        Some(true)
+    );
+}
+
+#[test]
+fn track_e_contract_track_name_is_nonempty() {
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let name = value["track"]["name"]
+        .as_str()
+        .expect("track.name must be a string");
+    assert!(!name.trim().is_empty(), "track.name must not be empty");
+}
+
+#[test]
+fn track_e_charter_doc_contains_interface_contracts_and_escalation() {
+    let path = repo_root().join("docs/FRX_TRACK_E_VERIFICATION_FUZZ_FORMAL_COVERAGE_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.contains("Interface Contracts"));
+    assert!(doc.contains("Escalation"));
+}

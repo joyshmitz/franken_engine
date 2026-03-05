@@ -462,3 +462,79 @@ fn contract_has_nonempty_contract_version() {
     let contract = parse_contract();
     assert!(!contract.contract_version.trim().is_empty());
 }
+
+#[test]
+fn contract_required_log_keys_are_nonempty_strings() {
+    let contract = parse_contract();
+    for key in &contract.required_log_keys {
+        assert!(
+            !key.trim().is_empty(),
+            "required_log_keys must not contain empty strings"
+        );
+    }
+}
+
+#[test]
+fn contract_required_artifacts_are_nonempty_strings() {
+    let contract = parse_contract();
+    for artifact in &contract.required_artifacts {
+        assert!(
+            !artifact.trim().is_empty(),
+            "required_artifacts must not contain empty strings"
+        );
+    }
+}
+
+#[test]
+fn contract_failure_scenario_command_templates_are_nonempty() {
+    let contract = parse_contract();
+    for scenario in &contract.failure_scenarios {
+        assert!(
+            !scenario.command_template.trim().is_empty(),
+            "scenario {} must have a command_template",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn vectors_contract_versions_are_aligned() {
+    let contract = parse_contract();
+    let vectors = parse_vectors();
+    assert_eq!(
+        contract.contract_version, vectors.contract_version,
+        "contract and vectors must share the same contract_version"
+    );
+}
+
+#[test]
+fn contract_required_attack_classes_are_unique() {
+    let contract = parse_contract();
+    let unique: BTreeSet<&str> = contract.required_attack_classes.iter().map(String::as_str).collect();
+    assert_eq!(
+        unique.len(),
+        contract.required_attack_classes.len(),
+        "required_attack_classes must be unique"
+    );
+}
+
+#[test]
+fn contract_gate_runner_fields_are_nonempty() {
+    let contract = parse_contract();
+    assert!(!contract.gate_runner.script.trim().is_empty());
+    assert!(!contract.gate_runner.replay_wrapper.trim().is_empty());
+    assert!(!contract.gate_runner.strict_mode.trim().is_empty());
+    assert!(!contract.gate_runner.manifest_schema_version.trim().is_empty());
+}
+
+#[test]
+fn vectors_all_command_templates_are_nonempty() {
+    let vectors = parse_vectors();
+    for vector in &vectors.vectors {
+        assert!(
+            !vector.command_template.trim().is_empty(),
+            "vector {} must have a non-empty command_template",
+            vector.scenario_id
+        );
+    }
+}

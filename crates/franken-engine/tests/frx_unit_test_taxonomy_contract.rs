@@ -652,3 +652,165 @@ fn schema_version_constants_are_nonempty() {
     assert!(!TEST_TAXONOMY_SCHEMA_VERSION.is_empty());
     assert!(!FIXTURE_REGISTRY_SCHEMA_VERSION.is_empty());
 }
+
+// ---------- FixtureRegistry lookup/by_class/by_surface ----------
+
+#[test]
+fn fixture_registry_lookup_returns_registered_entry() {
+    let mut registry = FixtureRegistry::new();
+    let entry = FixtureEntry {
+        fixture_id: "lookup-test".to_string(),
+        description: "test entry".to_string(),
+        test_class: TestClass::Edge,
+        surfaces: BTreeSet::from([TestSurface::Runtime]),
+        provenance: TestClass::Edge.min_provenance_level(),
+        seed: Some(99),
+        content_hash: "sha256:lookup".to_string(),
+        format_version: "v1".to_string(),
+        origin_ref: "bd-test".to_string(),
+        tags: BTreeSet::from(["edge".to_string()]),
+    };
+    registry.register(entry).unwrap();
+    let found = registry.lookup("lookup-test");
+    assert!(found.is_some());
+    assert_eq!(found.unwrap().test_class, TestClass::Edge);
+    assert!(registry.lookup("nonexistent").is_none());
+}
+
+#[test]
+fn fixture_registry_rejects_duplicate_id() {
+    let mut registry = FixtureRegistry::new();
+    let entry = FixtureEntry {
+        fixture_id: "dup-test".to_string(),
+        description: "first".to_string(),
+        test_class: TestClass::Core,
+        surfaces: BTreeSet::from([TestSurface::Parser]),
+        provenance: TestClass::Core.min_provenance_level(),
+        seed: Some(1),
+        content_hash: "sha256:dup1".to_string(),
+        format_version: "v1".to_string(),
+        origin_ref: "bd-test".to_string(),
+        tags: BTreeSet::new(),
+    };
+    registry.register(entry.clone()).unwrap();
+    let err = registry.register(entry);
+    assert!(err.is_err());
+}
+
+#[test]
+fn fixture_registry_by_class_filters_correctly() {
+    let mut registry = FixtureRegistry::new();
+    for (i, class) in [TestClass::Core, TestClass::Edge, TestClass::Core]
+        .iter()
+        .enumerate()
+    {
+        let entry = FixtureEntry {
+            fixture_id: format!("class-filter-{i}"),
+            description: "test".to_string(),
+            test_class: *class,
+            surfaces: BTreeSet::from([TestSurface::Compiler]),
+            provenance: class.min_provenance_level(),
+            seed: Some(i as u64),
+            content_hash: format!("sha256:cf{i}"),
+            format_version: "v1".to_string(),
+            origin_ref: "bd-test".to_string(),
+            tags: BTreeSet::new(),
+        };
+        registry.register(entry).unwrap();
+    }
+    assert_eq!(registry.by_class(TestClass::Core).len(), 2);
+    assert_eq!(registry.by_class(TestClass::Edge).len(), 1);
+    assert_eq!(registry.by_class(TestClass::Adversarial).len(), 0);
+}
+
+#[test]
+fn fixture_registry_coverage_matrix_and_gaps() {
+    let mut registry = FixtureRegistry::new();
+    let entry = FixtureEntry {
+        fixture_id: "cov-test".to_string(),
+        description: "test".to_string(),
+        test_class: TestClass::Core,
+        surfaces: BTreeSet::from([TestSurface::Parser, TestSurface::Runtime]),
+        provenance: TestClass::Core.min_provenance_level(),
+        seed: Some(10),
+        content_hash: "sha256:cov".to_string(),
+        format_version: "v1".to_string(),
+        origin_ref: "bd-test".to_string(),
+        tags: BTreeSet::new(),
+    };
+    registry.register(entry).unwrap();
+
+    let matrix = registry.coverage_matrix();
+    assert_eq!(
+        matrix.get(&(TestClass::Core, TestSurface::Parser)),
+        Some(&1)
+    );
+    assert_eq!(
+        matrix.get(&(TestClass::Core, TestSurface::Runtime)),
+        Some(&1)
+    );
+    assert!(
+        matrix
+            .get(&(TestClass::Edge, TestSurface::Parser))
+            .is_none()
+    );
+
+    let gaps = registry.coverage_gaps();
+    // Should have gaps for everything except Core+Parser and Core+Runtime
+    assert!(!gaps.is_empty());
+    assert!(gaps.contains(&(TestClass::Edge, TestSurface::Compiler)));
+}
+
+#[test]
+fn fixture_registry_len_and_is_empty() {
+    let mut registry = FixtureRegistry::new();
+    assert!(registry.is_empty());
+    assert_eq!(registry.len(), 0);
+
+    let entry = FixtureEntry {
+        fixture_id: "len-test".to_string(),
+        description: "test".to_string(),
+        test_class: TestClass::Regression,
+        surfaces: BTreeSet::from([TestSurface::Governance]),
+        provenance: TestClass::Regression.min_provenance_level(),
+        seed: Some(7),
+        content_hash: "sha256:len".to_string(),
+        format_version: "v1".to_string(),
+        origin_ref: "bd-test".to_string(),
+        tags: BTreeSet::new(),
+    };
+    registry.register(entry).unwrap();
+    assert!(!registry.is_empty());
+    assert_eq!(registry.len(), 1);
+}
+
+#[test]
+fn test_class_requires_seed_is_consistent_with_determinism_contract() {
+    for class in TestClass::ALL {
+        let dc = DeterminismContract::for_class(*class);
+        assert_eq!(
+            class.requires_seed(),
+            dc.seed_required,
+            "TestClass::requires_seed disagrees with DeterminismContract for {class}"
+        );
+    }
+}
+
+#[test]
+fn fixture_entry_derive_id_is_deterministic() {
+    let entry = FixtureEntry {
+        fixture_id: "derive-id-test".to_string(),
+        description: "test derive_id determinism".to_string(),
+        test_class: TestClass::Core,
+        surfaces: BTreeSet::from([TestSurface::Parser]),
+        provenance: TestClass::Core.min_provenance_level(),
+        seed: Some(42),
+        content_hash: "sha256:derive-id".to_string(),
+        format_version: "frx.unit-fixture.v1".to_string(),
+        origin_ref: "bd-test".to_string(),
+        tags: BTreeSet::from(["core".to_string()]),
+    };
+    let id_a = entry.derive_id().expect("derive_id a");
+    let id_b = entry.derive_id().expect("derive_id b");
+    assert_eq!(id_a, id_b);
+}

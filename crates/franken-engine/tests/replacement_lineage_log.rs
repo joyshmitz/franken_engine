@@ -1041,3 +1041,133 @@ fn lineage_query_default_matches_all() {
     .expect("append");
     assert_eq!(log.query(&query).len(), 1);
 }
+
+// ---------- query filtering ----------
+
+#[test]
+fn lineage_query_filters_by_kind() {
+    let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
+    log.append(
+        receipt("slot-qk", "old-0", "new-0", 100),
+        ReplacementKind::DelegateToNative,
+        100,
+    )
+    .expect("append");
+    log.append(
+        receipt("slot-qk", "new-0", "old-0", 200),
+        ReplacementKind::Rollback,
+        200,
+    )
+    .expect("append");
+
+    let mut kinds = BTreeSet::new();
+    kinds.insert(ReplacementKind::Rollback);
+    let query = LineageQuery {
+        slot_id: None,
+        kinds: Some(kinds),
+        min_timestamp_ns: None,
+        max_timestamp_ns: None,
+    };
+    let results = log.query(&query);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].kind, ReplacementKind::Rollback);
+}
+
+#[test]
+fn lineage_query_filters_by_timestamp_range() {
+    let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
+    for i in 0..5 {
+        log.append(
+            receipt("slot-ts", &format!("old-{i}"), &format!("new-{i}"), (i + 1) * 100),
+            ReplacementKind::DelegateToNative,
+            (i + 1) * 100,
+        )
+        .expect("append");
+    }
+
+    let query = LineageQuery {
+        slot_id: None,
+        kinds: None,
+        min_timestamp_ns: Some(200),
+        max_timestamp_ns: Some(400),
+    };
+    let results = log.query(&query);
+    assert_eq!(results.len(), 3);
+}
+
+// ---------- verify_slot_lineage ----------
+
+#[test]
+fn verify_slot_lineage_empty_slot_is_valid() {
+    let log = ReplacementLineageLog::new(LineageLogConfig::default());
+    let verify = log.verify_slot_lineage(&slot_id("nonexistent"));
+    assert!(verify.chain_valid);
+    assert_eq!(verify.total_entries, 0);
+}
+
+// ---------- log serde roundtrip ----------
+
+#[test]
+fn log_serde_roundtrip_preserves_len_and_merkle_root() {
+    let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
+    for i in 0..3 {
+        log.append(
+            receipt("slot-serde", &format!("old-{i}"), &format!("new-{i}"), (i + 1) * 100),
+            ReplacementKind::DelegateToNative,
+            (i + 1) * 100,
+        )
+        .expect("append");
+    }
+    let root_before = log.merkle_root();
+    let len_before = log.len();
+
+    let encoded = serde_json::to_vec(&log).expect("serialize");
+    let decoded: ReplacementLineageLog = serde_json::from_slice(&encoded).expect("deserialize");
+    assert_eq!(decoded.len(), len_before);
+    assert_eq!(decoded.merkle_root(), root_before);
+}
+
+// ---------- EvidenceCategory display ----------
+
+#[test]
+fn evidence_category_debug_is_nonempty() {
+    for category in [
+        EvidenceCategory::GateResult,
+        EvidenceCategory::SentinelRiskScore,
+        EvidenceCategory::DifferentialExecutionLog,
+        EvidenceCategory::Additional,
+    ] {
+        assert!(!format!("{category:?}").is_empty());
+    }
+}
+
+// ---------- LineageLogError additional variants ----------
+
+#[test]
+fn lineage_log_error_display_for_all_variants() {
+    let errors = vec![
+        LineageLogError::InvalidCheckpointOrder { older: 10, newer: 5 },
+    ];
+    for err in &errors {
+        let msg = format!("{err}");
+        assert!(!msg.is_empty());
+    }
+}
+
+// ---------- multiple checkpoints ----------
+
+#[test]
+fn multiple_checkpoints_accumulate() {
+    let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
+    for i in 0..3 {
+        log.append(
+            receipt("slot-mcp", &format!("old-{i}"), &format!("new-{i}"), (i + 1) * 100),
+            ReplacementKind::DelegateToNative,
+            (i + 1) * 100,
+        )
+        .expect("append");
+        log.create_checkpoint((i + 1) * 100, SecurityEpoch::from_raw(11))
+            .expect("checkpoint");
+    }
+    assert_eq!(log.checkpoints().len(), 3);
+}

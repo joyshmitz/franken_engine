@@ -3,9 +3,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use frankenengine_engine::control_plane_benchmark_split_gate::{
-    BenchmarkSplit, BenchmarkSplitFailureCode, BenchmarkSplitGateInput, BenchmarkSplitSnapshot,
-    BenchmarkSplitThresholds, LatencyStatsNs, SplitBenchmarkMetrics,
-    evaluate_control_plane_benchmark_split,
+    BenchmarkSplit, BenchmarkSplitFailureCode, BenchmarkSplitFinding, BenchmarkSplitGateInput,
+    BenchmarkSplitLogEvent, BenchmarkSplitSnapshot, BenchmarkSplitThresholds, LatencyStatsNs,
+    SplitBenchmarkMetrics, evaluate_control_plane_benchmark_split,
 };
 
 fn repo_root() -> PathBuf {
@@ -506,4 +506,104 @@ fn latency_stats_ns_debug_is_nonempty() {
         p99_ns: 3_000,
     };
     assert!(!format!("{stats:?}").is_empty());
+}
+
+// ────────────────────────────────────────────────────────────
+// Batch enrichment: snapshot hash determinism, missing split detection,
+// decision serde, evaluation pass flag, rollback flag, log event serde,
+// finding serde
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn snapshot_hash_is_deterministic() {
+    let snap_a = previous_snapshot();
+    let snap_b = previous_snapshot();
+    assert_eq!(snap_a.snapshot_hash(), snap_b.snapshot_hash());
+    assert_ne!(snap_a.snapshot_hash(), [0u8; 32]);
+}
+
+#[test]
+fn candidate_and_previous_snapshot_have_different_hashes() {
+    let prev = previous_snapshot();
+    let cand = candidate_snapshot(0, true);
+    assert_ne!(prev.snapshot_hash(), cand.snapshot_hash());
+}
+
+#[test]
+fn missing_split_in_candidate_flags_finding() {
+    let previous = previous_snapshot();
+    let mut candidate = candidate_snapshot(0, true);
+    candidate.split_metrics.remove(&BenchmarkSplit::CxThreading);
+    let decision = evaluate_control_plane_benchmark_split(
+        &input(previous, candidate),
+        &BenchmarkSplitThresholds::default(),
+    );
+    assert!(decision.findings.iter().any(|finding| {
+        finding.code == BenchmarkSplitFailureCode::MissingSplitMetrics
+            && finding.split == Some(BenchmarkSplit::CxThreading)
+    }));
+}
+
+#[test]
+fn zero_sleep_candidate_has_fewer_findings_than_high_sleep() {
+    let thresholds = BenchmarkSplitThresholds::default();
+    let clean = evaluate_control_plane_benchmark_split(
+        &input(previous_snapshot(), candidate_snapshot(0, true)),
+        &thresholds,
+    );
+    let heavy = evaluate_control_plane_benchmark_split(
+        &input(previous_snapshot(), candidate_snapshot(350_000, true)),
+        &thresholds,
+    );
+    assert!(
+        clean.findings.len() <= heavy.findings.len(),
+        "zero-sleep candidate should have fewer or equal findings"
+    );
+}
+
+#[test]
+fn decision_snapshot_hashes_match_inputs() {
+    let prev = previous_snapshot();
+    let cand = candidate_snapshot(0, true);
+    let expected_prev_hash = prev.snapshot_hash();
+    let expected_cand_hash = cand.snapshot_hash();
+    let decision = evaluate_control_plane_benchmark_split(
+        &input(prev, cand),
+        &BenchmarkSplitThresholds::default(),
+    );
+    assert_eq!(decision.previous_snapshot_hash, expected_prev_hash);
+    assert_eq!(decision.candidate_snapshot_hash, expected_cand_hash);
+}
+
+#[test]
+fn benchmark_split_log_event_serde_round_trip() {
+    let event = BenchmarkSplitLogEvent {
+        trace_id: "trace-1".to_string(),
+        decision_id: "decision-1".to_string(),
+        policy_id: "policy-1".to_string(),
+        component: "control_plane_benchmark".to_string(),
+        event: "benchmark_split_decision".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        split: Some("Baseline".to_string()),
+        metric: Some("throughput_ops_per_sec".to_string()),
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: BenchmarkSplitLogEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(event, recovered);
+}
+
+#[test]
+fn benchmark_split_finding_serde_round_trip() {
+    let finding = BenchmarkSplitFinding {
+        code: BenchmarkSplitFailureCode::LatencyRegressionExceeded,
+        split: Some(BenchmarkSplit::FullIntegration),
+        metric: Some("p95_ns".to_string()),
+        detail: "latency regression exceeded".to_string(),
+        observed_millionths: Some(75_000),
+        threshold_millionths: Some(50_000),
+    };
+    let json = serde_json::to_string(&finding).expect("serialize");
+    let recovered: BenchmarkSplitFinding = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(finding, recovered);
 }

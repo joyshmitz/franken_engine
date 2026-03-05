@@ -348,3 +348,74 @@ fn env_contract_doc_has_more_than_50_lines() {
     let doc = load_env_contract_doc();
     assert!(doc.lines().count() > 50);
 }
+
+// ---------- fixture field depth checks ----------
+
+#[test]
+fn fixture_runner_commands_all_nonempty() {
+    let fixture = load_fixture();
+    for (mode, command) in &fixture.runner_commands {
+        assert!(
+            !command.trim().is_empty(),
+            "runner command for mode `{mode}` must not be empty"
+        );
+    }
+}
+
+#[test]
+fn fixture_required_environment_keys_include_rustc_version() {
+    let fixture = load_fixture();
+    assert!(
+        fixture
+            .required_environment_keys
+            .iter()
+            .any(|k| k == "rustc_version"),
+        "required_environment_keys must include rustc_version"
+    );
+}
+
+#[test]
+fn fixture_required_manifest_keys_include_replay_command() {
+    let fixture = load_fixture();
+    assert!(
+        fixture
+            .required_manifest_keys
+            .iter()
+            .any(|k| k == "replay_command"),
+        "required_manifest_keys must include replay_command"
+    );
+}
+
+#[test]
+fn fixture_runner_commands_all_reference_same_script() {
+    let fixture = load_fixture();
+    for (mode, command) in &fixture.runner_commands {
+        assert!(
+            command.contains("run_parser_benchmark_protocol.sh"),
+            "runner command for mode `{mode}` should reference run_parser_benchmark_protocol.sh"
+        );
+    }
+}
+
+#[test]
+fn fixture_deterministic_env_schema_version_is_nonempty() {
+    let fixture = load_fixture();
+    assert!(!fixture.deterministic_env_schema_version.trim().is_empty());
+}
+
+#[test]
+fn wrapper_script_has_more_than_10_lines() {
+    let script = load_benchmark_wrapper_script();
+    assert!(
+        script.lines().count() > 10,
+        "wrapper script should have substantial content"
+    );
+}
+
+#[test]
+fn fixture_required_modes_are_nonempty_strings() {
+    let fixture = load_fixture();
+    for mode in &fixture.required_wrapper_modes {
+        assert!(!mode.trim().is_empty(), "wrapper mode must not be empty");
+    }
+}

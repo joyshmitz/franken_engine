@@ -539,3 +539,169 @@ fn action_tier_debug_is_nonempty() {
         assert!(!format!("{tier:?}").is_empty());
     }
 }
+
+// ────────────────────────────────────────────────────────────
+// Batch enrichment: health accessor, with_default_signing_key,
+// decision serde, queued decision fields, transition receipt serde,
+// event field completeness, take_recovery_backlog idempotent
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn health_accessor_tracks_latest_observed_health() {
+    let mut mgr = mk_manager(1_000);
+    assert_eq!(mgr.health(), AttestationHealth::Valid);
+
+    let req = mk_request(
+        "trace-health",
+        "decision-health",
+        "policy-health",
+        AutonomousAction::MetricsEmission,
+        ActionTier::LowImpact,
+        100,
+    );
+    mgr.evaluate_action(req, AttestationHealth::EvidenceExpired)
+        .expect("decision");
+    assert_eq!(mgr.health(), AttestationHealth::EvidenceExpired);
+}
+
+#[test]
+fn with_default_signing_key_produces_working_manager() {
+    let config = AttestationFallbackConfig {
+        unavailable_timeout_ns: 5_000,
+        challenge_on_fallback: false,
+        sandbox_on_fallback: true,
+    };
+    let mut mgr = AttestationFallbackManager::with_default_signing_key(config);
+    assert_eq!(mgr.state(), AttestationFallbackState::Normal);
+
+    let req = mk_request(
+        "trace-default-key",
+        "decision-default-key",
+        "policy-default-key",
+        AutonomousAction::Terminate,
+        ActionTier::HighImpact,
+        50,
+    );
+    let decision = mgr
+        .evaluate_action(req, AttestationHealth::VerificationFailed)
+        .expect("decision");
+    assert!(matches!(
+        decision,
+        AttestationFallbackDecision::Deferred { .. }
+    ));
+    mgr.transition_receipts()[0]
+        .verify()
+        .expect("default key receipt must verify");
+}
+
+#[test]
+fn attestation_fallback_decision_serde_round_trip_execute() {
+    let decision = AttestationFallbackDecision::Execute {
+        attestation_status: "valid".to_string(),
+        warning: Some("test warning".to_string()),
+    };
+    let json = serde_json::to_string(&decision).expect("serialize");
+    let recovered: AttestationFallbackDecision =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(decision, recovered);
+}
+
+#[test]
+fn attestation_fallback_decision_serde_round_trip_deferred() {
+    let decision = AttestationFallbackDecision::Deferred {
+        queue_id: 42,
+        attestation_status: "degraded".to_string(),
+        status: "attestation-pending".to_string(),
+        challenge_required: true,
+        sandbox_required: false,
+    };
+    let json = serde_json::to_string(&decision).expect("serialize");
+    let recovered: AttestationFallbackDecision =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(decision, recovered);
+}
+
+#[test]
+fn queued_decision_fields_populated_correctly_on_defer() {
+    let mut mgr = mk_manager(1_000);
+    let req = mk_request(
+        "trace-queued",
+        "decision-queued",
+        "policy-queued",
+        AutonomousAction::PolicyPromotion,
+        ActionTier::HighImpact,
+        555,
+    );
+    mgr.evaluate_action(req, AttestationHealth::VerificationFailed)
+        .expect("decision");
+    let queued = &mgr.pending_decisions()[0];
+    assert_eq!(queued.trace_id, "trace-queued");
+    assert_eq!(queued.decision_id, "decision-queued");
+    assert_eq!(queued.policy_id, "policy-queued");
+    assert_eq!(queued.status, "attestation-pending");
+    assert!(matches!(queued.action, AutonomousAction::PolicyPromotion));
+    assert_eq!(queued.queued_at_ns, 555);
+}
+
+#[test]
+fn take_recovery_backlog_is_empty_after_second_call() {
+    let mut mgr = mk_manager(500);
+    let req = mk_request(
+        "trace-backlog",
+        "decision-backlog",
+        "policy-backlog",
+        AutonomousAction::Quarantine,
+        ActionTier::HighImpact,
+        100,
+    );
+    mgr.evaluate_action(req, AttestationHealth::EvidenceExpired)
+        .expect("deferred");
+
+    let restore_req = mk_request(
+        "trace-restore",
+        "decision-restore",
+        "policy-restore",
+        AutonomousAction::MetricsEmission,
+        ActionTier::LowImpact,
+        200,
+    );
+    mgr.evaluate_action(restore_req, AttestationHealth::Valid)
+        .expect("restored");
+
+    let first_backlog = mgr.take_recovery_backlog();
+    assert_eq!(first_backlog.len(), 1);
+    let second_backlog = mgr.take_recovery_backlog();
+    assert!(second_backlog.is_empty(), "second call should be empty");
+}
+
+#[test]
+fn deferred_decision_without_sandbox_when_config_disabled() {
+    let config = AttestationFallbackConfig {
+        unavailable_timeout_ns: 1_000,
+        challenge_on_fallback: false,
+        sandbox_on_fallback: false,
+    };
+    let mut mgr = AttestationFallbackManager::new(config, SigningKey::from_bytes([7u8; 32]));
+    let req = mk_request(
+        "trace-no-sandbox",
+        "decision-no-sandbox",
+        "policy-no-sandbox",
+        AutonomousAction::Terminate,
+        ActionTier::HighImpact,
+        100,
+    );
+    let decision = mgr
+        .evaluate_action(req, AttestationHealth::VerificationFailed)
+        .expect("decision");
+    match decision {
+        AttestationFallbackDecision::Deferred {
+            challenge_required,
+            sandbox_required,
+            ..
+        } => {
+            assert!(!challenge_required);
+            assert!(!sandbox_required);
+        }
+        other => panic!("expected deferred, got {other:?}"),
+    }
+}

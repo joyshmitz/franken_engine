@@ -535,3 +535,114 @@ fn ifc_manifest_assets_all_have_nonempty_ids() {
         assert!(!id.trim().is_empty());
     }
 }
+
+// ---------- category-specific expected_outcome consistency ----------
+
+#[test]
+fn benign_assets_all_have_allow_outcome() {
+    let assets = parse_manifest_assets();
+    for asset in assets.iter().filter(|a| a["category"].as_str() == Some("benign")) {
+        assert_eq!(
+            asset["expected_outcome"].as_str(),
+            Some("allow"),
+            "benign asset {} must have allow outcome",
+            asset["asset_id"]
+        );
+    }
+}
+
+#[test]
+fn exfil_assets_all_have_block_outcome() {
+    let assets = parse_manifest_assets();
+    for asset in assets.iter().filter(|a| a["category"].as_str() == Some("exfil")) {
+        assert_eq!(
+            asset["expected_outcome"].as_str(),
+            Some("block"),
+            "exfil asset {} must have block outcome",
+            asset["asset_id"]
+        );
+    }
+}
+
+#[test]
+fn declassify_assets_all_have_declassify_outcome() {
+    let assets = parse_manifest_assets();
+    for asset in assets
+        .iter()
+        .filter(|a| a["category"].as_str() == Some("declassify"))
+    {
+        assert_eq!(
+            asset["expected_outcome"].as_str(),
+            Some("declassify"),
+            "declassify asset {} must have declassify outcome",
+            asset["asset_id"]
+        );
+    }
+}
+
+// ---------- exfil flow_path coverage ----------
+
+#[test]
+fn exfil_corpus_covers_all_five_flow_path_types() {
+    let assets = parse_manifest_assets();
+    let exfil_paths: BTreeSet<_> = assets
+        .iter()
+        .filter(|a| a["category"].as_str() == Some("exfil"))
+        .filter_map(|a| a["flow_path_type"].as_str().map(|s| s.to_string()))
+        .collect();
+    for required in REQUIRED_FLOW_PATHS {
+        assert!(
+            exfil_paths.contains(required),
+            "exfil corpus missing flow_path_type `{required}`"
+        );
+    }
+}
+
+// ---------- semantic_domain subcategory consistency ----------
+
+#[test]
+fn asset_semantic_domain_matches_category() {
+    let assets = parse_manifest_assets();
+    for asset in &assets {
+        let domain = asset["semantic_domain"].as_str().expect("semantic_domain");
+        let category = asset["category"].as_str().expect("category");
+        assert!(
+            domain.contains(category),
+            "asset {} has domain `{domain}` not matching category `{category}`",
+            asset["asset_id"]
+        );
+    }
+}
+
+// ---------- copy_tree nested subdirectory ----------
+
+#[test]
+fn copy_tree_handles_nested_subdirectories() {
+    let src = test_temp_dir("copy-nested-src");
+    let subdir = src.join("inner");
+    fs::create_dir_all(&subdir).expect("create inner dir");
+    fs::write(subdir.join("nested.txt"), "nested").expect("write nested");
+    let dst = test_temp_dir("copy-nested-dst").join("out");
+    copy_tree(&src, &dst);
+    assert_eq!(
+        fs::read_to_string(dst.join("inner/nested.txt")).unwrap(),
+        "nested"
+    );
+}
+
+// ---------- manifest has fixture_hash entries ----------
+
+#[test]
+fn every_asset_has_nonempty_fixture_hash() {
+    let assets = parse_manifest_assets();
+    for asset in &assets {
+        let hash = asset["fixture_hash"]
+            .as_str()
+            .unwrap_or_else(|| panic!("asset {} missing fixture_hash", asset["asset_id"]));
+        assert!(
+            !hash.trim().is_empty(),
+            "fixture_hash must be non-empty for asset {}",
+            asset["asset_id"]
+        );
+    }
+}

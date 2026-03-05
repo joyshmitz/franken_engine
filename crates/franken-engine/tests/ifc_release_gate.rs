@@ -632,3 +632,154 @@ fn ifc_release_gate_decision_has_empty_blockers_on_pass() {
         assert!(decision.blockers.is_empty());
     }
 }
+
+#[test]
+fn ifc_corpus_covers_all_required_flow_path_types() {
+    let run = run_ifc_corpus();
+    let flow_paths: BTreeSet<String> = run
+        .logs
+        .iter()
+        .filter_map(|e| e.flow_path_type.clone())
+        .collect();
+    for required in REQUIRED_FLOW_PATH_TYPES {
+        assert!(
+            flow_paths.contains(required),
+            "missing required flow path type in corpus: {required}"
+        );
+    }
+}
+
+#[test]
+fn ifc_corpus_covers_all_required_exfil_vector_domains() {
+    let run = run_ifc_corpus();
+    let domains: BTreeSet<String> = run
+        .logs
+        .iter()
+        .map(|e| e.semantic_domain.clone())
+        .collect();
+    for required in REQUIRED_EXFIL_VECTOR_DOMAINS {
+        assert!(
+            domains.contains(required),
+            "missing required exfil vector domain in corpus: {required}"
+        );
+    }
+}
+
+#[test]
+fn ifc_corpus_has_benign_exfil_and_declassify_categories() {
+    let run = run_ifc_corpus();
+    let categories: BTreeSet<String> = run
+        .logs
+        .iter()
+        .filter_map(|e| e.category.clone())
+        .collect();
+    for cat in ["benign", "exfil", "declassify"] {
+        assert!(
+            categories.contains(cat),
+            "missing IFC category in corpus: {cat}"
+        );
+    }
+}
+
+#[test]
+fn event_has_required_fields_rejects_empty_decision_id() {
+    let event = ConformanceLogEvent {
+        trace_id: "trace-1".to_string(),
+        decision_id: "  ".to_string(),
+        policy_id: "policy-1".to_string(),
+        component: "ifc".to_string(),
+        event: "evaluate".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        asset_id: "asset-1".to_string(),
+        workload_id: "asset-1".to_string(),
+        semantic_domain: "test".to_string(),
+        category: None,
+        source_labels: Vec::new(),
+        sink_clearances: Vec::new(),
+        flow_path_type: None,
+        expected_outcome: None,
+        actual_outcome: None,
+        evidence_type: None,
+        evidence_id: None,
+        duration_us: 100,
+        error_detail: None,
+    };
+    assert!(!event_has_required_fields(&event));
+}
+
+#[test]
+fn event_has_required_fields_rejects_empty_policy_id() {
+    let event = ConformanceLogEvent {
+        trace_id: "trace-1".to_string(),
+        decision_id: "decision-1".to_string(),
+        policy_id: "".to_string(),
+        component: "ifc".to_string(),
+        event: "evaluate".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        asset_id: "asset-1".to_string(),
+        workload_id: "asset-1".to_string(),
+        semantic_domain: "test".to_string(),
+        category: None,
+        source_labels: Vec::new(),
+        sink_clearances: Vec::new(),
+        flow_path_type: None,
+        expected_outcome: None,
+        actual_outcome: None,
+        evidence_type: None,
+        evidence_id: None,
+        duration_us: 100,
+        error_detail: None,
+    };
+    assert!(!event_has_required_fields(&event));
+}
+
+#[test]
+fn ifc_release_gate_blocks_on_direct_indirect_bypass() {
+    let mut run = run_ifc_corpus();
+    // Find an exfil event with direct/indirect flow path and allow it to succeed
+    let exfil_event = run
+        .logs
+        .iter_mut()
+        .find(|event| {
+            event.category.as_deref() == Some("exfil")
+                && matches!(event.flow_path_type.as_deref(), Some("direct" | "indirect"))
+        })
+        .expect("expected at least one direct/indirect exfil workload");
+
+    exfil_event.actual_outcome = Some("allow".to_string());
+    exfil_event.evidence_type = Some("none".to_string());
+    exfil_event.evidence_id = None;
+
+    let decision = evaluate_ifc_release_gate(&run);
+    assert!(decision.blocked);
+    assert!(decision.metrics.direct_indirect_bypass_count > 0);
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|b| b.contains("direct/indirect bypasses"))
+    );
+}
+
+#[test]
+fn ifc_release_gate_metrics_corpus_size_meets_minimum_thresholds() {
+    let run = run_ifc_corpus();
+    let decision = evaluate_ifc_release_gate(&run);
+    assert!(
+        decision.metrics.benign_total >= 100,
+        "benign corpus must be >= 100, got {}",
+        decision.metrics.benign_total
+    );
+    assert!(
+        decision.metrics.exfil_total >= 80,
+        "exfil corpus must be >= 80, got {}",
+        decision.metrics.exfil_total
+    );
+    assert!(
+        decision.metrics.declassify_total >= 30,
+        "declassify corpus must be >= 30, got {}",
+        decision.metrics.declassify_total
+    );
+}

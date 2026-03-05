@@ -457,3 +457,95 @@ fn semantic_fixture_catalog_fixtures_have_nonempty_ids() {
         assert!(!fixture.id.trim().is_empty());
     }
 }
+
+#[test]
+fn aggregate_family_status_not_applicable_counts_as_supported() {
+    assert_eq!(
+        aggregate_family_status(
+            GrammarCoverageStatus::NotApplicable,
+            GrammarCoverageStatus::NotApplicable
+        ),
+        "supported"
+    );
+    assert_eq!(
+        aggregate_family_status(
+            GrammarCoverageStatus::NotApplicable,
+            GrammarCoverageStatus::Supported
+        ),
+        "supported"
+    );
+}
+
+#[test]
+fn aggregate_family_status_unsupported_and_partial_is_partial() {
+    assert_eq!(
+        aggregate_family_status(
+            GrammarCoverageStatus::Unsupported,
+            GrammarCoverageStatus::Partial
+        ),
+        "partial"
+    );
+}
+
+#[test]
+fn backlog_family_fixture_ids_are_unique_within_family() {
+    let backlog = load_grammar_closure_backlog();
+    for family in &backlog.families {
+        let mut seen = BTreeSet::new();
+        for fixture_id in &family.fixture_ids {
+            assert!(
+                seen.insert(fixture_id),
+                "duplicate fixture_id `{}` within family `{}`",
+                fixture_id,
+                family.family_id
+            );
+        }
+    }
+}
+
+#[test]
+fn backlog_families_have_nonempty_owners() {
+    let backlog = load_grammar_closure_backlog();
+    for family in &backlog.families {
+        assert!(
+            !family.owner.trim().is_empty(),
+            "family `{}` must have a non-empty owner",
+            family.family_id
+        );
+    }
+}
+
+#[test]
+fn backlog_families_have_valid_current_status() {
+    let backlog = load_grammar_closure_backlog();
+    for family in &backlog.families {
+        assert!(
+            matches!(family.current_status.as_str(), "supported" | "partial" | "unsupported"),
+            "family `{}` has unexpected status `{}`",
+            family.family_id,
+            family.current_status
+        );
+    }
+}
+
+#[test]
+fn semantic_fixture_expected_hashes_start_with_sha256() {
+    let catalog = load_semantic_fixture_catalog();
+    for fixture in &catalog.fixtures {
+        assert!(
+            fixture.expected_hash.starts_with("sha256:"),
+            "fixture `{}` expected_hash must start with sha256: prefix",
+            fixture.id
+        );
+    }
+}
+
+#[test]
+fn backlog_family_ids_match_coverage_target_count() {
+    let backlog = load_grammar_closure_backlog();
+    assert_eq!(
+        backlog.families.len() as u64,
+        backlog.coverage_target_family_count,
+        "families.len() must equal coverage_target_family_count"
+    );
+}
