@@ -284,7 +284,11 @@ fn measurement_window_from_fixture_is_well_formed() {
 #[test]
 fn corpus_tiers_have_unique_ids() {
     let fixture = load_fixture();
-    let ids: BTreeSet<_> = fixture.corpus_tiers.iter().map(|t| t.tier_id.as_str()).collect();
+    let ids: BTreeSet<_> = fixture
+        .corpus_tiers
+        .iter()
+        .map(|t| t.tier_id.as_str())
+        .collect();
     assert_eq!(ids.len(), fixture.corpus_tiers.len());
 }
 
@@ -292,7 +296,11 @@ fn corpus_tiers_have_unique_ids() {
 fn corpus_tiers_are_all_release_required() {
     let fixture = load_fixture();
     for tier in &fixture.corpus_tiers {
-        assert!(tier.release_required, "tier {} not release-required", tier.tier_id);
+        assert!(
+            tier.release_required,
+            "tier {} not release-required",
+            tier.tier_id
+        );
     }
 }
 
@@ -301,19 +309,28 @@ fn corpus_tiers_are_all_release_required() {
 #[test]
 fn benchmark_cases_have_unique_ids() {
     let fixture = load_fixture();
-    let ids: BTreeSet<_> = fixture.benchmark_cases.iter().map(|c| c.case_id.as_str()).collect();
+    let ids: BTreeSet<_> = fixture
+        .benchmark_cases
+        .iter()
+        .map(|c| c.case_id.as_str())
+        .collect();
     assert_eq!(ids.len(), fixture.benchmark_cases.len());
 }
 
 #[test]
 fn benchmark_cases_reference_valid_tiers() {
     let fixture = load_fixture();
-    let tier_ids: BTreeSet<_> = fixture.corpus_tiers.iter().map(|t| t.tier_id.as_str()).collect();
+    let tier_ids: BTreeSet<_> = fixture
+        .corpus_tiers
+        .iter()
+        .map(|t| t.tier_id.as_str())
+        .collect();
     for case in &fixture.benchmark_cases {
         assert!(
             tier_ids.contains(case.tier_id.as_str()),
             "case {} references unknown tier {}",
-            case.case_id, case.tier_id
+            case.case_id,
+            case.tier_id
         );
     }
 }
@@ -366,6 +383,34 @@ fn runner_commands_have_four_modes() {
 #[test]
 fn structured_event_keys_include_trace_id() {
     let fixture = load_fixture();
-    assert!(fixture.structured_event_keys.contains(&"trace_id".to_string()));
-    assert!(fixture.structured_event_keys.contains(&"outcome".to_string()));
+    assert!(
+        fixture
+            .structured_event_keys
+            .contains(&"trace_id".to_string())
+    );
+    assert!(
+        fixture
+            .structured_event_keys
+            .contains(&"outcome".to_string())
+    );
+}
+
+#[test]
+fn fixture_has_nonempty_schema_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.trim().is_empty());
+}
+
+#[test]
+fn fixture_deterministic_double_load() {
+    let a = load_fixture();
+    let b = load_fixture();
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.benchmark_cases.len(), b.benchmark_cases.len());
+}
+
+#[test]
+fn doc_has_more_than_50_lines() {
+    let doc = load_doc();
+    assert!(doc.lines().count() > 50);
 }

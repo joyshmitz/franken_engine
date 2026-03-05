@@ -217,20 +217,31 @@ fn fixture_runner_commands_cover_all_required_modes() {
         .map(String::as_str)
         .collect();
     let commands: BTreeSet<&str> = fixture.runner_commands.keys().map(String::as_str).collect();
-    assert_eq!(modes, commands, "runner_commands must exactly cover required_wrapper_modes");
+    assert_eq!(
+        modes, commands,
+        "runner_commands must exactly cover required_wrapper_modes"
+    );
 }
 
 #[test]
 fn fixture_required_event_keys_are_unique() {
     let fixture = load_fixture();
-    let set: BTreeSet<&str> = fixture.required_event_keys.iter().map(String::as_str).collect();
+    let set: BTreeSet<&str> = fixture
+        .required_event_keys
+        .iter()
+        .map(String::as_str)
+        .collect();
     assert_eq!(set.len(), fixture.required_event_keys.len());
 }
 
 #[test]
 fn fixture_required_manifest_keys_are_unique() {
     let fixture = load_fixture();
-    let set: BTreeSet<&str> = fixture.required_manifest_keys.iter().map(String::as_str).collect();
+    let set: BTreeSet<&str> = fixture
+        .required_manifest_keys
+        .iter()
+        .map(String::as_str)
+        .collect();
     assert_eq!(set.len(), fixture.required_manifest_keys.len());
 }
 
@@ -248,7 +259,10 @@ fn fixture_required_environment_keys_are_unique() {
 #[test]
 fn fixture_bead_id_has_expected_prefix() {
     let fixture = load_fixture();
-    assert!(fixture.bead_id.starts_with("bd-"), "bead_id must start with bd-");
+    assert!(
+        fixture.bead_id.starts_with("bd-"),
+        "bead_id must start with bd-"
+    );
 }
 
 #[test]
@@ -256,7 +270,10 @@ fn fixture_schema_version_is_stable_contract() {
     let f1 = load_fixture();
     let f2 = load_fixture();
     assert_eq!(f1.schema_version, f2.schema_version);
-    assert_eq!(f1.deterministic_env_schema_version, f2.deterministic_env_schema_version);
+    assert_eq!(
+        f1.deterministic_env_schema_version,
+        f2.deterministic_env_schema_version
+    );
 }
 
 #[test]
@@ -307,4 +324,27 @@ fn fixture_required_event_keys_include_trace_id() {
         fixture.required_event_keys.iter().any(|k| k == "trace_id"),
         "required_event_keys must include trace_id"
     );
+}
+
+#[test]
+fn fixture_deterministic_double_load() {
+    let a = load_fixture();
+    let b = load_fixture();
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.bead_id, b.bead_id);
+    assert_eq!(a.wrapper_id, b.wrapper_id);
+}
+
+#[test]
+fn fixture_required_manifest_keys_are_nonempty_strings() {
+    let fixture = load_fixture();
+    for key in &fixture.required_manifest_keys {
+        assert!(!key.trim().is_empty());
+    }
+}
+
+#[test]
+fn env_contract_doc_has_more_than_50_lines() {
+    let doc = load_env_contract_doc();
+    assert!(doc.lines().count() > 50);
 }

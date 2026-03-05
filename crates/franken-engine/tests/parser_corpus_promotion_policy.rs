@@ -555,8 +555,18 @@ fn stable_replay_command_contains_corpus_and_fixture() {
 fn promotion_policy_has_two_rules() {
     let policy = load_promotion_policy();
     assert_eq!(policy.promotion_rules.len(), 2);
-    assert!(policy.promotion_rules.iter().any(|r| r.corpus == "normative"));
-    assert!(policy.promotion_rules.iter().any(|r| r.corpus == "adversarial"));
+    assert!(
+        policy
+            .promotion_rules
+            .iter()
+            .any(|r| r.corpus == "normative")
+    );
+    assert!(
+        policy
+            .promotion_rules
+            .iter()
+            .any(|r| r.corpus == "adversarial")
+    );
 }
 
 #[test]

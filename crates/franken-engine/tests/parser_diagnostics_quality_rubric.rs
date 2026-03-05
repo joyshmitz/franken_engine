@@ -558,13 +558,7 @@ fn rubric_cases_cover_expected_families() {
     let families: BTreeSet<_> = fixture
         .cases
         .iter()
-        .map(|case| {
-            case.family_id
-                .split('.')
-                .next()
-                .unwrap()
-                .to_string()
-        })
+        .map(|case| case.family_id.split('.').next().unwrap().to_string())
         .collect();
     for expected in ["goal", "input", "resource", "syntax"] {
         assert!(families.contains(expected), "missing family: {expected}");
@@ -671,4 +665,24 @@ fn aggregate_scores_include_all_dimensions() {
             dim.dimension_id
         );
     }
+}
+
+#[test]
+fn fixture_has_nonempty_schema_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.trim().is_empty());
+}
+
+#[test]
+fn fixture_deterministic_double_load() {
+    let a = load_fixture();
+    let b = load_fixture();
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.cases.len(), b.cases.len());
+}
+
+#[test]
+fn doc_has_more_than_50_lines() {
+    let doc = load_doc();
+    assert!(doc.lines().count() > 50);
 }

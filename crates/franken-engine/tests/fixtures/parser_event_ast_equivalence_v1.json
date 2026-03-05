@@ -11,11 +11,28 @@
     "error_code"
   ],
   "replay_command": "./scripts/e2e/parser_event_ast_equivalence_replay.sh",
+  "matrix_dimensions": {
+    "corpus_tiers": [
+      "core",
+      "edge",
+      "adversarial"
+    ],
+    "seed_sweep": [
+      17,
+      43,
+      101
+    ],
+    "cross_arch_targets": [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu"
+    ]
+  },
   "cases": [
     {
       "case_id": "module_import_export_parity",
       "goal": "module",
       "source": "import dep from \"pkg\";\nexport default dep;\n",
+      "corpus_tier": "core",
       "tamper_kind": "none",
       "expected_parse_error_code": null,
       "expected_materialization_error_code": null,
@@ -26,6 +43,7 @@
       "case_id": "script_await_parity",
       "goal": "script",
       "source": "await work",
+      "corpus_tier": "core",
       "tamper_kind": "none",
       "expected_parse_error_code": null,
       "expected_materialization_error_code": null,
@@ -36,6 +54,7 @@
       "case_id": "empty_source_failure_contract",
       "goal": "script",
       "source": "",
+      "corpus_tier": "edge",
       "tamper_kind": "none",
       "expected_parse_error_code": "empty_source",
       "expected_materialization_error_code": "parse_failed_event_stream",
@@ -46,6 +65,7 @@
       "case_id": "tampered_statement_payload_hash",
       "goal": "script",
       "source": "alpha;",
+      "corpus_tier": "adversarial",
       "tamper_kind": "statement_hash",
       "expected_parse_error_code": null,
       "expected_materialization_error_code": "statement_hash_mismatch",
@@ -77,6 +97,11 @@
     {
       "scenario_id": "full",
       "command": "PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=full ./scripts/run_parser_event_ast_equivalence.sh test",
+      "expected_outcome": "pass"
+    },
+    {
+      "scenario_id": "matrix",
+      "command": "PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=matrix ./scripts/run_parser_event_ast_equivalence.sh test",
       "expected_outcome": "pass"
     }
   ]

@@ -420,8 +420,16 @@ fn ev_score_returns_expected_value() {
 #[test]
 fn rank_by_ev_descending() {
     let results = vec![
-        CampaignResult { lever_id: "low".to_string(), ev_score_millionths: 100, gain_millionths: 0 },
-        CampaignResult { lever_id: "high".to_string(), ev_score_millionths: 900, gain_millionths: 0 },
+        CampaignResult {
+            lever_id: "low".to_string(),
+            ev_score_millionths: 100,
+            gain_millionths: 0,
+        },
+        CampaignResult {
+            lever_id: "high".to_string(),
+            ev_score_millionths: 900,
+            gain_millionths: 0,
+        },
     ];
     assert_eq!(rank_by_ev(&results), vec!["high", "low"]);
 }
@@ -429,8 +437,16 @@ fn rank_by_ev_descending() {
 #[test]
 fn rank_by_gain_descending() {
     let results = vec![
-        CampaignResult { lever_id: "neg".to_string(), ev_score_millionths: 0, gain_millionths: -500 },
-        CampaignResult { lever_id: "pos".to_string(), ev_score_millionths: 0, gain_millionths: 1000 },
+        CampaignResult {
+            lever_id: "neg".to_string(),
+            ev_score_millionths: 0,
+            gain_millionths: -500,
+        },
+        CampaignResult {
+            lever_id: "pos".to_string(),
+            ev_score_millionths: 0,
+            gain_millionths: 1000,
+        },
     ];
     assert_eq!(rank_by_gain(&results), vec!["pos", "neg"]);
 }
@@ -440,8 +456,16 @@ fn rank_by_gain_descending() {
 #[test]
 fn selected_lever_picks_highest_ev() {
     let results = vec![
-        CampaignResult { lever_id: "a".to_string(), ev_score_millionths: 50, gain_millionths: 1000 },
-        CampaignResult { lever_id: "b".to_string(), ev_score_millionths: 500, gain_millionths: -100 },
+        CampaignResult {
+            lever_id: "a".to_string(),
+            ev_score_millionths: 50,
+            gain_millionths: 1000,
+        },
+        CampaignResult {
+            lever_id: "b".to_string(),
+            ev_score_millionths: 500,
+            gain_millionths: -100,
+        },
     ];
     assert_eq!(selected_lever_by_ev(&results), "b");
 }
@@ -499,4 +523,189 @@ fn ev_score_zero_effort_avoids_panic() {
         friction: 0,
     };
     let _score = ev_score_millionths(&inputs);
+}
+
+#[test]
+fn fixture_deterministic_double_load() {
+    let a = load_fixture();
+    let b = load_fixture();
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.campaign_runs.len(), b.campaign_runs.len());
+}
+
+#[test]
+fn campaign_result_debug_is_nonempty() {
+    let result = CampaignResult {
+        lever_id: "test".to_string(),
+        ev_score_millionths: 100,
+        gain_millionths: 50,
+    };
+    let debug = format!("{result:?}");
+    assert!(!debug.trim().is_empty());
+}
+
+#[test]
+fn rank_by_ev_returns_empty_for_empty_input() {
+    let empty: Vec<CampaignResult> = vec![];
+    assert!(rank_by_ev(&empty).is_empty());
+}
+
+// ---------- additional doc and contract validation ----------
+
+#[test]
+fn doc_word_count_exceeds_minimum() {
+    let doc = load_doc();
+    let word_count = doc.split_whitespace().count();
+    assert!(
+        word_count >= 200,
+        "one-lever doc must have at least 200 words, found {word_count}"
+    );
+}
+
+#[test]
+fn doc_contains_required_keywords() {
+    let doc = load_doc();
+    for keyword in [
+        "deterministic",
+        "replay",
+        "artifact",
+        "millionths",
+        "EV",
+        "weight",
+        "baseline",
+        "candidate",
+    ] {
+        assert!(
+            doc.contains(keyword),
+            "one-lever doc missing required keyword: {keyword}"
+        );
+    }
+}
+
+#[test]
+fn doc_section_ordering_is_correct() {
+    let doc = load_doc();
+    let sections = [
+        "## Scope",
+        "## Contract Version",
+        "## One-Lever Campaign Semantics",
+        "## EV Scoring Contract",
+        "## Gain Attribution Contract",
+        "## Structured Log Contract",
+        "## Deterministic Replay Contract",
+        "## Deterministic Execution Contract",
+        "## Required Artifacts",
+        "## Operator Verification",
+    ];
+    let mut last_pos = 0;
+    for section in sections {
+        if let Some(pos) = doc.find(section) {
+            assert!(
+                pos >= last_pos,
+                "section `{section}` appears out of order in doc"
+            );
+            last_pos = pos;
+        }
+    }
+}
+
+#[test]
+fn fixture_lever_categories_are_nonempty_and_consistent() {
+    let fixture = load_fixture();
+    let mut categories = BTreeSet::new();
+    for run in &fixture.campaign_runs {
+        assert!(
+            !run.lever_category.trim().is_empty(),
+            "lever_category must not be empty for {}",
+            run.lever_id
+        );
+        categories.insert(run.lever_category.clone());
+    }
+    // At least one unique category must exist
+    assert!(!categories.is_empty());
+}
+
+#[test]
+fn fixture_replay_commands_start_with_script_path() {
+    let fixture = load_fixture();
+    for run in &fixture.campaign_runs {
+        assert!(
+            run.replay_command.starts_with("./scripts/")
+                || run.replay_command.starts_with("scripts/"),
+            "replay command for {} must point to scripts/ directory",
+            run.lever_id
+        );
+    }
+}
+
+#[test]
+fn fixture_changed_paths_are_nonempty_strings() {
+    let fixture = load_fixture();
+    for run in &fixture.campaign_runs {
+        for path in &run.changed_paths {
+            assert!(
+                !path.trim().is_empty(),
+                "changed_path entries must not be empty for {}",
+                run.lever_id
+            );
+        }
+    }
+}
+
+#[test]
+fn emit_events_count_matches_runs_plus_selection() {
+    let fixture = load_fixture();
+    let results = compute_campaign_results(&fixture);
+    let events = emit_structured_events(&fixture, &results);
+    // One event per run + one selection event
+    assert_eq!(events.len(), fixture.campaign_runs.len() + 1);
+}
+
+#[test]
+fn rank_by_ev_tiebreak_is_lexicographic() {
+    let results = vec![
+        CampaignResult {
+            lever_id: "beta".to_string(),
+            ev_score_millionths: 500,
+            gain_millionths: 0,
+        },
+        CampaignResult {
+            lever_id: "alpha".to_string(),
+            ev_score_millionths: 500,
+            gain_millionths: 0,
+        },
+    ];
+    let ranking = rank_by_ev(&results);
+    assert_eq!(
+        ranking,
+        vec!["alpha", "beta"],
+        "ties must break lexicographically by lever_id"
+    );
+}
+
+#[test]
+fn gain_ranking_tiebreak_is_lexicographic() {
+    let results = vec![
+        CampaignResult {
+            lever_id: "zeta".to_string(),
+            ev_score_millionths: 0,
+            gain_millionths: 100,
+        },
+        CampaignResult {
+            lever_id: "alpha".to_string(),
+            ev_score_millionths: 0,
+            gain_millionths: 100,
+        },
+    ];
+    let ranking = rank_by_gain(&results);
+    assert_eq!(
+        ranking,
+        vec!["alpha", "zeta"],
+        "ties must break lexicographically by lever_id"
+    );
+}
+
+#[test]
+fn scaled_delta_lower_zero_for_equal() {
+    assert_eq!(scaled_delta_lower_is_better(100, 100), 0);
 }

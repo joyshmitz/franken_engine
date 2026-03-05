@@ -314,39 +314,60 @@ fn parser_third_party_rerun_kit_upstream_inputs_are_nonempty_strings() {
 fn parser_third_party_rerun_kit_required_modes_are_unique() {
     let fixture = load_fixture();
     let unique: BTreeSet<_> = fixture.required_modes.iter().collect();
-    assert_eq!(unique.len(), fixture.required_modes.len(), "modes must be unique");
+    assert_eq!(
+        unique.len(),
+        fixture.required_modes.len(),
+        "modes must be unique"
+    );
 }
 
 #[test]
 fn parser_third_party_rerun_kit_manifest_keys_are_unique() {
     let fixture = load_fixture();
     let unique: BTreeSet<_> = fixture.required_manifest_keys.iter().collect();
-    assert_eq!(unique.len(), fixture.required_manifest_keys.len(), "manifest keys must be unique");
+    assert_eq!(
+        unique.len(),
+        fixture.required_manifest_keys.len(),
+        "manifest keys must be unique"
+    );
 }
 
 #[test]
 fn parser_third_party_rerun_kit_log_keys_are_unique() {
     let fixture = load_fixture();
     let unique: BTreeSet<_> = fixture.required_log_keys.iter().collect();
-    assert_eq!(unique.len(), fixture.required_log_keys.len(), "log keys must be unique");
+    assert_eq!(
+        unique.len(),
+        fixture.required_log_keys.len(),
+        "log keys must be unique"
+    );
 }
 
 #[test]
 fn parser_third_party_rerun_kit_fixture_has_replay_command() {
     let fixture = load_fixture();
-    assert!(!fixture.replay_command.trim().is_empty(), "replay command must not be empty");
+    assert!(
+        !fixture.replay_command.trim().is_empty(),
+        "replay command must not be empty"
+    );
 }
 
 #[test]
 fn parser_third_party_rerun_kit_fixture_has_bead_id() {
     let fixture = load_fixture();
-    assert!(!fixture.bead_id.trim().is_empty(), "bead_id must not be empty");
+    assert!(
+        !fixture.bead_id.trim().is_empty(),
+        "bead_id must not be empty"
+    );
 }
 
 #[test]
 fn parser_third_party_rerun_kit_fixture_has_policy_id() {
     let fixture = load_fixture();
-    assert!(!fixture.policy_id.trim().is_empty(), "policy_id must not be empty");
+    assert!(
+        !fixture.policy_id.trim().is_empty(),
+        "policy_id must not be empty"
+    );
 }
 
 #[test]
@@ -367,4 +388,148 @@ fn parser_third_party_rerun_kit_fixture_deterministic_double_load() {
     let b = load_fixture();
     assert_eq!(a.schema_version, b.schema_version);
     assert_eq!(a.bead_id, b.bead_id);
+}
+
+// ---------- additional doc and contract validation ----------
+
+#[test]
+fn parser_third_party_rerun_kit_doc_word_count_exceeds_minimum() {
+    let doc = load_doc();
+    let word_count = doc.split_whitespace().count();
+    assert!(
+        word_count >= 200,
+        "rerun kit doc must have at least 200 words, found {word_count}"
+    );
+}
+
+#[test]
+fn parser_third_party_rerun_kit_doc_contains_required_keywords() {
+    let doc = load_doc();
+    for keyword in [
+        "deterministic",
+        "replay",
+        "artifact",
+        "matrix",
+        "verifier",
+        "fail-closed",
+        "rch",
+    ] {
+        assert!(
+            doc.to_ascii_lowercase().contains(keyword),
+            "rerun kit doc missing required keyword: {keyword}"
+        );
+    }
+}
+
+#[test]
+fn parser_third_party_rerun_kit_doc_section_ordering_is_correct() {
+    let doc = load_doc();
+    let sections = [
+        "## Scope",
+        "## Contract Version",
+        "## Upstream Dependencies",
+        "## Kit Contents",
+        "## Matrix Input Status Model",
+        "## Replay and Execution",
+        "## Required Artifacts",
+        "## Operator Verification",
+    ];
+    let mut last_pos = 0;
+    for section in sections {
+        if let Some(pos) = doc.find(section) {
+            assert!(
+                pos >= last_pos,
+                "section `{section}` appears out of order in rerun kit doc"
+            );
+            last_pos = pos;
+        }
+    }
+}
+
+#[test]
+fn parser_third_party_rerun_kit_classifier_blocked_at_boundary() {
+    // exactly 1 critical delta should still block
+    assert_eq!(
+        classify_matrix_input_status(true, true, 1),
+        "blocked_critical_deltas"
+    );
+    // zero critical deltas should be ready
+    assert_eq!(
+        classify_matrix_input_status(true, true, 0),
+        "ready_for_external_rerun"
+    );
+}
+
+#[test]
+fn parser_third_party_rerun_kit_classifier_high_delta_count() {
+    assert_eq!(
+        classify_matrix_input_status(true, true, 1_000),
+        "blocked_critical_deltas"
+    );
+}
+
+#[test]
+fn parser_third_party_rerun_kit_replay_command_is_script_path() {
+    let fixture = load_fixture();
+    assert!(
+        fixture.replay_command.starts_with("./scripts/"),
+        "replay command must reference scripts/ directory"
+    );
+    assert!(
+        fixture.replay_command.ends_with(".sh package") || fixture.replay_command.ends_with(".sh"),
+        "replay command must invoke a shell script"
+    );
+}
+
+#[test]
+fn parser_third_party_rerun_kit_doc_mentions_rch_timeout() {
+    let doc = load_doc();
+    assert!(
+        doc.contains("RCH_BUILD_TIMEOUT"),
+        "rerun kit doc must mention RCH_BUILD_TIMEOUT env variable"
+    );
+}
+
+#[test]
+fn parser_third_party_rerun_kit_script_mentions_mode_package() {
+    let script = load_script();
+    assert!(
+        script.contains("package"),
+        "rerun kit script must support package mode"
+    );
+}
+
+#[test]
+fn parser_third_party_rerun_kit_fixture_matrix_statuses_cover_all_classifier_outputs() {
+    let fixture = load_fixture();
+    let statuses: BTreeSet<_> = fixture.matrix_input_statuses.iter().cloned().collect();
+    // All four possible outputs of classify_matrix_input_status must be present
+    let test_cases = [
+        (false, false, 0u64, "pending_upstream_matrix"),
+        (true, false, 0, "incomplete_matrix"),
+        (true, true, 1, "blocked_critical_deltas"),
+        (true, true, 0, "ready_for_external_rerun"),
+    ];
+    for (provided, complete, deltas, expected) in test_cases {
+        let result = classify_matrix_input_status(provided, complete, deltas);
+        assert_eq!(result, expected);
+        assert!(
+            statuses.contains(&expected.to_string()),
+            "fixture matrix_input_statuses missing classifier output: {expected}"
+        );
+    }
+}
+
+#[test]
+fn parser_third_party_rerun_kit_doc_references_cli_commands() {
+    let doc = load_doc();
+    for cli in [
+        "./scripts/run_parser_third_party_rerun_kit.sh",
+        "./scripts/e2e/parser_third_party_rerun_kit_replay.sh",
+    ] {
+        assert!(
+            doc.contains(cli),
+            "rerun kit doc missing CLI command reference: {cli}"
+        );
+    }
 }

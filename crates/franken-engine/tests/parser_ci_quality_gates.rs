@@ -634,11 +634,7 @@ fn parser_ci_quality_run_ids_are_unique() {
     let fixture = load_fixture();
     let mut seen = BTreeSet::new();
     for run in &fixture.runs {
-        assert!(
-            seen.insert(&run.run_id),
-            "duplicate run_id: {}",
-            run.run_id
-        );
+        assert!(seen.insert(&run.run_id), "duplicate run_id: {}", run.run_id);
     }
 }
 

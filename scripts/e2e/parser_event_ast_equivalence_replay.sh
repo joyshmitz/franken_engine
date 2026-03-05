@@ -10,10 +10,10 @@ parser_frontier_bootstrap_env
 scenario="${1:-replay}"
 
 case "${scenario}" in
-  parity|malformed|tamper|replay|full)
+  parity|malformed|tamper|replay|full|matrix)
     ;;
   *)
-    echo "usage: $0 [parity|malformed|tamper|replay|full]" >&2
+    echo "usage: $0 [parity|malformed|tamper|replay|full|matrix]" >&2
     exit 2
     ;;
 esac

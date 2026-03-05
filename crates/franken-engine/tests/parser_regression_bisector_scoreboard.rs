@@ -620,7 +620,11 @@ fn fixture_metric_definitions_have_unique_ids() {
     let fixture = load_fixture();
     let mut ids = BTreeSet::new();
     for metric in &fixture.metric_definitions {
-        assert!(ids.insert(&metric.metric_id), "duplicate metric id: {}", metric.metric_id);
+        assert!(
+            ids.insert(&metric.metric_id),
+            "duplicate metric id: {}",
+            metric.metric_id
+        );
     }
 }
 
@@ -628,7 +632,10 @@ fn fixture_metric_definitions_have_unique_ids() {
 fn fixture_history_commits_are_nonempty() {
     let fixture = load_fixture();
     for entry in &fixture.history {
-        assert!(!entry.commit.trim().is_empty(), "history commit must not be empty");
+        assert!(
+            !entry.commit.trim().is_empty(),
+            "history commit must not be empty"
+        );
     }
 }
 
@@ -638,7 +645,11 @@ fn emit_structured_events_count_matches_scores_plus_one() {
     let scores = build_commit_scores(&fixture);
     let bisect = run_bisect(&fixture);
     let events = emit_structured_events(&fixture, &scores, &bisect);
-    assert_eq!(events.len(), scores.len() + 1, "events = score rows + bisect event");
+    assert_eq!(
+        events.len(),
+        scores.len() + 1,
+        "events = score rows + bisect event"
+    );
 }
 
 #[test]

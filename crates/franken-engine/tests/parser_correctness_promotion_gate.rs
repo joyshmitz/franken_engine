@@ -620,7 +620,11 @@ fn evaluate_gate_holds_with_unresolved_critical() {
     let fixture = make_fixture(vec![make_drift("d1", "critical", "open", None)]);
     let eval = evaluate_gate(&fixture);
     assert_eq!(eval.outcome, "hold");
-    assert!(eval.blockers.iter().any(|b| b.contains("unresolved_high_drift:d1")));
+    assert!(
+        eval.blockers
+            .iter()
+            .any(|b| b.contains("unresolved_high_drift:d1"))
+    );
     assert!(eval.failing_fixture_ids.contains(&"fixture-d1".to_string()));
 }
 
@@ -630,7 +634,11 @@ fn evaluate_gate_holds_on_missing_evidence_lane() {
     fixture.required_evidence_lanes = vec!["lane_x".to_string()];
     let eval = evaluate_gate(&fixture);
     assert_eq!(eval.outcome, "hold");
-    assert!(eval.blockers.iter().any(|b| b.contains("evidence_missing:lane_x")));
+    assert!(
+        eval.blockers
+            .iter()
+            .any(|b| b.contains("evidence_missing:lane_x"))
+    );
 }
 
 #[test]
@@ -645,7 +653,11 @@ fn evaluate_gate_holds_on_failed_evidence_lane() {
     });
     let eval = evaluate_gate(&fixture);
     assert_eq!(eval.outcome, "hold");
-    assert!(eval.blockers.iter().any(|b| b.contains("evidence_not_green:lane_y:fail")));
+    assert!(
+        eval.blockers
+            .iter()
+            .any(|b| b.contains("evidence_not_green:lane_y:fail"))
+    );
 }
 
 // ---------- emit_structured_event ----------

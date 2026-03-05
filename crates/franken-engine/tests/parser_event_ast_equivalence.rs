@@ -21,6 +21,7 @@ struct EquivalenceCase {
     case_id: String,
     goal: String,
     source: String,
+    corpus_tier: String,
     tamper_kind: String,
     expected_parse_error_code: Option<String>,
     expected_materialization_error_code: Option<String>,
@@ -29,11 +30,19 @@ struct EquivalenceCase {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct MatrixDimensions {
+    corpus_tiers: Vec<String>,
+    seed_sweep: Vec<u64>,
+    cross_arch_targets: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 struct ParserEventAstEquivalenceFixture {
     schema_version: String,
     contract_version: String,
     required_log_keys: Vec<String>,
     replay_command: String,
+    matrix_dimensions: MatrixDimensions,
     cases: Vec<EquivalenceCase>,
     replay_scenarios: Vec<ReplayScenario>,
 }
@@ -140,6 +149,7 @@ fn emit_structured_events(fixture: &ParserEventAstEquivalenceFixture) -> Vec<Val
                 "component": "parser_event_ast_equivalence_gate",
                 "event": "scenario_evaluated",
                 "scenario_id": case.case_id,
+                "corpus_tier": case.corpus_tier,
                 "outcome": outcome,
                 "error_code": error_code,
                 "replay_command": format!(
@@ -317,7 +327,7 @@ fn parser_event_ast_equivalence_replay_scenarios_are_deterministic() {
     scenario_ids.sort_unstable();
     assert_eq!(
         scenario_ids,
-        ["full", "malformed", "parity", "replay", "tamper"]
+        ["full", "malformed", "matrix", "parity", "replay", "tamper"]
     );
 
     for scenario in &fixture.replay_scenarios {
@@ -351,7 +361,10 @@ fn parser_event_ast_equivalence_contract_doc_and_logs_are_well_formed() {
     assert!(doc.contains("bd-2mds.1.4.4"));
     assert!(doc.contains("./scripts/run_parser_event_ast_equivalence.sh ci"));
     assert!(doc.contains("./scripts/e2e/parser_event_ast_equivalence_replay.sh"));
+    assert!(doc.contains("./scripts/e2e/parser_event_ast_equivalence_replay.sh matrix"));
+    assert!(doc.contains("PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=matrix"));
     assert!(doc.contains("artifacts/parser_event_ast_equivalence/<timestamp>/run_manifest.json"));
+    assert!(doc.contains("artifacts/parser_event_ast_equivalence/<timestamp>/matrix_summary.json"));
 
     let events = emit_structured_events(&fixture);
     assert_eq!(events.len(), fixture.cases.len());
@@ -417,23 +430,74 @@ fn event_ast_parse_error_code_all_known() {
 #[test]
 fn event_ast_materialization_error_code_all_known() {
     let codes = [
-        ("parse_failed_event_stream", ParseEventMaterializationErrorCode::ParseFailedEventStream),
-        ("statement_hash_mismatch", ParseEventMaterializationErrorCode::StatementHashMismatch),
-        ("statement_count_mismatch", ParseEventMaterializationErrorCode::StatementCountMismatch),
-        ("statement_index_mismatch", ParseEventMaterializationErrorCode::StatementIndexMismatch),
-        ("statement_kind_mismatch", ParseEventMaterializationErrorCode::StatementKindMismatch),
-        ("statement_span_mismatch", ParseEventMaterializationErrorCode::StatementSpanMismatch),
-        ("source_hash_mismatch", ParseEventMaterializationErrorCode::SourceHashMismatch),
-        ("ast_hash_mismatch", ParseEventMaterializationErrorCode::AstHashMismatch),
-        ("missing_parse_started", ParseEventMaterializationErrorCode::MissingParseStarted),
-        ("missing_parse_completed", ParseEventMaterializationErrorCode::MissingParseCompleted),
-        ("invalid_event_sequence", ParseEventMaterializationErrorCode::InvalidEventSequence),
-        ("goal_mismatch", ParseEventMaterializationErrorCode::GoalMismatch),
-        ("mode_mismatch", ParseEventMaterializationErrorCode::ModeMismatch),
-        ("inconsistent_event_envelope", ParseEventMaterializationErrorCode::InconsistentEventEnvelope),
-        ("source_parse_failed", ParseEventMaterializationErrorCode::SourceParseFailed),
-        ("unsupported_contract_version", ParseEventMaterializationErrorCode::UnsupportedContractVersion),
-        ("unsupported_schema_version", ParseEventMaterializationErrorCode::UnsupportedSchemaVersion),
+        (
+            "parse_failed_event_stream",
+            ParseEventMaterializationErrorCode::ParseFailedEventStream,
+        ),
+        (
+            "statement_hash_mismatch",
+            ParseEventMaterializationErrorCode::StatementHashMismatch,
+        ),
+        (
+            "statement_count_mismatch",
+            ParseEventMaterializationErrorCode::StatementCountMismatch,
+        ),
+        (
+            "statement_index_mismatch",
+            ParseEventMaterializationErrorCode::StatementIndexMismatch,
+        ),
+        (
+            "statement_kind_mismatch",
+            ParseEventMaterializationErrorCode::StatementKindMismatch,
+        ),
+        (
+            "statement_span_mismatch",
+            ParseEventMaterializationErrorCode::StatementSpanMismatch,
+        ),
+        (
+            "source_hash_mismatch",
+            ParseEventMaterializationErrorCode::SourceHashMismatch,
+        ),
+        (
+            "ast_hash_mismatch",
+            ParseEventMaterializationErrorCode::AstHashMismatch,
+        ),
+        (
+            "missing_parse_started",
+            ParseEventMaterializationErrorCode::MissingParseStarted,
+        ),
+        (
+            "missing_parse_completed",
+            ParseEventMaterializationErrorCode::MissingParseCompleted,
+        ),
+        (
+            "invalid_event_sequence",
+            ParseEventMaterializationErrorCode::InvalidEventSequence,
+        ),
+        (
+            "goal_mismatch",
+            ParseEventMaterializationErrorCode::GoalMismatch,
+        ),
+        (
+            "mode_mismatch",
+            ParseEventMaterializationErrorCode::ModeMismatch,
+        ),
+        (
+            "inconsistent_event_envelope",
+            ParseEventMaterializationErrorCode::InconsistentEventEnvelope,
+        ),
+        (
+            "source_parse_failed",
+            ParseEventMaterializationErrorCode::SourceParseFailed,
+        ),
+        (
+            "unsupported_contract_version",
+            ParseEventMaterializationErrorCode::UnsupportedContractVersion,
+        ),
+        (
+            "unsupported_schema_version",
+            ParseEventMaterializationErrorCode::UnsupportedSchemaVersion,
+        ),
     ];
     for (raw, expected) in codes {
         assert_eq!(materialization_error_code(raw), expected);
@@ -467,6 +531,57 @@ fn fixture_case_ids_are_unique() {
     }
 }
 
+#[test]
+fn parser_event_ast_equivalence_matrix_dimensions_contract_is_complete() {
+    let fixture = load_fixture();
+    assert_eq!(
+        fixture.matrix_dimensions.corpus_tiers,
+        vec![
+            "core".to_string(),
+            "edge".to_string(),
+            "adversarial".to_string()
+        ]
+    );
+    assert_eq!(fixture.matrix_dimensions.seed_sweep, vec![17, 43, 101]);
+    assert_eq!(
+        fixture.matrix_dimensions.cross_arch_targets,
+        vec![
+            "x86_64-unknown-linux-gnu".to_string(),
+            "aarch64-unknown-linux-gnu".to_string()
+        ]
+    );
+}
+
+#[test]
+fn parser_event_ast_equivalence_cases_cover_required_matrix_tiers() {
+    let fixture = load_fixture();
+    let required = fixture
+        .matrix_dimensions
+        .corpus_tiers
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    let observed = fixture
+        .cases
+        .iter()
+        .map(|case| case.corpus_tier.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    for tier in &required {
+        assert!(
+            observed.contains(tier),
+            "missing required matrix corpus tier in cases: {tier}"
+        );
+    }
+    for case in &fixture.cases {
+        assert!(
+            required.contains(case.corpus_tier.as_str()),
+            "case uses unknown matrix corpus tier: {}",
+            case.corpus_tier
+        );
+    }
+}
+
 // ---------- emit_structured_events ----------
 
 #[test]
@@ -489,9 +604,9 @@ fn structured_events_have_trace_prefix() {
 // ---------- replay scenarios ----------
 
 #[test]
-fn replay_scenarios_have_five_entries() {
+fn replay_scenarios_have_six_entries() {
     let fixture = load_fixture();
-    assert_eq!(fixture.replay_scenarios.len(), 5);
+    assert_eq!(fixture.replay_scenarios.len(), 6);
 }
 
 #[test]

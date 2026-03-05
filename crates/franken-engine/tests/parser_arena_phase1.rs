@@ -367,3 +367,114 @@ fn arena_roundtrip_preserves_parse_goal() {
     let recovered = arena.to_syntax_tree().expect("recover");
     assert_eq!(recovered.goal, tree.goal);
 }
+
+#[test]
+fn arena_canonical_hash_is_nonempty_string() {
+    let tree = fixture_tree();
+    let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).expect("arena");
+    let hash = arena.canonical_hash().expect("hash");
+    assert!(!hash.is_empty(), "canonical hash must be non-empty");
+}
+
+#[test]
+fn arena_canonical_hash_changes_with_different_tree() {
+    let tree_a = fixture_tree();
+    let mut tree_b = fixture_tree();
+    tree_b.body.pop(); // remove last statement
+
+    let arena_a = ParserArena::from_syntax_tree(&tree_a, ArenaBudget::default()).expect("arena a");
+    let arena_b = ParserArena::from_syntax_tree(&tree_b, ArenaBudget::default()).expect("arena b");
+
+    assert_ne!(
+        arena_a.canonical_hash().expect("hash a"),
+        arena_b.canonical_hash().expect("hash b"),
+        "different trees must produce different hashes"
+    );
+}
+
+#[test]
+fn arena_statement_handles_count_matches_tree() {
+    let tree = fixture_tree();
+    let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).expect("arena");
+    assert_eq!(arena.statement_handles().len(), tree.body.len());
+}
+
+#[test]
+fn arena_budget_node_limit_enforcement() {
+    let tree = fixture_tree();
+    let budget = ArenaBudget {
+        max_nodes: 1, // too few for 3 statements
+        max_expressions: 1024,
+        max_spans: 1024,
+        max_bytes: 1024 * 1024,
+    };
+    let err =
+        ParserArena::from_syntax_tree(&tree, budget).expect_err("should fail with node limit");
+    assert!(matches!(
+        err,
+        ArenaError::BudgetExceeded {
+            kind: ArenaBudgetKind::Nodes,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn arena_budget_span_limit_enforcement() {
+    let tree = fixture_tree();
+    let budget = ArenaBudget {
+        max_nodes: 1024,
+        max_expressions: 1024,
+        max_spans: 1, // too few
+        max_bytes: 1024 * 1024,
+    };
+    let err =
+        ParserArena::from_syntax_tree(&tree, budget).expect_err("should fail with span limit");
+    assert!(matches!(
+        err,
+        ArenaError::BudgetExceeded {
+            kind: ArenaBudgetKind::Spans,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn arena_error_display_includes_budget_kind() {
+    let err = ArenaError::BudgetExceeded {
+        kind: ArenaBudgetKind::Nodes,
+        limit: 10,
+        attempted: 11,
+    };
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("10") || msg.contains("11"),
+        "error should mention limits: {msg}"
+    );
+}
+
+#[test]
+fn handle_audit_entry_serde_roundtrip() {
+    let tree = fixture_tree();
+    let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).expect("arena");
+    let entries = arena.handle_audit_entries();
+    assert!(!entries.is_empty());
+    let entry = &entries[0];
+    let json = serde_json::to_string(entry).expect("serialize");
+    let recovered: HandleAuditEntry = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(*entry, recovered);
+}
+
+#[test]
+fn expression_handle_from_parts_roundtrips() {
+    let handle = ExpressionHandle::from_parts(42, 7);
+    assert_eq!(handle.index(), 42);
+    assert_eq!(handle.generation(), 7);
+}
+
+#[test]
+fn span_handle_from_parts_roundtrips() {
+    let handle = SpanHandle::from_parts(99, 5);
+    assert_eq!(handle.index(), 99);
+    assert_eq!(handle.generation(), 5);
+}

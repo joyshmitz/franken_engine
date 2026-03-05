@@ -506,7 +506,10 @@ fn fnv1a64_single_byte_differs_from_basis() {
 fn scheduler_manifest_fingerprint_starts_with_fnv1a64() {
     let fixture = load_fixture();
     let fp = scheduler_manifest_fingerprint(&fixture.scheduler_manifest);
-    assert!(fp.starts_with("fnv1a64:"), "fingerprint must start with fnv1a64:");
+    assert!(
+        fp.starts_with("fnv1a64:"),
+        "fingerprint must start with fnv1a64:"
+    );
 }
 
 #[test]
@@ -672,8 +675,18 @@ fn evaluate_gate_holds_on_critical_unwaived() {
     let fixture = make_gov_fixture(vec![make_finding("f1", "critical", "sha256:aaa")], vec![]);
     let decision = evaluate_gate(&fixture);
     assert_eq!(decision.outcome, "hold");
-    assert!(decision.blockers.iter().any(|b| b.contains("critical_unwaived:f1")));
-    assert!(decision.escalations.iter().any(|e| e.contains("page_owner:owner")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|b| b.contains("critical_unwaived:f1"))
+    );
+    assert!(
+        decision
+            .escalations
+            .iter()
+            .any(|e| e.contains("page_owner:owner"))
+    );
 }
 
 #[test]
@@ -712,7 +725,12 @@ fn evaluate_gate_holds_on_expired_waiver() {
     );
     let decision = evaluate_gate(&fixture);
     assert_eq!(decision.outcome, "hold");
-    assert!(decision.blockers.iter().any(|b| b.contains("waiver_expired:w1")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|b| b.contains("waiver_expired:w1"))
+    );
 }
 
 #[test]
@@ -731,14 +749,22 @@ fn evaluate_gate_unknown_severity_blocks() {
     let fixture = make_gov_fixture(vec![make_finding("f1", "exotic", "sha256:ccc")], vec![]);
     let decision = evaluate_gate(&fixture);
     assert_eq!(decision.outcome, "hold");
-    assert!(decision.blockers.iter().any(|b| b.contains("unknown_severity:f1")));
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|b| b.contains("unknown_severity:f1"))
+    );
 }
 
 // ---------- remediation_actions ----------
 
 #[test]
 fn remediation_actions_creates_for_unknown_fingerprint() {
-    let fixture = make_gov_fixture(vec![make_finding("f1", "critical", "sha256:new12345")], vec![]);
+    let fixture = make_gov_fixture(
+        vec![make_finding("f1", "critical", "sha256:new12345")],
+        vec![],
+    );
     let decision = evaluate_gate(&fixture);
     let actions = remediation_actions(&fixture, &decision);
     assert_eq!(actions.len(), 1);
@@ -748,8 +774,10 @@ fn remediation_actions_creates_for_unknown_fingerprint() {
 
 #[test]
 fn remediation_actions_updates_for_existing_fingerprint() {
-    let mut fixture =
-        make_gov_fixture(vec![make_finding("f1", "critical", "sha256:existing")], vec![]);
+    let mut fixture = make_gov_fixture(
+        vec![make_finding("f1", "critical", "sha256:existing")],
+        vec![],
+    );
     fixture.existing_remediations.push(ExistingRemediation {
         fingerprint: "sha256:existing".to_string(),
         bead_id: "bd-existing-1".to_string(),

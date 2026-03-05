@@ -2,7 +2,9 @@ use std::fs;
 use std::path::Path;
 
 use frankenengine_engine::ast::ParseGoal;
-use frankenengine_engine::parser::{CanonicalEs2020Parser, Es2020Parser, ParserMode, ParserOptions};
+use frankenengine_engine::parser::{
+    CanonicalEs2020Parser, Es2020Parser, ParserMode, ParserOptions,
+};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -213,8 +215,14 @@ fn fixture_catalog_has_at_least_one_script_and_one_module_fixture() {
 
     let has_script = catalog.fixtures.iter().any(|f| f.goal == "script");
     let has_module = catalog.fixtures.iter().any(|f| f.goal == "module");
-    assert!(has_script, "catalog must contain at least one script fixture");
-    assert!(has_module, "catalog must contain at least one module fixture");
+    assert!(
+        has_script,
+        "catalog must contain at least one script fixture"
+    );
+    assert!(
+        has_module,
+        "catalog must contain at least one module fixture"
+    );
 }
 
 #[test]
@@ -282,8 +290,33 @@ fn parse_with_options_matches_default_parse() {
     let tree_options = parser
         .parse_with_options("var y = 2;", ParseGoal::Script, &options)
         .unwrap();
-    assert_eq!(
-        tree_default.canonical_hash(),
-        tree_options.canonical_hash()
-    );
+    assert_eq!(tree_default.canonical_hash(), tree_options.canonical_hash());
+}
+
+#[test]
+fn parser_mode_debug_is_nonempty() {
+    let mode = ParserMode::ScalarReference;
+    assert!(!format!("{mode:?}").is_empty());
+}
+
+#[test]
+fn parser_options_default_serde_roundtrip() {
+    let options = ParserOptions::default();
+    let json = serde_json::to_string(&options).expect("serialize");
+    let recovered: ParserOptions = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(serde_json::to_string(&recovered).unwrap(), json);
+}
+
+#[test]
+fn parse_goal_script_and_module_are_distinct() {
+    let parser = CanonicalEs2020Parser;
+    let h1 = parser
+        .parse("42", ParseGoal::Script)
+        .unwrap()
+        .canonical_hash();
+    let h2 = parser
+        .parse("42", ParseGoal::Module)
+        .unwrap()
+        .canonical_hash();
+    assert_ne!(h1, h2);
 }

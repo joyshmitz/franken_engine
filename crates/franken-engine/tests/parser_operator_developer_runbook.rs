@@ -382,6 +382,177 @@ fn parser_operator_runbook_fixture_has_nonempty_schema_version() {
 #[test]
 fn parser_operator_runbook_fixture_incidents_have_unique_ids() {
     let fixture = load_fixture();
-    let ids: BTreeSet<&str> = fixture.incident_matrix.iter().map(|s| s.scenario_id.as_str()).collect();
+    let ids: BTreeSet<&str> = fixture
+        .incident_matrix
+        .iter()
+        .map(|s| s.scenario_id.as_str())
+        .collect();
     assert_eq!(ids.len(), fixture.incident_matrix.len());
+}
+
+#[test]
+fn parser_operator_runbook_doc_has_more_than_50_lines() {
+    let doc = load_doc();
+    assert!(doc.lines().count() > 50);
+}
+
+#[test]
+fn parser_operator_runbook_doc_file_exists() {
+    let path = Path::new("../../docs/PARSER_OPERATOR_DEVELOPER_RUNBOOK.md");
+    assert!(path.exists());
+}
+
+#[test]
+fn parser_operator_runbook_doc_mentions_replay() {
+    let doc = load_doc();
+    assert!(doc.to_ascii_lowercase().contains("replay"));
+}
+
+// ---------- additional doc and contract validation ----------
+
+#[test]
+fn parser_operator_runbook_doc_word_count_exceeds_minimum() {
+    let doc = load_doc();
+    let word_count = doc.split_whitespace().count();
+    assert!(
+        word_count >= 200,
+        "runbook doc must have at least 200 words, found {word_count}"
+    );
+}
+
+#[test]
+fn parser_operator_runbook_doc_contains_required_keywords() {
+    let doc = load_doc();
+    for keyword in [
+        "replay",
+        "deterministic",
+        "drill",
+        "escalation",
+        "rollback",
+        "artifact",
+        "remediation",
+    ] {
+        assert!(
+            doc.to_ascii_lowercase().contains(keyword),
+            "runbook doc missing required keyword: {keyword}"
+        );
+    }
+}
+
+#[test]
+fn parser_operator_runbook_doc_section_ordering_is_correct() {
+    let doc = load_doc();
+    let sections = [
+        "## Scope",
+        "## Deterministic Environment And Log Contract",
+        "## Fresh-Operator Dry Run",
+        "## Replay-First Troubleshooting Decision Tree",
+        "## Scriptable Drill Lane",
+        "## Escalation And Rollback Posture",
+        "## Operator Verification Checklist",
+    ];
+    let mut last_pos = 0;
+    for section in sections {
+        if let Some(pos) = doc.find(section) {
+            assert!(
+                pos >= last_pos,
+                "section `{section}` appears out of order in runbook doc"
+            );
+            last_pos = pos;
+        }
+    }
+}
+
+#[test]
+fn parser_operator_runbook_incident_severities_are_known() {
+    let fixture = load_fixture();
+    let known: BTreeSet<&str> = ["critical", "high", "medium", "low"].into_iter().collect();
+    for scenario in &fixture.incident_matrix {
+        assert!(
+            known.contains(scenario.severity.to_ascii_lowercase().as_str()),
+            "unknown severity `{}` in scenario `{}`",
+            scenario.severity,
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn parser_operator_runbook_triage_critical_user_impact() {
+    let scenario = IncidentScenario {
+        scenario_id: "crit-ui".to_string(),
+        symptom: "critical user impact alarm".to_string(),
+        severity: "critical".to_string(),
+        expected_triage: "hold_rollout_and_rerun_user_impact_replay".to_string(),
+        replay_command: "./scripts/e2e/test.sh".to_string(),
+    };
+    assert_eq!(
+        triage_action(&scenario),
+        "hold_rollout_and_rerun_user_impact_replay"
+    );
+}
+
+#[test]
+fn parser_operator_runbook_triage_critical_fallback() {
+    let scenario = IncidentScenario {
+        scenario_id: "crit-fb".to_string(),
+        symptom: "fallback path triggered unexpectedly".to_string(),
+        severity: "critical".to_string(),
+        expected_triage: "fail_closed_and_rerun_failover_controls".to_string(),
+        replay_command: "./scripts/e2e/test.sh".to_string(),
+    };
+    assert_eq!(
+        triage_action(&scenario),
+        "fail_closed_and_rerun_failover_controls"
+    );
+}
+
+#[test]
+fn parser_operator_runbook_triage_diagnostic_symptom() {
+    let scenario = IncidentScenario {
+        scenario_id: "diag".to_string(),
+        symptom: "diagnostic quality drift".to_string(),
+        severity: "high".to_string(),
+        expected_triage: "rerun_diagnostics_rubric".to_string(),
+        replay_command: "./scripts/e2e/test.sh".to_string(),
+    };
+    assert_eq!(triage_action(&scenario), "rerun_diagnostics_rubric");
+}
+
+#[test]
+fn parser_operator_runbook_triage_resync_symptom() {
+    let scenario = IncidentScenario {
+        scenario_id: "resync".to_string(),
+        symptom: "resync regression found".to_string(),
+        severity: "medium".to_string(),
+        expected_triage: "rerun_error_recovery_replay".to_string(),
+        replay_command: "./scripts/e2e/test.sh".to_string(),
+    };
+    assert_eq!(triage_action(&scenario), "rerun_error_recovery_replay");
+}
+
+#[test]
+fn parser_operator_runbook_triage_api_compatibility_symptom() {
+    let scenario = IncidentScenario {
+        scenario_id: "api".to_string(),
+        symptom: "api compatibility check failed".to_string(),
+        severity: "high".to_string(),
+        expected_triage: "rerun_api_compatibility_gate".to_string(),
+        replay_command: "./scripts/e2e/test.sh".to_string(),
+    };
+    assert_eq!(triage_action(&scenario), "rerun_api_compatibility_gate");
+}
+
+#[test]
+fn parser_operator_runbook_doc_references_cli_commands() {
+    let doc = load_doc();
+    for cli in [
+        "./scripts/run_parser_operator_developer_runbook.sh",
+        "./scripts/e2e/parser_operator_developer_runbook_replay.sh",
+    ] {
+        assert!(
+            doc.contains(cli),
+            "runbook doc missing CLI command reference: {cli}"
+        );
+    }
 }

@@ -62,6 +62,7 @@ One-command replay wrapper:
 ```bash
 ./scripts/e2e/parser_event_ast_equivalence_replay.sh
 ./scripts/e2e/parser_event_ast_equivalence_replay.sh full
+./scripts/e2e/parser_event_ast_equivalence_replay.sh matrix
 ```
 
 Scenario-specific replay commands (all deterministic):
@@ -72,7 +73,13 @@ PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=malformed ./scripts/run_parser_event_ast_e
 PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=tamper ./scripts/run_parser_event_ast_equivalence.sh test
 PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=replay ./scripts/run_parser_event_ast_equivalence.sh test
 PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=full ./scripts/run_parser_event_ast_equivalence.sh test
+PARSER_EVENT_AST_EQUIVALENCE_SCENARIO=matrix ./scripts/run_parser_event_ast_equivalence.sh test
 ```
+
+Matrix scenario (`bd-2mds.1.4.4.2`) enforces deterministic coverage metadata:
+- corpus tiers: `core`, `edge`, `adversarial`
+- seed sweep: `17`, `43`, `101`
+- cross-architecture targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`
 
 ## Deterministic Execution Contract
 
@@ -98,6 +105,7 @@ Each run emits:
 - `artifacts/parser_event_ast_equivalence/<timestamp>/run_manifest.json`
 - `artifacts/parser_event_ast_equivalence/<timestamp>/events.jsonl`
 - `artifacts/parser_event_ast_equivalence/<timestamp>/commands.txt`
+- `artifacts/parser_event_ast_equivalence/<timestamp>/matrix_summary.json`
 
 The manifest includes deterministic environment fingerprints, replay command,
 scenario, and pass/fail outcome.
@@ -118,6 +126,8 @@ PARSER_EVENT_AST_EQUIVALENCE_BEAD_ID=bd-2mds.1.4.4.2 \
 cat artifacts/parser_event_ast_equivalence/<timestamp>/run_manifest.json
 cat artifacts/parser_event_ast_equivalence/<timestamp>/events.jsonl
 cat artifacts/parser_event_ast_equivalence/<timestamp>/commands.txt
+cat artifacts/parser_event_ast_equivalence/<timestamp>/matrix_summary.json
 ./scripts/e2e/parser_event_ast_equivalence_replay.sh
 ./scripts/e2e/parser_event_ast_equivalence_replay.sh full
+./scripts/e2e/parser_event_ast_equivalence_replay.sh matrix
 ```

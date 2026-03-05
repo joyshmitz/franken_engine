@@ -389,7 +389,10 @@ fn report_fixture_results_have_replay_commands() {
     config.policy_id = "policy-rc".to_string();
     let report = run_parser_oracle(&config).expect("oracle");
     for result in &report.fixture_results {
-        assert!(!result.replay_command.is_empty(), "must have replay command");
+        assert!(
+            !result.replay_command.is_empty(),
+            "must have replay command"
+        );
         assert!(!result.fixture_id.is_empty());
         assert!(!result.input_hash.is_empty());
     }

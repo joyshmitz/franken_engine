@@ -657,8 +657,7 @@ fn parse_event_ir_has_events_for_success_case() {
 #[test]
 fn parse_event_ir_has_events_for_failure_case() {
     let parser = CanonicalEs2020Parser;
-    let (result, ir) =
-        parser.parse_with_event_ir("", ParseGoal::Script, &ParserOptions::default());
+    let (result, ir) = parser.parse_with_event_ir("", ParseGoal::Script, &ParserOptions::default());
     assert!(result.is_err());
     assert!(!ir.events.is_empty());
 }
@@ -666,8 +665,7 @@ fn parse_event_ir_has_events_for_failure_case() {
 #[test]
 fn parse_event_ir_serde_roundtrip() {
     let parser = CanonicalEs2020Parser;
-    let (_, ir) =
-        parser.parse_with_event_ir("42;", ParseGoal::Script, &ParserOptions::default());
+    let (_, ir) = parser.parse_with_event_ir("42;", ParseGoal::Script, &ParserOptions::default());
     let json = serde_json::to_string(&ir).expect("serialize");
     let recovered: ParseEventIr = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.canonical_hash(), ir.canonical_hash());
@@ -714,10 +712,7 @@ fn materialized_ast_fails_for_parse_failure() {
 #[test]
 fn stream_input_parses_successfully() {
     let parser = CanonicalEs2020Parser;
-    let stream = StreamInput::new(
-        Cursor::new(b"42;".to_vec()),
-        "test-stream",
-    );
+    let stream = StreamInput::new(Cursor::new(b"42;".to_vec()), "test-stream");
     let result = parser.parse_with_options(stream, ParseGoal::Script, &ParserOptions::default());
     assert!(result.is_ok());
 }

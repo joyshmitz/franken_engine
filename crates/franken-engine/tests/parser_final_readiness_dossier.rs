@@ -711,7 +711,10 @@ fn comparison_matches_rejects_invalid() {
 #[test]
 fn evidence_status_parse_all_variants() {
     assert_eq!(EvidenceStatus::parse("pass"), EvidenceStatus::Pass);
-    assert_eq!(EvidenceStatus::parse("in_progress"), EvidenceStatus::InProgress);
+    assert_eq!(
+        EvidenceStatus::parse("in_progress"),
+        EvidenceStatus::InProgress
+    );
     assert_eq!(EvidenceStatus::parse("fail"), EvidenceStatus::Fail);
     assert_eq!(EvidenceStatus::parse("missing"), EvidenceStatus::Missing);
 }
@@ -743,9 +746,18 @@ fn severity_parse_all_variants() {
 
 #[test]
 fn verification_outcome_parse_all_variants() {
-    assert_eq!(VerificationOutcome::parse("pass"), VerificationOutcome::Pass);
-    assert_eq!(VerificationOutcome::parse("hold"), VerificationOutcome::Hold);
-    assert_eq!(VerificationOutcome::parse("fail"), VerificationOutcome::Fail);
+    assert_eq!(
+        VerificationOutcome::parse("pass"),
+        VerificationOutcome::Pass
+    );
+    assert_eq!(
+        VerificationOutcome::parse("hold"),
+        VerificationOutcome::Hold
+    );
+    assert_eq!(
+        VerificationOutcome::parse("fail"),
+        VerificationOutcome::Fail
+    );
 }
 
 // ---------- compute_risk_register_hash ----------

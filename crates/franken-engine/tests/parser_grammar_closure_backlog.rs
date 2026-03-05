@@ -327,7 +327,10 @@ fn coverage_score_unsupported_is_0() {
 #[test]
 fn aggregate_family_status_both_supported() {
     assert_eq!(
-        aggregate_family_status(GrammarCoverageStatus::Supported, GrammarCoverageStatus::Supported),
+        aggregate_family_status(
+            GrammarCoverageStatus::Supported,
+            GrammarCoverageStatus::Supported
+        ),
         "supported"
     );
 }
@@ -335,7 +338,10 @@ fn aggregate_family_status_both_supported() {
 #[test]
 fn aggregate_family_status_both_unsupported() {
     assert_eq!(
-        aggregate_family_status(GrammarCoverageStatus::Unsupported, GrammarCoverageStatus::Unsupported),
+        aggregate_family_status(
+            GrammarCoverageStatus::Unsupported,
+            GrammarCoverageStatus::Unsupported
+        ),
         "unsupported"
     );
 }
@@ -343,7 +349,10 @@ fn aggregate_family_status_both_unsupported() {
 #[test]
 fn aggregate_family_status_mixed_is_partial() {
     assert_eq!(
-        aggregate_family_status(GrammarCoverageStatus::Supported, GrammarCoverageStatus::Unsupported),
+        aggregate_family_status(
+            GrammarCoverageStatus::Supported,
+            GrammarCoverageStatus::Unsupported
+        ),
         "partial"
     );
 }
@@ -351,7 +360,10 @@ fn aggregate_family_status_mixed_is_partial() {
 #[test]
 fn aggregate_family_status_partial_partial() {
     assert_eq!(
-        aggregate_family_status(GrammarCoverageStatus::Partial, GrammarCoverageStatus::Partial),
+        aggregate_family_status(
+            GrammarCoverageStatus::Partial,
+            GrammarCoverageStatus::Partial
+        ),
         "partial"
     );
 }
@@ -404,7 +416,10 @@ fn grammar_closure_backlog_deterministic_double_parse() {
     let a = load_grammar_closure_backlog();
     let b = load_grammar_closure_backlog();
     assert_eq!(a.schema_version, b.schema_version);
-    assert_eq!(a.coverage_target_family_count, b.coverage_target_family_count);
+    assert_eq!(
+        a.coverage_target_family_count,
+        b.coverage_target_family_count
+    );
     assert_eq!(a.families.len(), b.families.len());
 }
 

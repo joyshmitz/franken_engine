@@ -599,7 +599,10 @@ fn replay_scenarios_have_unique_ids() {
     let fixture = load_fixture();
     let mut ids = BTreeSet::new();
     for scenario in &fixture.replay_scenarios {
-        assert!(ids.insert(scenario.scenario_id.clone()), "duplicate replay scenario id");
+        assert!(
+            ids.insert(scenario.scenario_id.clone()),
+            "duplicate replay scenario id"
+        );
     }
 }
 
@@ -610,7 +613,10 @@ fn incident_simulations_have_unique_scenario_ids() {
     let fixture = load_fixture();
     let mut ids = BTreeSet::new();
     for sim in &fixture.incident_simulations {
-        assert!(ids.insert(sim.scenario_id.clone()), "duplicate simulation id");
+        assert!(
+            ids.insert(sim.scenario_id.clone()),
+            "duplicate simulation id"
+        );
     }
 }
 

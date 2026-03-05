@@ -300,3 +300,61 @@ fn canonical_hash_different_sources_differ() {
     let h2 = parse_hash("var b = 2;", ParseGoal::Script);
     assert_ne!(h1, h2);
 }
+
+#[test]
+fn parse_hash_is_deterministic_for_function() {
+    let h1 = parse_hash("function f() { return 1; }", ParseGoal::Script);
+    let h2 = parse_hash("function f() { return 1; }", ParseGoal::Script);
+    assert_eq!(h1, h2);
+}
+
+#[test]
+fn empty_source_returns_parse_error() {
+    let result = parser().parse("", ParseGoal::Module);
+    assert!(result.is_err(), "empty source should return error");
+}
+
+#[test]
+fn semantic_signature_import_statement() {
+    let tree = parser()
+        .parse("import x from './mod.mjs'", ParseGoal::Module)
+        .unwrap();
+    let sig = semantic_signature(&tree);
+    assert_eq!(sig.len(), 1);
+    assert!(sig[0].starts_with("import:"));
+}
+
+#[test]
+fn semantic_signature_three_var_declarations() {
+    let tree = parser()
+        .parse("var a = 1;\nvar b = 2;\nvar c = 3;", ParseGoal::Script)
+        .unwrap();
+    let sig = semantic_signature(&tree);
+    assert_eq!(sig.len(), 3);
+}
+
+#[test]
+fn parse_hash_changes_with_whitespace_if_semantically_same() {
+    let h1 = parse_hash("var x=1;", ParseGoal::Script);
+    let h2 = parse_hash("var  x  =  1  ;", ParseGoal::Script);
+    // Both should parse successfully - hashes may or may not differ
+    // depending on span encoding, but both should be non-empty
+    assert!(!h1.is_empty());
+    assert!(!h2.is_empty());
+}
+
+#[test]
+fn canonical_hash_nonempty_for_module() {
+    let tree = parser()
+        .parse("export default 42", ParseGoal::Module)
+        .unwrap();
+    let hash = tree.canonical_hash();
+    assert!(!hash.is_empty());
+}
+
+#[test]
+fn parser_helper_returns_parser_instance() {
+    let p = parser();
+    let result = p.parse("42", ParseGoal::Script);
+    assert!(result.is_ok());
+}

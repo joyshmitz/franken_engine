@@ -557,7 +557,10 @@ fn integration_samples_have_unique_ids() {
     let fixture = load_fixture();
     let mut ids = BTreeSet::new();
     for sample in &fixture.integration_samples {
-        assert!(ids.insert(sample.sample_id.clone()), "duplicate integration sample id");
+        assert!(
+            ids.insert(sample.sample_id.clone()),
+            "duplicate integration sample id"
+        );
         assert!(matches!(sample.goal.as_str(), "script" | "module"));
     }
 }
@@ -571,7 +574,9 @@ fn baseline_scenarios_have_replay_commands() {
         assert!(!scenario.scenario_id.is_empty());
         assert!(!scenario.replay_command.trim().is_empty());
         assert!(
-            scenario.replay_command.contains("parser_user_impact_baseline_dashboard"),
+            scenario
+                .replay_command
+                .contains("parser_user_impact_baseline_dashboard"),
             "replay command should reference test name"
         );
     }
@@ -623,9 +628,21 @@ fn weighted_composite_score_zero_scores_yields_zero() {
 fn dashboard_snapshot_has_three_metric_scores() {
     let fixture = load_fixture();
     let snapshot = evaluate_snapshot(&fixture);
-    assert!(snapshot.metric_scores_millionths.contains_key("diagnostic_quality"));
-    assert!(snapshot.metric_scores_millionths.contains_key("recovery_usefulness"));
-    assert!(snapshot.metric_scores_millionths.contains_key("integration_friction"));
+    assert!(
+        snapshot
+            .metric_scores_millionths
+            .contains_key("diagnostic_quality")
+    );
+    assert!(
+        snapshot
+            .metric_scores_millionths
+            .contains_key("recovery_usefulness")
+    );
+    assert!(
+        snapshot
+            .metric_scores_millionths
+            .contains_key("integration_friction")
+    );
 }
 
 #[test]
@@ -641,7 +658,10 @@ fn dashboard_composite_is_within_bounds() {
 fn diagnostic_quality_score_is_perfect_million() {
     let fixture = load_fixture();
     let score = evaluate_diagnostic_quality(&fixture);
-    assert_eq!(score, 1_000_000, "all diagnostic samples should match exactly");
+    assert_eq!(
+        score, 1_000_000,
+        "all diagnostic samples should match exactly"
+    );
 }
 
 // ---------- evaluate_integration_friction ----------
@@ -650,5 +670,28 @@ fn diagnostic_quality_score_is_perfect_million() {
 fn integration_friction_score_is_perfect_million() {
     let fixture = load_fixture();
     let score = evaluate_integration_friction(&fixture);
-    assert_eq!(score, 1_000_000, "all integration samples should match exactly");
+    assert_eq!(
+        score, 1_000_000,
+        "all integration samples should match exactly"
+    );
+}
+
+#[test]
+fn fixture_has_nonempty_schema_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.trim().is_empty());
+}
+
+#[test]
+fn fixture_deterministic_double_load() {
+    let a = load_fixture();
+    let b = load_fixture();
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.metric_definitions.len(), b.metric_definitions.len());
+}
+
+#[test]
+fn doc_has_more_than_50_lines() {
+    let doc = load_doc();
+    assert!(doc.lines().count() > 50);
 }

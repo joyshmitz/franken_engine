@@ -595,7 +595,11 @@ fn evaluate_gate_holds_when_delta_below_threshold() {
     let fixture = minimal_fixture(1_000_000, 1_000_000, 100, 500_000, 1_500_000, 500_000);
     let eval = evaluate_gate(&fixture);
     assert_eq!(eval.outcome, "hold");
-    assert!(eval.blocked_pairs.iter().any(|b| b.contains("delta_below_threshold")));
+    assert!(
+        eval.blocked_pairs
+            .iter()
+            .any(|b| b.contains("delta_below_threshold"))
+    );
 }
 
 #[test]
@@ -603,7 +607,11 @@ fn evaluate_gate_holds_when_sample_count_zero() {
     let fixture = minimal_fixture(2_000_000, 1_000_000, 0, 500_000, 1_500_000, 0);
     let eval = evaluate_gate(&fixture);
     assert_eq!(eval.outcome, "hold");
-    assert!(eval.blocked_pairs.iter().any(|b| b.contains("sample_count_zero")));
+    assert!(
+        eval.blocked_pairs
+            .iter()
+            .any(|b| b.contains("sample_count_zero"))
+    );
 }
 
 #[test]
@@ -611,7 +619,11 @@ fn evaluate_gate_holds_when_invalid_confidence_interval() {
     let fixture = minimal_fixture(2_000_000, 1_000_000, 100, 1_500_000, 500_000, 0);
     let eval = evaluate_gate(&fixture);
     assert_eq!(eval.outcome, "hold");
-    assert!(eval.blocked_pairs.iter().any(|b| b.contains("invalid_confidence_interval")));
+    assert!(
+        eval.blocked_pairs
+            .iter()
+            .any(|b| b.contains("invalid_confidence_interval"))
+    );
 }
 
 #[test]
@@ -619,7 +631,11 @@ fn evaluate_gate_holds_when_ci_low_not_positive() {
     let fixture = minimal_fixture(2_000_000, 1_000_000, 100, 0, 1_500_000, 0);
     let eval = evaluate_gate(&fixture);
     assert_eq!(eval.outcome, "hold");
-    assert!(eval.blocked_pairs.iter().any(|b| b.contains("non_reproducible_win")));
+    assert!(
+        eval.blocked_pairs
+            .iter()
+            .any(|b| b.contains("non_reproducible_win"))
+    );
 }
 
 #[test]
@@ -628,7 +644,11 @@ fn evaluate_gate_protocol_drift_in_row_blocks() {
     fixture.benchmark_rows[0].protocol_hash = "sha256:different".to_string();
     let eval = evaluate_gate(&fixture);
     assert_eq!(eval.outcome, "hold");
-    assert!(eval.blocked_pairs.iter().any(|b| b.contains("protocol_drift")));
+    assert!(
+        eval.blocked_pairs
+            .iter()
+            .any(|b| b.contains("protocol_drift"))
+    );
     assert!(eval.failing_workload_ids.contains(&"wl-1".to_string()));
 }
 
@@ -638,7 +658,11 @@ fn evaluate_gate_missing_evidence_lane_blocks() {
     fixture.required_evidence_lanes = vec!["lane_missing".to_string()];
     let eval = evaluate_gate(&fixture);
     assert_eq!(eval.outcome, "hold");
-    assert!(eval.blocked_pairs.iter().any(|b| b.contains("evidence_missing:lane_missing")));
+    assert!(
+        eval.blocked_pairs
+            .iter()
+            .any(|b| b.contains("evidence_missing:lane_missing"))
+    );
 }
 
 #[test]
@@ -653,7 +677,11 @@ fn evaluate_gate_non_reproducible_telemetry_blocks() {
     });
     let eval = evaluate_gate(&fixture);
     assert_eq!(eval.outcome, "hold");
-    assert!(eval.blocked_pairs.iter().any(|b| b.contains("telemetry_not_reproducible:art-1")));
+    assert!(
+        eval.blocked_pairs
+            .iter()
+            .any(|b| b.contains("telemetry_not_reproducible:art-1"))
+    );
 }
 
 // ---------- emit_structured_event ----------
@@ -697,4 +725,22 @@ fn evaluate_gate_deterministic_across_runs() {
     let eval1 = evaluate_gate(&fixture);
     let eval2 = evaluate_gate(&fixture);
     assert_eq!(eval1, eval2);
+}
+
+#[test]
+fn load_fixture_has_nonempty_gate_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.gate_version.trim().is_empty());
+}
+
+#[test]
+fn load_fixture_has_nonempty_schema_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.trim().is_empty());
+}
+
+#[test]
+fn load_doc_has_more_than_50_lines() {
+    let doc = load_doc();
+    assert!(doc.lines().count() > 50);
 }

@@ -408,7 +408,10 @@ fn generate_identifier_is_deterministic_for_same_state() {
 fn generate_case_produces_nonempty_source() {
     for seed in 0..16 {
         let case = generate_case(seed);
-        assert!(!case.source.is_empty(), "seed {seed} should produce non-empty source");
+        assert!(
+            !case.source.is_empty(),
+            "seed {seed} should produce non-empty source"
+        );
     }
 }
 
@@ -516,6 +519,65 @@ fn generate_case_wide_seed_range_produces_different_sources() {
 fn generate_case_source_is_nonempty() {
     for seed in 0..10 {
         let case = generate_case(seed);
-        assert!(!case.source.is_empty(), "seed {seed} must produce non-empty source");
+        assert!(
+            !case.source.is_empty(),
+            "seed {seed} must produce non-empty source"
+        );
     }
+}
+
+#[test]
+fn lcg_next_advances_state() {
+    let mut state = 1_u64;
+    let first = lcg_next(&mut state);
+    let second = lcg_next(&mut state);
+    assert_ne!(first, second, "successive LCG values should differ");
+}
+
+#[test]
+fn semantic_signature_import_starts_with_import_prefix() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser
+        .parse("import x from 'pkg'", ParseGoal::Module)
+        .expect("parse");
+    let sig = semantic_signature(&tree);
+    assert_eq!(sig.len(), 1);
+    assert!(sig[0].starts_with("import:"));
+}
+
+#[test]
+fn semantic_signature_export_default_starts_with_prefix() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser
+        .parse("export default 42", ParseGoal::Module)
+        .expect("parse");
+    let sig = semantic_signature(&tree);
+    assert_eq!(sig.len(), 1);
+    assert!(sig[0].starts_with("export_default:"));
+}
+
+#[test]
+fn failure_context_includes_replay_command() {
+    let ctx = failure_context("my_test", 0, ParseGoal::Script, "x");
+    let parsed: serde_json::Value = serde_json::from_str(&ctx).expect("valid json");
+    let cmd = parsed["replay_command"].as_str().unwrap();
+    assert!(cmd.contains("cargo test"));
+    assert!(cmd.contains("my_test"));
+}
+
+#[test]
+fn failure_context_trace_and_decision_ids_differ() {
+    let ctx = failure_context("t", 7, ParseGoal::Script, "x");
+    let parsed: serde_json::Value = serde_json::from_str(&ctx).expect("valid json");
+    let trace = parsed["trace_id"].as_str().unwrap();
+    let decision = parsed["decision_id"].as_str().unwrap();
+    assert_ne!(trace, decision);
+}
+
+#[test]
+fn constants_are_nonempty() {
+    assert!(!TRACE_PREFIX.is_empty());
+    assert!(!DECISION_PREFIX.is_empty());
+    assert!(!POLICY_ID.is_empty());
+    assert!(!COMPONENT.is_empty());
 }

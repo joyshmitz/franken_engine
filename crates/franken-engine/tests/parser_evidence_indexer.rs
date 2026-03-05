@@ -484,3 +484,47 @@ fn empty_builder_produces_empty_index() {
     assert!(index.runs.is_empty());
     assert!(index.events.is_empty());
 }
+
+#[test]
+fn schema_migration_step_debug_is_nonempty() {
+    let step = SchemaMigrationStep {
+        migration_id: "mig-debug".to_string(),
+        from_schema: "v1".to_string(),
+        to_schema: "v2".to_string(),
+    };
+    assert!(!format!("{step:?}").is_empty());
+}
+
+#[test]
+fn indexed_parser_event_debug_is_nonempty() {
+    let event = IndexedParserEvent {
+        run_id: "run-dbg".to_string(),
+        sequence: 0,
+        schema_version: PARSER_EVIDENCE_INDEX_SCHEMA_V1.to_string(),
+        trace_id: "t".to_string(),
+        decision_id: "d".to_string(),
+        policy_id: "p".to_string(),
+        component: "c".to_string(),
+        event: "e".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        replay_command: None,
+        scenario_id: None,
+    };
+    assert!(!format!("{event:?}").is_empty());
+}
+
+#[test]
+fn parser_run_artifact_ref_debug_is_nonempty() {
+    let ref_ = ParserRunArtifactRef {
+        run_id: "run-dbg".to_string(),
+        manifest_schema_version: PARSER_EVIDENCE_INDEX_SCHEMA_V1.to_string(),
+        manifest_path: "m.json".to_string(),
+        events_path: "e.jsonl".to_string(),
+        commands_path: "c.txt".to_string(),
+        replay_command: "./replay.sh".to_string(),
+        generated_at_utc: None,
+        outcome: None,
+    };
+    assert!(!format!("{ref_:?}").is_empty());
+}

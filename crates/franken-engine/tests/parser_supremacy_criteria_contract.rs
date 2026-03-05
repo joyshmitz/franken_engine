@@ -473,9 +473,18 @@ fn rule_class_parse_all_variants() {
     assert_eq!(RuleClass::parse("correctness"), RuleClass::Correctness);
     assert_eq!(RuleClass::parse("determinism"), RuleClass::Determinism);
     assert_eq!(RuleClass::parse("performance"), RuleClass::Performance);
-    assert_eq!(RuleClass::parse("reproducibility"), RuleClass::Reproducibility);
-    assert_eq!(RuleClass::parse("verification_rigor"), RuleClass::VerificationRigor);
-    assert_eq!(RuleClass::parse("user_facing_quality"), RuleClass::UserFacingQuality);
+    assert_eq!(
+        RuleClass::parse("reproducibility"),
+        RuleClass::Reproducibility
+    );
+    assert_eq!(
+        RuleClass::parse("verification_rigor"),
+        RuleClass::VerificationRigor
+    );
+    assert_eq!(
+        RuleClass::parse("user_facing_quality"),
+        RuleClass::UserFacingQuality
+    );
 }
 
 #[test]
@@ -554,8 +563,14 @@ fn metric_for_class_returns_correct_field() {
     assert_eq!(metric_for_class(&metrics, RuleClass::Determinism), 200);
     assert_eq!(metric_for_class(&metrics, RuleClass::Performance), 300);
     assert_eq!(metric_for_class(&metrics, RuleClass::Reproducibility), 400);
-    assert_eq!(metric_for_class(&metrics, RuleClass::VerificationRigor), 500);
-    assert_eq!(metric_for_class(&metrics, RuleClass::UserFacingQuality), 600);
+    assert_eq!(
+        metric_for_class(&metrics, RuleClass::VerificationRigor),
+        500
+    );
+    assert_eq!(
+        metric_for_class(&metrics, RuleClass::UserFacingQuality),
+        600
+    );
 }
 
 // ---------- fnv1a64 ----------
@@ -622,4 +637,162 @@ fn gate_event_serde_has_required_fields() {
     assert!(obj.contains_key("run_id"));
     assert!(obj.contains_key("verdict"));
     assert!(obj.contains_key("error_code"));
+}
+
+// ---------- additional doc and contract validation ----------
+
+#[test]
+fn supremacy_doc_word_count_exceeds_minimum() {
+    let doc = load_doc();
+    let word_count = doc.split_whitespace().count();
+    assert!(
+        word_count >= 200,
+        "supremacy criteria doc must have at least 200 words, found {word_count}"
+    );
+}
+
+#[test]
+fn supremacy_doc_contains_required_keywords() {
+    let doc = load_doc();
+    for keyword in [
+        "deterministic",
+        "correctness",
+        "determinism",
+        "performance",
+        "reproducibility",
+        "verification_rigor",
+        "user_facing_quality",
+        "hard-fail",
+    ] {
+        assert!(
+            doc.contains(keyword),
+            "supremacy criteria doc missing required keyword: {keyword}"
+        );
+    }
+}
+
+#[test]
+fn supremacy_doc_section_ordering_is_correct() {
+    let doc = load_doc();
+    let sections = [
+        "## Contract Version",
+        "## Required Criteria Dimensions",
+        "## Machine-Checkable Evaluator",
+        "## Deterministic Gate Simulation",
+        "## Criteria Changelog Policy",
+        "## Structured Log Contract",
+        "## Deterministic Execution Contract",
+        "## Required Artifacts",
+        "## Operator Verification",
+    ];
+    let mut last_pos = 0;
+    for section in sections {
+        if let Some(pos) = doc.find(section) {
+            assert!(
+                pos >= last_pos,
+                "section `{section}` appears out of order in supremacy doc"
+            );
+            last_pos = pos;
+        }
+    }
+}
+
+#[test]
+fn supremacy_fixture_rule_ids_have_consistent_format() {
+    let fixture = load_fixture();
+    for rule in &fixture.rule_definitions {
+        assert!(
+            rule.rule_id.contains('-'),
+            "rule_id `{}` should use hyphenated format",
+            rule.rule_id
+        );
+        assert!(
+            !rule.rule_id.contains(' '),
+            "rule_id `{}` must not contain spaces",
+            rule.rule_id
+        );
+    }
+}
+
+#[test]
+fn supremacy_fixture_all_bundles_have_replay_commands() {
+    let fixture = load_fixture();
+    for bundle in &fixture.artifact_bundles {
+        assert!(
+            !bundle.replay_command.trim().is_empty(),
+            "bundle `{}` must have a replay command",
+            bundle.artifact_bundle_id
+        );
+        assert!(
+            bundle.replay_command.starts_with("./scripts/"),
+            "bundle `{}` replay command must start with ./scripts/",
+            bundle.artifact_bundle_id
+        );
+    }
+}
+
+#[test]
+fn supremacy_fixture_bundle_ids_are_unique() {
+    let fixture = load_fixture();
+    let mut ids = BTreeSet::new();
+    for bundle in &fixture.artifact_bundles {
+        assert!(
+            ids.insert(bundle.artifact_bundle_id.clone()),
+            "duplicate artifact_bundle_id: {}",
+            bundle.artifact_bundle_id
+        );
+    }
+}
+
+#[test]
+fn supremacy_fixture_git_shas_are_nonempty() {
+    let fixture = load_fixture();
+    for bundle in &fixture.artifact_bundles {
+        assert!(
+            !bundle.git_sha.trim().is_empty(),
+            "bundle `{}` must have a git_sha",
+            bundle.artifact_bundle_id
+        );
+    }
+}
+
+#[test]
+fn supremacy_gate_events_fail_verdict_has_error_code() {
+    let fixture = load_fixture();
+    let events = simulate_gate_events(&fixture);
+    for event in &events {
+        if event.verdict == "fail" {
+            assert!(
+                event.error_code.is_some(),
+                "fail verdict must include an error_code"
+            );
+            let code = event.error_code.as_ref().unwrap();
+            assert!(
+                code.starts_with("FE-PARSER-"),
+                "error code must start with FE-PARSER- prefix, got: {code}"
+            );
+        }
+    }
+}
+
+#[test]
+fn supremacy_gate_events_pass_verdict_has_no_error_code() {
+    let fixture = load_fixture();
+    let events = simulate_gate_events(&fixture);
+    for event in &events {
+        if event.verdict == "pass" {
+            assert!(
+                event.error_code.is_none(),
+                "pass verdict must not include an error_code"
+            );
+        }
+    }
+}
+
+#[test]
+fn supremacy_fixture_minimum_weighted_score_is_reasonable() {
+    let fixture = load_fixture();
+    // The minimum weighted score should be positive and less than the max possible (1_000_000)
+    assert!(fixture.gating_policy.minimum_weighted_score_millionths > 0);
+    assert!(fixture.gating_policy.minimum_weighted_score_millionths <= 1_000_000);
 }

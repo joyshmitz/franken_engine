@@ -520,10 +520,7 @@ fn build_lane_delta_event_critical_has_fail_outcome() {
     };
     let event = build_lane_delta_event(&fixture, "lane1", &delta);
     assert_eq!(event["outcome"], "fail");
-    assert_eq!(
-        event["error_code"],
-        "FE-PARSER-CROSS-ARCH-MATRIX-0001"
-    );
+    assert_eq!(event["error_code"], "FE-PARSER-CROSS-ARCH-MATRIX-0001");
 }
 
 // ---------- assert_required_event_keys ----------
@@ -541,10 +538,7 @@ fn assert_required_event_keys_passes_for_valid_event() {
         "scenario_id": "s1",
         "replay_command": "cmd"
     });
-    let keys = vec![
-        "trace_id".to_string(),
-        "error_code".to_string(),
-    ];
+    let keys = vec!["trace_id".to_string(), "error_code".to_string()];
     assert_required_event_keys(&event, &keys);
 }
 
@@ -655,4 +649,26 @@ fn classify_matrix_status_incomplete_strict_ignores_critical_deltas() {
         classify_matrix_input_status(false, true, 5),
         "incomplete_matrix"
     );
+}
+
+#[test]
+fn fixture_has_nonempty_bead_id() {
+    let fixture = load_fixture();
+    assert!(!fixture.bead_id.trim().is_empty());
+}
+
+#[test]
+fn fixture_has_nonempty_policy_id() {
+    let fixture = load_fixture();
+    assert!(!fixture.policy_id.trim().is_empty());
+}
+
+#[test]
+fn fixture_deterministic_triple_parse() {
+    let a = load_fixture();
+    let b = load_fixture();
+    let c = load_fixture();
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(b.schema_version, c.schema_version);
+    assert_eq!(a.bead_id, c.bead_id);
 }
