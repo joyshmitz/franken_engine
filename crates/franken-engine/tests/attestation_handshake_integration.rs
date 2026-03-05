@@ -643,3 +643,211 @@ fn approve_multiple_measurements() {
 
     assert_eq!(verifier.authorization_count(), 2);
 }
+
+// ---------------------------------------------------------------------------
+// Authorization operations check
+// ---------------------------------------------------------------------------
+
+#[test]
+fn authorization_authorizes_claimed_capabilities() {
+    let mut verifier = test_verifier();
+    let root = test_trust_root();
+    let measurement = test_measurement(&root);
+    verifier.approve_measurement(measurement.composite_hash());
+
+    let client = test_client("cell-001");
+    let auth = do_full_handshake(&mut verifier, &client, &root, &measurement, 1000).unwrap();
+
+    assert!(auth.authorizes("sign_receipts"));
+    assert!(auth.authorizes("emit_evidence"));
+    assert!(!auth.authorizes("admin_override"));
+}
+
+#[test]
+fn check_authorization_rejects_unauthorized_operation() {
+    let mut verifier = test_verifier();
+    let root = test_trust_root();
+    let measurement = test_measurement(&root);
+    verifier.approve_measurement(measurement.composite_hash());
+
+    let client = test_client("cell-001");
+    do_full_handshake(&mut verifier, &client, &root, &measurement, 1000).unwrap();
+
+    let err = verifier
+        .check_authorization("cell-001", "admin_override", 1000)
+        .expect_err("should reject");
+    assert!(matches!(err, HandshakeError::OperationNotAuthorized { .. }));
+}
+
+#[test]
+fn check_authorization_rejects_unknown_cell() {
+    let verifier = test_verifier();
+    let err = verifier
+        .check_authorization("nonexistent-cell", "sign_receipts", 1000)
+        .expect_err("should fail");
+    assert!(matches!(err, HandshakeError::CellNotFound { .. }));
+}
+
+#[test]
+fn check_authorization_rejects_expired_authorization() {
+    let mut verifier = test_verifier();
+    verifier.set_authorization_window(500);
+    let root = test_trust_root();
+    let measurement = test_measurement(&root);
+    verifier.approve_measurement(measurement.composite_hash());
+
+    let client = test_client("cell-001");
+    do_full_handshake(&mut verifier, &client, &root, &measurement, 1000).unwrap();
+
+    let err = verifier
+        .check_authorization("cell-001", "sign_receipts", 2000)
+        .expect_err("should be expired");
+    assert!(matches!(err, HandshakeError::AuthorizationExpired { .. }));
+}
+
+// ---------------------------------------------------------------------------
+// Revocation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn revoke_nonexistent_cell_returns_false() {
+    let mut verifier = test_verifier();
+    assert!(!verifier.revoke_authorization("no-such-cell"));
+}
+
+#[test]
+fn revoke_all_on_empty_returns_zero() {
+    let mut verifier = test_verifier();
+    assert_eq!(verifier.revoke_all_authorizations(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Handshake failure: unapproved measurement
+// ---------------------------------------------------------------------------
+
+#[test]
+fn handshake_fails_for_unapproved_measurement() {
+    let mut verifier = test_verifier();
+    // Don't approve any measurements
+    let root = test_trust_root();
+    let measurement = test_measurement(&root);
+    let client = test_client("cell-001");
+
+    let err = do_full_handshake(&mut verifier, &client, &root, &measurement, 1000)
+        .expect_err("should reject");
+    assert!(matches!(err, HandshakeError::MeasurementNotApproved { .. }));
+}
+
+// ---------------------------------------------------------------------------
+// HandshakeOutcome display
+// ---------------------------------------------------------------------------
+
+#[test]
+fn handshake_outcome_display_all_non_empty() {
+    for outcome in [
+        HandshakeOutcome::Authorized,
+        HandshakeOutcome::ChallengeTimeout,
+        HandshakeOutcome::MeasurementRejected,
+        HandshakeOutcome::QuoteFailed,
+        HandshakeOutcome::KeyBindingFailed,
+        HandshakeOutcome::SignatureFailed,
+    ] {
+        assert!(!outcome.to_string().is_empty());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Challenge determinism
+// ---------------------------------------------------------------------------
+
+#[test]
+fn challenge_canonical_bytes_deterministic() {
+    let verifier = test_verifier();
+    let c1 = verifier.generate_challenge([1u8; 32], 1000, 500).unwrap();
+    let c2 = verifier.generate_challenge([1u8; 32], 1000, 500).unwrap();
+    assert_eq!(c1.canonical_bytes(), c2.canonical_bytes());
+}
+
+// ---------------------------------------------------------------------------
+// CellAuthorization canonical bytes
+// ---------------------------------------------------------------------------
+
+#[test]
+fn authorization_canonical_bytes_deterministic() {
+    let mut verifier = test_verifier();
+    let root = test_trust_root();
+    let measurement = test_measurement(&root);
+    verifier.approve_measurement(measurement.composite_hash());
+
+    let client = test_client("cell-001");
+    let auth1 = do_full_handshake(&mut verifier, &client, &root, &measurement, 1000).unwrap();
+    let bytes1 = auth1.canonical_bytes();
+
+    // Re-handshake same cell overwrites authorization
+    let auth2 = do_full_handshake(&mut verifier, &client, &root, &measurement, 1000).unwrap();
+    let bytes2 = auth2.canonical_bytes();
+
+    // Same inputs should produce same canonical bytes
+    assert_eq!(bytes1, bytes2);
+}
+
+// ---------------------------------------------------------------------------
+// Event HandshakeEvent serde with success
+// ---------------------------------------------------------------------------
+
+#[test]
+fn handshake_event_success_serde_roundtrip() {
+    let mut verifier = test_verifier();
+    let root = test_trust_root();
+    let measurement = test_measurement(&root);
+    verifier.approve_measurement(measurement.composite_hash());
+
+    let client = test_client("cell-001");
+    do_full_handshake(&mut verifier, &client, &root, &measurement, 1000).unwrap();
+
+    let event = &verifier.events()[0];
+    let json = serde_json::to_string(event).expect("serialize");
+    let recovered: HandshakeEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(*event, recovered);
+    assert_eq!(event.outcome, HandshakeOutcome::Authorized);
+}
+
+// ---------------------------------------------------------------------------
+// Verifier serde roundtrip
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verifier_serde_roundtrip() {
+    let mut verifier = test_verifier();
+    let root = test_trust_root();
+    let measurement = test_measurement(&root);
+    verifier.approve_measurement(measurement.composite_hash());
+
+    let client = test_client("cell-001");
+    do_full_handshake(&mut verifier, &client, &root, &measurement, 1000).unwrap();
+
+    let json = serde_json::to_string(&verifier).expect("serialize");
+    let recovered: PolicyPlaneVerifier = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.authorization_count(), 1);
+    assert_eq!(recovered.policy_version(), verifier.policy_version());
+}
+
+// ---------------------------------------------------------------------------
+// ReattestationTrigger serde (additional)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn reattestation_trigger_debug_distinct() {
+    let triggers = [
+        ReattestationTrigger::Periodic,
+        ReattestationTrigger::PolicyChange,
+        ReattestationTrigger::EpochTransition,
+        ReattestationTrigger::TrustRootUpdate,
+        ReattestationTrigger::Manual,
+    ];
+    let debug_strs: std::collections::BTreeSet<_> = triggers
+        .iter()
+        .map(|t| format!("{t:?}"))
+        .collect();
+    assert_eq!(debug_strs.len(), 5);
+}

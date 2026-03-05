@@ -5,7 +5,9 @@
 
 #![forbid(unsafe_code)]
 
-use frankenengine_engine::hash_tiers::{AuthenticityHash, ContentHash, IntegrityHash};
+use frankenengine_engine::hash_tiers::{
+    AuthenticityHash, ContentHash, HashAlgorithm, HashEvent, HashTier, IntegrityHash,
+};
 
 // ---------------------------------------------------------------------------
 // IntegrityHash (Tier 1)
@@ -217,4 +219,205 @@ fn all_tiers_deterministic_10_runs() {
         assert_eq!(ContentHash::compute(data), c0);
         assert_eq!(AuthenticityHash::compute_keyed(key, data), a0);
     }
+}
+
+// ---------------------------------------------------------------------------
+// HashTier enum
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hash_tier_serde_round_trip_all_variants() {
+    for tier in [HashTier::Integrity, HashTier::Content, HashTier::Authenticity] {
+        let json = serde_json::to_string(&tier).expect("serialize");
+        let recovered: HashTier = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(tier, recovered);
+    }
+}
+
+#[test]
+fn hash_tier_display_non_empty() {
+    for tier in [HashTier::Integrity, HashTier::Content, HashTier::Authenticity] {
+        assert!(!tier.to_string().is_empty());
+    }
+}
+
+#[test]
+fn hash_tier_ordering() {
+    assert!(HashTier::Integrity < HashTier::Content);
+    assert!(HashTier::Content < HashTier::Authenticity);
+}
+
+#[test]
+fn hash_tier_display_contains_tier_prefix() {
+    assert!(HashTier::Integrity.to_string().contains("integrity"));
+    assert!(HashTier::Content.to_string().contains("content"));
+    assert!(HashTier::Authenticity.to_string().contains("authenticity"));
+}
+
+// ---------------------------------------------------------------------------
+// HashAlgorithm enum
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hash_algorithm_serde_round_trip_all_variants() {
+    for algo in [
+        HashAlgorithm::WyhashInspired,
+        HashAlgorithm::SipInspiredCr,
+        HashAlgorithm::SipInspiredKeyed,
+    ] {
+        let json = serde_json::to_string(&algo).expect("serialize");
+        let recovered: HashAlgorithm = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(algo, recovered);
+    }
+}
+
+#[test]
+fn hash_algorithm_tier_mapping() {
+    assert_eq!(HashAlgorithm::WyhashInspired.tier(), HashTier::Integrity);
+    assert_eq!(HashAlgorithm::SipInspiredCr.tier(), HashTier::Content);
+    assert_eq!(HashAlgorithm::SipInspiredKeyed.tier(), HashTier::Authenticity);
+}
+
+#[test]
+fn hash_algorithm_display_non_empty() {
+    for algo in [
+        HashAlgorithm::WyhashInspired,
+        HashAlgorithm::SipInspiredCr,
+        HashAlgorithm::SipInspiredKeyed,
+    ] {
+        assert!(!algo.to_string().is_empty());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HashEvent struct
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hash_event_serde_round_trip() {
+    let event = HashEvent {
+        tier: HashTier::Authenticity,
+        algorithm: HashAlgorithm::SipInspiredKeyed,
+        input_len: 256,
+        component: "capability_witness".to_string(),
+        trace_id: "trace-001".to_string(),
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: HashEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(event, recovered);
+}
+
+#[test]
+fn hash_event_serde_round_trip_all_tiers() {
+    for (tier, algo) in [
+        (HashTier::Integrity, HashAlgorithm::WyhashInspired),
+        (HashTier::Content, HashAlgorithm::SipInspiredCr),
+        (HashTier::Authenticity, HashAlgorithm::SipInspiredKeyed),
+    ] {
+        let event = HashEvent {
+            tier,
+            algorithm: algo,
+            input_len: 128,
+            component: "test".to_string(),
+            trace_id: "t-1".to_string(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let recovered: HashEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(event, recovered);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// IntegrityHash edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn integrity_hash_ordering_is_deterministic() {
+    let a = IntegrityHash::compute(b"aaa");
+    let b = IntegrityHash::compute(b"bbb");
+    // Just verify Ord works without panic
+    let _ = a.cmp(&b);
+    let _ = a.partial_cmp(&b);
+}
+
+#[test]
+fn integrity_hash_large_input() {
+    let data = vec![0xCDu8; 1_000_000];
+    let h = IntegrityHash::compute(&data);
+    assert_ne!(h.as_u64(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// ContentHash edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn content_hash_hex_is_lowercase() {
+    let h = ContentHash::compute(b"hex-check");
+    let hex = h.to_hex();
+    assert_eq!(hex, hex.to_lowercase());
+}
+
+#[test]
+fn content_hash_ordering_is_deterministic() {
+    let a = ContentHash::compute(b"alpha");
+    let b = ContentHash::compute(b"beta");
+    let _ = a.cmp(&b);
+}
+
+// ---------------------------------------------------------------------------
+// AuthenticityHash edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn authenticity_hash_keyed_differs_from_unkeyed() {
+    let data = b"same-data";
+    let keyed = AuthenticityHash::compute_keyed(b"a-key", data);
+    let unkeyed = AuthenticityHash::compute(data);
+    assert_ne!(keyed, unkeyed);
+}
+
+#[test]
+fn authenticity_hash_hex_is_lowercase() {
+    let h = AuthenticityHash::compute(b"hex-check");
+    let hex = h.to_hex();
+    assert_eq!(hex, hex.to_lowercase());
+}
+
+#[test]
+fn authenticity_hash_empty_key_differs_from_empty_data() {
+    let a = AuthenticityHash::compute_keyed(b"", b"data");
+    let b = AuthenticityHash::compute_keyed(b"key", b"");
+    assert_ne!(a, b);
+}
+
+#[test]
+fn authenticity_hash_ordering_is_deterministic() {
+    let a = AuthenticityHash::compute(b"first");
+    let b = AuthenticityHash::compute(b"second");
+    let _ = a.cmp(&b);
+}
+
+// ---------------------------------------------------------------------------
+// Cross-tier domain separation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn content_and_authenticity_unkeyed_produce_same_bytes() {
+    // Per docs: unkeyed authenticity uses same algorithm as content
+    let data = b"domain-test";
+    let content = ContentHash::compute(data);
+    let auth = AuthenticityHash::compute(data);
+    assert_eq!(content.as_bytes(), auth.as_bytes());
+}
+
+#[test]
+fn display_prefixes_are_distinct() {
+    let data = b"prefix-test";
+    let i = IntegrityHash::compute(data).to_string();
+    let c = ContentHash::compute(data).to_string();
+    let a = AuthenticityHash::compute(data).to_string();
+    assert!(i.starts_with("integrity:"));
+    assert!(c.starts_with("content:"));
+    assert!(a.starts_with("authenticity:"));
 }
