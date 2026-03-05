@@ -2115,7 +2115,7 @@ mod tests {
 
         let signing_key = SigningKey::from_bytes([7u8; 32]);
         // Receipt's source_label is Public but obligation expects Secret
-        let receipt = DeclassificationReceipt {
+        let mut receipt = DeclassificationReceipt {
             receipt_id: "rcpt-m".into(),
             source_label: Label::Public,
             sink_clearance: Label::Internal,
@@ -2129,6 +2129,7 @@ mod tests {
             schema_version: crate::ifc_artifacts::IfcSchemaVersion::CURRENT,
             signature: Signature::from_bytes(SIGNATURE_SENTINEL),
         };
+        receipt.sign(&signing_key).unwrap();
 
         let err = lattice
             .use_declassification_with_receipt("obl-m", &receipt, "trace-m")

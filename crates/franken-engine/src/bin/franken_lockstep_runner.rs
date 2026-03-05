@@ -698,9 +698,9 @@ fn executable_suffixes() -> Vec<String> {
                 continue;
             }
             let normalized = if trimmed.starts_with('.') {
-                trimmed.to_string()
+                trimmed.to_ascii_lowercase()
             } else {
-                format!(".{trimmed}")
+                format!(".{}", trimmed.to_ascii_lowercase())
             };
             if !suffixes
                 .iter()

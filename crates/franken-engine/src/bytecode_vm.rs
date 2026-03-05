@@ -2477,13 +2477,19 @@ mod tests {
         for (err, variant) in errors.iter().zip(variants) {
             let json = serde_json::to_string(err).unwrap();
             let payload: serde_json::Value = serde_json::from_str(&json).unwrap();
-            let object = payload
-                .as_object()
-                .expect("VmError serialization should be an object");
-            assert!(
-                object.contains_key(variant),
-                "serialized VmError should include variant `{variant}`: {json}"
-            );
+            if let Some(object) = payload.as_object() {
+                assert!(
+                    object.contains_key(variant),
+                    "serialized VmError should include variant `{variant}`: {json}"
+                );
+            } else if let Some(s) = payload.as_str() {
+                assert_eq!(
+                    s, variant,
+                    "serialized unit VmError should match variant `{variant}`: {json}"
+                );
+            } else {
+                panic!("VmError serialization should be an object or string: {json}");
+            }
         }
     }
 

@@ -2224,15 +2224,6 @@ mod tests {
     // Enrichment: PearlTower 2026-03-02 — GetProperty / SetProperty
     // -----------------------------------------------------------------------
 
-    fn test_module_with_caps(
-        instructions: Vec<Ir3Instruction>,
-        caps: Vec<CapabilityTag>,
-    ) -> Ir3Module {
-        let mut m = test_module(instructions);
-        m.required_capabilities = caps;
-        m
-    }
-
     #[test]
     fn set_and_get_property_on_heap_object() {
         // Allocate object, set property, read it back.

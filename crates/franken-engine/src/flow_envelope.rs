@@ -2432,6 +2432,7 @@ mod tests {
         let mut cloned = original.clone();
         cloned.envelope_epoch = SecurityEpoch::from_raw(99);
         assert_eq!(original.envelope_epoch, SecurityEpoch::from_raw(3));
+        assert_eq!(cloned.envelope_epoch, SecurityEpoch::from_raw(99));
     }
 
     #[test]
