@@ -144,3 +144,198 @@ fn serialization_is_byte_identical_for_identical_inputs() {
     let b = serde_json::to_vec(&signed).expect("serialize");
     assert_eq!(a, b);
 }
+
+// ---------- nonce replay detection ----------
+
+#[test]
+fn nonce_registry_rejects_replay_of_same_nonce() {
+    let mut receipt = base_receipt(proof_schema_version_current(), DecisionImpact::HighImpact);
+    receipt.attestation_bindings = Some(attestation_bindings());
+    let signed = receipt.sign(TEST_KEY);
+
+    let mut nonce_registry = ReceiptNonceRegistry::new();
+    let result1 = validate_receipt_with_policy(
+        &signed,
+        TEST_KEY,
+        SecurityEpoch::from_raw(42),
+        &AttestationRequirementPolicy::default(),
+        Some(&mut nonce_registry),
+    );
+    assert!(result1.is_ok());
+
+    let result2 = validate_receipt_with_policy(
+        &signed,
+        TEST_KEY,
+        SecurityEpoch::from_raw(42),
+        &AttestationRequirementPolicy::default(),
+        Some(&mut nonce_registry),
+    );
+    assert!(matches!(
+        result2,
+        Err(ProofSchemaError::NonceReplay { .. })
+    ));
+}
+
+// ---------- epoch mismatch ----------
+
+#[test]
+fn receipt_verification_rejects_wrong_epoch() {
+    let receipt = base_receipt(proof_schema_version_current(), DecisionImpact::Standard).sign(TEST_KEY);
+    let result = validate_receipt(&receipt, TEST_KEY, SecurityEpoch::from_raw(99));
+    assert!(matches!(
+        result,
+        Err(ProofSchemaError::EpochMismatch { .. })
+    ));
+}
+
+// ---------- invalid signature ----------
+
+#[test]
+fn receipt_verification_rejects_wrong_key() {
+    let receipt = base_receipt(proof_schema_version_current(), DecisionImpact::Standard).sign(TEST_KEY);
+    let wrong_key = b"wrong-integration-signing-key!!!!";
+    let result = validate_receipt(&receipt, wrong_key, SecurityEpoch::from_raw(42));
+    assert!(matches!(
+        result,
+        Err(ProofSchemaError::InvalidSignature { .. })
+    ));
+}
+
+// ---------- attestation requirement policy ----------
+
+#[test]
+fn high_impact_without_attestation_bindings_rejected_by_default_policy() {
+    let receipt =
+        base_receipt(proof_schema_version_current(), DecisionImpact::HighImpact).sign(TEST_KEY);
+    assert!(receipt.attestation_bindings.is_none());
+
+    let result = validate_receipt_with_policy(
+        &receipt,
+        TEST_KEY,
+        SecurityEpoch::from_raw(42),
+        &AttestationRequirementPolicy::default(),
+        None,
+    );
+    assert!(matches!(
+        result,
+        Err(ProofSchemaError::MissingAttestationBindings { .. })
+    ));
+}
+
+#[test]
+fn standard_impact_does_not_require_attestation_bindings() {
+    let receipt =
+        base_receipt(proof_schema_version_current(), DecisionImpact::Standard).sign(TEST_KEY);
+    let result = validate_receipt_with_policy(
+        &receipt,
+        TEST_KEY,
+        SecurityEpoch::from_raw(42),
+        &AttestationRequirementPolicy::default(),
+        None,
+    );
+    assert!(result.is_ok());
+}
+
+// ---------- schema version ----------
+
+#[test]
+fn v1_0_and_current_are_different_versions() {
+    assert_ne!(proof_schema_version_v1_0(), proof_schema_version_current());
+}
+
+#[test]
+fn current_receipt_validates_with_current_epoch() {
+    let receipt =
+        base_receipt(proof_schema_version_current(), DecisionImpact::Standard).sign(TEST_KEY);
+    assert!(validate_receipt(&receipt, TEST_KEY, SecurityEpoch::from_raw(42)).is_ok());
+}
+
+// ---------- optimization class ----------
+
+#[test]
+fn optimization_class_display_is_nonempty() {
+    for class in [
+        OptimizationClass::Superinstruction,
+        OptimizationClass::TraceSpecialization,
+        OptimizationClass::LayoutSpecialization,
+        OptimizationClass::DevirtualizedHostcallFastPath,
+    ] {
+        assert!(!class.to_string().is_empty());
+    }
+}
+
+// ---------- receipt object id ----------
+
+#[test]
+fn receipt_object_id_is_deterministic() {
+    let receipt =
+        base_receipt(proof_schema_version_current(), DecisionImpact::Standard).sign(TEST_KEY);
+    let id_a = receipt.object_id("integration-zone").expect("object id");
+    let id_b = receipt.object_id("integration-zone").expect("object id");
+    assert_eq!(id_a, id_b);
+}
+
+#[test]
+fn receipt_verify_signature_validates_correct_key() {
+    let receipt =
+        base_receipt(proof_schema_version_current(), DecisionImpact::Standard).sign(TEST_KEY);
+    assert!(receipt.verify_signature(TEST_KEY));
+}
+
+#[test]
+fn receipt_verify_signature_rejects_wrong_key() {
+    let receipt =
+        base_receipt(proof_schema_version_current(), DecisionImpact::Standard).sign(TEST_KEY);
+    assert!(!receipt.verify_signature(b"wrong-key-32-bytes-integration!!"));
+}
+
+// ---------- attestation validity window ----------
+
+#[test]
+fn validity_window_has_correct_bounds() {
+    let window = AttestationValidityWindow {
+        start_timestamp_ticks: 900,
+        end_timestamp_ticks: 1_500,
+    };
+    assert_eq!(window.start_timestamp_ticks, 900);
+    assert_eq!(window.end_timestamp_ticks, 1_500);
+}
+
+#[test]
+fn validity_window_serde_roundtrip() {
+    let window = AttestationValidityWindow {
+        start_timestamp_ticks: 100,
+        end_timestamp_ticks: 200,
+    };
+    let json = serde_json::to_string(&window).expect("serialize");
+    let recovered: AttestationValidityWindow =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.start_timestamp_ticks, 100);
+    assert_eq!(recovered.end_timestamp_ticks, 200);
+}
+
+// ---------- serde roundtrip ----------
+
+#[test]
+fn attestation_bindings_serde_roundtrip() {
+    let bindings = attestation_bindings();
+    let json = serde_json::to_string(&bindings).expect("serialize");
+    let recovered: ReceiptAttestationBindings =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.nonce, bindings.nonce);
+    assert_eq!(recovered.measurement_id, bindings.measurement_id);
+}
+
+#[test]
+fn opt_receipt_full_serde_roundtrip() {
+    let mut receipt = base_receipt(proof_schema_version_current(), DecisionImpact::HighImpact);
+    receipt.attestation_bindings = Some(attestation_bindings());
+    let signed = receipt.sign(TEST_KEY);
+
+    let json = serde_json::to_string(&signed).expect("serialize");
+    let recovered: OptReceipt = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.optimization_id, signed.optimization_id);
+    assert_eq!(recovered.schema_version, signed.schema_version);
+    assert_eq!(recovered.signature, signed.signature);
+    assert!(recovered.attestation_bindings.is_some());
+}

@@ -56,40 +56,36 @@ fn flamegraph_kind_as_str_all_distinct() {
 
 #[test]
 fn pipeline_error_stable_codes_all_distinct() {
-    let errors: Vec<(&str, Box<dyn Fn() -> FlamegraphPipelineError>)> = vec![
+    let errors: Vec<(_, &str)> = vec![
         (
-            "FE-FLAME-1001",
-            Box::new(|| FlamegraphPipelineError::InvalidRequest {
+            FlamegraphPipelineError::InvalidRequest {
                 field: "f".into(),
                 detail: "d".into(),
-            }),
+            },
+            "FE-FLAME-1001",
         ),
         (
+            FlamegraphPipelineError::InvalidTimestamp { value: "v".into() },
             "FE-FLAME-1002",
-            Box::new(|| FlamegraphPipelineError::InvalidTimestamp { value: "v".into() }),
         ),
         (
+            FlamegraphPipelineError::EmptyFoldedStack { field: "f".into() },
             "FE-FLAME-1003",
-            Box::new(|| FlamegraphPipelineError::EmptyFoldedStack { field: "f".into() }),
         ),
+        (FlamegraphPipelineError::MismatchedDiffInput, "FE-FLAME-1004"),
         (
-            "FE-FLAME-1004",
-            Box::new(|| FlamegraphPipelineError::MismatchedDiffInput),
-        ),
-        (
-            "FE-FLAME-1005",
-            Box::new(|| FlamegraphPipelineError::InvalidSvg {
+            FlamegraphPipelineError::InvalidSvg {
                 kind: FlamegraphKind::Cpu,
-            }),
+            },
+            "FE-FLAME-1005",
         ),
         (
+            FlamegraphPipelineError::SerializationFailure { detail: "d".into() },
             "FE-FLAME-1006",
-            Box::new(|| FlamegraphPipelineError::SerializationFailure { detail: "d".into() }),
         ),
     ];
-    for (expected_code, factory) in &errors {
-        let e = factory();
-        assert_eq!(e.stable_code(), *expected_code, "code mismatch for {e}");
+    for (err, expected_code) in &errors {
+        assert_eq!(err.stable_code(), *expected_code, "code mismatch for {err}");
     }
 }
 
@@ -349,7 +345,7 @@ fn flamegraph_query_default() {
 
 #[test]
 fn flamegraph_kind_ordering_stable() {
-    let mut kinds = vec![
+    let mut kinds = [
         FlamegraphKind::DiffAllocation,
         FlamegraphKind::Cpu,
         FlamegraphKind::DiffCpu,
@@ -454,4 +450,244 @@ fn pipeline_decision_is_failure() {
         events: vec![],
     };
     assert!(!d.is_success());
+}
+
+// ===========================================================================
+// 11) Serde roundtrips — additional structs
+// ===========================================================================
+
+#[test]
+fn serde_roundtrip_flamegraph_metadata() {
+    let fm = FlamegraphMetadata {
+        benchmark_run_id: "run1".into(),
+        baseline_benchmark_run_id: Some("baseline1".into()),
+        workload_id: "wl1".into(),
+        benchmark_profile: "profile1".into(),
+        config_fingerprint: "fp1".into(),
+        git_commit: "abc123".into(),
+        generated_at_utc: "2026-02-27T00:00:00Z".into(),
+    };
+    let json = serde_json::to_string(&fm).unwrap();
+    let rt: FlamegraphMetadata = serde_json::from_str(&json).unwrap();
+    assert_eq!(fm, rt);
+}
+
+#[test]
+fn serde_roundtrip_flamegraph_evidence_link() {
+    let fel = FlamegraphEvidenceLink {
+        trace_id: "t1".into(),
+        decision_id: "d1".into(),
+        policy_id: "p1".into(),
+        benchmark_run_id: "r1".into(),
+        optimization_decision_id: "o1".into(),
+        evidence_node_id: "n1".into(),
+    };
+    let json = serde_json::to_string(&fel).unwrap();
+    let rt: FlamegraphEvidenceLink = serde_json::from_str(&json).unwrap();
+    assert_eq!(fel, rt);
+}
+
+#[test]
+fn serde_roundtrip_flamegraph_pipeline_event() {
+    let fpe = FlamegraphPipelineEvent {
+        trace_id: "t".into(),
+        decision_id: "d".into(),
+        policy_id: "p".into(),
+        component: FLAMEGRAPH_COMPONENT.into(),
+        event: "test_event".into(),
+        outcome: "pass".into(),
+        error_code: Some("FE-FLAME-1001".into()),
+        artifact_id: Some("art1".into()),
+        flamegraph_kind: Some("cpu".into()),
+    };
+    let json = serde_json::to_string(&fpe).unwrap();
+    let rt: FlamegraphPipelineEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(fpe, rt);
+}
+
+// ===========================================================================
+// 12) FlamegraphPipelineError — Display contains relevant fields
+// ===========================================================================
+
+#[test]
+fn pipeline_error_invalid_request_contains_field() {
+    let e = FlamegraphPipelineError::InvalidRequest {
+        field: "trace_id".into(),
+        detail: "cannot be empty".into(),
+    };
+    let s = e.to_string();
+    assert!(s.contains("trace_id") || s.contains("empty"), "should contain field: {s}");
+}
+
+#[test]
+fn pipeline_error_invalid_timestamp_contains_value() {
+    let e = FlamegraphPipelineError::InvalidTimestamp {
+        value: "not-a-date".into(),
+    };
+    let s = e.to_string();
+    assert!(s.contains("not-a-date") || s.contains("timestamp"), "should contain value: {s}");
+}
+
+#[test]
+fn pipeline_error_invalid_folded_stack_contains_line() {
+    let e = FlamegraphPipelineError::InvalidFoldedStack {
+        field: "cpu_stacks".into(),
+        line_number: 42,
+        detail: "malformed".into(),
+    };
+    let s = e.to_string();
+    assert!(s.contains("42") || s.contains("malformed"), "should contain line: {s}");
+}
+
+#[test]
+fn pipeline_error_empty_folded_stack_contains_field() {
+    let e = FlamegraphPipelineError::EmptyFoldedStack {
+        field: "allocation_stacks".into(),
+    };
+    let s = e.to_string();
+    assert!(
+        s.contains("allocation_stacks") || s.contains("empty"),
+        "should contain field: {s}"
+    );
+}
+
+#[test]
+fn pipeline_error_serialization_contains_detail() {
+    let e = FlamegraphPipelineError::SerializationFailure {
+        detail: "json error".into(),
+    };
+    let s = e.to_string();
+    assert!(s.contains("json") || s.contains("serialization"), "should contain detail: {s}");
+}
+
+// ===========================================================================
+// 13) FlamegraphKind — as_str values
+// ===========================================================================
+
+#[test]
+fn flamegraph_kind_as_str_values() {
+    assert_eq!(FlamegraphKind::Cpu.as_str(), "cpu");
+    assert_eq!(FlamegraphKind::Allocation.as_str(), "allocation");
+    assert_eq!(FlamegraphKind::DiffCpu.as_str(), "diff_cpu");
+    assert_eq!(FlamegraphKind::DiffAllocation.as_str(), "diff_allocation");
+}
+
+// ===========================================================================
+// 14) FlamegraphPipelineError — stable_code values
+// ===========================================================================
+
+#[test]
+fn pipeline_error_invalid_folded_stack_code() {
+    let e = FlamegraphPipelineError::InvalidFoldedStack {
+        field: "f".into(),
+        line_number: 1,
+        detail: "d".into(),
+    };
+    // InvalidFoldedStack should have a code too
+    let code = e.stable_code();
+    assert!(code.starts_with("FE-FLAME-"), "code should start with FE-FLAME-: {code}");
+}
+
+// ===========================================================================
+// 15) FlamegraphDiffEntry — delta sign
+// ===========================================================================
+
+#[test]
+fn flamegraph_diff_entry_negative_delta() {
+    let fde = FlamegraphDiffEntry {
+        stack: "main;foo".into(),
+        baseline_samples: 100,
+        candidate_samples: 50,
+        delta_samples: -50,
+    };
+    assert!(fde.delta_samples < 0);
+    let json = serde_json::to_string(&fde).unwrap();
+    let rt: FlamegraphDiffEntry = serde_json::from_str(&json).unwrap();
+    assert_eq!(fde, rt);
+}
+
+// ===========================================================================
+// 16) FlamegraphPipelineDecision serde roundtrip
+// ===========================================================================
+
+#[test]
+fn serde_roundtrip_pipeline_decision() {
+    let d = FlamegraphPipelineDecision {
+        pipeline_id: "p1".into(),
+        trace_id: "t".into(),
+        decision_id: "d".into(),
+        policy_id: "p".into(),
+        outcome: "pass".into(),
+        error_code: None,
+        rollback_required: false,
+        storage_backend: "test".into(),
+        storage_integration_point: FLAMEGRAPH_STORAGE_INTEGRATION_POINT.into(),
+        artifacts: vec![],
+        store_keys: vec![],
+        events: vec![],
+    };
+    let json = serde_json::to_string(&d).unwrap();
+    let rt: FlamegraphPipelineDecision = serde_json::from_str(&json).unwrap();
+    assert_eq!(d, rt);
+}
+
+// ===========================================================================
+// 17) FoldedStackSample edge cases
+// ===========================================================================
+
+#[test]
+fn folded_stack_sample_zero_count() {
+    let fss = FoldedStackSample {
+        stack: "main".into(),
+        sample_count: 0,
+    };
+    let json = serde_json::to_string(&fss).unwrap();
+    let rt: FoldedStackSample = serde_json::from_str(&json).unwrap();
+    assert_eq!(fss, rt);
+}
+
+#[test]
+fn folded_stack_sample_deep_stack() {
+    let deep = (0..100).map(|i| format!("frame_{i}")).collect::<Vec<_>>().join(";");
+    let fss = FoldedStackSample {
+        stack: deep.clone(),
+        sample_count: 1,
+    };
+    let json = serde_json::to_string(&fss).unwrap();
+    let rt: FoldedStackSample = serde_json::from_str(&json).unwrap();
+    assert_eq!(rt.stack, deep);
+}
+
+// ===========================================================================
+// 18) FlamegraphMetadata optional baseline
+// ===========================================================================
+
+#[test]
+fn flamegraph_metadata_no_baseline() {
+    let fm = FlamegraphMetadata {
+        benchmark_run_id: "run1".into(),
+        baseline_benchmark_run_id: None,
+        workload_id: "wl1".into(),
+        benchmark_profile: "profile1".into(),
+        config_fingerprint: "fp1".into(),
+        git_commit: "abc123".into(),
+        generated_at_utc: "2026-02-27T00:00:00Z".into(),
+    };
+    let v: serde_json::Value = serde_json::to_value(&fm).unwrap();
+    assert!(v["baseline_benchmark_run_id"].is_null());
+}
+
+#[test]
+fn flamegraph_metadata_with_baseline() {
+    let fm = FlamegraphMetadata {
+        benchmark_run_id: "run1".into(),
+        baseline_benchmark_run_id: Some("baseline1".into()),
+        workload_id: "wl1".into(),
+        benchmark_profile: "profile1".into(),
+        config_fingerprint: "fp1".into(),
+        git_commit: "abc123".into(),
+        generated_at_utc: "2026-02-27T00:00:00Z".into(),
+    };
+    let v: serde_json::Value = serde_json::to_value(&fm).unwrap();
+    assert_eq!(v["baseline_benchmark_run_id"], "baseline1");
 }

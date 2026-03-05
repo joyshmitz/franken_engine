@@ -185,3 +185,105 @@ fn replay_template_is_one_command_entrypoint() {
         "./scripts/run_parser_benchmark_protocol.sh ci"
     );
 }
+
+// ---------- load helpers ----------
+
+#[test]
+fn load_fixture_returns_nonempty_wrapper_id() {
+    let fixture = load_fixture();
+    assert!(!fixture.wrapper_id.is_empty());
+}
+
+#[test]
+fn load_env_contract_doc_returns_nonempty() {
+    let doc = load_env_contract_doc();
+    assert!(!doc.is_empty());
+}
+
+#[test]
+fn load_benchmark_wrapper_script_returns_nonempty() {
+    let script = load_benchmark_wrapper_script();
+    assert!(!script.is_empty());
+}
+
+// ---------- fixture consistency ----------
+
+#[test]
+fn fixture_runner_commands_cover_all_required_modes() {
+    let fixture = load_fixture();
+    let modes: BTreeSet<&str> = fixture
+        .required_wrapper_modes
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let commands: BTreeSet<&str> = fixture.runner_commands.keys().map(String::as_str).collect();
+    assert_eq!(modes, commands, "runner_commands must exactly cover required_wrapper_modes");
+}
+
+#[test]
+fn fixture_required_event_keys_are_unique() {
+    let fixture = load_fixture();
+    let set: BTreeSet<&str> = fixture.required_event_keys.iter().map(String::as_str).collect();
+    assert_eq!(set.len(), fixture.required_event_keys.len());
+}
+
+#[test]
+fn fixture_required_manifest_keys_are_unique() {
+    let fixture = load_fixture();
+    let set: BTreeSet<&str> = fixture.required_manifest_keys.iter().map(String::as_str).collect();
+    assert_eq!(set.len(), fixture.required_manifest_keys.len());
+}
+
+#[test]
+fn fixture_required_environment_keys_are_unique() {
+    let fixture = load_fixture();
+    let set: BTreeSet<&str> = fixture
+        .required_environment_keys
+        .iter()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(set.len(), fixture.required_environment_keys.len());
+}
+
+#[test]
+fn fixture_bead_id_has_expected_prefix() {
+    let fixture = load_fixture();
+    assert!(fixture.bead_id.starts_with("bd-"), "bead_id must start with bd-");
+}
+
+#[test]
+fn fixture_schema_version_is_stable_contract() {
+    let f1 = load_fixture();
+    let f2 = load_fixture();
+    assert_eq!(f1.schema_version, f2.schema_version);
+    assert_eq!(f1.deterministic_env_schema_version, f2.deterministic_env_schema_version);
+}
+
+#[test]
+fn fixture_replay_command_template_references_script() {
+    let fixture = load_fixture();
+    assert!(
+        fixture.replay_command_template.starts_with("./scripts/"),
+        "replay template must reference scripts dir"
+    );
+}
+
+#[test]
+fn wrapper_script_contains_mode_arguments() {
+    let script = load_benchmark_wrapper_script();
+    for mode in ["check", "test", "clippy", "ci"] {
+        assert!(
+            script.contains(mode),
+            "wrapper script should reference mode `{mode}`"
+        );
+    }
+}
+
+#[test]
+fn env_contract_doc_references_deterministic_env_schema() {
+    let doc = load_env_contract_doc();
+    assert!(
+        doc.contains("franken-engine.parser-frontier.env-contract"),
+        "env contract doc should reference env contract schema"
+    );
+}

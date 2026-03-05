@@ -612,3 +612,146 @@ fn repository_sqlite_policy_guard_passes() {
             && event.component == COMPONENT
     }));
 }
+
+// ---------- constants ----------
+
+#[test]
+fn sqlite_policy_constants_are_nonempty() {
+    assert!(!POLICY_ID.is_empty());
+    assert!(!TRACE_PREFIX.is_empty());
+    assert!(!COMPONENT.is_empty());
+}
+
+#[test]
+fn forbidden_sqlite_deps_is_nonempty() {
+    assert!(!FORBIDDEN_SQLITE_DEPENDENCIES.is_empty());
+    assert!(FORBIDDEN_SQLITE_DEPENDENCIES.contains(&"rusqlite"));
+}
+
+#[test]
+fn forbidden_sqlite_tokens_is_nonempty() {
+    assert!(!FORBIDDEN_SQLITE_TOKENS.is_empty());
+    assert!(FORBIDDEN_SQLITE_TOKENS.contains(&"rusqlite::"));
+}
+
+#[test]
+fn adapter_allowed_paths_is_nonempty() {
+    assert!(!ADAPTER_ALLOWED_PATHS.is_empty());
+}
+
+// ---------- dependency_section ----------
+
+#[test]
+fn sqlite_dependency_section_recognizes_standard() {
+    assert!(dependency_section("dependencies"));
+    assert!(dependency_section("dev-dependencies"));
+    assert!(dependency_section("build-dependencies"));
+    assert!(dependency_section("workspace.dependencies"));
+}
+
+#[test]
+fn sqlite_dependency_section_rejects_non_dep() {
+    assert!(!dependency_section("package"));
+    assert!(!dependency_section("features"));
+}
+
+// ---------- dependency_names ----------
+
+#[test]
+fn sqlite_dependency_names_extracts_deps() {
+    let toml = "[dependencies]\nserde = \"1\"\ntokio = \"1\"\n";
+    let deps = dependency_names(toml);
+    assert!(deps.contains(&"serde".to_string()));
+    assert!(deps.contains(&"tokio".to_string()));
+}
+
+#[test]
+fn sqlite_dependency_names_handles_empty() {
+    assert!(dependency_names("").is_empty());
+}
+
+// ---------- is_forbidden_sqlite_dependency ----------
+
+#[test]
+fn is_forbidden_sqlite_dep_blocks_known() {
+    assert!(is_forbidden_sqlite_dependency("rusqlite"));
+    assert!(is_forbidden_sqlite_dependency("libsqlite3-sys"));
+    assert!(is_forbidden_sqlite_dependency("sqlite3"));
+}
+
+#[test]
+fn is_forbidden_sqlite_dep_allows_unrelated() {
+    assert!(!is_forbidden_sqlite_dependency("serde"));
+    assert!(!is_forbidden_sqlite_dependency("frankensqlite"));
+}
+
+// ---------- is_adapter_allowed_path ----------
+
+#[test]
+fn adapter_allowed_path_matches() {
+    assert!(is_adapter_allowed_path("crates/franken-engine/src/storage_adapter.rs"));
+    assert!(!is_adapter_allowed_path("crates/franken-engine/src/something.rs"));
+}
+
+// ---------- matches_pattern ----------
+
+#[test]
+fn matches_pattern_exact_match() {
+    assert!(matches_pattern("foo.rs", "foo.rs"));
+    assert!(!matches_pattern("foo.rs", "bar.rs"));
+}
+
+#[test]
+fn matches_pattern_wildcard() {
+    assert!(matches_pattern("crates/*", "crates/foo.rs"));
+    assert!(!matches_pattern("crates/*", "src/foo.rs"));
+}
+
+// ---------- parse_exception_doc ----------
+
+#[test]
+fn sqlite_parse_exception_doc_requires_approved() {
+    let doc = ExceptionDocumentInput {
+        path: "docs/adr/exceptions/ADR-EXCEPTION-SQLITE-0001.md".to_string(),
+        content: "Scope: dependency:rusqlite\n".to_string(),
+    };
+    assert!(parse_exception_doc(&doc).is_none());
+}
+
+#[test]
+fn sqlite_parse_exception_doc_ignores_non_sqlite_path() {
+    let doc = ExceptionDocumentInput {
+        path: "docs/adr/exceptions/ADR-OTHER.md".to_string(),
+        content: "Status: Approved\nScope: dependency:rusqlite\n".to_string(),
+    };
+    assert!(parse_exception_doc(&doc).is_none());
+}
+
+// ---------- PolicyGuardReport ----------
+
+#[test]
+fn sqlite_report_jsonl_is_parseable() {
+    let report = evaluate_guard(&[], &[], &[]);
+    for line in report.as_jsonl().lines() {
+        let _: serde_json::Value = serde_json::from_str(line).expect("valid JSONL");
+    }
+}
+
+// ---------- evaluate_guard ----------
+
+#[test]
+fn sqlite_evaluate_guard_empty_passes() {
+    let report = evaluate_guard(&[], &[], &[]);
+    assert!(report.violations.is_empty());
+    assert!(report.events.iter().any(|e| e.event == "guard_summary" && e.outcome == "pass"));
+}
+
+#[test]
+fn sqlite_multiple_violations_accumulate() {
+    let manifests = vec![ManifestInput {
+        path: "Cargo.toml".to_string(),
+        content: "[dependencies]\nrusqlite = \"1\"\nsqlite3 = \"1\"\n".to_string(),
+    }];
+    let report = evaluate_guard(&manifests, &[], &[]);
+    assert_eq!(report.violations.len(), 2);
+}

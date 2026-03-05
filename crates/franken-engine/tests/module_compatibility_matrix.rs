@@ -162,3 +162,228 @@ fn canonical_hash_is_stable_across_reloads() {
     let b = ModuleCompatibilityMatrix::from_default_json().expect("load default matrix b");
     assert_eq!(a.canonical_hash(), b.canonical_hash());
 }
+
+// ---------- context helper ----------
+
+#[test]
+fn context_sets_trace_fields() {
+    let ctx = context();
+    assert_eq!(ctx.trace_id, "trace-modcompat-integration");
+    assert_eq!(ctx.decision_id, "decision-modcompat-integration");
+    assert_eq!(ctx.policy_id, "policy-modcompat-integration");
+}
+
+// ---------- ModuleFeature ----------
+
+#[test]
+fn module_feature_serde_roundtrip() {
+    for feature in [
+        ModuleFeature::Esm,
+        ModuleFeature::Cjs,
+        ModuleFeature::DualMode,
+        ModuleFeature::ConditionalExports,
+        ModuleFeature::PackageJsonFields,
+    ] {
+        let json = serde_json::to_string(&feature).expect("serialize");
+        let recovered: ModuleFeature = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, feature);
+    }
+}
+
+#[test]
+fn module_feature_as_str_is_nonempty() {
+    for feature in [
+        ModuleFeature::Esm,
+        ModuleFeature::Cjs,
+        ModuleFeature::DualMode,
+        ModuleFeature::ConditionalExports,
+        ModuleFeature::PackageJsonFields,
+    ] {
+        assert!(!feature.as_str().is_empty());
+    }
+}
+
+// ---------- CompatibilityRuntime ----------
+
+#[test]
+fn compatibility_runtime_serde_roundtrip() {
+    for runtime in [
+        CompatibilityRuntime::FrankenEngine,
+        CompatibilityRuntime::Node,
+        CompatibilityRuntime::Bun,
+    ] {
+        let json = serde_json::to_string(&runtime).expect("serialize");
+        let recovered: CompatibilityRuntime = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, runtime);
+    }
+}
+
+#[test]
+fn compatibility_runtime_as_str_is_nonempty() {
+    for runtime in [
+        CompatibilityRuntime::FrankenEngine,
+        CompatibilityRuntime::Node,
+        CompatibilityRuntime::Bun,
+    ] {
+        assert!(!runtime.as_str().is_empty());
+    }
+}
+
+// ---------- CompatibilityMode ----------
+
+#[test]
+fn compatibility_mode_serde_roundtrip() {
+    for mode in [
+        CompatibilityMode::Native,
+        CompatibilityMode::NodeCompat,
+        CompatibilityMode::BunCompat,
+    ] {
+        let json = serde_json::to_string(&mode).expect("serialize");
+        let recovered: CompatibilityMode = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, mode);
+    }
+}
+
+#[test]
+fn compatibility_mode_as_str_is_nonempty() {
+    for mode in [
+        CompatibilityMode::Native,
+        CompatibilityMode::NodeCompat,
+        CompatibilityMode::BunCompat,
+    ] {
+        assert!(!mode.as_str().is_empty());
+    }
+}
+
+// ---------- CompatibilityMatrixErrorCode ----------
+
+#[test]
+fn error_code_stable_code_starts_with_fe() {
+    for code in [
+        CompatibilityMatrixErrorCode::MatrixParseError,
+        CompatibilityMatrixErrorCode::DuplicateCaseId,
+        CompatibilityMatrixErrorCode::CaseNotFound,
+        CompatibilityMatrixErrorCode::HiddenShim,
+        CompatibilityMatrixErrorCode::MissingWaiver,
+        CompatibilityMatrixErrorCode::MissingMigrationGuidance,
+        CompatibilityMatrixErrorCode::InvalidMatrix,
+        CompatibilityMatrixErrorCode::ObservationMismatch,
+    ] {
+        let stable = code.stable_code();
+        assert!(
+            stable.starts_with("FE-MODCOMP-"),
+            "code {} does not start with FE-MODCOMP-",
+            stable
+        );
+    }
+}
+
+#[test]
+fn error_code_stable_codes_are_unique() {
+    let codes = [
+        CompatibilityMatrixErrorCode::MatrixParseError,
+        CompatibilityMatrixErrorCode::DuplicateCaseId,
+        CompatibilityMatrixErrorCode::CaseNotFound,
+        CompatibilityMatrixErrorCode::HiddenShim,
+        CompatibilityMatrixErrorCode::MissingWaiver,
+        CompatibilityMatrixErrorCode::MissingMigrationGuidance,
+        CompatibilityMatrixErrorCode::InvalidMatrix,
+        CompatibilityMatrixErrorCode::ObservationMismatch,
+    ];
+    let stable: BTreeSet<_> = codes.iter().map(|c| c.stable_code()).collect();
+    assert_eq!(stable.len(), codes.len());
+}
+
+// ---------- DEFAULT_MATRIX_JSON ----------
+
+#[test]
+fn default_matrix_json_is_valid_json() {
+    let value: serde_json::Value =
+        serde_json::from_str(DEFAULT_MATRIX_JSON).expect("parse default matrix JSON");
+    assert!(value.is_object());
+}
+
+// ---------- ModuleCompatibilityMatrix ----------
+
+#[test]
+fn matrix_entries_have_unique_case_ids() {
+    let matrix = ModuleCompatibilityMatrix::from_default_json().expect("load matrix");
+    let entries = matrix.entries();
+    let ids: BTreeSet<_> = entries.iter().map(|e| &e.case_id).collect();
+    assert_eq!(ids.len(), entries.len());
+}
+
+#[test]
+fn matrix_entry_lookup_by_case_id() {
+    let matrix = ModuleCompatibilityMatrix::from_default_json().expect("load matrix");
+    let first_id = matrix.entries()[0].case_id.clone();
+    let entry = matrix.entry(&first_id);
+    assert!(entry.is_some());
+    assert_eq!(entry.unwrap().case_id, first_id);
+}
+
+#[test]
+fn matrix_entry_lookup_missing_returns_none() {
+    let matrix = ModuleCompatibilityMatrix::from_default_json().expect("load matrix");
+    assert!(matrix.entry("nonexistent-case-id-xyz").is_none());
+}
+
+#[test]
+fn matrix_to_json_pretty_roundtrips() {
+    let matrix = ModuleCompatibilityMatrix::from_default_json().expect("load matrix");
+    let json = matrix.to_json_pretty().expect("serialize");
+    assert!(json.contains("schema_version"));
+    assert!(!json.is_empty());
+}
+
+#[test]
+fn matrix_canonical_bytes_are_deterministic() {
+    let a = ModuleCompatibilityMatrix::from_default_json().expect("load a");
+    let b = ModuleCompatibilityMatrix::from_default_json().expect("load b");
+    assert_eq!(a.canonical_bytes(), b.canonical_bytes());
+}
+
+// ---------- CompatibilityObservation ----------
+
+#[test]
+fn compatibility_observation_new_sets_fields() {
+    let obs = CompatibilityObservation::new(
+        "test-case",
+        CompatibilityRuntime::Node,
+        CompatibilityMode::NodeCompat,
+        "expected_behavior",
+    );
+    assert_eq!(obs.case_id, "test-case");
+    assert_eq!(obs.runtime, CompatibilityRuntime::Node);
+    assert_eq!(obs.mode, CompatibilityMode::NodeCompat);
+    assert_eq!(obs.observed_behavior, "expected_behavior");
+}
+
+// ---------- FeatureParityTracker ----------
+
+#[test]
+fn tracker_has_default_features() {
+    let tracker = FeatureParityTracker::new();
+    assert!(!tracker.features().is_empty());
+}
+
+// ---------- WaiverRecord ----------
+
+#[test]
+fn waiver_record_serde_roundtrip() {
+    let waiver = WaiverRecord {
+        waiver_id: "waiver-test".to_string(),
+        feature_id: "feature-test".to_string(),
+        reason: "test reason".to_string(),
+        approved_by: "ops".to_string(),
+        approved_at_ns: 100,
+        valid_until_ns: Some(200),
+        test262_exemptions: Vec::new(),
+        lockstep_exemptions: Vec::new(),
+        sealed: false,
+    };
+    let json = serde_json::to_string(&waiver).expect("serialize");
+    let recovered: WaiverRecord = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.waiver_id, "waiver-test");
+    assert_eq!(recovered.valid_until_ns, Some(200));
+}

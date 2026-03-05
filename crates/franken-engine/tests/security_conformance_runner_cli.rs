@@ -326,3 +326,142 @@ label_sha256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
         "stderr missing manifest mismatch:\n{stderr}"
     );
 }
+
+// ---------- sha256_hex ----------
+
+#[test]
+fn sha256_hex_deterministic() {
+    let a = sha256_hex(b"hello world");
+    let b = sha256_hex(b"hello world");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn sha256_hex_different_inputs_differ() {
+    assert_ne!(sha256_hex(b"hello"), sha256_hex(b"world"));
+}
+
+#[test]
+fn sha256_hex_empty_input() {
+    let result = sha256_hex(b"");
+    assert_eq!(result.len(), 64);
+    assert!(result.chars().all(|c| c.is_ascii_hexdigit()));
+}
+
+#[test]
+fn sha256_hex_known_value() {
+    // SHA-256 of empty string is well-known
+    let expected = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    assert_eq!(sha256_hex(b""), expected);
+}
+
+// ---------- parse_evidence_path ----------
+
+#[test]
+fn parse_evidence_path_extracts_path() {
+    let stdout = "some output\nsecurity evidence=/tmp/evidence.jsonl\nmore output\n";
+    let path = parse_evidence_path(stdout);
+    assert_eq!(path, PathBuf::from("/tmp/evidence.jsonl"));
+}
+
+// ---------- normalize_path ----------
+
+#[test]
+fn normalize_path_absolute_stays_absolute() {
+    let path = PathBuf::from("/absolute/path");
+    let result = normalize_path(path.clone());
+    assert_eq!(result, path);
+}
+
+#[test]
+fn normalize_path_relative_becomes_absolute() {
+    let path = PathBuf::from("relative/path");
+    let result = normalize_path(path);
+    assert!(result.is_absolute());
+}
+
+// ---------- TestTempDir ----------
+
+#[test]
+fn test_temp_dir_creates_directory() {
+    let guard = TestTempDir::new("temp-dir-test");
+    assert!(guard.path.exists());
+    assert!(guard.path.is_dir());
+}
+
+#[test]
+fn test_temp_dir_unique_paths() {
+    let a = TestTempDir::new("uniq-a");
+    let b = TestTempDir::new("uniq-b");
+    assert_ne!(a.path, b.path);
+}
+
+// ---------- write_file ----------
+
+#[test]
+fn write_file_creates_and_writes() {
+    let guard = TestTempDir::new("write-file-test");
+    let path = guard.path.join("subdir/test.txt");
+    write_file(&path, "hello");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "hello");
+}
+
+// ---------- build_fixture ----------
+
+#[test]
+fn build_fixture_creates_corpus_manifest() {
+    let fixture = build_fixture();
+    let manifest_path = fixture.labels_root.join("corpus_manifest.toml");
+    assert!(manifest_path.exists());
+    let content = fs::read_to_string(&manifest_path).unwrap();
+    assert!(content.contains("franken-engine.security-conformance-corpus-manifest.v1"));
+}
+
+#[test]
+fn build_fixture_creates_observations_jsonl() {
+    let fixture = build_fixture();
+    assert!(fixture.observations_jsonl.exists());
+    let content = fs::read_to_string(&fixture.observations_jsonl).unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert_eq!(lines.len(), 2);
+}
+
+// ---------- fixture labels are valid TOML ----------
+
+#[test]
+fn build_fixture_labels_are_valid_toml() {
+    let fixture = build_fixture();
+    let benign_label = fixture
+        .labels_root
+        .join("benign/echo_read/workload_label.toml");
+    let content = fs::read_to_string(&benign_label).unwrap();
+    let parsed: toml::Value = toml::from_str(&content).expect("valid toml");
+    assert_eq!(
+        parsed["workload_id"].as_str(),
+        Some("benign-echo-read")
+    );
+}
+
+// ---------- fixture observations are valid JSON ----------
+
+#[test]
+fn build_fixture_observations_are_valid_json() {
+    let fixture = build_fixture();
+    let content = fs::read_to_string(&fixture.observations_jsonl).unwrap();
+    for line in content.lines() {
+        let parsed: Value = serde_json::from_str(line).expect("valid JSON");
+        assert!(parsed["workload_id"].as_str().is_some());
+    }
+}
+
+// ---------- policy snapshot hash has expected length ----------
+
+#[test]
+fn build_fixture_policy_hash_has_correct_length() {
+    let fixture = build_fixture();
+    assert_eq!(fixture.policy_snapshot_hash.len(), 64);
+    assert!(fixture
+        .policy_snapshot_hash
+        .chars()
+        .all(|c| c.is_ascii_hexdigit()));
+}

@@ -411,3 +411,108 @@ fn transition_trigger_display_stable() {
     assert_eq!(TransitionTrigger::Auto.to_string(), "auto");
     assert_eq!(TransitionTrigger::CrashLoop.to_string(), "crash_loop");
 }
+
+// ---------- serde roundtrips ----------
+
+#[test]
+fn rollout_phase_serde_roundtrip() {
+    for phase in RolloutPhase::ALL {
+        let json = serde_json::to_string(&phase).expect("serialize");
+        let recovered: RolloutPhase = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, phase);
+    }
+}
+
+#[test]
+fn transition_trigger_serde_roundtrip() {
+    for trigger in [TransitionTrigger::Manual, TransitionTrigger::Auto, TransitionTrigger::CrashLoop] {
+        let json = serde_json::to_string(&trigger).expect("serialize");
+        let recovered: TransitionTrigger = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, trigger);
+    }
+}
+
+#[test]
+fn lifecycle_config_serde_roundtrip() {
+    let config = LifecycleConfig::default();
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: LifecycleConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, config);
+}
+
+#[test]
+fn lifecycle_config_default_values() {
+    let config = LifecycleConfig::default();
+    assert_eq!(config.crash_threshold, 3);
+    assert!(config.crash_window_ticks > 0);
+    assert!(config.rollback_holdoff_ticks > 0);
+}
+
+#[test]
+fn component_descriptor_serde_roundtrip() {
+    let desc = descriptor("ext-serde", "1.0.0");
+    let json = serde_json::to_string(&desc).expect("serialize");
+    let recovered: ComponentDescriptor = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.component_id, "ext-serde");
+    assert_eq!(recovered.version, "1.0.0");
+}
+
+#[test]
+fn lifecycle_error_is_std_error() {
+    let err = LifecycleError::ComponentNotFound {
+        component_id: "ext-missing".to_string(),
+    };
+    let dyn_err: &dyn std::error::Error = &err;
+    assert!(dyn_err.to_string().contains("ext-missing"));
+}
+
+#[test]
+fn lifecycle_error_display_unique_variants() {
+    let errors: Vec<LifecycleError> = vec![
+        LifecycleError::InvalidTransition {
+            from: LifecycleState::Inactive,
+            to: LifecycleState::Active,
+        },
+        LifecycleError::ComponentNotFound {
+            component_id: "x".to_string(),
+        },
+        LifecycleError::CheckpointRegression {
+            component_id: "x".to_string(),
+        },
+        LifecycleError::RevocationCheckFailed {
+            detail: "x".to_string(),
+        },
+    ];
+    let messages: BTreeSet<String> = errors.iter().map(|e| e.to_string()).collect();
+    assert_eq!(messages.len(), errors.len());
+}
+
+#[test]
+fn lifecycle_state_display() {
+    assert_eq!(LifecycleState::Inactive.to_string(), "inactive");
+    assert_eq!(LifecycleState::Active.to_string(), "active");
+    assert_eq!(
+        LifecycleState::Updating(RolloutPhase::Shadow).to_string(),
+        "updating:shadow"
+    );
+}
+
+#[test]
+fn rollout_phase_next_pipeline() {
+    assert_eq!(RolloutPhase::Shadow.next(), Some(RolloutPhase::Canary));
+    assert_eq!(RolloutPhase::Canary.next(), Some(RolloutPhase::Ramp));
+    assert_eq!(RolloutPhase::Ramp.next(), Some(RolloutPhase::Default));
+    assert_eq!(RolloutPhase::Default.next(), None);
+}
+
+#[test]
+fn pre_activation_check_serde_roundtrip() {
+    let check = PreActivationCheck {
+        check_name: "signature".to_string(),
+        passed: true,
+        detail: "valid".to_string(),
+    };
+    let json = serde_json::to_string(&check).expect("serialize");
+    let recovered: PreActivationCheck = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, check);
+}

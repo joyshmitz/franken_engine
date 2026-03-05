@@ -6,12 +6,12 @@ use std::{
     path::PathBuf,
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const CONTRACT_SCHEMA_VERSION: &str = "frx.incremental-adoption-controls.v1";
 const CONTRACT_JSON: &str = include_str!("../../../docs/frx_incremental_adoption_controls_v1.json");
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct AdoptionControlsContract {
     schema_version: String,
     bead_id: String,
@@ -26,13 +26,13 @@ struct AdoptionControlsContract {
     operator_verification: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Track {
     id: String,
     name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PolicyToggle {
     required: bool,
     default: bool,
@@ -40,20 +40,20 @@ struct PolicyToggle {
     fallback_route: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CanaryFlow {
     stages: Vec<String>,
     allowed_transitions: Vec<CanaryTransition>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CanaryTransition {
     from: String,
     to: String,
     kind: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MigrationDiagnostic {
     diagnostic_code: String,
     compatibility_class: String,
@@ -291,6 +291,171 @@ fn frx_07_4_contract_matches_runtime_surfaces_and_logging_requirements() {
         assert!(
             safe_mode.contains(snippet),
             "safe_mode_fallback missing: {snippet}"
+        );
+    }
+}
+
+#[test]
+fn frx_07_4_canary_flow_has_no_self_transitions() {
+    let contract = parse_contract();
+    for t in &contract.canary_flow.allowed_transitions {
+        assert_ne!(
+            t.from, t.to,
+            "self-transition not allowed: {} -> {}",
+            t.from, t.to
+        );
+    }
+}
+
+#[test]
+fn frx_07_4_transition_kinds_are_promote_or_rollback() {
+    let contract = parse_contract();
+    let allowed_kinds: BTreeSet<&str> = ["promote", "rollback"].into_iter().collect();
+    for t in &contract.canary_flow.allowed_transitions {
+        assert!(
+            allowed_kinds.contains(t.kind.as_str()),
+            "invalid transition kind: {} (from {} to {})",
+            t.kind,
+            t.from,
+            t.to
+        );
+    }
+}
+
+#[test]
+fn frx_07_4_diagnostic_codes_are_unique() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for d in &contract.migration_diagnostics {
+        assert!(
+            seen.insert(&d.diagnostic_code),
+            "duplicate diagnostic_code: {}",
+            d.diagnostic_code
+        );
+    }
+}
+
+#[test]
+fn frx_07_4_policy_toggle_defaults_are_consistent() {
+    let contract = parse_contract();
+    for (name, toggle) in &contract.policy_toggles {
+        // required toggles should default to false (opt-in safety)
+        if toggle.required {
+            assert!(
+                !toggle.default,
+                "required toggle {} should default to false for safety",
+                name
+            );
+        }
+    }
+}
+
+#[test]
+fn frx_07_4_serde_roundtrip_preserves_contract() {
+    let contract = parse_contract();
+    let serialized = serde_json::to_string(&contract).expect("serialize");
+    let deserialized: AdoptionControlsContract =
+        serde_json::from_str(&serialized).expect("deserialize");
+    assert_eq!(contract, deserialized);
+}
+
+#[test]
+fn frx_07_4_deterministic_double_parse() {
+    let a = parse_contract();
+    let b = parse_contract();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn frx_07_4_canary_stages_cover_full_lifecycle() {
+    let contract = parse_contract();
+    let stages: BTreeSet<&str> = contract
+        .canary_flow
+        .stages
+        .iter()
+        .map(String::as_str)
+        .collect();
+    // every transition endpoint must be a valid stage
+    for t in &contract.canary_flow.allowed_transitions {
+        assert!(
+            stages.contains(t.from.as_str()),
+            "transition from unknown stage: {}",
+            t.from
+        );
+        assert!(
+            stages.contains(t.to.as_str()),
+            "transition to unknown stage: {}",
+            t.to
+        );
+    }
+}
+
+#[test]
+fn frx_07_4_rollout_axes_are_nonempty_strings() {
+    let contract = parse_contract();
+    assert!(!contract.rollout_axes.is_empty());
+    for axis in &contract.rollout_axes {
+        assert!(!axis.trim().is_empty(), "rollout axis must not be empty");
+    }
+}
+
+#[test]
+fn frx_07_4_doc_file_exists_and_is_nonempty() {
+    let path = repo_root().join("docs/FRX_INCREMENTAL_ADOPTION_CONTROLS_V1.md");
+    let content = fs::read_to_string(&path).expect("read doc");
+    assert!(!content.is_empty());
+}
+
+#[test]
+fn frx_07_4_policy_toggle_names_are_all_present() {
+    let contract = parse_contract();
+    let toggle_names: BTreeSet<&str> = contract.policy_toggles.keys().map(String::as_str).collect();
+    for expected in ["force_fallback", "policy_opt_out", "denylist_opt_out", "canary_pause"] {
+        assert!(toggle_names.contains(expected), "missing toggle: {expected}");
+    }
+}
+
+#[test]
+fn frx_07_4_operator_verification_has_json_validation() {
+    let contract = parse_contract();
+    assert!(
+        contract
+            .operator_verification
+            .iter()
+            .any(|cmd| cmd.contains("jq empty")),
+        "operator verification must include JSON validation"
+    );
+}
+
+#[test]
+fn frx_07_4_canary_flow_transitions_are_unique() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for t in &contract.canary_flow.allowed_transitions {
+        assert!(
+            seen.insert((&t.from, &t.to, &t.kind)),
+            "duplicate transition: {} -> {} ({})",
+            t.from,
+            t.to,
+            t.kind
+        );
+    }
+}
+
+#[test]
+fn frx_07_4_remediation_ids_are_nonempty_and_unique() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for d in &contract.migration_diagnostics {
+        assert!(
+            !d.remediation_id.trim().is_empty(),
+            "remediation_id must not be empty for {}",
+            d.diagnostic_code
+        );
+        assert!(
+            seen.insert(&d.remediation_id),
+            "duplicate remediation_id: {}",
+            d.remediation_id
         );
     }
 }

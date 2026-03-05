@@ -210,7 +210,7 @@ fn entropy_certificate_and_quality_sentinel_fail_closed_in_fidelity_emergency() 
 // ────────────────────────────────────────────────────────────
 
 use frankenengine_engine::observability_channel_model::{
-    ChannelPath, ChannelReport, ChannelSpec, DistortionMetric, FailureBudget,
+    ChannelPath, ChannelReport, ChannelSpec, DistortionMetric, FailureBudget, PolicyViolation,
     RateDistortionEnvelope, RateDistortionPoint, ViolationKind, canonical_risk_ledgers,
 };
 
@@ -516,7 +516,7 @@ fn utilization_increases_with_emissions() {
 
     let mut states = BTreeMap::new();
     states.insert("ch-util".to_string(), state.clone());
-    let report_before = generate_channel_report(&[spec.clone()], &states, epoch);
+    let report_before = generate_channel_report(std::slice::from_ref(&spec), &states, epoch);
     let util_before = report_before.channels[0].utilization_millionths;
 
     for _ in 0..5 {
@@ -529,4 +529,234 @@ fn utilization_increases_with_emissions() {
     let util_after = report_after.channels[0].utilization_millionths;
 
     assert!(util_after > util_before);
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment batch 8: enum serde/Display, envelope methods,
+// risk ledger, violation kind, constants, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn schema_version_constant_is_stable() {
+    use frankenengine_engine::observability_channel_model::SCHEMA_VERSION;
+    assert_eq!(SCHEMA_VERSION, "franken-engine.observability-channel.v1");
+}
+
+#[test]
+fn payload_family_all_has_five_elements() {
+    assert_eq!(PayloadFamily::ALL.len(), 5);
+}
+
+#[test]
+fn payload_family_serde_round_trip() {
+    for family in PayloadFamily::ALL {
+        let json = serde_json::to_string(&family).expect("serialize");
+        let recovered: PayloadFamily = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(family, recovered);
+    }
+}
+
+#[test]
+fn payload_family_display_all_unique() {
+    let displays: BTreeSet<String> = PayloadFamily::ALL.iter().map(|f| f.to_string()).collect();
+    assert_eq!(displays.len(), 5);
+}
+
+#[test]
+fn distortion_metric_serde_round_trip() {
+    let metrics = [
+        DistortionMetric::Hamming,
+        DistortionMetric::SquaredError,
+        DistortionMetric::LogLoss,
+        DistortionMetric::EditDistance,
+        DistortionMetric::BinaryFidelity,
+    ];
+    for metric in metrics {
+        let json = serde_json::to_string(&metric).expect("serialize");
+        let recovered: DistortionMetric = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(metric, recovered);
+    }
+}
+
+#[test]
+fn distortion_metric_display_all_unique() {
+    let metrics = [
+        DistortionMetric::Hamming,
+        DistortionMetric::SquaredError,
+        DistortionMetric::LogLoss,
+        DistortionMetric::EditDistance,
+        DistortionMetric::BinaryFidelity,
+    ];
+    let displays: BTreeSet<String> = metrics.iter().map(|m| m.to_string()).collect();
+    assert_eq!(displays.len(), 5);
+}
+
+#[test]
+fn channel_path_all_has_five_elements() {
+    assert_eq!(ChannelPath::ALL.len(), 5);
+}
+
+#[test]
+fn channel_path_serde_round_trip() {
+    for path in ChannelPath::ALL {
+        let json = serde_json::to_string(&path).expect("serialize");
+        let recovered: ChannelPath = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(path, recovered);
+    }
+}
+
+#[test]
+fn channel_path_display_all_unique() {
+    let displays: BTreeSet<String> = ChannelPath::ALL.iter().map(|p| p.to_string()).collect();
+    assert_eq!(displays.len(), 5);
+}
+
+#[test]
+fn violation_kind_serde_round_trip() {
+    let kinds = [
+        ViolationKind::UncappedTelemetry,
+        ViolationKind::UnverifiableLoss,
+        ViolationKind::DropBudgetExceeded,
+        ViolationKind::DegradationBudgetExceeded,
+        ViolationKind::BackpressureOverflow,
+    ];
+    for kind in kinds {
+        let json = serde_json::to_string(&kind).expect("serialize");
+        let recovered: ViolationKind = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(kind, recovered);
+    }
+}
+
+#[test]
+fn violation_kind_display_all_unique() {
+    let kinds = [
+        ViolationKind::UncappedTelemetry,
+        ViolationKind::UnverifiableLoss,
+        ViolationKind::DropBudgetExceeded,
+        ViolationKind::DegradationBudgetExceeded,
+        ViolationKind::BackpressureOverflow,
+    ];
+    let displays: BTreeSet<String> = kinds.iter().map(|k| k.to_string()).collect();
+    assert_eq!(displays.len(), 5);
+}
+
+#[test]
+fn rate_distortion_envelope_rate_at_distortion_interpolates() {
+    let envelope = RateDistortionEnvelope {
+        family: PayloadFamily::Optimization,
+        metric: DistortionMetric::SquaredError,
+        frontier: vec![
+            RateDistortionPoint { distortion_millionths: 0, rate_millibits: 1_000_000 },
+            RateDistortionPoint { distortion_millionths: 500_000, rate_millibits: 500_000 },
+        ],
+        max_distortion_millionths: 500_000,
+        min_rate_millibits: 100_000,
+    };
+
+    // At zero distortion, rate should be 1_000_000
+    assert_eq!(envelope.rate_at_distortion(0), Some(1_000_000));
+    // At max distortion, rate should be 500_000
+    assert_eq!(envelope.rate_at_distortion(500_000), Some(500_000));
+    // Midpoint should interpolate to ~750_000
+    assert_eq!(envelope.rate_at_distortion(250_000), Some(750_000));
+    // Beyond max distortion returns None
+    assert_eq!(envelope.rate_at_distortion(500_001), None);
+}
+
+#[test]
+fn rate_distortion_envelope_empty_frontier_returns_none() {
+    let envelope = RateDistortionEnvelope {
+        family: PayloadFamily::Decision,
+        metric: DistortionMetric::Hamming,
+        frontier: vec![],
+        max_distortion_millionths: 100_000,
+        min_rate_millibits: 0,
+    };
+    assert_eq!(envelope.rate_at_distortion(0), None);
+}
+
+#[test]
+fn rate_distortion_envelope_is_achievable() {
+    let envelope = RateDistortionEnvelope {
+        family: PayloadFamily::Optimization,
+        metric: DistortionMetric::SquaredError,
+        frontier: vec![
+            RateDistortionPoint { distortion_millionths: 0, rate_millibits: 1_000_000 },
+            RateDistortionPoint { distortion_millionths: 500_000, rate_millibits: 500_000 },
+        ],
+        max_distortion_millionths: 500_000,
+        min_rate_millibits: 100_000,
+    };
+
+    // At zero distortion, rate 1M is achievable
+    assert!(envelope.is_achievable(1_000_000, 0));
+    // At zero distortion, rate below min is not achievable
+    assert!(!envelope.is_achievable(500_000, 0));
+    // Beyond max distortion is never achievable
+    assert!(!envelope.is_achievable(2_000_000, 600_000));
+}
+
+#[test]
+fn risk_ledger_risk_at_distortion_returns_closest_entry() {
+    let ledgers = canonical_risk_ledgers();
+    // Just verify it returns a non-negative value for 0 distortion
+    for ledger in &ledgers {
+        let risk = ledger.risk_at_distortion(0);
+        assert!(risk >= 0);
+    }
+}
+
+#[test]
+fn channel_state_is_healthy_when_no_violations() {
+    let spec = lossy_spec("ch-healthy-check");
+    let epoch = SecurityEpoch::from_raw(1);
+    let state = ChannelState::new("ch-healthy-check".to_string(), epoch);
+    assert!(state.is_healthy(&spec));
+}
+
+#[test]
+fn channel_state_is_not_healthy_after_violation() {
+    let spec = lossy_spec("ch-unhealthy-check");
+    let epoch = SecurityEpoch::from_raw(1);
+    let mut state = ChannelState::new("ch-unhealthy-check".to_string(), epoch);
+
+    // Fill buffer to trigger backpressure overflow
+    for _ in 0..4 {
+        state.emit(&spec, 0).expect("fill buffer");
+    }
+    let _ = state.emit(&spec, 0); // triggers violation
+    assert!(!state.is_healthy(&spec));
+}
+
+#[test]
+fn channel_state_serde_round_trip() {
+    let spec = lossy_spec("ch-state-serde");
+    let epoch = SecurityEpoch::from_raw(5);
+    let mut state = ChannelState::new("ch-state-serde".to_string(), epoch);
+    state.emit(&spec, 0).expect("emit");
+
+    let json = serde_json::to_string(&state).expect("serialize");
+    let recovered: ChannelState = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(state, recovered);
+}
+
+#[test]
+fn channel_spec_serde_round_trip() {
+    let spec = lossy_spec("ch-spec-serde");
+    let json = serde_json::to_string(&spec).expect("serialize");
+    let recovered: ChannelSpec = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(spec, recovered);
+}
+
+#[test]
+fn policy_violation_serde_round_trip() {
+    let violation = PolicyViolation {
+        channel_id: "ch-viol".to_string(),
+        epoch: SecurityEpoch::from_raw(3),
+        violation_kind: ViolationKind::DropBudgetExceeded,
+        detail: "drop budget exceeded at item 4".to_string(),
+    };
+    let json = serde_json::to_string(&violation).expect("serialize");
+    let recovered: PolicyViolation = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(violation, recovered);
 }

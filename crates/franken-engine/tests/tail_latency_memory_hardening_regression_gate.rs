@@ -395,3 +395,445 @@ fn structured_log_events_include_required_keys() {
         );
     }
 }
+
+// ── EV scoring tests ──────────────────────────────────────────────────
+
+#[test]
+fn ev_score_zero_impact_yields_zero() {
+    let inputs = EvInputs {
+        impact: 0,
+        confidence: 100,
+        reuse: 50,
+        effort: 10,
+        friction: 5,
+    };
+    assert_eq!(ev_score_millionths(&inputs), 0);
+}
+
+#[test]
+fn ev_score_high_effort_reduces_score() {
+    let low_effort = EvInputs {
+        impact: 100,
+        confidence: 80,
+        reuse: 50,
+        effort: 1,
+        friction: 1,
+    };
+    let high_effort = EvInputs {
+        impact: 100,
+        confidence: 80,
+        reuse: 50,
+        effort: 100,
+        friction: 1,
+    };
+    assert!(ev_score_millionths(&low_effort) > ev_score_millionths(&high_effort));
+}
+
+#[test]
+fn ev_score_high_friction_reduces_score() {
+    let low_friction = EvInputs {
+        impact: 100,
+        confidence: 80,
+        reuse: 50,
+        effort: 10,
+        friction: 1,
+    };
+    let high_friction = EvInputs {
+        impact: 100,
+        confidence: 80,
+        reuse: 50,
+        effort: 10,
+        friction: 100,
+    };
+    assert!(ev_score_millionths(&low_friction) > ev_score_millionths(&high_friction));
+}
+
+#[test]
+fn ev_score_denominator_clamped_to_at_least_one() {
+    let inputs = EvInputs {
+        impact: 10,
+        confidence: 10,
+        reuse: 10,
+        effort: 0,
+        friction: 0,
+    };
+    let score = ev_score_millionths(&inputs);
+    assert!(
+        score > 0,
+        "saturating_mul(0,0).max(1) should clamp denominator"
+    );
+}
+
+// ── Budget breach tests ───────────────────────────────────────────────
+
+#[test]
+fn breaches_budget_when_p95_exceeds() {
+    let budgets = TailMemoryBudgets {
+        max_p95_ns: 1000,
+        max_p99_ns: 5000,
+        max_p999_ns: 10000,
+        max_cvar_ns: 2000,
+        max_peak_heap_bytes: 1_000_000,
+        max_live_allocations_tail: 500,
+    };
+    let mut run = make_baseline_run("breach-p95");
+    run.candidate_metrics.p95_ns = 1001;
+    assert!(breaches_budget(&run, &budgets));
+}
+
+#[test]
+fn breaches_budget_when_peak_heap_exceeds() {
+    let budgets = TailMemoryBudgets {
+        max_p95_ns: 10000,
+        max_p99_ns: 50000,
+        max_p999_ns: 100000,
+        max_cvar_ns: 20000,
+        max_peak_heap_bytes: 1_000_000,
+        max_live_allocations_tail: 500,
+    };
+    let mut run = make_baseline_run("breach-heap");
+    run.candidate_metrics.peak_heap_bytes = 1_000_001;
+    assert!(breaches_budget(&run, &budgets));
+}
+
+#[test]
+fn no_breach_when_all_within_budget() {
+    let budgets = TailMemoryBudgets {
+        max_p95_ns: 10000,
+        max_p99_ns: 50000,
+        max_p999_ns: 100000,
+        max_cvar_ns: 20000,
+        max_peak_heap_bytes: 1_000_000,
+        max_live_allocations_tail: 500,
+    };
+    let run = make_baseline_run("no-breach");
+    assert!(!breaches_budget(&run, &budgets));
+}
+
+// ── Central metric improvement tests ──────────────────────────────────
+
+#[test]
+fn central_metric_improved_when_latency_decreased() {
+    let mut run = make_baseline_run("lat-improved");
+    run.candidate_metrics.mean_latency_ns = run.baseline_metrics.mean_latency_ns - 100;
+    assert!(central_metric_improved(&run));
+}
+
+#[test]
+fn central_metric_improved_when_throughput_increased() {
+    let mut run = make_baseline_run("tput-improved");
+    run.candidate_metrics.throughput_ops_per_sec_millionths =
+        run.baseline_metrics.throughput_ops_per_sec_millionths + 100;
+    assert!(central_metric_improved(&run));
+}
+
+#[test]
+fn central_metric_not_improved_when_same() {
+    let run = make_baseline_run("same-metrics");
+    assert!(!central_metric_improved(&run));
+}
+
+// ── Tail regression tests ─────────────────────────────────────────────
+
+#[test]
+fn tail_or_memory_regressed_when_p99_increases() {
+    let mut run = make_baseline_run("p99-regressed");
+    run.candidate_metrics.p99_ns = run.baseline_metrics.p99_ns + 1;
+    assert!(tail_or_memory_regressed(&run));
+}
+
+#[test]
+fn tail_not_regressed_when_identical() {
+    let run = make_baseline_run("no-regression");
+    assert!(!tail_or_memory_regressed(&run));
+}
+
+#[test]
+fn tail_regressed_when_live_allocations_increase() {
+    let mut run = make_baseline_run("alloc-regressed");
+    run.candidate_metrics.live_allocations_tail = run.baseline_metrics.live_allocations_tail + 10;
+    assert!(tail_or_memory_regressed(&run));
+}
+
+// ── Campaign evaluation tests ─────────────────────────────────────────
+
+#[test]
+fn evaluate_promotes_when_all_good() {
+    let budgets = large_budgets();
+    let run = make_baseline_run("all-good");
+    let decision = evaluate_campaign(&run, &budgets);
+    assert_eq!(decision.outcome, "promote");
+    assert_eq!(decision.campaign_id, "all-good");
+}
+
+#[test]
+fn evaluate_holds_when_budget_breached() {
+    let mut budgets = large_budgets();
+    budgets.max_p95_ns = 1;
+    let run = make_baseline_run("budget-breach");
+    let decision = evaluate_campaign(&run, &budgets);
+    assert_eq!(decision.outcome, "hold");
+}
+
+#[test]
+fn evaluate_holds_when_compatibility_invariant_broken() {
+    let budgets = large_budgets();
+    let mut run = make_baseline_run("compat-broken");
+    run.compatibility_invariant_ok = false;
+    let decision = evaluate_campaign(&run, &budgets);
+    assert_eq!(decision.outcome, "hold");
+}
+
+#[test]
+fn evaluate_holds_when_central_improved_but_tail_regressed() {
+    let budgets = large_budgets();
+    let mut run = make_baseline_run("improved-but-regressed");
+    run.candidate_metrics.mean_latency_ns = run.baseline_metrics.mean_latency_ns - 100;
+    run.candidate_metrics.p99_ns = run.baseline_metrics.p99_ns + 500;
+    let decision = evaluate_campaign(&run, &budgets);
+    assert_eq!(decision.outcome, "hold");
+}
+
+// ── Selection tests ───────────────────────────────────────────────────
+
+#[test]
+fn selected_campaign_picks_highest_ev_promotable() {
+    let decisions = vec![
+        CampaignDecision {
+            campaign_id: "low-ev".to_string(),
+            ev_score_millionths: 100,
+            outcome: "promote".to_string(),
+        },
+        CampaignDecision {
+            campaign_id: "high-ev".to_string(),
+            ev_score_millionths: 1000,
+            outcome: "promote".to_string(),
+        },
+        CampaignDecision {
+            campaign_id: "held".to_string(),
+            ev_score_millionths: 5000,
+            outcome: "hold".to_string(),
+        },
+    ];
+    assert_eq!(selected_campaign(&decisions), Some("high-ev".to_string()));
+}
+
+#[test]
+fn selected_campaign_returns_none_when_all_held() {
+    let decisions = vec![
+        CampaignDecision {
+            campaign_id: "held-1".to_string(),
+            ev_score_millionths: 1000,
+            outcome: "hold".to_string(),
+        },
+        CampaignDecision {
+            campaign_id: "held-2".to_string(),
+            ev_score_millionths: 500,
+            outcome: "hold".to_string(),
+        },
+    ];
+    assert_eq!(selected_campaign(&decisions), None);
+}
+
+#[test]
+fn selected_campaign_breaks_ev_tie_by_campaign_id() {
+    let decisions = vec![
+        CampaignDecision {
+            campaign_id: "beta".to_string(),
+            ev_score_millionths: 500,
+            outcome: "promote".to_string(),
+        },
+        CampaignDecision {
+            campaign_id: "alpha".to_string(),
+            ev_score_millionths: 500,
+            outcome: "promote".to_string(),
+        },
+    ];
+    assert_eq!(selected_campaign(&decisions), Some("alpha".to_string()));
+}
+
+#[test]
+fn selected_campaign_empty_decisions_returns_none() {
+    assert_eq!(selected_campaign(&[]), None);
+}
+
+// ── Leverage classification tests ─────────────────────────────────────
+
+#[test]
+fn classify_queue_path() {
+    assert_eq!(
+        classify_tail_memory_lever("src/request_queue.rs"),
+        Some("queueing")
+    );
+}
+
+#[test]
+fn classify_gc_allocator_path() {
+    assert_eq!(
+        classify_tail_memory_lever("src/gc_allocator_pool.rs"),
+        Some("gc_allocator")
+    );
+}
+
+#[test]
+fn classify_sync_lock_path() {
+    assert_eq!(
+        classify_tail_memory_lever("src/sync_barrier.rs"),
+        Some("synchronization")
+    );
+}
+
+#[test]
+fn classify_abi_path() {
+    assert_eq!(
+        classify_tail_memory_lever("src/abi_bridge.rs"),
+        Some("abi_boundary")
+    );
+}
+
+#[test]
+fn classify_retry_path() {
+    assert_eq!(
+        classify_tail_memory_lever("src/retry_policy.rs"),
+        Some("retries")
+    );
+}
+
+#[test]
+fn classify_unrelated_path_returns_none() {
+    assert_eq!(classify_tail_memory_lever("src/main.rs"), None);
+}
+
+#[test]
+fn leverage_one_family_true_for_same_category() {
+    let paths = vec![
+        "src/gc_pool.rs".to_string(),
+        "src/allocator_slab.rs".to_string(),
+    ];
+    assert!(leverage_classification_is_one_family(&paths));
+}
+
+#[test]
+fn leverage_one_family_false_for_mixed_categories() {
+    let paths = vec![
+        "src/gc_pool.rs".to_string(),
+        "src/retry_handler.rs".to_string(),
+    ];
+    assert!(!leverage_classification_is_one_family(&paths));
+}
+
+// ── Structured event tests ────────────────────────────────────────────
+
+#[test]
+fn emit_structured_events_has_correct_count() {
+    let decisions = vec![
+        CampaignDecision {
+            campaign_id: "c1".to_string(),
+            ev_score_millionths: 100,
+            outcome: "promote".to_string(),
+        },
+        CampaignDecision {
+            campaign_id: "c2".to_string(),
+            ev_score_millionths: 200,
+            outcome: "hold".to_string(),
+        },
+    ];
+    let events = emit_structured_events(&decisions);
+    assert_eq!(events.len(), 2);
+}
+
+#[test]
+fn emit_structured_events_decision_id_contains_campaign_id() {
+    let decisions = vec![CampaignDecision {
+        campaign_id: "my-campaign".to_string(),
+        ev_score_millionths: 100,
+        outcome: "promote".to_string(),
+    }];
+    let events = emit_structured_events(&decisions);
+    assert_eq!(
+        events[0]["decision_id"].as_str(),
+        Some("decision-my-campaign")
+    );
+}
+
+#[test]
+fn emit_structured_events_outcome_matches_decision() {
+    let decisions = vec![CampaignDecision {
+        campaign_id: "hold-campaign".to_string(),
+        ev_score_millionths: 100,
+        outcome: "hold".to_string(),
+    }];
+    let events = emit_structured_events(&decisions);
+    assert_eq!(events[0]["outcome"].as_str(), Some("hold"));
+}
+
+#[test]
+fn emit_structured_events_error_code_is_null() {
+    let decisions = vec![CampaignDecision {
+        campaign_id: "ok".to_string(),
+        ev_score_millionths: 100,
+        outcome: "promote".to_string(),
+    }];
+    let events = emit_structured_events(&decisions);
+    assert!(events[0]["error_code"].is_null());
+}
+
+// ── Test helpers ──────────────────────────────────────────────────────
+
+fn make_baseline_run(campaign_id: &str) -> CampaignRun {
+    let metrics = MetricVector {
+        mean_latency_ns: 5000,
+        p95_ns: 500,
+        p99_ns: 2000,
+        p999_ns: 5000,
+        cvar_ns: 1000,
+        peak_heap_bytes: 100_000,
+        live_allocations_tail: 50,
+        throughput_ops_per_sec_millionths: 1_000_000,
+    };
+    CampaignRun {
+        campaign_id: campaign_id.to_string(),
+        lever_id: "lever-001".to_string(),
+        lever_category: "gc_allocator".to_string(),
+        commit: "abc123".to_string(),
+        run_id: "run-001".to_string(),
+        generated_at_utc: "2026-03-01T00:00:00Z".to_string(),
+        changed_paths: vec!["src/gc_allocator_pool.rs".to_string()],
+        decomposition_ledger_ns: DecompositionLedgerNs {
+            queueing: 100,
+            service: 200,
+            synchronization: 50,
+            retries: 10,
+            gc_allocator: 300,
+            abi_boundary: 40,
+        },
+        baseline_metrics: metrics.clone(),
+        candidate_metrics: metrics,
+        compatibility_invariant_ok: true,
+        ev_inputs: EvInputs {
+            impact: 50,
+            confidence: 80,
+            reuse: 40,
+            effort: 10,
+            friction: 5,
+        },
+        expected_ev_score_millionths: 0,
+        expected_outcome: "promote".to_string(),
+        replay_command:
+            "./scripts/e2e/tail_latency_memory_hardening_regression_gate_replay.sh check"
+                .to_string(),
+        artifact_manifest: "artifacts/manifest.json".to_string(),
+        artifact_report: "artifacts/report.json".to_string(),
+    }
+}
+
+fn large_budgets() -> TailMemoryBudgets {
+    TailMemoryBudgets {
+        max_p95_ns: 1_000_000,
+        max_p99_ns: 5_000_000,
+        max_p999_ns: 10_000_000,
+        max_cvar_ns: 2_000_000,
+        max_peak_heap_bytes: 100_000_000,
+        max_live_allocations_tail: 50_000,
+    }
+}

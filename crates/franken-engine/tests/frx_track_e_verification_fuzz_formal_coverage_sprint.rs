@@ -123,3 +123,146 @@ fn frx_track_e_readme_gate_instructions_present() {
         "README missing track E replay command"
     );
 }
+
+// ---------- repo_root ----------
+
+#[test]
+fn repo_root_exists() {
+    assert!(repo_root().exists());
+}
+
+// ---------- charter doc content ----------
+
+#[test]
+fn track_e_charter_doc_is_nonempty() {
+    let path = repo_root().join("docs/FRX_TRACK_E_VERIFICATION_FUZZ_FORMAL_COVERAGE_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read track E doc");
+    assert!(!doc.is_empty());
+}
+
+#[test]
+fn track_e_charter_references_fail_closed() {
+    let path = repo_root().join("docs/FRX_TRACK_E_VERIFICATION_FUZZ_FORMAL_COVERAGE_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read track E doc");
+    assert!(doc.contains("counterexample"));
+}
+
+// ---------- JSON contract fields ----------
+
+#[test]
+fn track_e_contract_has_track_section() {
+    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["track"].is_object());
+    assert_eq!(value["track"]["id"].as_str(), Some("FRX-11.5"));
+}
+
+#[test]
+fn track_e_contract_has_activation_gate() {
+    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["activation_gate"].is_object());
+}
+
+#[test]
+fn track_e_contract_has_outputs_section() {
+    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["outputs"].is_object());
+    assert!(value["outputs"]["blocking_report"].is_object());
+}
+
+#[test]
+fn track_e_contract_failure_policy_is_fail_closed() {
+    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert_eq!(value["failure_policy"]["mode"].as_str(), Some("fail_closed"));
+}
+
+#[test]
+fn track_e_contract_json_is_deterministic() {
+    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let v1: Value = serde_json::from_str(&raw).expect("parse first");
+    let v2: Value = serde_json::from_str(&raw).expect("parse second");
+    assert_eq!(v1, v2);
+}
+
+#[test]
+fn track_e_contract_has_generated_at_utc() {
+    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let ts = value["generated_at_utc"].as_str().expect("generated_at_utc must be string");
+    assert!(ts.ends_with('Z'), "generated_at_utc must end with Z");
+}
+
+#[test]
+fn track_e_contract_has_failure_policy_object() {
+    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["failure_policy"].is_object());
+    assert!(!value["failure_policy"]["mode"].as_str().unwrap_or("").is_empty());
+}
+
+#[test]
+fn track_e_charter_mentions_fuzz() {
+    let path = repo_root().join("docs/FRX_TRACK_E_VERIFICATION_FUZZ_FORMAL_COVERAGE_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.to_ascii_lowercase().contains("fuzz"));
+}
+
+#[test]
+fn track_e_contract_has_primary_bead() {
+    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["primary_bead"].as_str().is_some_and(|s| !s.is_empty()));
+}
+
+#[test]
+fn track_e_charter_mentions_metamorphic() {
+    let path = repo_root().join("docs/FRX_TRACK_E_VERIFICATION_FUZZ_FORMAL_COVERAGE_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.contains("metamorphic"));
+}
+
+#[test]
+fn track_e_contract_blocking_report_has_required_fields_array() {
+    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let fields = value["outputs"]["blocking_report"]["required_fields"]
+        .as_array()
+        .expect("required_fields must be array");
+    assert!(!fields.is_empty());
+}
+
+#[test]
+fn track_e_contract_has_schema_version() {
+    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let sv = value["schema_version"].as_str().expect("schema_version");
+    assert!(!sv.trim().is_empty());
+}
+
+#[test]
+fn track_e_contract_has_generated_by() {
+    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["generated_by"].as_str().is_some_and(|s| !s.is_empty()));
+}
+
+#[test]
+fn track_e_charter_mentions_formal_verification() {
+    let path = repo_root().join("docs/FRX_TRACK_E_VERIFICATION_FUZZ_FORMAL_COVERAGE_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.contains("Formal"));
+}

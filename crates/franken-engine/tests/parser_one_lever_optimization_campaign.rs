@@ -353,3 +353,124 @@ fn replay_scenarios_and_structured_log_contract_are_complete() {
         }
     }
 }
+
+// ---------- load_fixture helper ----------
+
+#[test]
+fn load_fixture_returns_valid_fixture() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.is_empty());
+    assert!(!fixture.campaign_runs.is_empty());
+}
+
+// ---------- load_doc helper ----------
+
+#[test]
+fn load_doc_returns_nonempty_string() {
+    let doc = load_doc();
+    assert!(!doc.is_empty());
+    assert!(doc.contains("One-Lever"));
+}
+
+// ---------- scaled_delta_higher_is_better ----------
+
+#[test]
+fn scaled_delta_higher_positive_for_improvement() {
+    assert_eq!(scaled_delta_higher_is_better(100, 150), 500_000);
+}
+
+#[test]
+fn scaled_delta_higher_negative_for_regression() {
+    assert_eq!(scaled_delta_higher_is_better(200, 100), -500_000);
+}
+
+#[test]
+fn scaled_delta_higher_zero_for_equal() {
+    assert_eq!(scaled_delta_higher_is_better(100, 100), 0);
+}
+
+// ---------- scaled_delta_lower_is_better ----------
+
+#[test]
+fn scaled_delta_lower_positive_for_improvement() {
+    assert_eq!(scaled_delta_lower_is_better(200, 100), 500_000);
+}
+
+#[test]
+fn scaled_delta_lower_negative_for_regression() {
+    assert_eq!(scaled_delta_lower_is_better(100, 200), -1_000_000);
+}
+
+// ---------- ev_score_millionths ----------
+
+#[test]
+fn ev_score_returns_expected_value() {
+    let inputs = EvInputs {
+        impact: 10,
+        confidence: 10,
+        reuse: 10,
+        effort: 1,
+        friction: 1,
+    };
+    assert_eq!(ev_score_millionths(&inputs), 1_000_000_000);
+}
+
+// ---------- rank_by_ev / rank_by_gain ----------
+
+#[test]
+fn rank_by_ev_descending() {
+    let results = vec![
+        CampaignResult { lever_id: "low".to_string(), ev_score_millionths: 100, gain_millionths: 0 },
+        CampaignResult { lever_id: "high".to_string(), ev_score_millionths: 900, gain_millionths: 0 },
+    ];
+    assert_eq!(rank_by_ev(&results), vec!["high", "low"]);
+}
+
+#[test]
+fn rank_by_gain_descending() {
+    let results = vec![
+        CampaignResult { lever_id: "neg".to_string(), ev_score_millionths: 0, gain_millionths: -500 },
+        CampaignResult { lever_id: "pos".to_string(), ev_score_millionths: 0, gain_millionths: 1000 },
+    ];
+    assert_eq!(rank_by_gain(&results), vec!["pos", "neg"]);
+}
+
+// ---------- selected_lever_by_ev ----------
+
+#[test]
+fn selected_lever_picks_highest_ev() {
+    let results = vec![
+        CampaignResult { lever_id: "a".to_string(), ev_score_millionths: 50, gain_millionths: 1000 },
+        CampaignResult { lever_id: "b".to_string(), ev_score_millionths: 500, gain_millionths: -100 },
+    ];
+    assert_eq!(selected_lever_by_ev(&results), "b");
+}
+
+// ---------- emit_structured_events ----------
+
+#[test]
+fn emit_events_includes_selection_event() {
+    let fixture = load_fixture();
+    let results = compute_campaign_results(&fixture);
+    let events = emit_structured_events(&fixture, &results);
+    let last = events.last().expect("at least one event");
+    assert_eq!(last["event"], "selected_lever");
+}
+
+// ---------- determinism ----------
+
+#[test]
+fn compute_results_is_deterministic() {
+    let fixture = load_fixture();
+    let a = compute_campaign_results(&fixture);
+    let b = compute_campaign_results(&fixture);
+    assert_eq!(a, b);
+}
+
+// ---------- weight constants ----------
+
+#[test]
+fn weight_constants_sum_to_million() {
+    let total = THROUGHPUT_WEIGHT + LATENCY_WEIGHT + NS_PER_TOKEN_WEIGHT + ALLOCS_PER_TOKEN_WEIGHT;
+    assert_eq!(total, 1_000_000);
+}

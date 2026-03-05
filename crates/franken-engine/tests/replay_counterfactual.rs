@@ -303,3 +303,150 @@ fn cross_machine_replay_diagnosis_surfaces_environment_deltas() {
         Some("replay matched across environment deltas: architecture")
     );
 }
+
+#[test]
+fn replay_fixture_path_exists() {
+    let path = replay_fixture_path();
+    assert!(path.exists(), "replay fixture file must exist: {}", path.display());
+}
+
+#[test]
+fn identical_environments_have_no_mismatches() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+
+    let baseline = runner.run_fixture(&fixture).expect("baseline run");
+    let replay = runner.run_fixture(&fixture).expect("replay run");
+
+    let env = ReplayEnvironmentFingerprint {
+        os: "linux".to_string(),
+        architecture: "x86_64".to_string(),
+        family: "unix".to_string(),
+        pointer_width_bits: 64,
+        endian: "little".to_string(),
+    };
+
+    let diagnosis = diagnose_cross_machine_replay(&baseline, &replay, &env, &env);
+    assert!(diagnosis.cross_machine_match);
+    assert!(diagnosis.environment_mismatches.is_empty());
+}
+
+#[test]
+fn verify_replay_with_same_run_passes() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+
+    let run = runner.run_fixture(&fixture).expect("run");
+    let verification = verify_replay(&run, &run);
+    assert!(verification.matches);
+}
+
+#[test]
+fn replay_fixture_parses_as_valid_json() {
+    let path = replay_fixture_path();
+    let raw = fs::read_to_string(&path).expect("read fixture");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("parse fixture JSON");
+    assert!(value.is_object(), "fixture must be a JSON object");
+}
+
+#[test]
+fn deterministic_runner_produces_consistent_event_count() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+    let run_a = runner.run_fixture(&fixture).expect("run a");
+    let run_b = runner.run_fixture(&fixture).expect("run b");
+    assert_eq!(run_a.events.len(), run_b.events.len());
+}
+
+#[test]
+fn evidence_linkage_records_have_nonempty_hashes() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+    let baseline = runner.run_fixture(&fixture).expect("baseline run");
+    let collector = ArtifactCollector::new(test_temp_dir("linkage-check")).expect("collector");
+    let artifacts = collector.collect(&baseline).expect("collect artifacts");
+    let evidence_json =
+        fs::read_to_string(&artifacts.evidence_linkage_path).expect("read linkage");
+    let records: Vec<EvidenceLinkageRecord> =
+        serde_json::from_str(&evidence_json).expect("parse linkage");
+    for record in &records {
+        assert!(
+            !record.evidence_hash.trim().is_empty(),
+            "evidence_hash must not be empty for seq {}",
+            record.event_sequence
+        );
+    }
+}
+
+#[test]
+fn test_temp_dir_creates_unique_paths() {
+    let a = test_temp_dir("unique-a");
+    let b = test_temp_dir("unique-b");
+    assert_ne!(a, b);
+    assert!(a.exists());
+    assert!(b.exists());
+    fs::remove_dir_all(a).ok();
+    fs::remove_dir_all(b).ok();
+}
+
+#[test]
+fn replay_fixture_has_steps_field() {
+    let path = replay_fixture_path();
+    let raw = fs::read_to_string(&path).expect("read fixture");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("parse fixture JSON");
+    assert!(value.get("steps").is_some(), "fixture must have a steps field");
+}
+
+#[test]
+fn deterministic_runner_default_is_constructible() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+    let run = runner.run_fixture(&fixture).expect("run");
+    assert!(!run.events.is_empty(), "run must produce events");
+}
+
+#[test]
+fn verify_replay_detects_divergent_runs() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+    let run_a = runner.run_fixture(&fixture).expect("run a");
+    let mut run_b = runner.run_fixture(&fixture).expect("run b");
+    if !run_b.random_transcript.is_empty() {
+        run_b.random_transcript[0] = run_b.random_transcript[0].wrapping_add(1);
+    }
+    let verification = verify_replay(&run_a, &run_b);
+    // Mutated transcript should cause mismatch if any random values were used
+    if !run_a.random_transcript.is_empty() {
+        assert!(!verification.matches);
+    }
+}

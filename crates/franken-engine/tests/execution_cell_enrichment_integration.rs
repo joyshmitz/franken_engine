@@ -30,7 +30,7 @@ fn cell_kind_display_all_distinct() {
 
 #[test]
 fn cell_kind_ordering_stable() {
-    let mut kinds = vec![CellKind::Delegate, CellKind::Extension, CellKind::Session];
+    let mut kinds = [CellKind::Delegate, CellKind::Extension, CellKind::Session];
     kinds.sort();
     let first = kinds[0];
     let last = kinds[kinds.len() - 1];
@@ -494,4 +494,305 @@ fn extension_host_binding_new_empty() {
     assert_eq!(binding.evidence_count(), 0);
     assert!(binding.evidence_log().is_empty());
     assert_eq!(binding.manager().active_count(), 0);
+}
+
+// ===========================================================================
+// 9) CellError — error_code values
+// ===========================================================================
+
+#[test]
+fn cell_error_error_code_starts_with_prefix() {
+    let errors: Vec<CellError> = vec![
+        CellError::InvalidState {
+            cell_id: "c".into(),
+            current: RegionState::Running,
+            attempted: "x".into(),
+        },
+        CellError::BudgetExhausted {
+            cell_id: "c".into(),
+            requested_ms: 10,
+            remaining_ms: 5,
+        },
+        CellError::CxThreading {
+            cell_id: "c".into(),
+            error_code: "e".into(),
+            message: "m".into(),
+        },
+        CellError::CellNotFound {
+            cell_id: "c".into(),
+        },
+        CellError::SessionRejected {
+            parent_cell_id: "c".into(),
+            reason: "r".into(),
+        },
+        CellError::ObligationNotFound {
+            cell_id: "c".into(),
+            obligation_id: "o".into(),
+        },
+    ];
+    for err in &errors {
+        let code = err.error_code();
+        assert!(
+            !code.is_empty(),
+            "error code should not be empty for {err:?}"
+        );
+    }
+}
+
+// ===========================================================================
+// 10) CellError — Display content validation
+// ===========================================================================
+
+#[test]
+fn cell_error_budget_exhausted_contains_values() {
+    let e = CellError::BudgetExhausted {
+        cell_id: "cell-b".into(),
+        requested_ms: 100,
+        remaining_ms: 50,
+    };
+    let s = e.to_string();
+    assert!(s.contains("100") || s.contains("50") || s.contains("budget"), "should contain budget info: {s}");
+}
+
+#[test]
+fn cell_error_session_rejected_contains_reason() {
+    let e = CellError::SessionRejected {
+        parent_cell_id: "parent-1".into(),
+        reason: "extension is closing".into(),
+    };
+    let s = e.to_string();
+    assert!(
+        s.contains("closing") || s.contains("rejected"),
+        "should contain reason: {s}"
+    );
+}
+
+#[test]
+fn cell_error_obligation_not_found_contains_ids() {
+    let e = CellError::ObligationNotFound {
+        cell_id: "cell-x".into(),
+        obligation_id: "obl-42".into(),
+    };
+    let s = e.to_string();
+    assert!(
+        s.contains("obl-42") || s.contains("cell-x"),
+        "should contain ids: {s}"
+    );
+}
+
+#[test]
+fn cell_error_invalid_state_contains_state() {
+    let e = CellError::InvalidState {
+        cell_id: "cell-s".into(),
+        current: RegionState::Running,
+        attempted: "finalize".into(),
+    };
+    let s = e.to_string();
+    assert!(!s.is_empty(), "display should not be empty");
+}
+
+#[test]
+fn cell_error_cx_threading_contains_message() {
+    let e = CellError::CxThreading {
+        cell_id: "cell-t".into(),
+        error_code: "CX-001".into(),
+        message: "thread pool exhausted".into(),
+    };
+    let s = e.to_string();
+    assert!(
+        s.contains("exhausted") || s.contains("CX-001"),
+        "should contain message: {s}"
+    );
+}
+
+// ===========================================================================
+// 11) CellKind — Display values
+// ===========================================================================
+
+#[test]
+fn cell_kind_display_non_empty() {
+    for k in [CellKind::Extension, CellKind::Session, CellKind::Delegate] {
+        let s = k.to_string();
+        assert!(!s.is_empty(), "CellKind display should not be empty for {k:?}");
+    }
+}
+
+// ===========================================================================
+// 12) CellManager — multiple cells
+// ===========================================================================
+
+#[test]
+fn cell_manager_multiple_cells() {
+    let mut manager = CellManager::new();
+    manager.create_extension_cell("ext-1", "trace-1");
+    manager.create_extension_cell("ext-2", "trace-2");
+    manager.create_delegate_cell("del-1", "trace-3");
+    assert_eq!(manager.active_count(), 3);
+    let ids = manager.active_cell_ids();
+    assert_eq!(ids.len(), 3);
+}
+
+#[test]
+fn cell_manager_get_mut_modifies() {
+    let mut manager = CellManager::new();
+    manager.create_extension_cell("ext-1", "trace-1");
+    let cell = manager.get_mut("ext-1").unwrap();
+    cell.register_obligation("obl-1", "test obligation");
+    assert_eq!(manager.get("ext-1").unwrap().pending_obligations(), 1);
+}
+
+#[test]
+fn cell_manager_insert_prebuilt_cell() {
+    let mut manager = CellManager::new();
+    let cell = ExecutionCell::with_context("custom", CellKind::Session, "t", "d", "p");
+    manager.insert_cell("custom", cell);
+    assert_eq!(manager.active_count(), 1);
+    let c = manager.get("custom").unwrap();
+    assert_eq!(c.kind(), CellKind::Session);
+}
+
+// ===========================================================================
+// 13) ExecutionCell — obligations
+// ===========================================================================
+
+#[test]
+fn execution_cell_register_and_commit_obligation() {
+    let mut cell = ExecutionCell::new("cell-obl", CellKind::Extension, "trace-obl");
+    cell.register_obligation("obl-1", "write file");
+    assert_eq!(cell.pending_obligations(), 1);
+    cell.commit_obligation("obl-1").unwrap();
+    assert_eq!(cell.pending_obligations(), 0);
+}
+
+#[test]
+fn execution_cell_register_and_abort_obligation() {
+    let mut cell = ExecutionCell::new("cell-obl2", CellKind::Extension, "trace-obl2");
+    cell.register_obligation("obl-1", "write file");
+    cell.abort_obligation("obl-1").unwrap();
+    assert_eq!(cell.pending_obligations(), 0);
+}
+
+#[test]
+fn execution_cell_commit_unknown_obligation_fails() {
+    let mut cell = ExecutionCell::new("cell-obl3", CellKind::Extension, "trace-obl3");
+    let err = cell.commit_obligation("nonexistent").unwrap_err();
+    assert!(matches!(err, CellError::ObligationNotFound { .. }));
+}
+
+#[test]
+fn execution_cell_abort_unknown_obligation_fails() {
+    let mut cell = ExecutionCell::new("cell-obl4", CellKind::Extension, "trace-obl4");
+    let err = cell.abort_obligation("nonexistent").unwrap_err();
+    assert!(matches!(err, CellError::ObligationNotFound { .. }));
+}
+
+// ===========================================================================
+// 14) ExecutionCell — session creation
+// ===========================================================================
+
+#[test]
+fn execution_cell_create_session() {
+    let mut cell = ExecutionCell::new("ext-parent", CellKind::Extension, "trace-sess");
+    let session = cell.create_session("sess-1", "trace-sess-1").unwrap();
+    assert_eq!(session.kind(), CellKind::Session);
+    assert_eq!(session.cell_id(), "sess-1");
+    assert_eq!(cell.session_count(), 1);
+}
+
+#[test]
+fn execution_cell_create_multiple_sessions() {
+    let mut cell = ExecutionCell::new("ext-multi", CellKind::Extension, "trace-multi");
+    cell.create_session("sess-1", "t1").unwrap();
+    cell.create_session("sess-2", "t2").unwrap();
+    assert_eq!(cell.session_count(), 2);
+}
+
+// ===========================================================================
+// 15) CellCloseReport edge cases
+// ===========================================================================
+
+#[test]
+fn cell_close_report_failure() {
+    let cr = CellCloseReport {
+        cell_id: "fail-cell".into(),
+        cell_kind: CellKind::Delegate,
+        close_reason: "timeout".into(),
+        success: false,
+        obligations_committed: 0,
+        obligations_aborted: 2,
+        drain_timeout_escalated: true,
+        budget_consumed_ms: 500,
+        evidence_entries_emitted: 3,
+    };
+    assert!(!cr.success);
+    assert!(cr.drain_timeout_escalated);
+    assert_eq!(cr.obligations_aborted, 2);
+}
+
+// ===========================================================================
+// 16) LifecycleEvidenceEntry with metadata
+// ===========================================================================
+
+#[test]
+fn lifecycle_evidence_entry_with_metadata() {
+    let mut metadata = std::collections::BTreeMap::new();
+    metadata.insert("extension_id".to_string(), "ext-123".to_string());
+    metadata.insert("version".to_string(), "1.0.0".to_string());
+    let le = LifecycleEvidenceEntry {
+        sequence: 5,
+        trace_id: "t".into(),
+        decision_id: "d".into(),
+        policy_id: "p".into(),
+        component: "extension_host_binding".into(),
+        event: "extension_load".into(),
+        outcome: "ok".into(),
+        error_code: None,
+        cell_id: "c".into(),
+        cell_kind: CellKind::Extension,
+        region_state: RegionState::Running,
+        budget_consumed_ms: 0,
+        metadata,
+    };
+    let json = serde_json::to_string(&le).unwrap();
+    let rt: LifecycleEvidenceEntry = serde_json::from_str(&json).unwrap();
+    assert_eq!(rt.metadata.len(), 2);
+    assert_eq!(rt.metadata["extension_id"], "ext-123");
+}
+
+// ===========================================================================
+// 17) ExtensionHostBinding — drain deadline
+// ===========================================================================
+
+#[test]
+fn extension_host_binding_drain_deadline() {
+    let binding1 = ExtensionHostBinding::new(DrainDeadline { max_ticks: 50 });
+    let binding2 = ExtensionHostBinding::new(DrainDeadline { max_ticks: 200 });
+    // Both should start empty
+    assert_eq!(binding1.active_extension_count(), 0);
+    assert_eq!(binding2.active_extension_count(), 0);
+}
+
+// ===========================================================================
+// 18) CellEvent with error_code
+// ===========================================================================
+
+#[test]
+fn cell_event_with_error_code() {
+    let ce = CellEvent {
+        trace_id: "t".into(),
+        cell_id: "c".into(),
+        cell_kind: CellKind::Extension,
+        decision_id: "d".into(),
+        policy_id: "p".into(),
+        event: "budget_exhausted".into(),
+        component: "execution_cell".into(),
+        outcome: "error".into(),
+        error_code: Some("FE-CELL-0002".into()),
+        region_state: RegionState::Running,
+        budget_consumed_ms: 1000,
+    };
+    let json = serde_json::to_string(&ce).unwrap();
+    assert!(json.contains("FE-CELL-0002"));
+    let rt: CellEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(rt.error_code, Some("FE-CELL-0002".into()));
 }

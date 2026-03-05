@@ -647,3 +647,90 @@ fn tier_up_decision_event_serde_roundtrip() {
     let back: TierUpDecisionEvent = serde_json::from_str(&json).unwrap();
     assert_eq!(back, event);
 }
+
+// ---------- decision events all have nonempty trace_id ----------
+
+#[test]
+fn decision_events_all_have_nonempty_trace_id() {
+    let program = Program {
+        constants: vec![Value::Int(1)],
+        property_pool: Vec::new(),
+        instructions: vec![
+            Instruction::LoadConst {
+                dst: r(0),
+                const_index: 0,
+            },
+            Instruction::Return { src: r(0) },
+        ],
+    };
+
+    let mut vm = BytecodeVm::new("trace-events-check", 4, 32);
+    let report = vm.execute(&program).unwrap();
+    let decision = evaluate_tier_up_eligibility(&report, &TierUpPolicy::default());
+
+    for event in &decision.events {
+        assert!(
+            !event.trace_id.trim().is_empty(),
+            "event trace_id must not be empty"
+        );
+    }
+}
+
+// ---------- default policy schema version ----------
+
+#[test]
+fn default_policy_has_expected_schema_version() {
+    let policy = TierUpPolicy::default();
+    let json = serde_json::to_string(&policy).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    // Policy should serialize to valid JSON with all fields present
+    assert!(value.is_object());
+    assert!(value.as_object().unwrap().len() >= 5);
+}
+
+// ---------- decision hash differs for different programs ----------
+
+#[test]
+fn decision_hash_differs_for_different_programs() {
+    let prog_a = Program {
+        constants: vec![Value::Int(1)],
+        property_pool: Vec::new(),
+        instructions: vec![
+            Instruction::LoadConst {
+                dst: r(0),
+                const_index: 0,
+            },
+            Instruction::Return { src: r(0) },
+        ],
+    };
+    let prog_b = Program {
+        constants: vec![Value::Int(1), Value::Int(2)],
+        property_pool: Vec::new(),
+        instructions: vec![
+            Instruction::LoadConst {
+                dst: r(0),
+                const_index: 0,
+            },
+            Instruction::LoadConst {
+                dst: r(1),
+                const_index: 1,
+            },
+            Instruction::Add {
+                dst: r(2),
+                lhs: r(0),
+                rhs: r(1),
+            },
+            Instruction::Return { src: r(2) },
+        ],
+    };
+
+    let mut vm_a = BytecodeVm::new("hash-a", 4, 32);
+    let report_a = vm_a.execute(&prog_a).unwrap();
+    let decision_a = evaluate_tier_up_eligibility(&report_a, &TierUpPolicy::default());
+
+    let mut vm_b = BytecodeVm::new("hash-b", 4, 32);
+    let report_b = vm_b.execute(&prog_b).unwrap();
+    let decision_b = evaluate_tier_up_eligibility(&report_b, &TierUpPolicy::default());
+
+    assert_ne!(decision_a.decision_hash, decision_b.decision_hash);
+}

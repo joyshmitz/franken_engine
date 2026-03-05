@@ -195,3 +195,184 @@ fn run_lockstep_oracle_marks_missing_candidate_trace_as_schema_violation() {
         FrxDivergenceClass::SchemaViolation
     );
 }
+
+// ---------- build_trace ----------
+
+#[test]
+fn build_trace_sets_correct_fields() {
+    let events = vec![event(1, "render", "dom_commit", "path", 100)];
+    let trace = build_trace("fixture-a", "scenario-a", "trace-a", events);
+    assert_eq!(trace.fixture_ref, "fixture-a");
+    assert_eq!(trace.scenario_id, "scenario-a");
+    assert_eq!(trace.trace_id, "trace-a");
+    assert_eq!(trace.seed, 42);
+    assert_eq!(trace.outcome, "pass");
+    assert_eq!(trace.component, "frx_react_corpus");
+}
+
+#[test]
+fn build_trace_decision_id_includes_trace_id() {
+    let trace = build_trace("f", "s", "trace-x", vec![]);
+    assert!(trace.decision_id.contains("trace-x"));
+}
+
+// ---------- event helper ----------
+
+#[test]
+fn event_helper_sets_fields() {
+    let e = event(5, "render", "dom_commit", "render_path", 200);
+    assert_eq!(e.seq, 5);
+    assert_eq!(e.phase, "render");
+    assert_eq!(e.event, "dom_commit");
+    assert_eq!(e.decision_path, "render_path");
+    assert_eq!(e.timing_us, 200);
+    assert_eq!(e.actor, "Harness");
+    assert_eq!(e.outcome, "ok");
+}
+
+// ---------- FrxDivergenceClass ----------
+
+#[test]
+fn divergence_class_serde_roundtrip() {
+    for class in [
+        FrxDivergenceClass::HydrationOutcome,
+        FrxDivergenceClass::SchemaViolation,
+    ] {
+        let json = serde_json::to_string(&class).expect("serialize");
+        let recovered: FrxDivergenceClass = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, class);
+    }
+}
+
+// ---------- FrxObservableTrace ----------
+
+#[test]
+fn observable_trace_serde_roundtrip() {
+    let trace = build_trace("ref-a", "scenario-a", "trace-a", vec![
+        event(1, "render", "commit", "path", 100),
+    ]);
+    let json = serde_json::to_string(&trace).expect("serialize");
+    let recovered: FrxObservableTrace = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.fixture_ref, trace.fixture_ref);
+    assert_eq!(recovered.scenario_id, trace.scenario_id);
+    assert_eq!(recovered.events.len(), trace.events.len());
+}
+
+// ---------- evaluate_case ----------
+
+#[test]
+fn evaluate_case_detects_event_count_mismatch() {
+    let react = build_trace("ref", "scen", "trace-r", vec![
+        event(1, "render", "commit", "path", 100),
+        event(2, "render", "done", "path", 200),
+    ]);
+    let franken = build_trace("ref", "scen", "trace-f", vec![
+        event(1, "render", "commit", "path", 100),
+    ]);
+
+    let result = evaluate_case(FrxLockstepCaseInput {
+        fixture_ref: "ref".to_string(),
+        scenario_id: "scen".to_string(),
+        react_trace: react,
+        franken_trace: franken,
+        react_trace_path: None,
+        franken_trace_path: None,
+    })
+    .expect("should evaluate");
+
+    assert!(!result.pass);
+    assert!(result.divergence.is_some());
+}
+
+// ---------- FrxLockstepRunContext ----------
+
+#[test]
+fn lockstep_run_context_deterministic_sets_fields() {
+    let ctx = FrxLockstepRunContext::deterministic("trace-1", "decision-1", "policy-1");
+    assert_eq!(ctx.trace_id, "trace-1");
+    assert_eq!(ctx.decision_id, "decision-1");
+    assert_eq!(ctx.policy_id, "policy-1");
+}
+
+// ---------- write_trace_file ----------
+
+#[test]
+fn write_trace_file_creates_file() {
+    let dir = unique_temp_dir("write-trace-test");
+    let trace = build_trace("ref-write", "scen-write", "trace-write", vec![
+        event(1, "render", "commit", "path", 100),
+    ]);
+    write_trace_file(dir.as_path(), "ref-write", &trace);
+    let path = dir.join("ref-write.trace.json");
+    assert!(path.exists());
+    let content = fs::read_to_string(&path).expect("read");
+    let parsed: FrxObservableTrace = serde_json::from_str(&content).expect("parse");
+    assert_eq!(parsed.fixture_ref, "ref-write");
+}
+
+#[test]
+fn trace_event_serde_roundtrip() {
+    let e = event(1, "render", "dom_commit", "render_path", 100);
+    let json = serde_json::to_string(&e).expect("serialize");
+    let recovered: FrxTraceEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.seq, e.seq);
+    assert_eq!(recovered.phase, e.phase);
+    assert_eq!(recovered.event, e.event);
+}
+
+#[test]
+fn lockstep_run_context_deterministic_fields_are_stable() {
+    let a = FrxLockstepRunContext::deterministic("t", "d", "p");
+    let b = FrxLockstepRunContext::deterministic("t", "d", "p");
+    assert_eq!(a.trace_id, b.trace_id);
+    assert_eq!(a.decision_id, b.decision_id);
+    assert_eq!(a.policy_id, b.policy_id);
+}
+
+#[test]
+fn evaluate_case_rejects_empty_traces() {
+    let react = build_trace("ref-empty", "scen-empty", "trace-r-empty", vec![]);
+    let franken = build_trace("ref-empty", "scen-empty", "trace-f-empty", vec![]);
+    let result = evaluate_case(FrxLockstepCaseInput {
+        fixture_ref: "ref-empty".to_string(),
+        scenario_id: "scen-empty".to_string(),
+        react_trace: react,
+        franken_trace: franken,
+        react_trace_path: None,
+        franken_trace_path: None,
+    });
+    assert!(result.is_err(), "empty traces should be rejected");
+}
+
+#[test]
+fn divergence_class_serde_round_trip() {
+    for class in [
+        FrxDivergenceClass::DomMutationTrace,
+        FrxDivergenceClass::EffectInvocationOrder,
+        FrxDivergenceClass::StateTransition,
+        FrxDivergenceClass::HydrationOutcome,
+        FrxDivergenceClass::EventSequence,
+        FrxDivergenceClass::SchemaViolation,
+    ] {
+        let json = serde_json::to_string(&class).expect("serialize");
+        let recovered: FrxDivergenceClass = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(class, recovered);
+    }
+}
+
+#[test]
+fn divergence_class_as_str_is_non_empty() {
+    for class in [
+        FrxDivergenceClass::DomMutationTrace,
+        FrxDivergenceClass::EffectInvocationOrder,
+        FrxDivergenceClass::StateTransition,
+    ] {
+        assert!(!class.as_str().is_empty());
+    }
+}
+
+#[test]
+fn lockstep_run_context_deterministic_sets_policy_id() {
+    let ctx = FrxLockstepRunContext::deterministic("t", "d", "p");
+    assert_eq!(ctx.policy_id, "p");
+}

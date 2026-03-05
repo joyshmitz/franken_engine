@@ -7,11 +7,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::migration_kit::{
-    BehaviorDivergence, BehaviorValidationReport, CapabilityInferenceResult, CompatibilityReport,
-    DivergenceKind, DivergenceSeverity, LockstepTestResult, ManifestGenerationInput,
-    MigrationConfig, MigrationEvent, MigrationKitError, SourceFile, SourceRuntime, analyze_package,
-    compute_migration_readiness, emit_migration_event, generate_manifest, generate_remediation,
-    infer_capabilities, validate_behavior,
+    ApiSupportLevel, BehaviorDivergence, BehaviorValidationReport, COMPONENT,
+    CapabilityInferenceResult, CompatibilityReport, DivergenceKind, DivergenceSeverity,
+    InferredCapabilityKind, LockstepTestResult, ManifestGenerationInput, MigrationConfig,
+    MigrationEvent, MigrationKitError, REPORT_SCHEMA_DEF, RemediationCategory, RemediationEffort,
+    SourceFile, SourceRuntime, analyze_package, compute_migration_readiness, emit_migration_event,
+    generate_manifest, generate_remediation, infer_capabilities, lookup_api, validate_behavior,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 
@@ -777,4 +778,780 @@ fn test_serde_roundtrip_behavior_report() {
     let roundtripped: BehaviorValidationReport = serde_json::from_str(&json).unwrap();
     assert_eq!(report.passing_count, roundtripped.passing_count);
     assert_eq!(report.divergence_count, roundtripped.divergence_count);
+}
+
+// =========================================================================
+// Enum serde round-trips
+// =========================================================================
+
+#[test]
+fn test_serde_roundtrip_source_runtime() {
+    for rt in [SourceRuntime::Node, SourceRuntime::Bun] {
+        let json = serde_json::to_string(&rt).unwrap();
+        let back: SourceRuntime = serde_json::from_str(&json).unwrap();
+        assert_eq!(rt, back);
+    }
+}
+
+#[test]
+fn test_serde_roundtrip_api_support_level() {
+    let variants = [
+        ApiSupportLevel::FullySupported,
+        ApiSupportLevel::PartiallySupported,
+        ApiSupportLevel::Unsupported,
+        ApiSupportLevel::Deprecated,
+        ApiSupportLevel::RequiresPolyfill,
+    ];
+    for v in variants {
+        let json = serde_json::to_string(&v).unwrap();
+        let back: ApiSupportLevel = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+}
+
+#[test]
+fn test_serde_roundtrip_divergence_kind() {
+    let variants = [
+        DivergenceKind::SemanticDifference,
+        DivergenceKind::TimingDifference,
+        DivergenceKind::OutputFormatDifference,
+        DivergenceKind::ErrorBehaviorDifference,
+        DivergenceKind::MissingFeature,
+        DivergenceKind::SecurityPolicyDifference,
+    ];
+    for v in variants {
+        let json = serde_json::to_string(&v).unwrap();
+        let back: DivergenceKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+}
+
+#[test]
+fn test_serde_roundtrip_divergence_severity() {
+    let variants = [
+        DivergenceSeverity::Critical,
+        DivergenceSeverity::High,
+        DivergenceSeverity::Medium,
+        DivergenceSeverity::Low,
+        DivergenceSeverity::Informational,
+    ];
+    for v in variants {
+        let json = serde_json::to_string(&v).unwrap();
+        let back: DivergenceSeverity = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+}
+
+#[test]
+fn test_serde_roundtrip_inferred_capability_kind() {
+    let variants = [
+        InferredCapabilityKind::FileSystem,
+        InferredCapabilityKind::Network,
+        InferredCapabilityKind::ProcessSpawn,
+        InferredCapabilityKind::EnvironmentAccess,
+        InferredCapabilityKind::CryptoAccess,
+        InferredCapabilityKind::TimerAccess,
+        InferredCapabilityKind::WorkerThreads,
+        InferredCapabilityKind::ChildProcess,
+        InferredCapabilityKind::DynamicImport,
+        InferredCapabilityKind::WasmExecution,
+        InferredCapabilityKind::SharedMemory,
+        InferredCapabilityKind::NativeAddon,
+    ];
+    for v in variants {
+        let json = serde_json::to_string(&v).unwrap();
+        let back: InferredCapabilityKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+}
+
+#[test]
+fn test_serde_roundtrip_remediation_category() {
+    let variants = [
+        RemediationCategory::ApiReplacement,
+        RemediationCategory::DependencySwap,
+        RemediationCategory::ConfigChange,
+        RemediationCategory::CodeRefactor,
+        RemediationCategory::PolyfillAddition,
+        RemediationCategory::SecurityPolicyUpdate,
+        RemediationCategory::FeatureDisable,
+    ];
+    for v in variants {
+        let json = serde_json::to_string(&v).unwrap();
+        let back: RemediationCategory = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+}
+
+#[test]
+fn test_serde_roundtrip_remediation_effort() {
+    let variants = [
+        RemediationEffort::Trivial,
+        RemediationEffort::Low,
+        RemediationEffort::Medium,
+        RemediationEffort::High,
+        RemediationEffort::Significant,
+    ];
+    for v in variants {
+        let json = serde_json::to_string(&v).unwrap();
+        let back: RemediationEffort = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+}
+
+// =========================================================================
+// Constants stability
+// =========================================================================
+
+#[test]
+fn test_component_constant() {
+    assert_eq!(COMPONENT, "migration_kit");
+}
+
+#[test]
+fn test_report_schema_def_constant() {
+    assert_eq!(REPORT_SCHEMA_DEF, b"MigrationAnalysisReport.v1");
+}
+
+// =========================================================================
+// Display implementations
+// =========================================================================
+
+#[test]
+fn test_source_runtime_display() {
+    assert_eq!(format!("{}", SourceRuntime::Node), "Node.js");
+    assert_eq!(format!("{}", SourceRuntime::Bun), "Bun");
+}
+
+// =========================================================================
+// ApiSupportLevel methods
+// =========================================================================
+
+#[test]
+fn test_api_support_level_is_migration_blocker() {
+    assert!(ApiSupportLevel::Unsupported.is_migration_blocker());
+    assert!(!ApiSupportLevel::FullySupported.is_migration_blocker());
+    assert!(!ApiSupportLevel::PartiallySupported.is_migration_blocker());
+    assert!(!ApiSupportLevel::Deprecated.is_migration_blocker());
+    assert!(!ApiSupportLevel::RequiresPolyfill.is_migration_blocker());
+}
+
+#[test]
+fn test_api_support_level_compatibility_weight() {
+    assert_eq!(
+        ApiSupportLevel::FullySupported.compatibility_weight_millionths(),
+        1_000_000
+    );
+    assert_eq!(
+        ApiSupportLevel::PartiallySupported.compatibility_weight_millionths(),
+        700_000
+    );
+    assert_eq!(
+        ApiSupportLevel::Deprecated.compatibility_weight_millionths(),
+        500_000
+    );
+    assert_eq!(
+        ApiSupportLevel::RequiresPolyfill.compatibility_weight_millionths(),
+        400_000
+    );
+    assert_eq!(
+        ApiSupportLevel::Unsupported.compatibility_weight_millionths(),
+        0
+    );
+}
+
+#[test]
+fn test_api_support_level_weight_ordering() {
+    // Weights should decrease: FullySupported > Partial > Deprecated > Polyfill > Unsupported
+    let weights: Vec<u64> = [
+        ApiSupportLevel::FullySupported,
+        ApiSupportLevel::PartiallySupported,
+        ApiSupportLevel::Deprecated,
+        ApiSupportLevel::RequiresPolyfill,
+        ApiSupportLevel::Unsupported,
+    ]
+    .iter()
+    .map(|l| l.compatibility_weight_millionths())
+    .collect();
+    for window in weights.windows(2) {
+        assert!(window[0] > window[1]);
+    }
+}
+
+// =========================================================================
+// DivergenceSeverity methods
+// =========================================================================
+
+#[test]
+fn test_divergence_severity_penalty() {
+    assert_eq!(DivergenceSeverity::Critical.penalty_millionths(), 200_000);
+    assert_eq!(DivergenceSeverity::High.penalty_millionths(), 100_000);
+    assert_eq!(DivergenceSeverity::Medium.penalty_millionths(), 50_000);
+    assert_eq!(DivergenceSeverity::Low.penalty_millionths(), 20_000);
+    assert_eq!(DivergenceSeverity::Informational.penalty_millionths(), 0);
+}
+
+#[test]
+fn test_divergence_severity_penalty_ordering() {
+    // Penalty should decrease: Critical > High > Medium > Low > Informational
+    let penalties: Vec<u64> = [
+        DivergenceSeverity::Critical,
+        DivergenceSeverity::High,
+        DivergenceSeverity::Medium,
+        DivergenceSeverity::Low,
+    ]
+    .iter()
+    .map(|s| s.penalty_millionths())
+    .collect();
+    for window in penalties.windows(2) {
+        assert!(window[0] > window[1]);
+    }
+}
+
+// =========================================================================
+// InferredCapabilityKind methods
+// =========================================================================
+
+#[test]
+fn test_inferred_capability_kind_franken_names() {
+    assert_eq!(
+        InferredCapabilityKind::FileSystem.franken_capability_name(),
+        "cap:fs"
+    );
+    assert_eq!(
+        InferredCapabilityKind::Network.franken_capability_name(),
+        "cap:net"
+    );
+    assert_eq!(
+        InferredCapabilityKind::ProcessSpawn.franken_capability_name(),
+        "cap:process:spawn"
+    );
+    assert_eq!(
+        InferredCapabilityKind::EnvironmentAccess.franken_capability_name(),
+        "cap:env"
+    );
+    assert_eq!(
+        InferredCapabilityKind::CryptoAccess.franken_capability_name(),
+        "cap:crypto"
+    );
+    assert_eq!(
+        InferredCapabilityKind::TimerAccess.franken_capability_name(),
+        "cap:timer"
+    );
+    assert_eq!(
+        InferredCapabilityKind::WorkerThreads.franken_capability_name(),
+        "cap:worker"
+    );
+    assert_eq!(
+        InferredCapabilityKind::ChildProcess.franken_capability_name(),
+        "cap:process:child"
+    );
+    assert_eq!(
+        InferredCapabilityKind::DynamicImport.franken_capability_name(),
+        "cap:import:dynamic"
+    );
+    assert_eq!(
+        InferredCapabilityKind::WasmExecution.franken_capability_name(),
+        "cap:wasm"
+    );
+    assert_eq!(
+        InferredCapabilityKind::SharedMemory.franken_capability_name(),
+        "cap:shared-memory"
+    );
+    assert_eq!(
+        InferredCapabilityKind::NativeAddon.franken_capability_name(),
+        "cap:native-addon"
+    );
+}
+
+#[test]
+fn test_inferred_capability_kind_all_names_distinct() {
+    let kinds = [
+        InferredCapabilityKind::FileSystem,
+        InferredCapabilityKind::Network,
+        InferredCapabilityKind::ProcessSpawn,
+        InferredCapabilityKind::EnvironmentAccess,
+        InferredCapabilityKind::CryptoAccess,
+        InferredCapabilityKind::TimerAccess,
+        InferredCapabilityKind::WorkerThreads,
+        InferredCapabilityKind::ChildProcess,
+        InferredCapabilityKind::DynamicImport,
+        InferredCapabilityKind::WasmExecution,
+        InferredCapabilityKind::SharedMemory,
+        InferredCapabilityKind::NativeAddon,
+    ];
+    let names: BTreeSet<&str> = kinds.iter().map(|k| k.franken_capability_name()).collect();
+    assert_eq!(names.len(), kinds.len());
+}
+
+#[test]
+fn test_inferred_capability_kind_all_start_with_cap() {
+    let kinds = [
+        InferredCapabilityKind::FileSystem,
+        InferredCapabilityKind::Network,
+        InferredCapabilityKind::ProcessSpawn,
+        InferredCapabilityKind::EnvironmentAccess,
+        InferredCapabilityKind::CryptoAccess,
+        InferredCapabilityKind::TimerAccess,
+        InferredCapabilityKind::WorkerThreads,
+        InferredCapabilityKind::ChildProcess,
+        InferredCapabilityKind::DynamicImport,
+        InferredCapabilityKind::WasmExecution,
+        InferredCapabilityKind::SharedMemory,
+        InferredCapabilityKind::NativeAddon,
+    ];
+    for kind in &kinds {
+        assert!(
+            kind.franken_capability_name().starts_with("cap:"),
+            "{:?} name does not start with cap:",
+            kind
+        );
+    }
+}
+
+// =========================================================================
+// RemediationEffort methods
+// =========================================================================
+
+#[test]
+fn test_remediation_effort_weight() {
+    assert_eq!(RemediationEffort::Trivial.weight_millionths(), 100_000);
+    assert_eq!(RemediationEffort::Low.weight_millionths(), 300_000);
+    assert_eq!(RemediationEffort::Medium.weight_millionths(), 500_000);
+    assert_eq!(RemediationEffort::High.weight_millionths(), 800_000);
+    assert_eq!(
+        RemediationEffort::Significant.weight_millionths(),
+        1_000_000
+    );
+}
+
+#[test]
+fn test_remediation_effort_weight_ordering() {
+    // Weight should increase: Trivial < Low < Medium < High < Significant
+    let weights: Vec<u64> = [
+        RemediationEffort::Trivial,
+        RemediationEffort::Low,
+        RemediationEffort::Medium,
+        RemediationEffort::High,
+        RemediationEffort::Significant,
+    ]
+    .iter()
+    .map(|e| e.weight_millionths())
+    .collect();
+    for window in weights.windows(2) {
+        assert!(window[0] < window[1]);
+    }
+}
+
+// =========================================================================
+// lookup_api
+// =========================================================================
+
+#[test]
+fn test_lookup_api_known_fs_read_file() {
+    let api = lookup_api("fs", "readFile");
+    assert!(api.is_some());
+    let api = api.unwrap();
+    assert_eq!(api.module_name, "fs");
+    assert_eq!(api.api_name, "readFile");
+    assert_eq!(api.support_level, ApiSupportLevel::FullySupported);
+}
+
+#[test]
+fn test_lookup_api_unknown_returns_none() {
+    assert!(lookup_api("nonexistent_module", "nonexistent_api").is_none());
+}
+
+#[test]
+fn test_lookup_api_wrong_api_name_returns_none() {
+    // "fs" module exists, but "fakeFunction" does not
+    assert!(lookup_api("fs", "fakeFunction").is_none());
+}
+
+// =========================================================================
+// Error codes coverage
+// =========================================================================
+
+#[test]
+fn test_error_code_all_variants() {
+    let errors = [
+        (
+            MigrationKitError::AnalysisFailed { detail: "x".into() },
+            "FE-MK-0001",
+        ),
+        (
+            MigrationKitError::ManifestGenerationFailed { detail: "x".into() },
+            "FE-MK-0002",
+        ),
+        (
+            MigrationKitError::CapabilityInferenceFailed { detail: "x".into() },
+            "FE-MK-0003",
+        ),
+        (
+            MigrationKitError::BehaviorValidationFailed { detail: "x".into() },
+            "FE-MK-0004",
+        ),
+        (
+            MigrationKitError::RemediationUnavailable { detail: "x".into() },
+            "FE-MK-0005",
+        ),
+        (
+            MigrationKitError::InvalidPackageJson { detail: "x".into() },
+            "FE-MK-0006",
+        ),
+        (
+            MigrationKitError::UnsupportedApiDetected {
+                api: "a".into(),
+                detail: "x".into(),
+            },
+            "FE-MK-0007",
+        ),
+        (
+            MigrationKitError::IncompatibleDependency {
+                name: "n".into(),
+                reason: "r".into(),
+            },
+            "FE-MK-0008",
+        ),
+        (
+            MigrationKitError::LockstepMismatch {
+                runtime: "rt".into(),
+                detail: "x".into(),
+            },
+            "FE-MK-0009",
+        ),
+        (
+            MigrationKitError::ReportGenerationFailed { detail: "x".into() },
+            "FE-MK-0010",
+        ),
+        (
+            MigrationKitError::DeterminismViolation { detail: "x".into() },
+            "FE-MK-0011",
+        ),
+        (
+            MigrationKitError::TooManyEntries {
+                kind: "k".into(),
+                count: 10,
+                max: 5,
+            },
+            "FE-MK-0012",
+        ),
+        (
+            MigrationKitError::InternalError { detail: "x".into() },
+            "FE-MK-0099",
+        ),
+    ];
+    for (err, expected_code) in &errors {
+        assert_eq!(err.code(), *expected_code, "code mismatch for {:?}", err);
+    }
+}
+
+#[test]
+fn test_error_display_all_variants_non_empty() {
+    let errors = [
+        MigrationKitError::AnalysisFailed { detail: "d".into() },
+        MigrationKitError::ManifestGenerationFailed { detail: "d".into() },
+        MigrationKitError::CapabilityInferenceFailed { detail: "d".into() },
+        MigrationKitError::BehaviorValidationFailed { detail: "d".into() },
+        MigrationKitError::RemediationUnavailable { detail: "d".into() },
+        MigrationKitError::InvalidPackageJson { detail: "d".into() },
+        MigrationKitError::UnsupportedApiDetected {
+            api: "a".into(),
+            detail: "d".into(),
+        },
+        MigrationKitError::IncompatibleDependency {
+            name: "n".into(),
+            reason: "r".into(),
+        },
+        MigrationKitError::LockstepMismatch {
+            runtime: "rt".into(),
+            detail: "d".into(),
+        },
+        MigrationKitError::ReportGenerationFailed { detail: "d".into() },
+        MigrationKitError::DeterminismViolation { detail: "d".into() },
+        MigrationKitError::TooManyEntries {
+            kind: "k".into(),
+            count: 10,
+            max: 5,
+        },
+        MigrationKitError::InternalError { detail: "d".into() },
+    ];
+    for err in &errors {
+        let msg = format!("{err}");
+        assert!(!msg.is_empty(), "empty display for {:?}", err);
+    }
+}
+
+#[test]
+fn test_error_std_error_trait() {
+    let err = MigrationKitError::AnalysisFailed {
+        detail: "test".into(),
+    };
+    let dyn_err: &dyn std::error::Error = &err;
+    assert!(dyn_err.source().is_none());
+}
+
+#[test]
+fn test_error_serde_roundtrip() {
+    let errors = [
+        MigrationKitError::AnalysisFailed { detail: "d".into() },
+        MigrationKitError::UnsupportedApiDetected {
+            api: "a".into(),
+            detail: "d".into(),
+        },
+        MigrationKitError::TooManyEntries {
+            kind: "k".into(),
+            count: 10,
+            max: 5,
+        },
+        MigrationKitError::InternalError { detail: "d".into() },
+    ];
+    for err in &errors {
+        let json = serde_json::to_string(err).unwrap();
+        let back: MigrationKitError = serde_json::from_str(&json).unwrap();
+        assert_eq!(*err, back);
+    }
+}
+
+// =========================================================================
+// Serde roundtrip for additional structs
+// =========================================================================
+
+#[test]
+fn test_serde_roundtrip_migration_config() {
+    let config = MigrationConfig {
+        source_runtime: SourceRuntime::Bun,
+        analyze_dependencies: false,
+        infer_capabilities: true,
+        run_behavior_validation: false,
+        min_compatibility_score_millionths: 500_000,
+        max_divergence_count: 50,
+        deterministic_seed: 123,
+    };
+    let json = serde_json::to_string(&config).unwrap();
+    let back: MigrationConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(config, back);
+}
+
+#[test]
+fn test_serde_roundtrip_compatibility_report() {
+    let report = make_empty_compat();
+    let json = serde_json::to_string(&report).unwrap();
+    let back: CompatibilityReport = serde_json::from_str(&json).unwrap();
+    assert_eq!(report, back);
+}
+
+#[test]
+fn test_serde_roundtrip_capability_inference_result() {
+    let caps = make_empty_caps();
+    let json = serde_json::to_string(&caps).unwrap();
+    let back: CapabilityInferenceResult = serde_json::from_str(&json).unwrap();
+    assert_eq!(caps, back);
+}
+
+#[test]
+fn test_serde_roundtrip_lockstep_test_result() {
+    let result = passing_result("serde_test");
+    let json = serde_json::to_string(&result).unwrap();
+    let back: LockstepTestResult = serde_json::from_str(&json).unwrap();
+    assert_eq!(result, back);
+}
+
+#[test]
+fn test_serde_roundtrip_source_file() {
+    let sf = SourceFile {
+        path: "test.js".to_string(),
+        content: "console.log('hi');".to_string(),
+    };
+    let json = serde_json::to_string(&sf).unwrap();
+    let back: SourceFile = serde_json::from_str(&json).unwrap();
+    assert_eq!(sf, back);
+}
+
+#[test]
+fn test_serde_roundtrip_migration_event() {
+    let event = MigrationEvent {
+        trace_id: "t1".to_string(),
+        decision_id: "d1".to_string(),
+        component: COMPONENT.to_string(),
+        event: "test".to_string(),
+        outcome: "ok".to_string(),
+        error_code: Some("FE-MK-0001".to_string()),
+        details: BTreeMap::from([("k".to_string(), "v".to_string())]),
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    let back: MigrationEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(event, back);
+}
+
+// =========================================================================
+// Enum ordering
+// =========================================================================
+
+#[test]
+fn test_divergence_severity_ordering() {
+    assert!(DivergenceSeverity::Critical < DivergenceSeverity::High);
+    assert!(DivergenceSeverity::High < DivergenceSeverity::Medium);
+    assert!(DivergenceSeverity::Medium < DivergenceSeverity::Low);
+    assert!(DivergenceSeverity::Low < DivergenceSeverity::Informational);
+}
+
+#[test]
+fn test_api_support_level_ordering() {
+    assert!(ApiSupportLevel::FullySupported < ApiSupportLevel::PartiallySupported);
+    assert!(ApiSupportLevel::PartiallySupported < ApiSupportLevel::Unsupported);
+    assert!(ApiSupportLevel::Unsupported < ApiSupportLevel::Deprecated);
+    assert!(ApiSupportLevel::Deprecated < ApiSupportLevel::RequiresPolyfill);
+}
+
+// =========================================================================
+// compute_migration_readiness additional
+// =========================================================================
+
+#[test]
+fn test_readiness_score_midpoint() {
+    let compat = CompatibilityReport {
+        compatibility_score_millionths: 500_000,
+        ..make_empty_compat()
+    };
+    let behavior = BehaviorValidationReport {
+        parity_score_millionths: 500_000,
+        ..make_empty_behavior()
+    };
+    let score = compute_migration_readiness(&compat, &behavior);
+    assert_eq!(score, 500_000);
+}
+
+// =========================================================================
+// Event emission edge cases
+// =========================================================================
+
+#[test]
+fn test_event_with_error_code() {
+    let event = MigrationEvent {
+        trace_id: "err-trace".to_string(),
+        decision_id: "err-dec".to_string(),
+        component: COMPONENT.to_string(),
+        event: "migration_failed".to_string(),
+        outcome: "failure".to_string(),
+        error_code: Some("FE-MK-0006".to_string()),
+        details: BTreeMap::new(),
+    };
+    let json = emit_migration_event(&event);
+    assert!(json.contains("FE-MK-0006"));
+    assert!(json.contains("migration_failed"));
+}
+
+#[test]
+fn test_event_empty_details() {
+    let event = MigrationEvent {
+        trace_id: "t".to_string(),
+        decision_id: "d".to_string(),
+        component: COMPONENT.to_string(),
+        event: "e".to_string(),
+        outcome: "o".to_string(),
+        error_code: None,
+        details: BTreeMap::new(),
+    };
+    let json = emit_migration_event(&event);
+    let parsed: MigrationEvent = serde_json::from_str(&json).unwrap();
+    assert!(parsed.details.is_empty());
+}
+
+// =========================================================================
+// Manifest edge cases
+// =========================================================================
+
+#[test]
+fn test_manifest_empty_version_accepted() {
+    let manifest = generate_manifest(ManifestGenerationInput {
+        source_runtime: SourceRuntime::Node,
+        source_package_name: "test".to_string(),
+        source_version: String::new(),
+        entry_point: "index.js".to_string(),
+        compatibility: make_empty_compat(),
+        behavior: make_empty_behavior(),
+        capabilities: make_empty_caps(),
+        epoch: SecurityEpoch::from_raw(1),
+    })
+    .unwrap();
+    assert_eq!(manifest.source_version, "");
+}
+
+#[test]
+fn test_manifest_empty_entry_point_accepted() {
+    let manifest = generate_manifest(ManifestGenerationInput {
+        source_runtime: SourceRuntime::Node,
+        source_package_name: "test".to_string(),
+        source_version: "1.0.0".to_string(),
+        entry_point: String::new(),
+        compatibility: make_empty_compat(),
+        behavior: make_empty_behavior(),
+        capabilities: make_empty_caps(),
+        epoch: SecurityEpoch::from_raw(1),
+    })
+    .unwrap();
+    assert_eq!(manifest.entry_point, "");
+}
+
+#[test]
+fn test_manifest_scoped_package_name_normalization() {
+    let manifest = generate_manifest(ManifestGenerationInput {
+        source_runtime: SourceRuntime::Node,
+        source_package_name: "@scope/my-pkg".to_string(),
+        source_version: "1.0.0".to_string(),
+        entry_point: "index.js".to_string(),
+        compatibility: make_empty_compat(),
+        behavior: make_empty_behavior(),
+        capabilities: make_empty_caps(),
+        epoch: SecurityEpoch::from_raw(1),
+    })
+    .unwrap();
+    // Scoped names get @ and / stripped/replaced
+    assert!(!manifest.franken_extension_name.contains('@'));
+    assert!(!manifest.franken_extension_name.contains('/'));
+}
+
+// =========================================================================
+// Capability inference patterns
+// =========================================================================
+
+#[test]
+fn test_infer_crypto_capability() {
+    let files = vec![SourceFile {
+        path: "hash.js".to_string(),
+        content: "const crypto = require('crypto');\nconst hash = crypto.createHash('sha256');"
+            .to_string(),
+    }];
+    let caps = infer_capabilities(&files, &node_config()).unwrap();
+    assert!(caps.minimum_capability_set.contains("cap:crypto"));
+}
+
+#[test]
+fn test_infer_env_access_capability() {
+    let files = vec![SourceFile {
+        path: "config.js".to_string(),
+        content: "const port = process.env.PORT || 3000;".to_string(),
+    }];
+    let caps = infer_capabilities(&files, &node_config()).unwrap();
+    assert!(caps.minimum_capability_set.contains("cap:env"));
+}
+
+#[test]
+fn test_infer_multiple_capabilities_single_file() {
+    let files = vec![SourceFile {
+        path: "app.js".to_string(),
+        content: r#"
+            const fs = require('fs');
+            const http = require('http');
+            const crypto = require('crypto');
+            const port = process.env.PORT;
+        "#
+        .to_string(),
+    }];
+    let caps = infer_capabilities(&files, &node_config()).unwrap();
+    assert!(caps.minimum_capability_set.contains("cap:fs"));
+    assert!(caps.minimum_capability_set.contains("cap:net"));
+    assert!(caps.minimum_capability_set.contains("cap:crypto"));
+    assert!(caps.minimum_capability_set.contains("cap:env"));
 }

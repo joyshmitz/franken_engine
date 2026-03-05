@@ -163,3 +163,120 @@ fn frx_track_d_readme_gate_instructions_present() {
         "README missing track D replay command"
     );
 }
+
+// ---------- repo_root ----------
+
+#[test]
+fn repo_root_exists() {
+    assert!(repo_root().exists());
+}
+
+// ---------- charter doc ----------
+
+#[test]
+fn track_d_charter_doc_is_nonempty() {
+    let path = repo_root().join("docs/FRX_TRACK_D_WASM_LANE_HYBRID_ROUTER_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read track D doc");
+    assert!(!doc.is_empty());
+}
+
+// ---------- JSON contract ----------
+
+#[test]
+fn track_d_contract_has_track_section() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["track"].is_object());
+    assert_eq!(value["track"]["id"].as_str(), Some("FRX-11.4"));
+}
+
+#[test]
+fn track_d_contract_has_outputs_section() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["outputs"].is_object());
+    assert!(value["outputs"]["router_decision_artifact"].is_object());
+}
+
+#[test]
+fn track_d_contract_json_is_deterministic() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let v1: Value = serde_json::from_str(&raw).expect("parse first");
+    let v2: Value = serde_json::from_str(&raw).expect("parse second");
+    assert_eq!(v1, v2);
+}
+
+#[test]
+fn track_d_contract_has_generated_at_utc() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let ts = value["generated_at_utc"].as_str().expect("generated_at_utc");
+    assert!(ts.ends_with('Z'));
+}
+
+#[test]
+fn track_d_contract_has_activation_gate() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["activation_gate"].is_object());
+}
+
+#[test]
+fn track_d_charter_mentions_wasm() {
+    let path = repo_root().join("docs/FRX_TRACK_D_WASM_LANE_HYBRID_ROUTER_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.to_ascii_lowercase().contains("wasm"));
+}
+
+#[test]
+fn track_d_contract_has_failure_policy() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["failure_policy"].is_object());
+    assert_eq!(value["failure_policy"]["mode"].as_str(), Some("fail_closed"));
+}
+
+#[test]
+fn track_d_contract_has_primary_bead() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let pb = value["primary_bead"].as_str().expect("primary_bead must be string");
+    assert!(!pb.trim().is_empty());
+}
+
+#[test]
+fn track_d_charter_mentions_hybrid_router() {
+    let path = repo_root().join("docs/FRX_TRACK_D_WASM_LANE_HYBRID_ROUTER_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.contains("Hybrid Router"));
+}
+
+#[test]
+fn track_d_contract_has_schema_version() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let sv = value["schema_version"].as_str().expect("schema_version must be string");
+    assert!(!sv.trim().is_empty());
+}
+
+#[test]
+fn track_d_charter_mentions_abi_overhead() {
+    let path = repo_root().join("docs/FRX_TRACK_D_WASM_LANE_HYBRID_ROUTER_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.to_ascii_lowercase().contains("abi overhead"));
+}
+
+#[test]
+fn track_d_charter_mentions_deterministic_replay() {
+    let path = repo_root().join("docs/FRX_TRACK_D_WASM_LANE_HYBRID_ROUTER_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.contains("Deterministic Replay"));
+}

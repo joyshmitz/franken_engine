@@ -155,3 +155,95 @@ fn default_spec_produces_non_empty_adjustment_set() {
     assert!(!spec.measurement_contracts.is_empty());
     assert!(!spec.assumptions.is_empty());
 }
+
+#[test]
+fn twin_state_snapshot_multiple_upserts_preserved_in_serde() {
+    let mut snapshot = TwinStateSnapshot::new("t", "d", "p", 1, 1);
+    snapshot.upsert_value("key_a", 100);
+    snapshot.upsert_value("key_b", 200);
+    let json = serde_json::to_string(&snapshot).expect("serialize");
+    let recovered: TwinStateSnapshot = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(snapshot, recovered);
+}
+
+#[test]
+fn twin_state_snapshot_new_sets_trace_fields() {
+    let snapshot = TwinStateSnapshot::new("trace-1", "decision-1", "policy-1", 5, 42);
+    let json = serde_json::to_string(&snapshot).expect("serialize");
+    assert!(json.contains("trace-1"));
+    assert!(json.contains("decision-1"));
+    assert!(json.contains("policy-1"));
+}
+
+#[test]
+fn default_spec_causal_model_is_identified() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    let backdoor = spec
+        .causal_model
+        .backdoor_criterion(&spec.treatment_variable, &spec.outcome_variable)
+        .expect("backdoor criterion");
+    assert!(backdoor.identified);
+}
+
+#[test]
+fn twin_state_domain_serde_round_trip_extended() {
+    for domain in [
+        TwinStateDomain::Outcome,
+        TwinStateDomain::Regime,
+        TwinStateDomain::Resource,
+        TwinStateDomain::Replay,
+        TwinStateDomain::Calibration,
+    ] {
+        let json = serde_json::to_string(&domain).expect("serialize");
+        let recovered: TwinStateDomain = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(domain, recovered);
+    }
+}
+
+#[test]
+fn default_spec_has_nonempty_assumptions() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    assert!(!spec.assumptions.is_empty());
+    for assumption in &spec.assumptions {
+        assert!(!assumption.id.trim().is_empty());
+    }
+}
+
+#[test]
+fn default_spec_has_nonempty_transitions() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    assert!(!spec.transitions.is_empty());
+    for transition in &spec.transitions {
+        assert!(!transition.id.trim().is_empty());
+    }
+}
+
+#[test]
+fn default_spec_treatment_and_outcome_variables_are_nonempty() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    assert!(!spec.treatment_variable.trim().is_empty());
+    assert!(!spec.outcome_variable.trim().is_empty());
+}
+
+#[test]
+fn twin_state_domain_all_variants_serialize() {
+    for domain in [
+        TwinStateDomain::Outcome,
+        TwinStateDomain::Regime,
+        TwinStateDomain::Resource,
+        TwinStateDomain::Replay,
+        TwinStateDomain::Calibration,
+    ] {
+        let json = serde_json::to_string(&domain).expect("serialize");
+        assert!(!json.is_empty());
+    }
+}
+
+#[test]
+fn default_spec_serde_roundtrip_preserves_component() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    let json = serde_json::to_string(&spec).expect("serialize");
+    let recovered: SemanticTwinSpecification = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.component, SEMANTIC_TWIN_COMPONENT);
+    assert_eq!(recovered.treatment_variable, spec.treatment_variable);
+}

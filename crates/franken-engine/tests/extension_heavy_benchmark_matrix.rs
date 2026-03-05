@@ -337,3 +337,124 @@ fn benchmark_spec_links_machine_readable_manifests() {
         );
     }
 }
+
+// ---------- helper functions ----------
+
+#[test]
+fn require_string_field_returns_value() {
+    let value = serde_json::json!({"name": "test"});
+    assert_eq!(require_string_field(&value, "name"), "test");
+}
+
+#[test]
+#[should_panic(expected = "missing")]
+fn require_string_field_panics_on_missing() {
+    let value = serde_json::json!({});
+    require_string_field(&value, "missing_field");
+}
+
+#[test]
+fn require_u64_field_returns_value() {
+    let value = serde_json::json!({"count": 42});
+    assert_eq!(require_u64_field(&value, "count"), 42);
+}
+
+#[test]
+#[should_panic(expected = "missing")]
+fn require_u64_field_panics_on_missing() {
+    let value = serde_json::json!({});
+    require_u64_field(&value, "missing_field");
+}
+
+#[test]
+fn require_bool_field_returns_value() {
+    let value = serde_json::json!({"active": true});
+    assert!(require_bool_field(&value, "active"));
+}
+
+#[test]
+#[should_panic(expected = "missing")]
+fn require_bool_field_panics_on_missing() {
+    let value = serde_json::json!({});
+    require_bool_field(&value, "missing_field");
+}
+
+#[test]
+fn is_sha256_hex_accepts_valid_hex() {
+    let valid = "a".repeat(64);
+    assert!(is_sha256_hex(&valid));
+}
+
+#[test]
+fn is_sha256_hex_rejects_short_string() {
+    assert!(!is_sha256_hex("abc123"));
+}
+
+#[test]
+fn is_sha256_hex_rejects_non_hex_chars() {
+    let invalid = "z".repeat(64);
+    assert!(!is_sha256_hex(&invalid));
+}
+
+#[test]
+fn is_sha256_hex_rejects_empty() {
+    assert!(!is_sha256_hex(""));
+}
+
+// ---------- read_json / read_text ----------
+
+#[test]
+fn read_json_returns_object_for_workload_matrix() {
+    let value = read_json("docs/extension_heavy_workload_matrix_v1.json");
+    assert!(value.is_object());
+}
+
+#[test]
+fn read_text_returns_nonempty_for_spec() {
+    let text = read_text("docs/EXTENSION_HEAVY_BENCHMARK_SUITE_V1.md");
+    assert!(!text.is_empty());
+}
+
+// ---------- fixture structure ----------
+
+#[test]
+fn workload_matrix_has_five_families() {
+    let matrix = read_json("docs/extension_heavy_workload_matrix_v1.json");
+    let families = matrix["family_definitions"].as_array().expect("array");
+    assert_eq!(families.len(), 5);
+}
+
+#[test]
+fn golden_output_manifest_has_fifteen_entries() {
+    let golden = read_json("docs/extension_heavy_golden_outputs_v1.json");
+    let entries = golden["entries"].as_array().expect("array");
+    assert_eq!(entries.len(), 15);
+}
+
+#[test]
+fn workload_matrix_has_schema_version() {
+    let matrix = read_json("docs/extension_heavy_workload_matrix_v1.json");
+    let sv = require_string_field(&matrix, "schema_version");
+    assert!(!sv.is_empty());
+}
+
+#[test]
+fn golden_output_manifest_entry_ids_are_unique() {
+    let golden = read_json("docs/extension_heavy_golden_outputs_v1.json");
+    let entries = golden["entries"].as_array().expect("array");
+    let mut seen = BTreeSet::new();
+    for entry in entries {
+        let wid = require_string_field(entry, "workload_id");
+        assert!(seen.insert(wid.to_string()), "duplicate workload_id: {wid}");
+    }
+}
+
+#[test]
+fn workload_matrix_cases_have_nonempty_workload_ids() {
+    let matrix = read_json("docs/extension_heavy_workload_matrix_v1.json");
+    let cases = matrix["cases"].as_array().expect("cases array");
+    for case in cases {
+        let wid = require_string_field(case, "workload_id");
+        assert!(!wid.trim().is_empty());
+    }
+}

@@ -226,3 +226,165 @@ const value = 1;
         }
     );
 }
+
+#[test]
+fn empty_source_is_rejected() {
+    let error = normalize_typescript_to_es2020(
+        "",
+        &TsNormalizationConfig::default(),
+        "trace-empty",
+        "decision-empty",
+        "policy-empty",
+    )
+    .expect_err("empty source should be rejected");
+
+    assert_eq!(error, TsNormalizationError::EmptySource);
+}
+
+#[test]
+fn different_traces_produce_different_witness_ids() {
+    let source = "const x: number = 1;";
+    let config = TsNormalizationConfig::default();
+
+    let a = normalize_typescript_to_es2020(source, &config, "trace-a", "decision-a", "policy-a")
+        .expect("normalize a");
+    let b = normalize_typescript_to_es2020(source, &config, "trace-b", "decision-b", "policy-b")
+        .expect("normalize b");
+
+    assert_eq!(a.witness.trace_id, "trace-a");
+    assert_eq!(b.witness.trace_id, "trace-b");
+    // Same source produces same content hashes
+    assert_eq!(a.witness.source_hash, b.witness.source_hash);
+    assert_eq!(a.witness.normalized_hash, b.witness.normalized_hash);
+}
+
+#[test]
+fn hostcall_produces_capability_intent() {
+    let source = r#"const read = hostcall<"fs.read">();"#;
+    let output = normalize_typescript_to_es2020(
+        source,
+        &TsNormalizationConfig::default(),
+        "trace-cap",
+        "decision-cap",
+        "policy-cap",
+    )
+    .expect("hostcall normalization should pass");
+
+    assert!(
+        !output.capability_intents.is_empty(),
+        "hostcall source must produce capability intents"
+    );
+}
+
+#[test]
+fn type_only_import_results_in_empty_source_error() {
+    let source = r#"import type { Foo } from "./types";"#;
+    let error = normalize_typescript_to_es2020(
+        source,
+        &TsNormalizationConfig::default(),
+        "trace-type-import",
+        "decision-type-import",
+        "policy-type-import",
+    )
+    .expect_err("type-only source should produce EmptySource after stripping");
+
+    assert_eq!(error, TsNormalizationError::EmptySource);
+}
+
+#[test]
+fn default_config_targets_es2020() {
+    let config = TsNormalizationConfig::default();
+    assert_eq!(config.compiler_options.target, "es2020");
+}
+
+#[test]
+fn whitespace_only_source_is_rejected() {
+    let error = normalize_typescript_to_es2020(
+        "   \n\t  \n  ",
+        &TsNormalizationConfig::default(),
+        "trace-ws",
+        "decision-ws",
+        "policy-ws",
+    )
+    .expect_err("whitespace-only source should be rejected");
+    assert_eq!(error, TsNormalizationError::EmptySource);
+}
+
+#[test]
+fn normalization_events_have_nonempty_component_field() {
+    let source = "const x: number = 42;";
+    let output = normalize_typescript_to_es2020(
+        source,
+        &TsNormalizationConfig::default(),
+        "trace-comp",
+        "decision-comp",
+        "policy-comp",
+    )
+    .expect("normalization should pass");
+    for event in &output.events {
+        assert!(
+            !event.component.trim().is_empty(),
+            "event component must not be empty"
+        );
+    }
+}
+
+#[test]
+fn enum_is_lowered_and_does_not_contain_enum_keyword() {
+    let source = "enum Mode { Fast, Safe }";
+    let output = normalize_typescript_to_es2020(
+        source,
+        &TsNormalizationConfig::default(),
+        "trace-enum",
+        "decision-enum",
+        "policy-enum",
+    )
+    .expect("enum normalization should pass");
+
+    // enum keyword should be removed during lowering
+    assert!(!output.normalized_source.contains("enum Mode"));
+    // The Mode identifier should still be present in the output
+    assert!(output.normalized_source.contains("Mode"));
+}
+
+#[test]
+fn ts_normalization_config_default_is_constructible() {
+    let config = TsNormalizationConfig::default();
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: TsNormalizationConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(
+        serde_json::to_string(&recovered).unwrap(),
+        json
+    );
+}
+
+#[test]
+fn witness_hashes_are_nonempty() {
+    let source = "const x: number = 1;";
+    let output = normalize_typescript_to_es2020(
+        source,
+        &TsNormalizationConfig::default(),
+        "trace-hash",
+        "decision-hash",
+        "policy-hash",
+    )
+    .expect("normalization should pass");
+    assert!(!output.witness.source_hash.is_empty());
+    assert!(!output.witness.normalized_hash.is_empty());
+    assert!(!output.witness.compiler_options_hash.is_empty());
+}
+
+#[test]
+fn normalization_preserves_runtime_semantics() {
+    let source = "const add = (a: number, b: number): number => a + b;";
+    let output = normalize_typescript_to_es2020(
+        source,
+        &TsNormalizationConfig::default(),
+        "trace-sem",
+        "decision-sem",
+        "policy-sem",
+    )
+    .expect("normalization should pass");
+    assert!(output.normalized_source.contains("add"));
+    assert!(!output.normalized_source.contains(": number"));
+}

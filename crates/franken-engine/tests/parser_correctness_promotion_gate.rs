@@ -463,3 +463,218 @@ fn parser_correctness_gate_script_contains_fail_closed_rch_markers() {
         );
     }
 }
+
+// ---------- unresolved_high_drifts ----------
+
+fn make_drift(
+    drift_id: &str,
+    severity: &str,
+    status: &str,
+    waiver: Option<WaiverRecord>,
+) -> DriftRecord {
+    DriftRecord {
+        drift_id: drift_id.to_string(),
+        fixture_id: format!("fixture-{drift_id}"),
+        severity: severity.to_string(),
+        status: status.to_string(),
+        owner: "owner-a".to_string(),
+        detected_at_utc: "2026-01-01T00:00:00Z".to_string(),
+        replay_command: "./scripts/e2e/replay.sh".to_string(),
+        waiver,
+    }
+}
+
+fn make_fixture(drifts: Vec<DriftRecord>) -> ParserCorrectnessPromotionGateFixture {
+    ParserCorrectnessPromotionGateFixture {
+        schema_version: "franken-engine.parser-correctness-promotion-gate.v1".to_string(),
+        gate_version: "1.0.0".to_string(),
+        high_severity_levels: vec!["high".to_string(), "critical".to_string()],
+        required_evidence_lanes: vec![],
+        structured_log_required_keys: vec![],
+        drift_records: drifts,
+        evidence_vectors: vec![],
+        expected_gate: ExpectedGate {
+            expected_outcome: String::new(),
+            expected_blockers: vec![],
+            expected_unresolved_high_count: 0,
+            expected_waiver_count: 0,
+            expected_failing_fixture_ids: vec![],
+        },
+        replay_scenarios: vec![],
+    }
+}
+
+#[test]
+fn unresolved_high_drifts_finds_open_critical() {
+    let fixture = make_fixture(vec![make_drift("d1", "critical", "open", None)]);
+    let unresolved = unresolved_high_drifts(&fixture);
+    assert_eq!(unresolved.len(), 1);
+    assert_eq!(unresolved[0].drift_id, "d1");
+}
+
+#[test]
+fn unresolved_high_drifts_skips_resolved() {
+    let fixture = make_fixture(vec![make_drift("d1", "critical", "resolved", None)]);
+    assert!(unresolved_high_drifts(&fixture).is_empty());
+}
+
+#[test]
+fn unresolved_high_drifts_skips_waived() {
+    let fixture = make_fixture(vec![make_drift("d1", "high", "waived", None)]);
+    assert!(unresolved_high_drifts(&fixture).is_empty());
+}
+
+#[test]
+fn unresolved_high_drifts_skips_low_severity() {
+    let fixture = make_fixture(vec![make_drift("d1", "low", "open", None)]);
+    assert!(unresolved_high_drifts(&fixture).is_empty());
+}
+
+#[test]
+fn unresolved_high_drifts_skips_medium_severity() {
+    let fixture = make_fixture(vec![make_drift("d1", "medium", "open", None)]);
+    assert!(unresolved_high_drifts(&fixture).is_empty());
+}
+
+// ---------- count_waivers ----------
+
+#[test]
+fn count_waivers_counts_waived_status() {
+    let fixture = make_fixture(vec![
+        make_drift("d1", "high", "waived", None),
+        make_drift("d2", "critical", "open", None),
+        make_drift("d3", "low", "waived", None),
+    ]);
+    assert_eq!(count_waivers(&fixture), 2);
+}
+
+#[test]
+fn count_waivers_zero_when_none_waived() {
+    let fixture = make_fixture(vec![make_drift("d1", "high", "open", None)]);
+    assert_eq!(count_waivers(&fixture), 0);
+}
+
+// ---------- collect_waiver_issues ----------
+
+#[test]
+fn collect_waiver_issues_missing_waiver_record() {
+    let fixture = make_fixture(vec![make_drift("d1", "high", "waived", None)]);
+    let issues = collect_waiver_issues(&fixture);
+    assert_eq!(issues.len(), 1);
+    assert!(issues[0].contains("missing_record"));
+}
+
+#[test]
+fn collect_waiver_issues_empty_fields() {
+    let waiver = WaiverRecord {
+        waiver_id: "".to_string(),
+        approved_by: "admin".to_string(),
+        remediation_due_utc: "2027-01-01T00:00:00Z".to_string(),
+        rationale: "reason".to_string(),
+    };
+    let fixture = make_fixture(vec![make_drift("d1", "high", "waived", Some(waiver))]);
+    let issues = collect_waiver_issues(&fixture);
+    assert_eq!(issues.len(), 1);
+    assert!(issues[0].contains("missing_fields"));
+}
+
+#[test]
+fn collect_waiver_issues_invalid_due_date() {
+    let waiver = WaiverRecord {
+        waiver_id: "w1".to_string(),
+        approved_by: "admin".to_string(),
+        remediation_due_utc: "2025-12-31T00:00:00Z".to_string(),
+        rationale: "reason".to_string(),
+    };
+    let fixture = make_fixture(vec![make_drift("d1", "high", "waived", Some(waiver))]);
+    let issues = collect_waiver_issues(&fixture);
+    assert_eq!(issues.len(), 1);
+    assert!(issues[0].contains("invalid_due_date"));
+}
+
+#[test]
+fn collect_waiver_issues_valid_waiver_no_issues() {
+    let waiver = WaiverRecord {
+        waiver_id: "w1".to_string(),
+        approved_by: "admin".to_string(),
+        remediation_due_utc: "2027-01-01T00:00:00Z".to_string(),
+        rationale: "reason".to_string(),
+    };
+    let fixture = make_fixture(vec![make_drift("d1", "high", "waived", Some(waiver))]);
+    let issues = collect_waiver_issues(&fixture);
+    assert!(issues.is_empty());
+}
+
+// ---------- evaluate_gate synthetic ----------
+
+#[test]
+fn evaluate_gate_promotes_with_no_drifts() {
+    let fixture = make_fixture(vec![]);
+    let eval = evaluate_gate(&fixture);
+    assert_eq!(eval.outcome, "promote");
+    assert!(eval.blockers.is_empty());
+}
+
+#[test]
+fn evaluate_gate_holds_with_unresolved_critical() {
+    let fixture = make_fixture(vec![make_drift("d1", "critical", "open", None)]);
+    let eval = evaluate_gate(&fixture);
+    assert_eq!(eval.outcome, "hold");
+    assert!(eval.blockers.iter().any(|b| b.contains("unresolved_high_drift:d1")));
+    assert!(eval.failing_fixture_ids.contains(&"fixture-d1".to_string()));
+}
+
+#[test]
+fn evaluate_gate_holds_on_missing_evidence_lane() {
+    let mut fixture = make_fixture(vec![]);
+    fixture.required_evidence_lanes = vec!["lane_x".to_string()];
+    let eval = evaluate_gate(&fixture);
+    assert_eq!(eval.outcome, "hold");
+    assert!(eval.blockers.iter().any(|b| b.contains("evidence_missing:lane_x")));
+}
+
+#[test]
+fn evaluate_gate_holds_on_failed_evidence_lane() {
+    let mut fixture = make_fixture(vec![]);
+    fixture.required_evidence_lanes = vec!["lane_y".to_string()];
+    fixture.evidence_vectors.push(EvidenceVector {
+        lane_id: "lane_y".to_string(),
+        status: "fail".to_string(),
+        artifact_manifest: "path/run_manifest.json".to_string(),
+        replay_command: "./scripts/e2e/replay.sh".to_string(),
+    });
+    let eval = evaluate_gate(&fixture);
+    assert_eq!(eval.outcome, "hold");
+    assert!(eval.blockers.iter().any(|b| b.contains("evidence_not_green:lane_y:fail")));
+}
+
+// ---------- emit_structured_event ----------
+
+#[test]
+fn emit_structured_event_promote_null_error_code() {
+    let fixture = make_fixture(vec![]);
+    let eval = evaluate_gate(&fixture);
+    let event = emit_structured_event(&fixture, &eval);
+    assert!(event.get("error_code").unwrap().is_null());
+}
+
+#[test]
+fn emit_structured_event_hold_has_error_code() {
+    let fixture = make_fixture(vec![make_drift("d1", "critical", "open", None)]);
+    let eval = evaluate_gate(&fixture);
+    let event = emit_structured_event(&fixture, &eval);
+    assert_eq!(
+        event.get("error_code").unwrap().as_str().unwrap(),
+        "FE-PARSER-CORRECTNESS-GATE-0001"
+    );
+}
+
+// ---------- evaluate_gate determinism ----------
+
+#[test]
+fn evaluate_gate_deterministic() {
+    let fixture = load_fixture();
+    let eval1 = evaluate_gate(&fixture);
+    let eval2 = evaluate_gate(&fixture);
+    assert_eq!(eval1, eval2);
+}

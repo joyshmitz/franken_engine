@@ -811,3 +811,177 @@ fn store_serde_roundtrip_preserves_halted_state() {
     );
     assert_eq!(recovered.governance_ledger().len(), 1);
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment batch 8: enum serde, error Display, constants
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn tee_platform_serde_round_trip() {
+    for platform in TeePlatform::ALL {
+        let json = serde_json::to_string(&platform).expect("serialize");
+        let recovered: TeePlatform = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(platform, recovered);
+    }
+}
+
+#[test]
+fn tee_platform_all_has_four_elements() {
+    assert_eq!(TeePlatform::ALL.len(), 4);
+}
+
+#[test]
+fn measurement_algorithm_serde_round_trip() {
+    for algo in [MeasurementAlgorithm::Sha256, MeasurementAlgorithm::Sha384] {
+        let json = serde_json::to_string(&algo).expect("serialize");
+        let recovered: MeasurementAlgorithm = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(algo, recovered);
+    }
+}
+
+#[test]
+fn decision_impact_serde_round_trip() {
+    for impact in [DecisionImpact::Standard, DecisionImpact::HighImpact] {
+        let json = serde_json::to_string(&impact).expect("serialize");
+        let recovered: DecisionImpact = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(impact, recovered);
+    }
+}
+
+#[test]
+fn revocation_source_type_serde_round_trip() {
+    for src_type in [RevocationSourceType::IntelPcs, RevocationSourceType::InternalLedger] {
+        let json = serde_json::to_string(&src_type).expect("serialize");
+        let recovered: RevocationSourceType = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(src_type, recovered);
+    }
+}
+
+#[test]
+fn revocation_fallback_serde_round_trip() {
+    for fallback in [RevocationFallback::TryNextSource, RevocationFallback::FailClosed] {
+        let json = serde_json::to_string(&fallback).expect("serialize");
+        let recovered: RevocationFallback = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(fallback, recovered);
+    }
+}
+
+#[test]
+fn revocation_probe_status_serde_round_trip() {
+    for status in [
+        RevocationProbeStatus::Good,
+        RevocationProbeStatus::Revoked,
+        RevocationProbeStatus::Unavailable,
+    ] {
+        let json = serde_json::to_string(&status).expect("serialize");
+        let recovered: RevocationProbeStatus = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(status, recovered);
+    }
+}
+
+#[test]
+fn trust_root_pinning_serde_round_trip() {
+    let pinned = TrustRootPinning::Pinned;
+    let rotating = TrustRootPinning::Rotating {
+        rotation_group: "group-a".to_string(),
+    };
+    for pinning in [pinned, rotating] {
+        let json = serde_json::to_string(&pinning).expect("serialize");
+        let recovered: TrustRootPinning = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(pinning, recovered);
+    }
+}
+
+#[test]
+fn trust_root_source_serde_round_trip() {
+    let sources = [
+        TrustRootSource::Policy,
+        TrustRootSource::TemporaryOverride {
+            override_id: "ovr-1".to_string(),
+            justification_artifact_id: "art-1".to_string(),
+        },
+    ];
+    for source in sources {
+        let json = serde_json::to_string(&source).expect("serialize");
+        let recovered: TrustRootSource = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(source, recovered);
+    }
+}
+
+#[test]
+fn tee_attestation_policy_error_error_codes_all_unique() {
+    use std::collections::BTreeSet;
+    let errors: Vec<TeeAttestationPolicyError> = vec![
+        TeeAttestationPolicyError::ReceiptEmissionHalted,
+        TeeAttestationPolicyError::EmitterNotSynced {
+            emitter_id: "e".to_string(),
+        },
+        TeeAttestationPolicyError::EmitterPolicyStale {
+            emitter_id: "e".to_string(),
+            synced_epoch: SecurityEpoch::from_raw(1),
+            required_epoch: SecurityEpoch::from_raw(3),
+        },
+        TeeAttestationPolicyError::PolicyEpochRegression {
+            current: SecurityEpoch::from_raw(5),
+            attempted: SecurityEpoch::from_raw(3),
+        },
+        TeeAttestationPolicyError::AttestationStale {
+            quote_age_secs: 999,
+            max_age_secs: 300,
+        },
+        TeeAttestationPolicyError::UnknownMeasurementDigest {
+            platform: TeePlatform::IntelSgx,
+            digest: "abc".to_string(),
+        },
+        TeeAttestationPolicyError::UnknownTrustRoot {
+            platform: TeePlatform::IntelSgx,
+            root_id: "r".to_string(),
+        },
+        TeeAttestationPolicyError::RevokedBySource {
+            source_id: "s".to_string(),
+        },
+        TeeAttestationPolicyError::RevocationSourceUnavailable {
+            source_id: "s".to_string(),
+        },
+    ];
+    let codes: BTreeSet<String> = errors.iter().map(|e| e.error_code().to_string()).collect();
+    assert_eq!(codes.len(), errors.len(), "each error variant should have a unique code");
+}
+
+#[test]
+fn tee_attestation_policy_error_is_std_error() {
+    let err: Box<dyn std::error::Error> =
+        Box::new(TeeAttestationPolicyError::ReceiptEmissionHalted);
+    assert!(!err.to_string().is_empty());
+}
+
+#[test]
+fn measurement_digest_serde_round_trip() {
+    let digest = MeasurementDigest {
+        algorithm: MeasurementAlgorithm::Sha256,
+        digest_hex: digest_hex(0xAA, 32),
+    };
+    let json = serde_json::to_string(&digest).expect("serialize");
+    let recovered: MeasurementDigest = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(digest, recovered);
+}
+
+#[test]
+fn attestation_quote_serde_round_trip() {
+    let quote = sgx_quote("sgx-root-a");
+    let json = serde_json::to_string(&quote).expect("serialize");
+    let recovered: AttestationQuote = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(quote, recovered);
+}
+
+#[test]
+fn governance_event_serde_round_trip() {
+    let mut store = TeeAttestationPolicyStore::default();
+    store
+        .load_policy(sample_policy(1), "trace-serde-ev", "decision-serde-ev")
+        .expect("load");
+    let event = &store.governance_ledger()[0];
+    let json = serde_json::to_string(event).expect("serialize");
+    let recovered: PolicyGovernanceEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(*event, recovered);
+}

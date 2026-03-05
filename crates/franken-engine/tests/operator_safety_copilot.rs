@@ -533,3 +533,139 @@ fn policy_effectiveness_view_computes_rates_and_percentiles() {
     assert_eq!(view.calibration_history[0].timestamp_ns, 100);
     assert_eq!(view.calibration_history[1].timestamp_ns, 200);
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: enum serde, error display, struct serde
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn recommendation_reversibility_serde_round_trip() {
+    for rev in [
+        RecommendationReversibility::Reversible,
+        RecommendationReversibility::LimitedWindow,
+        RecommendationReversibility::Irreversible,
+    ] {
+        let json = serde_json::to_string(&rev).expect("serialize");
+        let recovered: RecommendationReversibility = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(rev, recovered);
+    }
+}
+
+#[test]
+fn time_sensitivity_serde_round_trip() {
+    for ts in [
+        TimeSensitivity::Immediate,
+        TimeSensitivity::NearTerm,
+        TimeSensitivity::Routine,
+    ] {
+        let json = serde_json::to_string(&ts).expect("serialize");
+        let recovered: TimeSensitivity = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(ts, recovered);
+    }
+}
+
+#[test]
+fn operator_role_serde_round_trip() {
+    for role in [
+        OperatorRole::Viewer,
+        OperatorRole::Operator,
+        OperatorRole::Administrator,
+    ] {
+        let json = serde_json::to_string(&role).expect("serialize");
+        let recovered: OperatorRole = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(role, recovered);
+    }
+}
+
+#[test]
+fn boundary_trigger_direction_serde_round_trip() {
+    for dir in [
+        BoundaryTriggerDirection::AtOrAbove,
+        BoundaryTriggerDirection::AtOrBelow,
+    ] {
+        let json = serde_json::to_string(&dir).expect("serialize");
+        let recovered: BoundaryTriggerDirection = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(dir, recovered);
+    }
+}
+
+#[test]
+fn incident_severity_ordering() {
+    assert!(IncidentSeverity::Low < IncidentSeverity::Medium);
+    assert!(IncidentSeverity::Medium < IncidentSeverity::High);
+    assert!(IncidentSeverity::High < IncidentSeverity::Critical);
+}
+
+#[test]
+fn extension_trust_level_ordering() {
+    assert!(ExtensionTrustLevel::High < ExtensionTrustLevel::Guarded);
+    assert!(ExtensionTrustLevel::Guarded < ExtensionTrustLevel::Watch);
+    assert!(ExtensionTrustLevel::Watch < ExtensionTrustLevel::Quarantined);
+}
+
+#[test]
+fn copilot_error_display_all_unique() {
+    let errors = [
+        CopilotError::InvalidConfidenceBand {
+            metric: "m1".to_string(),
+        },
+        CopilotError::MissingSnapshotForRollback {
+            action_type: "sandbox".to_string(),
+            target_extension: "ext".to_string(),
+        },
+        CopilotError::InvalidDecisionBoundaryHint {
+            metric: "m2".to_string(),
+        },
+        CopilotError::UnauthorizedRole {
+            role: OperatorRole::Viewer,
+            action: "select".to_string(),
+        },
+        CopilotError::OperatorMismatch {
+            selected_by: "a".to_string(),
+            confirmed_by: "b".to_string(),
+        },
+        CopilotError::MissingConfirmationToken,
+    ];
+    let msgs: std::collections::BTreeSet<String> = errors.iter().map(|e| e.to_string()).collect();
+    assert_eq!(msgs.len(), errors.len());
+}
+
+#[test]
+fn copilot_error_is_std_error() {
+    let err: Box<dyn std::error::Error> = Box::new(CopilotError::MissingConfirmationToken);
+    assert!(!err.to_string().is_empty());
+}
+
+#[test]
+fn evidence_strength_serde_round_trip() {
+    let es = EvidenceStrength {
+        evidence_atoms: 47,
+        observation_window_seconds: 720,
+    };
+    let json = serde_json::to_string(&es).expect("serialize");
+    let recovered: EvidenceStrength = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(es, recovered);
+}
+
+#[test]
+fn confidence_band_serde_round_trip() {
+    let cb = ConfidenceBand {
+        metric: "test".to_string(),
+        point_millionths: 500_000,
+        lower_millionths: 400_000,
+        upper_millionths: 600_000,
+        confidence_level_bps: 9_500,
+    };
+    let json = serde_json::to_string(&cb).expect("serialize");
+    let recovered: ConfidenceBand = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(cb, recovered);
+}
+
+#[test]
+fn timeline_drilldown_pointers_default_is_all_none() {
+    let ptrs = TimelineDrilldownPointers::default();
+    assert!(ptrs.evidence_pointer.is_none());
+    assert!(ptrs.decision_receipt_pointer.is_none());
+    assert!(ptrs.replay_pointer.is_none());
+    assert!(ptrs.counterfactual_pointer.is_none());
+}

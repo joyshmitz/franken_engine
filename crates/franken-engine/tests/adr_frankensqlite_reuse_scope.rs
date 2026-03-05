@@ -39,3 +39,123 @@ fn frankensqlite_reuse_scope_adr_contains_required_sections() {
         );
     }
 }
+
+#[test]
+fn frankensqlite_adr_file_exists_and_is_nonempty() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(!content.is_empty());
+}
+
+#[test]
+fn frankensqlite_adr_references_companion_decision() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("Companion Decision"));
+}
+
+#[test]
+fn frankensqlite_adr_references_wal() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("WAL"));
+}
+
+#[test]
+fn frankensqlite_adr_mentions_schema_migration() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("schema migration"));
+}
+
+#[test]
+fn frankensqlite_adr_has_persistence_boundary_definition() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("Persistence Boundary Definition"));
+}
+
+#[test]
+fn frankensqlite_adr_has_rationale_section() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("## Rationale"));
+}
+
+#[test]
+fn frankensqlite_adr_status_is_accepted() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("Status: Accepted"));
+}
+
+#[test]
+fn frankensqlite_adr_mentions_canonical_substrate() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("canonical substrate"));
+}
+
+#[test]
+fn frankensqlite_adr_has_context_section() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("## Context"));
+}
+
+#[test]
+fn frankensqlite_adr_has_decision_section() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("## Decision"));
+}
+
+#[test]
+fn frankensqlite_adr_references_related_beads() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("Related beads"));
+}
+
+#[test]
+fn frankensqlite_adr_mentions_lineage_logs() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("lineage logs"));
+}
+
+#[test]
+fn frankensqlite_adr_has_consequences_section() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("## Consequences"));
+}
+
+#[test]
+fn frankensqlite_adr_has_compliance_signals_section() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("## Compliance Signals"));
+}
+
+#[test]
+fn frankensqlite_adr_has_migration_policy_section() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("## Migration Policy"));
+}

@@ -325,3 +325,84 @@ fn scenario_log_event_serde_round_trip() {
     let recovered: ScenarioLogEvent = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(event, recovered);
 }
+
+#[test]
+fn hook_manifest_consistent_with_itself_has_no_violations() {
+    let manifest = HookManifest::new(
+        "Stable",
+        vec![
+            make_slot(0, HookKind::State),
+            make_slot(1, HookKind::Effect),
+        ],
+    );
+    let violations = validate_hook_consistency(&manifest, &manifest);
+    assert!(violations.is_empty());
+}
+
+#[test]
+fn empty_hook_manifest_consistent_with_itself() {
+    let manifest = HookManifest::new("Empty", vec![]);
+    let violations = validate_hook_consistency(&manifest, &manifest);
+    assert!(violations.is_empty());
+}
+
+#[test]
+fn make_slot_populates_fields() {
+    let slot = make_slot(3, HookKind::Memo);
+    assert_eq!(slot.index, HookSlotIndex(3));
+    assert_eq!(slot.kind, HookKind::Memo);
+    assert!(slot.deps.is_none());
+}
+
+#[test]
+fn hook_kind_serde_round_trip_all_variants() {
+    for kind in [
+        HookKind::State,
+        HookKind::Effect,
+        HookKind::Memo,
+    ] {
+        let json = serde_json::to_string(&kind).expect("serialize");
+        let recovered: HookKind = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(kind, recovered);
+    }
+}
+
+#[test]
+fn render_phase_serde_round_trip() {
+    for phase in [
+        RenderPhase::Idle,
+    ] {
+        let json = serde_json::to_string(&phase).expect("serialize");
+        let recovered: RenderPhase = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(phase, recovered);
+    }
+}
+
+#[test]
+fn hook_slot_index_ordering_is_correct() {
+    let a = HookSlotIndex(1);
+    let b = HookSlotIndex(5);
+    assert!(a < b);
+    assert_eq!(HookSlotIndex(3), HookSlotIndex(3));
+}
+
+#[test]
+fn log_event_populates_constants() {
+    let event = log_event(LogEventInput {
+        scenario_id: "test-constants",
+        trace_id: "trace-const",
+        decision_id: "decision-const",
+        event: "check",
+        decision_path: "validate->check",
+        trigger: UnsupportedSemanticsTrigger::HookTopologyDrift,
+        route: FallbackExecutionRoute::CompatibilityRuntimeLane,
+        outcome: "pass",
+        error_code: None,
+        hardening_guidance: "none",
+    });
+    assert_eq!(event.schema_version, SCHEMA_VERSION);
+    assert_eq!(event.policy_id, POLICY_ID);
+    assert_eq!(event.component, COMPONENT);
+    assert_eq!(event.replay_command, REPLAY_COMMAND);
+    assert!(event.error_code.is_none());
+}

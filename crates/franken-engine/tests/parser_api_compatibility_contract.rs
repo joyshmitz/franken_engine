@@ -574,3 +574,247 @@ fn compatibility_vectors_are_deterministic_and_meet_slos() {
         );
     }
 }
+
+// ---------- fixture invariants ----------
+
+#[test]
+fn fixture_case_ids_are_unique() {
+    let fixture = load_fixture();
+    let mut seen = BTreeSet::new();
+    for case in &fixture.compatibility_cases {
+        assert!(
+            seen.insert(case.case_id.clone()),
+            "duplicate case_id: {}",
+            case.case_id
+        );
+    }
+}
+
+#[test]
+fn fixture_covers_all_input_kinds() {
+    let fixture = load_fixture();
+    let kinds: BTreeSet<&str> = fixture
+        .compatibility_cases
+        .iter()
+        .map(|c| c.input_kind.as_str())
+        .collect();
+    for expected in ["inline_str", "owned_string", "path", "stream"] {
+        assert!(
+            kinds.contains(expected),
+            "fixture missing input_kind: {expected}"
+        );
+    }
+}
+
+#[test]
+fn fixture_covers_both_goals() {
+    let fixture = load_fixture();
+    let goals: BTreeSet<&str> = fixture
+        .compatibility_cases
+        .iter()
+        .map(|c| c.goal.as_str())
+        .collect();
+    assert!(goals.contains("script"), "fixture missing script goal");
+    assert!(goals.contains("module"), "fixture missing module goal");
+}
+
+#[test]
+fn fixture_has_both_success_and_failure_cases() {
+    let fixture = load_fixture();
+    let has_ok = fixture.compatibility_cases.iter().any(|c| c.expect_ok);
+    let has_fail = fixture.compatibility_cases.iter().any(|c| !c.expect_ok);
+    assert!(has_ok, "fixture must have at least one success case");
+    assert!(has_fail, "fixture must have at least one failure case");
+}
+
+// ---------- ParseEventIr ----------
+
+#[test]
+fn parse_event_ir_schema_and_contract_versions_are_nonempty() {
+    assert!(!ParseEventIr::schema_version().is_empty());
+    assert!(!ParseEventIr::contract_version().is_empty());
+}
+
+#[test]
+fn parse_event_ir_canonical_hash_is_deterministic() {
+    let parser = CanonicalEs2020Parser;
+    let (_, ir_a) =
+        parser.parse_with_event_ir("alpha;", ParseGoal::Script, &ParserOptions::default());
+    let (_, ir_b) =
+        parser.parse_with_event_ir("alpha;", ParseGoal::Script, &ParserOptions::default());
+    assert_eq!(ir_a.canonical_hash(), ir_b.canonical_hash());
+}
+
+#[test]
+fn parse_event_ir_has_events_for_success_case() {
+    let parser = CanonicalEs2020Parser;
+    let (result, ir) =
+        parser.parse_with_event_ir("42;", ParseGoal::Script, &ParserOptions::default());
+    assert!(result.is_ok());
+    assert!(!ir.events.is_empty());
+}
+
+#[test]
+fn parse_event_ir_has_events_for_failure_case() {
+    let parser = CanonicalEs2020Parser;
+    let (result, ir) =
+        parser.parse_with_event_ir("", ParseGoal::Script, &ParserOptions::default());
+    assert!(result.is_err());
+    assert!(!ir.events.is_empty());
+}
+
+#[test]
+fn parse_event_ir_serde_roundtrip() {
+    let parser = CanonicalEs2020Parser;
+    let (_, ir) =
+        parser.parse_with_event_ir("42;", ParseGoal::Script, &ParserOptions::default());
+    let json = serde_json::to_string(&ir).expect("serialize");
+    let recovered: ParseEventIr = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.canonical_hash(), ir.canonical_hash());
+}
+
+// ---------- MaterializedSyntaxTree ----------
+
+#[test]
+fn materialized_ast_root_node_id_starts_with_expected_prefix() {
+    let parser = CanonicalEs2020Parser;
+    let (_result, _ir, materialized) =
+        parser.parse_with_materialized_ast("alpha;", ParseGoal::Script, &ParserOptions::default());
+    let mat = materialized.expect("should succeed");
+    assert!(mat.root_node_id.starts_with("ast-node-"));
+}
+
+#[test]
+fn materialized_ast_statement_count_matches_parse_tree() {
+    let parser = CanonicalEs2020Parser;
+    let (result, _ir, materialized) = parser.parse_with_materialized_ast(
+        "alpha;\nbeta;\ngamma;",
+        ParseGoal::Script,
+        &ParserOptions::default(),
+    );
+    let tree = result.expect("parse succeeds");
+    let mat = materialized.expect("materialized succeeds");
+    assert_eq!(mat.statement_nodes.len(), tree.body.len());
+}
+
+#[test]
+fn materialized_ast_fails_for_parse_failure() {
+    let parser = CanonicalEs2020Parser;
+    let (_result, _ir, materialized) =
+        parser.parse_with_materialized_ast("", ParseGoal::Script, &ParserOptions::default());
+    let err = materialized.expect_err("should fail for empty source");
+    assert_eq!(
+        err.code,
+        ParseEventMaterializationErrorCode::ParseFailedEventStream
+    );
+}
+
+// ---------- StreamInput ----------
+
+#[test]
+fn stream_input_parses_successfully() {
+    let parser = CanonicalEs2020Parser;
+    let stream = StreamInput::new(
+        Cursor::new(b"42;".to_vec()),
+        "test-stream",
+    );
+    let result = parser.parse_with_options(stream, ParseGoal::Script, &ParserOptions::default());
+    assert!(result.is_ok());
+}
+
+// ---------- ParseBudgetKind ----------
+
+#[test]
+fn parse_budget_kind_as_str_values() {
+    assert_eq!(ParseBudgetKind::SourceBytes.as_str(), "source_bytes");
+    assert_eq!(ParseBudgetKind::TokenCount.as_str(), "token_count");
+    assert_eq!(ParseBudgetKind::RecursionDepth.as_str(), "recursion_depth");
+}
+
+#[test]
+fn parse_budget_kind_serde_roundtrip() {
+    for kind in [
+        ParseBudgetKind::SourceBytes,
+        ParseBudgetKind::TokenCount,
+        ParseBudgetKind::RecursionDepth,
+    ] {
+        let json = serde_json::to_string(&kind).expect("serialize");
+        let recovered: ParseBudgetKind = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, kind);
+    }
+}
+
+// ---------- ParserBudget ----------
+
+#[test]
+fn parser_budget_default_values() {
+    let budget = ParserBudget::default();
+    assert_eq!(budget.max_source_bytes, 1_048_576);
+    assert_eq!(budget.max_token_count, 65_536);
+    assert_eq!(budget.max_recursion_depth, 256);
+}
+
+#[test]
+fn parser_budget_serde_roundtrip() {
+    let budget = ParserBudget::default();
+    let json = serde_json::to_string(&budget).expect("serialize");
+    let recovered: ParserBudget = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.max_source_bytes, budget.max_source_bytes);
+    assert_eq!(recovered.max_token_count, budget.max_token_count);
+    assert_eq!(recovered.max_recursion_depth, budget.max_recursion_depth);
+}
+
+// ---------- ParseErrorCode coverage ----------
+
+#[test]
+fn parse_error_code_roundtrip_matches_all_variants() {
+    for code in ParseErrorCode::ALL {
+        let json = serde_json::to_string(&code).expect("serialize");
+        let recovered: ParseErrorCode = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, code);
+    }
+}
+
+// ---------- ParseEventMaterializationErrorCode ----------
+
+#[test]
+fn parse_event_materialization_error_code_as_str_is_nonempty() {
+    let code = ParseEventMaterializationErrorCode::ParseFailedEventStream;
+    assert!(!code.as_str().is_empty());
+}
+
+// ---------- helpers ----------
+
+#[test]
+fn parse_goal_helper_maps_correctly() {
+    assert_eq!(parse_goal("script"), ParseGoal::Script);
+    assert_eq!(parse_goal("module"), ParseGoal::Module);
+}
+
+#[test]
+fn parse_error_code_helper_maps_all_codes() {
+    let mappings = [
+        ("empty_source", ParseErrorCode::EmptySource),
+        ("invalid_goal", ParseErrorCode::InvalidGoal),
+        ("unsupported_syntax", ParseErrorCode::UnsupportedSyntax),
+        ("io_read_failed", ParseErrorCode::IoReadFailed),
+        ("invalid_utf8", ParseErrorCode::InvalidUtf8),
+        ("source_too_large", ParseErrorCode::SourceTooLarge),
+        ("budget_exceeded", ParseErrorCode::BudgetExceeded),
+    ];
+    for (raw, expected) in mappings {
+        assert_eq!(parse_error_code(raw), expected);
+    }
+}
+
+#[test]
+fn parse_budget_kind_helper_maps_all_kinds() {
+    let mappings = [
+        ("source_bytes", ParseBudgetKind::SourceBytes),
+        ("token_count", ParseBudgetKind::TokenCount),
+        ("recursion_depth", ParseBudgetKind::RecursionDepth),
+    ];
+    for (raw, expected) in mappings {
+        assert_eq!(parse_budget_kind(raw), expected);
+    }
+}

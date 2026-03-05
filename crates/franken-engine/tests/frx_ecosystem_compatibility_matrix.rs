@@ -6,12 +6,12 @@ use std::{
     path::PathBuf,
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const MATRIX_SCHEMA_VERSION: &str = "frx.ecosystem-compatibility-matrix.v1";
 const MATRIX_JSON: &str = include_str!("../../../docs/frx_ecosystem_compatibility_matrix_v1.json");
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct EcosystemMatrix {
     schema_version: String,
     bead_id: String,
@@ -24,13 +24,13 @@ struct EcosystemMatrix {
     operator_verification: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MatrixTrack {
     id: String,
     name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CompatibilityEntry {
     stack_id: String,
     category: String,
@@ -44,7 +44,7 @@ struct CompatibilityEntry {
     structured_log_template: StructuredLogTemplate,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct StructuredLogTemplate {
     scenario_id: String,
     component: String,
@@ -52,7 +52,7 @@ struct StructuredLogTemplate {
     outcome: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct KnownGap {
     stack_id: String,
     surface: String,
@@ -301,4 +301,166 @@ fn frx_07_3_structured_log_fields_and_operator_commands_are_present() {
             .any(|line| line.contains("jq empty docs/frx_ecosystem_compatibility_matrix_v1.json")),
         "operator verification must include JSON validation command"
     );
+}
+
+#[test]
+fn frx_07_3_entry_index_returns_correct_count_and_unique_keys() {
+    let matrix = parse_matrix();
+    let index = entry_index(&matrix);
+    assert_eq!(
+        index.len(),
+        matrix.entries.len(),
+        "entry_index size must match entries length (all stack_ids unique)"
+    );
+    for entry in &matrix.entries {
+        assert!(
+            index.contains_key(entry.stack_id.as_str()),
+            "entry_index must contain stack_id: {}",
+            entry.stack_id
+        );
+    }
+}
+
+#[test]
+fn frx_07_3_structured_log_scenario_ids_are_unique_across_entries() {
+    let matrix = parse_matrix();
+    let mut seen = BTreeSet::new();
+    for entry in &matrix.entries {
+        assert!(
+            seen.insert(&entry.structured_log_template.scenario_id),
+            "duplicate scenario_id: {}",
+            entry.structured_log_template.scenario_id
+        );
+    }
+}
+
+#[test]
+fn frx_07_3_known_gap_stack_ids_are_subset_of_entry_stack_ids() {
+    let matrix = parse_matrix();
+    let entry_ids: BTreeSet<&str> = matrix.entries.iter().map(|e| e.stack_id.as_str()).collect();
+    for gap in &matrix.known_gaps {
+        assert!(
+            entry_ids.contains(gap.stack_id.as_str()),
+            "known gap references stack_id not in entries: {}",
+            gap.stack_id
+        );
+    }
+}
+
+#[test]
+fn frx_07_3_all_entries_have_nonempty_stack_id_and_surface() {
+    let matrix = parse_matrix();
+    for entry in &matrix.entries {
+        assert!(
+            !entry.stack_id.trim().is_empty(),
+            "stack_id must not be empty"
+        );
+        assert!(
+            !entry.surface.trim().is_empty(),
+            "surface must not be empty for {}",
+            entry.stack_id
+        );
+        assert!(
+            !entry.category.trim().is_empty(),
+            "category must not be empty for {}",
+            entry.stack_id
+        );
+    }
+}
+
+#[test]
+fn frx_07_3_serde_roundtrip_preserves_matrix() {
+    let matrix = parse_matrix();
+    let serialized = serde_json::to_string(&matrix).expect("serialize");
+    let deserialized: EcosystemMatrix = serde_json::from_str(&serialized).expect("deserialize");
+    assert_eq!(matrix, deserialized);
+}
+
+#[test]
+fn frx_07_3_deterministic_double_parse() {
+    let a = parse_matrix();
+    let b = parse_matrix();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn frx_07_3_known_gaps_have_unique_stack_id_surface_pairs() {
+    let matrix = parse_matrix();
+    let mut seen = BTreeSet::new();
+    for gap in &matrix.known_gaps {
+        assert!(
+            seen.insert((&gap.stack_id, &gap.surface)),
+            "duplicate known gap: {} / {}",
+            gap.stack_id,
+            gap.surface
+        );
+    }
+}
+
+#[test]
+fn frx_07_3_evidence_bundle_refs_are_all_under_artifacts() {
+    let matrix = parse_matrix();
+    for entry in &matrix.entries {
+        assert!(
+            entry.evidence_bundle_ref.starts_with("artifacts/"),
+            "evidence_bundle_ref must be under artifacts/: {}",
+            entry.evidence_bundle_ref
+        );
+        assert!(
+            !entry.evidence_bundle_ref.trim().is_empty(),
+            "evidence_bundle_ref must not be empty for {}",
+            entry.stack_id
+        );
+    }
+}
+
+#[test]
+fn frx_07_3_doc_file_exists_and_is_nonempty() {
+    let path = repo_root().join("docs/FRX_ECOSYSTEM_COMPATIBILITY_MATRIX_V1.md");
+    let content = fs::read_to_string(&path).expect("read doc");
+    assert!(!content.is_empty());
+}
+
+// ---------- integration_test_ids are unique ----------
+
+#[test]
+fn frx_07_3_integration_test_ids_are_unique() {
+    let matrix = parse_matrix();
+    let mut seen = BTreeSet::new();
+    for entry in &matrix.entries {
+        assert!(
+            seen.insert(&entry.integration_test_id),
+            "duplicate integration_test_id: {}",
+            entry.integration_test_id
+        );
+    }
+}
+
+// ---------- operator verification has JSON validation ----------
+
+#[test]
+fn frx_07_3_operator_verification_includes_json_validation() {
+    let matrix = parse_matrix();
+    assert!(
+        matrix
+            .operator_verification
+            .iter()
+            .any(|cmd| cmd.contains("jq empty")),
+        "operator verification must include JSON validation"
+    );
+}
+
+// ---------- known gap error codes are unique ----------
+
+#[test]
+fn frx_07_3_known_gap_error_codes_are_unique() {
+    let matrix = parse_matrix();
+    let mut seen = BTreeSet::new();
+    for gap in &matrix.known_gaps {
+        assert!(
+            seen.insert(&gap.error_code),
+            "duplicate error_code in known gaps: {}",
+            gap.error_code
+        );
+    }
 }

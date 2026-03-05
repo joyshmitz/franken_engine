@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
 
@@ -369,4 +369,76 @@ fn evaluate_always_produces_evaluations_and_structured_logs() {
             .iter()
             .all(|event| !event.trace_id.is_empty() && !event.policy_id.is_empty())
     );
+}
+
+#[test]
+fn evaluate_is_deterministic_for_identical_inputs() {
+    let gate_input = input(previous_snapshot(), candidate_snapshot(0, true));
+    let thresholds = BenchmarkSplitThresholds::default();
+    let a = evaluate_control_plane_benchmark_split(&gate_input, &thresholds);
+    let b = evaluate_control_plane_benchmark_split(&gate_input, &thresholds);
+    assert_eq!(a.pass, b.pass);
+    assert_eq!(a.evaluations.len(), b.evaluations.len());
+    assert_eq!(a.findings.len(), b.findings.len());
+    assert_eq!(a.logs.len(), b.logs.len());
+}
+
+#[test]
+fn decision_always_covers_all_five_splits() {
+    let decision = evaluate_control_plane_benchmark_split(
+        &input(previous_snapshot(), candidate_snapshot(0, true)),
+        &BenchmarkSplitThresholds::default(),
+    );
+    let splits: BTreeSet<_> = decision
+        .evaluations
+        .iter()
+        .map(|e| e.split.clone())
+        .collect();
+    for expected_split in [
+        BenchmarkSplit::Baseline,
+        BenchmarkSplit::CxThreading,
+        BenchmarkSplit::DecisionContracts,
+        BenchmarkSplit::EvidenceEmission,
+        BenchmarkSplit::FullIntegration,
+    ] {
+        assert!(
+            splits.contains(&expected_split),
+            "missing evaluation for split {:?}",
+            expected_split
+        );
+    }
+}
+
+#[test]
+fn evaluate_with_zero_adapter_sleep_produces_evaluations_for_all_splits() {
+    let decision = evaluate_control_plane_benchmark_split(
+        &input(previous_snapshot(), candidate_snapshot(0, true)),
+        &BenchmarkSplitThresholds::default(),
+    );
+    assert_eq!(decision.evaluations.len(), 5);
+    assert!(!decision.logs.is_empty());
+}
+
+#[test]
+fn previous_snapshot_has_all_five_splits() {
+    let snapshot = previous_snapshot();
+    for split in [
+        BenchmarkSplit::Baseline,
+        BenchmarkSplit::CxThreading,
+        BenchmarkSplit::DecisionContracts,
+        BenchmarkSplit::EvidenceEmission,
+        BenchmarkSplit::FullIntegration,
+    ] {
+        assert!(
+            snapshot.split_metrics.contains_key(&split),
+            "previous snapshot missing split: {split:?}"
+        );
+    }
+}
+
+#[test]
+fn stable_baseline_runs_have_ten_entries() {
+    let runs = stable_baseline_runs();
+    assert_eq!(runs.len(), 10, "baseline requires exactly 10 runs");
+    assert!(runs.iter().all(|&v| v > 0));
 }

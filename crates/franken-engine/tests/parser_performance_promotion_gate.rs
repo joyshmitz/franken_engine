@@ -508,3 +508,193 @@ fn parser_performance_gate_script_contains_fail_closed_rch_markers() {
         );
     }
 }
+
+// ---------- pair_key ----------
+
+#[test]
+fn pair_key_returns_owned_tuple() {
+    let (peer, quantile) = pair_key("v8", "p99");
+    assert_eq!(peer, "v8");
+    assert_eq!(quantile, "p99");
+}
+
+// ---------- pair_blocker ----------
+
+#[test]
+fn pair_blocker_formats_three_segments() {
+    let blocker = pair_blocker("v8", "p99", "protocol_drift");
+    assert_eq!(blocker, "v8:p99:protocol_drift");
+}
+
+#[test]
+fn pair_blocker_empty_fields_still_format() {
+    let blocker = pair_blocker("", "", "");
+    assert_eq!(blocker, "::");
+}
+
+// ---------- evaluate_gate with synthetic data ----------
+
+fn minimal_fixture(
+    franken: i64,
+    peer: i64,
+    sample_count: u64,
+    ci_low: i64,
+    ci_high: i64,
+    threshold: i64,
+) -> ParserPerformancePromotionGateFixture {
+    let protocol_hash = "sha256:abc123".to_string();
+    ParserPerformancePromotionGateFixture {
+        schema_version: "franken-engine.parser-performance-promotion-gate.v1".to_string(),
+        gate_version: "1.0.0".to_string(),
+        protocol_version: "1.0".to_string(),
+        protocol_hash: protocol_hash.clone(),
+        required_peers: vec!["peer-a".to_string()],
+        required_quantiles: vec!["p50".to_string()],
+        minimum_delta_millionths_by_quantile: {
+            let mut m = BTreeMap::new();
+            m.insert("p50".to_string(), threshold);
+            m
+        },
+        required_evidence_lanes: vec![],
+        required_structured_log_keys: vec![],
+        evidence_vectors: vec![],
+        telemetry_artifacts: vec![],
+        benchmark_rows: vec![BenchmarkRow {
+            workload_id: "wl-1".to_string(),
+            corpus_id: "corpus-1".to_string(),
+            peer_id: "peer-a".to_string(),
+            quantile: "p50".to_string(),
+            franken_score_millionths: franken,
+            peer_score_millionths: peer,
+            sample_count,
+            confidence_low_delta_millionths: ci_low,
+            confidence_high_delta_millionths: ci_high,
+            protocol_hash,
+        }],
+        expected_gate: ExpectedGate {
+            expected_outcome: String::new(),
+            expected_blocked_pairs: vec![],
+            expected_failing_workload_ids: vec![],
+            expected_verified_pairs: 0,
+        },
+        replay_scenarios: vec![],
+    }
+}
+
+#[test]
+fn evaluate_gate_promotes_when_all_conditions_pass() {
+    let fixture = minimal_fixture(2_000_000, 1_000_000, 100, 500_000, 1_500_000, 500_000);
+    let eval = evaluate_gate(&fixture);
+    assert_eq!(eval.outcome, "promote");
+    assert!(eval.blocked_pairs.is_empty());
+    assert_eq!(eval.verified_pairs, 1);
+}
+
+#[test]
+fn evaluate_gate_holds_when_delta_below_threshold() {
+    let fixture = minimal_fixture(1_000_000, 1_000_000, 100, 500_000, 1_500_000, 500_000);
+    let eval = evaluate_gate(&fixture);
+    assert_eq!(eval.outcome, "hold");
+    assert!(eval.blocked_pairs.iter().any(|b| b.contains("delta_below_threshold")));
+}
+
+#[test]
+fn evaluate_gate_holds_when_sample_count_zero() {
+    let fixture = minimal_fixture(2_000_000, 1_000_000, 0, 500_000, 1_500_000, 0);
+    let eval = evaluate_gate(&fixture);
+    assert_eq!(eval.outcome, "hold");
+    assert!(eval.blocked_pairs.iter().any(|b| b.contains("sample_count_zero")));
+}
+
+#[test]
+fn evaluate_gate_holds_when_invalid_confidence_interval() {
+    let fixture = minimal_fixture(2_000_000, 1_000_000, 100, 1_500_000, 500_000, 0);
+    let eval = evaluate_gate(&fixture);
+    assert_eq!(eval.outcome, "hold");
+    assert!(eval.blocked_pairs.iter().any(|b| b.contains("invalid_confidence_interval")));
+}
+
+#[test]
+fn evaluate_gate_holds_when_ci_low_not_positive() {
+    let fixture = minimal_fixture(2_000_000, 1_000_000, 100, 0, 1_500_000, 0);
+    let eval = evaluate_gate(&fixture);
+    assert_eq!(eval.outcome, "hold");
+    assert!(eval.blocked_pairs.iter().any(|b| b.contains("non_reproducible_win")));
+}
+
+#[test]
+fn evaluate_gate_protocol_drift_in_row_blocks() {
+    let mut fixture = minimal_fixture(2_000_000, 1_000_000, 100, 500_000, 1_500_000, 0);
+    fixture.benchmark_rows[0].protocol_hash = "sha256:different".to_string();
+    let eval = evaluate_gate(&fixture);
+    assert_eq!(eval.outcome, "hold");
+    assert!(eval.blocked_pairs.iter().any(|b| b.contains("protocol_drift")));
+    assert!(eval.failing_workload_ids.contains(&"wl-1".to_string()));
+}
+
+#[test]
+fn evaluate_gate_missing_evidence_lane_blocks() {
+    let mut fixture = minimal_fixture(2_000_000, 1_000_000, 100, 500_000, 1_500_000, 500_000);
+    fixture.required_evidence_lanes = vec!["lane_missing".to_string()];
+    let eval = evaluate_gate(&fixture);
+    assert_eq!(eval.outcome, "hold");
+    assert!(eval.blocked_pairs.iter().any(|b| b.contains("evidence_missing:lane_missing")));
+}
+
+#[test]
+fn evaluate_gate_non_reproducible_telemetry_blocks() {
+    let mut fixture = minimal_fixture(2_000_000, 1_000_000, 100, 500_000, 1_500_000, 500_000);
+    fixture.telemetry_artifacts.push(TelemetryArtifact {
+        artifact_id: "art-1".to_string(),
+        manifest_path: "path/run_manifest.json".to_string(),
+        protocol_hash: fixture.protocol_hash.clone(),
+        reproducible: false,
+        replay_command: "./scripts/e2e/replay.sh".to_string(),
+    });
+    let eval = evaluate_gate(&fixture);
+    assert_eq!(eval.outcome, "hold");
+    assert!(eval.blocked_pairs.iter().any(|b| b.contains("telemetry_not_reproducible:art-1")));
+}
+
+// ---------- emit_structured_event ----------
+
+#[test]
+fn emit_structured_event_promote_has_null_error_code() {
+    let fixture = minimal_fixture(2_000_000, 1_000_000, 100, 500_000, 1_500_000, 500_000);
+    let eval = evaluate_gate(&fixture);
+    let event = emit_structured_event(&fixture, &eval);
+    assert!(event.get("error_code").unwrap().is_null());
+    assert_eq!(event.get("outcome").unwrap().as_str().unwrap(), "promote");
+}
+
+#[test]
+fn emit_structured_event_hold_has_error_code() {
+    let fixture = minimal_fixture(1_000_000, 1_000_000, 100, 500_000, 1_500_000, 500_000);
+    let eval = evaluate_gate(&fixture);
+    let event = emit_structured_event(&fixture, &eval);
+    assert_eq!(
+        event.get("error_code").unwrap().as_str().unwrap(),
+        "FE-PARSER-PERF-GATE-0001"
+    );
+}
+
+#[test]
+fn emit_structured_event_contains_schema_version() {
+    let fixture = minimal_fixture(2_000_000, 1_000_000, 100, 500_000, 1_500_000, 500_000);
+    let eval = evaluate_gate(&fixture);
+    let event = emit_structured_event(&fixture, &eval);
+    assert_eq!(
+        event.get("schema_version").unwrap().as_str().unwrap(),
+        "franken-engine.parser-log-event.v1"
+    );
+}
+
+// ---------- evaluate_gate determinism ----------
+
+#[test]
+fn evaluate_gate_deterministic_across_runs() {
+    let fixture = load_fixture();
+    let eval1 = evaluate_gate(&fixture);
+    let eval2 = evaluate_gate(&fixture);
+    assert_eq!(eval1, eval2);
+}

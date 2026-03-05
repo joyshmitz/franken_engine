@@ -835,3 +835,139 @@ fn franken_verify_attestation_create_rejects_ambiguous_signing_key_flags() {
     let _ = fs::remove_file(input_path);
     let _ = fs::remove_file(signing_key_path);
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment batch 8: verdict serde, report serde, constants,
+// render functions, exit codes, edge cases
+// ────────────────────────────────────────────────────────────
+
+use frankenengine_engine::third_party_verifier::{
+    render_attestation_summary, render_report_summary, VerificationCheckResult, VerifierEvent,
+    DEFAULT_CONTAINMENT_LATENCY_SLA_NS, EXIT_CODE_FAILED, EXIT_CODE_INCONCLUSIVE,
+    EXIT_CODE_PARTIALLY_VERIFIED, EXIT_CODE_VERIFIED, THIRD_PARTY_VERIFIER_COMPONENT,
+};
+
+#[test]
+fn verification_verdict_serde_round_trip() {
+    for verdict in [
+        VerificationVerdict::Verified,
+        VerificationVerdict::PartiallyVerified,
+        VerificationVerdict::Failed,
+        VerificationVerdict::Inconclusive,
+    ] {
+        let json = serde_json::to_string(&verdict).expect("serialize");
+        let recovered: VerificationVerdict = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(verdict, recovered);
+    }
+}
+
+#[test]
+fn verification_verdict_exit_codes_match_constants() {
+    assert_eq!(VerificationVerdict::Verified.exit_code(), EXIT_CODE_VERIFIED);
+    assert_eq!(
+        VerificationVerdict::PartiallyVerified.exit_code(),
+        EXIT_CODE_PARTIALLY_VERIFIED
+    );
+    assert_eq!(VerificationVerdict::Failed.exit_code(), EXIT_CODE_FAILED);
+    assert_eq!(
+        VerificationVerdict::Inconclusive.exit_code(),
+        EXIT_CODE_INCONCLUSIVE
+    );
+}
+
+#[test]
+fn constants_are_stable() {
+    assert_eq!(THIRD_PARTY_VERIFIER_COMPONENT, "third_party_verifier");
+    assert_eq!(DEFAULT_CONTAINMENT_LATENCY_SLA_NS, 500_000_000);
+    assert_eq!(EXIT_CODE_VERIFIED, 0);
+    assert_eq!(EXIT_CODE_PARTIALLY_VERIFIED, 24);
+    assert_eq!(EXIT_CODE_FAILED, 25);
+    assert_eq!(EXIT_CODE_INCONCLUSIVE, 26);
+}
+
+#[test]
+fn report_serde_round_trip() {
+    let bundle = make_benchmark_claim_bundle();
+    let report = verify_benchmark_claim(&bundle);
+    let json = serde_json::to_string(&report).expect("serialize");
+    let recovered: ThirdPartyVerificationReport =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(report.verdict, recovered.verdict);
+    assert_eq!(report.checks.len(), recovered.checks.len());
+    assert_eq!(report.claim_type, recovered.claim_type);
+}
+
+#[test]
+fn check_result_serde_round_trip() {
+    let check = VerificationCheckResult {
+        name: "test_check".to_string(),
+        passed: true,
+        detail: "all good".to_string(),
+        error_code: None,
+    };
+    let json = serde_json::to_string(&check).expect("serialize");
+    let recovered: VerificationCheckResult = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(check, recovered);
+}
+
+#[test]
+fn verifier_event_serde_round_trip() {
+    let event = VerifierEvent {
+        trace_id: "t-1".to_string(),
+        decision_id: "d-1".to_string(),
+        policy_id: "p-1".to_string(),
+        component: THIRD_PARTY_VERIFIER_COMPONENT.to_string(),
+        event: "verify_benchmark".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: VerifierEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(event, recovered);
+}
+
+#[test]
+fn render_report_summary_contains_verdict() {
+    let bundle = make_benchmark_claim_bundle();
+    let report = verify_benchmark_claim(&bundle);
+    let summary = render_report_summary(&report);
+    assert!(summary.contains("verdict=Verified"));
+    assert!(summary.contains("claim_type=benchmark"));
+}
+
+#[test]
+fn render_attestation_summary_contains_verifier_info() {
+    let input = make_attestation_input(true);
+    let attestation = generate_attestation(&input).expect("create attestation");
+    let summary = render_attestation_summary(&attestation);
+    assert!(!summary.is_empty());
+    assert!(summary.contains("v1.2.0")); // verifier_version
+    assert!(summary.contains("signed=true"));
+}
+
+#[test]
+fn replay_claim_with_counterfactual_config_still_verifies() {
+    let mut bundle = make_replay_claim_bundle();
+    bundle
+        .counterfactual_configs
+        .push(make_counterfactual_config("cf-branch-1"));
+    let report = verify_replay_claim(&bundle);
+    assert_eq!(report.verdict, VerificationVerdict::Verified);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name.starts_with("counterfactual:"))
+    );
+}
+
+#[test]
+fn containment_claim_with_no_scenarios_passes_vacuously() {
+    let mut bundle = make_containment_claim_bundle();
+    bundle.result.scenarios.clear();
+    bundle.result.total_scenarios = 0;
+    bundle.result.passed_scenarios = 0;
+    let report = verify_containment_claim(&bundle);
+    // With no scenarios the checks pass vacuously
+    assert_eq!(report.verdict, VerificationVerdict::Verified);
+}

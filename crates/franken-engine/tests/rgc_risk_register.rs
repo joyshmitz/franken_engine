@@ -2,12 +2,12 @@
 
 use std::{collections::BTreeSet, fs, path::PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const RISK_REGISTER_SCHEMA_VERSION: &str = "rgc.risk-register.v1";
 const RISK_REGISTER_JSON: &str = include_str!("../../../docs/rgc_risk_register_v1.json");
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct RiskRegister {
     schema_version: String,
     bead_id: String,
@@ -19,20 +19,20 @@ struct RiskRegister {
     operator_verification: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct RiskTrack {
     id: String,
     name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ReviewPolicy {
     fail_closed_on_stale_review: bool,
     stale_threshold_days: u64,
     milestone_reviews: Vec<MilestoneReview>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MilestoneReview {
     milestone: String,
     gate_id: String,
@@ -41,7 +41,7 @@ struct MilestoneReview {
     required_evidence_fields: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct RiskEntry {
     risk_id: String,
     title: String,
@@ -244,4 +244,134 @@ fn rgc_013_operator_verification_commands_are_present() {
     assert!(joined.contains("jq empty docs/rgc_risk_register_v1.json"));
     assert!(joined.contains("cargo test -p frankenengine-engine --test rgc_risk_register"));
     assert!(joined.contains("run_phase_a_exit_gate.sh check"));
+}
+
+#[test]
+fn rgc_013_serde_roundtrip_preserves_register() {
+    let register = parse_risk_register();
+    let serialized = serde_json::to_string(&register).expect("serialize");
+    let deserialized: RiskRegister = serde_json::from_str(&serialized).expect("deserialize");
+    assert_eq!(register, deserialized);
+}
+
+#[test]
+fn rgc_013_deterministic_double_parse() {
+    let a = parse_risk_register();
+    let b = parse_risk_register();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn rgc_013_risk_ids_are_unique() {
+    let register = parse_risk_register();
+    let mut seen = BTreeSet::new();
+    for risk in &register.risks {
+        assert!(
+            seen.insert(&risk.risk_id),
+            "duplicate risk_id: {}",
+            risk.risk_id
+        );
+    }
+}
+
+#[test]
+fn rgc_013_risk_levels_are_valid_and_high_risks_have_high_scores() {
+    let register = parse_risk_register();
+    for risk in &register.risks {
+        assert!(
+            ["high", "medium", "low"].contains(&risk.risk_level.as_str()),
+            "{} has invalid risk_level: {}",
+            risk.risk_id,
+            risk.risk_level
+        );
+        let score = risk.likelihood as u16 * risk.impact as u16;
+        // High risks should have non-trivial score
+        if risk.risk_level == "high" {
+            assert!(
+                score >= 6,
+                "{} marked high but score {} is too low",
+                risk.risk_id,
+                score
+            );
+        }
+    }
+}
+
+#[test]
+fn rgc_013_doc_file_is_nonempty() {
+    let path = repo_root().join("docs/RGC_RISK_REGISTER_V1.md");
+    let content = fs::read_to_string(&path).expect("read doc");
+    assert!(!content.is_empty());
+}
+
+#[test]
+fn rgc_013_milestone_gate_ids_are_unique() {
+    let register = parse_risk_register();
+    let mut seen = BTreeSet::new();
+    for review in &register.review_policy.milestone_reviews {
+        assert!(
+            seen.insert(&review.gate_id),
+            "duplicate gate_id: {}",
+            review.gate_id
+        );
+    }
+}
+
+#[test]
+fn rgc_013_risk_domains_are_nonempty_strings() {
+    let register = parse_risk_register();
+    let mut domains = BTreeSet::new();
+    for risk in &register.risks {
+        assert!(!risk.domain.trim().is_empty());
+        domains.insert(risk.domain.as_str());
+    }
+    // Should have multiple domains
+    assert!(domains.len() >= 2, "expected multiple risk domains");
+}
+
+#[test]
+fn rgc_013_all_open_actions_are_nonempty() {
+    let register = parse_risk_register();
+    for risk in &register.risks {
+        for action in &risk.open_actions {
+            assert!(
+                !action.trim().is_empty(),
+                "risk {} has empty open_action",
+                risk.risk_id
+            );
+        }
+    }
+}
+
+#[test]
+fn rgc_013_review_required_reviewers_are_nonempty() {
+    let register = parse_risk_register();
+    for review in &register.review_policy.milestone_reviews {
+        assert!(!review.required_reviewers.is_empty());
+        for reviewer in &review.required_reviewers {
+            assert!(
+                !reviewer.trim().is_empty(),
+                "milestone {} has empty reviewer",
+                review.milestone
+            );
+        }
+    }
+}
+
+#[test]
+fn rgc_013_register_has_nonempty_bead_id() {
+    let register = parse_risk_register();
+    assert!(!register.bead_id.trim().is_empty());
+}
+
+#[test]
+fn rgc_013_register_has_nonempty_schema_version() {
+    let register = parse_risk_register();
+    assert_eq!(register.schema_version, RISK_REGISTER_SCHEMA_VERSION);
+}
+
+#[test]
+fn rgc_013_register_generated_at_utc_ends_with_z() {
+    let register = parse_risk_register();
+    assert!(register.generated_at_utc.ends_with('Z'));
 }

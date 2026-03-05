@@ -284,3 +284,102 @@ fn transparent_scoring_and_publication_rules_are_explicit() {
         );
     }
 }
+
+#[test]
+fn benchmark_spec_file_exists_and_is_nonempty() {
+    let spec = read_spec();
+    assert!(!spec.is_empty());
+}
+
+#[test]
+fn parse_table_row_splits_correctly() {
+    let row = "| a | b | c |";
+    let cells = parse_table_row(row);
+    assert_eq!(cells, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn parse_table_row_handles_empty_cells() {
+    let row = "| a | | c |";
+    let cells = parse_table_row(row);
+    assert_eq!(cells.len(), 3);
+    assert_eq!(cells[1], "");
+}
+
+#[test]
+fn parse_table_by_heading_finds_families() {
+    let spec = read_spec();
+    let (header, rows) = parse_table_by_heading(&spec, "## Required Benchmark Families");
+    assert!(!header.is_empty());
+    assert!(!rows.is_empty());
+    // All rows should have same column count as header
+    for row in &rows {
+        assert_eq!(row.len(), header.len());
+    }
+}
+
+#[test]
+fn benchmark_spec_deterministic_double_read() {
+    let a = read_spec();
+    let b = read_spec();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn ci_publication_gate_declares_failure_and_blocking_criteria() {
+    let spec = read_spec();
+    for fragment in [
+        "## CI Publication Gate",
+        "CI must fail publication",
+    ] {
+        assert!(
+            spec.contains(fragment),
+            "CI publication gate missing: {fragment}"
+        );
+    }
+}
+
+#[test]
+fn failure_semantics_section_mentions_rollback() {
+    let spec = read_spec();
+    assert!(
+        spec.contains("## Failure Semantics and Rollback"),
+        "failure semantics section must exist"
+    );
+    assert!(
+        spec.contains("rollback") || spec.contains("Rollback"),
+        "failure semantics must discuss rollback"
+    );
+}
+
+#[test]
+fn benchmark_spec_mentions_fairness_contract() {
+    let spec = read_spec();
+    assert!(spec.contains("## Fairness and Denominator Contract"));
+}
+
+#[test]
+fn benchmark_spec_mentions_reproducibility_workflow() {
+    let spec = read_spec();
+    assert!(spec.contains("## Reproducibility and Verifier Workflow"));
+}
+
+#[test]
+fn benchmark_spec_workload_schema_section_exists() {
+    let spec = read_spec();
+    assert!(spec.contains("## Workload and Result Schema Contract"));
+}
+
+#[test]
+fn independent_verifier_onboarding_section_exists_with_content() {
+    let spec = read_spec();
+    assert!(
+        spec.contains("## Independent Verifier Onboarding"),
+        "verifier onboarding section must exist"
+    );
+    // Should mention the verification process
+    assert!(
+        spec.contains("verify") || spec.contains("verifier") || spec.contains("Verifier"),
+        "verifier onboarding must discuss verification"
+    );
+}

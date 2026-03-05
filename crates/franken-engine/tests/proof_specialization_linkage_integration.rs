@@ -10,8 +10,8 @@
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::ir_contract::{Ir3Module, Ir4Module, WitnessEventKind};
 use frankenengine_engine::proof_specialization_linkage::{
-    error_code, ExecutionRecord, InvalidationCause, LinkageEngine, LinkageError, LinkageEvent,
-    LinkageId, LinkageRecord, PerformanceDelta, ProofInputRef, RollbackState,
+    ExecutionRecord, InvalidationCause, LinkageEngine, LinkageError, LinkageEvent, LinkageId,
+    LinkageRecord, PerformanceDelta, ProofInputRef, RollbackState, error_code,
 };
 use frankenengine_engine::proof_specialization_receipt::{OptimizationClass, ProofType};
 use frankenengine_engine::security_epoch::SecurityEpoch;
@@ -331,9 +331,11 @@ fn record_execution_success_updates_counters_and_ir4() {
     assert_eq!(exec.duration_ticks, 80);
 
     // IR4 updated with specialization id
-    assert!(module
-        .active_specialization_ids
-        .contains(&"lnk-1".to_string()));
+    assert!(
+        module
+            .active_specialization_ids
+            .contains(&"lnk-1".to_string())
+    );
 
     // Engine internal counters
     let stored = eng.get(&lid).unwrap();

@@ -714,3 +714,147 @@ fn chain_error_attenuation_violation_lists_amplified_capabilities() {
         panic!("expected AttenuationViolation, got {err:?}");
     }
 }
+
+// ────────────────────────────────────────────────────────────
+// Additional enrichment: chain methods, error serde, context
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn delegation_chain_len_and_is_empty() {
+    let empty = DelegationChain::new(vec![]);
+    assert_eq!(empty.len(), 0);
+    assert!(empty.is_empty());
+
+    let root_sk = make_sk(1);
+    let leaf = make_principal(10);
+    let link0 = make_bound_token(&root_sk, leaf, &[RuntimeCapability::VmDispatch]);
+    let chain = DelegationChain::new(vec![link0]);
+    assert_eq!(chain.len(), 1);
+    assert!(!chain.is_empty());
+}
+
+#[test]
+fn chain_error_serde_round_trip() {
+    let errors = vec![
+        ChainError::EmptyChain,
+        ChainError::DepthExceeded {
+            max_depth: 8,
+            actual_depth: 10,
+        },
+        ChainError::MissingCheckpointBinding { index: 2 },
+        ChainError::MissingRevocationFreshnessBinding { index: 3 },
+        ChainError::MissingCapabilityAtLeaf {
+            required: RuntimeCapability::VmDispatch,
+            leaf_capabilities: BTreeSet::from([RuntimeCapability::NetworkEgress]),
+        },
+    ];
+    for err in &errors {
+        let json = serde_json::to_string(err).expect("serialize");
+        let recovered: ChainError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(*err, recovered);
+    }
+}
+
+#[test]
+fn chain_error_display_all_unique() {
+    let errors: Vec<String> = vec![
+        ChainError::EmptyChain.to_string(),
+        ChainError::DepthExceeded {
+            max_depth: 5,
+            actual_depth: 10,
+        }
+        .to_string(),
+        ChainError::UnauthorizedRoot {
+            root_issuer: make_sk(1).verification_key(),
+        }
+        .to_string(),
+        ChainError::MissingCheckpointBinding { index: 0 }.to_string(),
+        ChainError::MissingRevocationFreshnessBinding { index: 0 }.to_string(),
+        ChainError::MissingCapabilityAtLeaf {
+            required: RuntimeCapability::VmDispatch,
+            leaf_capabilities: BTreeSet::new(),
+        }
+        .to_string(),
+    ];
+    let unique: BTreeSet<_> = errors.iter().collect();
+    assert_eq!(unique.len(), errors.len());
+}
+
+#[test]
+fn chain_error_is_std_error() {
+    let err = ChainError::EmptyChain;
+    let _: &dyn std::error::Error = &err;
+}
+
+#[test]
+fn delegation_verification_context_with_authorized_root() {
+    let sk = make_sk(42);
+    let ctx = DelegationVerificationContext::with_authorized_root(sk.verification_key());
+    assert!(ctx.authorized_roots.contains(&sk.verification_key()));
+    assert_eq!(ctx.authorized_roots.len(), 1);
+}
+
+#[test]
+fn delegation_verification_context_default() {
+    let ctx = DelegationVerificationContext::default();
+    assert!(ctx.authorized_roots.is_empty());
+    assert!(ctx.required_zone.is_none());
+}
+
+#[test]
+fn delegation_link_summary_serde_round_trip() {
+    use frankenengine_engine::delegation_chain::DelegationLinkSummary;
+
+    let summary = DelegationLinkSummary {
+        index: 0,
+        token_id: EngineObjectId([1; 32]),
+        issuer: make_principal(10),
+        delegate: make_principal(20),
+        capability_count: 2,
+        zone: "zone-a".to_string(),
+        not_before_tick: 100,
+        expiry_tick: 1000,
+    };
+    let json = serde_json::to_string(&summary).expect("serialize");
+    let recovered: DelegationLinkSummary = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(summary, recovered);
+}
+
+#[test]
+fn principal_id_from_different_keys_yields_different_ids() {
+    let sk1 = make_sk(1);
+    let sk2 = make_sk(2);
+    let p1 = principal_id_from_verification_key(&sk1.verification_key());
+    let p2 = principal_id_from_verification_key(&sk2.verification_key());
+    assert_ne!(p1, p2);
+}
+
+#[test]
+fn chain_verify_method_matches_free_function() {
+    let root_sk = make_sk(1);
+    let leaf = make_principal(55);
+    let link0 = make_bound_token(&root_sk, leaf.clone(), &[RuntimeCapability::VmDispatch]);
+    let chain = DelegationChain::new(vec![link0]);
+    let ctx = make_ctx(&root_sk);
+
+    let proof_method = chain
+        .verify(
+            RuntimeCapability::VmDispatch,
+            &leaf,
+            &ctx,
+            &NoRevocationOracle,
+        )
+        .expect("method verify");
+
+    let proof_fn = verify_chain(
+        &chain,
+        RuntimeCapability::VmDispatch,
+        &leaf,
+        &ctx,
+        &NoRevocationOracle,
+    )
+    .expect("function verify");
+
+    assert_eq!(proof_method.chain_hash, proof_fn.chain_hash);
+    assert_eq!(proof_method.authorized_capability, proof_fn.authorized_capability);
+}

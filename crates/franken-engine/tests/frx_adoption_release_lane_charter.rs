@@ -113,3 +113,144 @@ fn frx_c0_freeze_manifest_links_adoption_release_lane_artifacts() {
         Some("docs/frx_adoption_release_lane_contract_v1.json")
     );
 }
+
+// ---------- repo_root ----------
+
+#[test]
+fn repo_root_exists() {
+    assert!(repo_root().exists());
+}
+
+// ---------- charter doc ----------
+
+#[test]
+fn adoption_charter_doc_is_nonempty() {
+    let path = repo_root().join("docs/FRX_ADOPTION_RELEASE_LANE_CHARTER_V1.md");
+    let doc = fs::read_to_string(&path).expect("read charter doc");
+    assert!(!doc.is_empty());
+}
+
+#[test]
+fn adoption_charter_references_program_constitution() {
+    let path = repo_root().join("docs/FRX_ADOPTION_RELEASE_LANE_CHARTER_V1.md");
+    let doc = fs::read_to_string(&path).expect("read charter doc");
+    assert!(doc.contains("FRX_PROGRAM_CONSTITUTION_V1.md"));
+}
+
+// ---------- JSON contract fields ----------
+
+#[test]
+fn adoption_contract_has_lane_section() {
+    let path = repo_root().join("docs/frx_adoption_release_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["lane"].is_object());
+    assert_eq!(value["lane"]["id"].as_str(), Some("FRX-10.8"));
+}
+
+#[test]
+fn adoption_contract_has_ownership_section() {
+    let path = repo_root().join("docs/frx_adoption_release_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["ownership"].is_object());
+    assert!(value["ownership"]["stage_gate_authority"].is_object());
+}
+
+#[test]
+fn adoption_contract_stages_include_alpha_beta_ga() {
+    let path = repo_root().join("docs/frx_adoption_release_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let stages = value["ownership"]["stage_gate_authority"]["stages"]
+        .as_array()
+        .expect("stages array");
+    let stage_strs: Vec<&str> = stages.iter().filter_map(|s| s.as_str()).collect();
+    assert!(stage_strs.contains(&"alpha"));
+    assert!(stage_strs.contains(&"beta"));
+    assert!(stage_strs.contains(&"ga"));
+}
+
+#[test]
+fn adoption_contract_json_is_deterministic() {
+    let path = repo_root().join("docs/frx_adoption_release_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let v1: Value = serde_json::from_str(&raw).expect("parse first");
+    let v2: Value = serde_json::from_str(&raw).expect("parse second");
+    assert_eq!(v1, v2);
+}
+
+#[test]
+fn adoption_contract_has_generated_at_utc() {
+    let path = repo_root().join("docs/frx_adoption_release_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let ts = value["generated_at_utc"].as_str().expect("generated_at_utc must be string");
+    assert!(ts.ends_with('Z'), "generated_at_utc must end with Z");
+}
+
+#[test]
+fn adoption_contract_has_failure_policy_object() {
+    let path = repo_root().join("docs/frx_adoption_release_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["failure_policy"].is_object());
+    assert!(!value["failure_policy"]["mode"].as_str().unwrap_or("").is_empty());
+}
+
+#[test]
+fn adoption_charter_mentions_rollback() {
+    let path = repo_root().join("docs/FRX_ADOPTION_RELEASE_LANE_CHARTER_V1.md");
+    let doc = fs::read_to_string(&path).expect("read charter doc");
+    assert!(doc.to_ascii_lowercase().contains("rollback"));
+}
+
+#[test]
+fn adoption_contract_has_primary_bead() {
+    let path = repo_root().join("docs/frx_adoption_release_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let pb = value["primary_bead"].as_str().expect("primary_bead must be string");
+    assert!(!pb.trim().is_empty());
+}
+
+#[test]
+fn adoption_charter_mentions_claim_publication() {
+    let path = repo_root().join("docs/FRX_ADOPTION_RELEASE_LANE_CHARTER_V1.md");
+    let doc = fs::read_to_string(&path).expect("read charter doc");
+    assert!(doc.contains("claim"));
+    assert!(doc.contains("publication"));
+}
+
+#[test]
+fn adoption_contract_has_schema_version() {
+    let path = repo_root().join("docs/frx_adoption_release_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let sv = value["schema_version"].as_str().expect("schema_version must be string");
+    assert!(!sv.trim().is_empty());
+}
+
+#[test]
+fn adoption_contract_has_generated_by() {
+    let path = repo_root().join("docs/frx_adoption_release_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["generated_by"].as_str().is_some_and(|s| !s.is_empty()));
+}
+
+#[test]
+fn adoption_contract_has_logging_contract() {
+    let path = repo_root().join("docs/frx_adoption_release_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["logging_contract"].is_object());
+}
+
+#[test]
+fn adoption_contract_has_release_gate_contract() {
+    let path = repo_root().join("docs/frx_adoption_release_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["release_gate_contract"].is_object());
+}

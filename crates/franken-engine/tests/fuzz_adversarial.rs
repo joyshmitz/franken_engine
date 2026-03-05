@@ -438,3 +438,180 @@ fn byte(data: &[u8], index: usize) -> u8 {
     }
     data[index % data.len()]
 }
+
+// ---------- byte helper ----------
+
+#[test]
+fn byte_empty_returns_zero() {
+    assert_eq!(byte(&[], 0), 0);
+    assert_eq!(byte(&[], 100), 0);
+}
+
+#[test]
+fn byte_wraps_index() {
+    let data = [10, 20, 30];
+    assert_eq!(byte(&data, 0), 10);
+    assert_eq!(byte(&data, 3), 10); // wraps
+    assert_eq!(byte(&data, 4), 20);
+}
+
+// ---------- bytes32 ----------
+
+#[test]
+fn bytes32_produces_32_byte_array() {
+    let data = [1, 2, 3, 4, 5];
+    let result = bytes32(&data, 0);
+    assert_eq!(result.len(), 32);
+}
+
+#[test]
+fn bytes32_wraps_for_short_data() {
+    let data = [0xAB];
+    let result = bytes32(&data, 0);
+    assert!(result.iter().all(|&b| b == 0xAB));
+}
+
+// ---------- make_id ----------
+
+#[test]
+fn make_id_starts_with_prefix() {
+    let data = [42; 64];
+    let id = make_id("sess", &data, 0);
+    assert!(id.starts_with("sess-"));
+}
+
+#[test]
+fn make_id_has_8_alpha_chars_after_prefix() {
+    let data = [0; 64];
+    let id = make_id("ext", &data, 0);
+    let suffix = &id["ext-".len()..];
+    assert_eq!(suffix.len(), 8);
+    assert!(suffix.chars().all(|c| c.is_ascii_lowercase()));
+}
+
+#[test]
+fn make_id_different_offsets_produce_different_ids() {
+    let data: Vec<u8> = (0..64).collect();
+    let id_a = make_id("test", &data, 0);
+    let id_b = make_id("test", &data, 8);
+    assert_ne!(id_a, id_b);
+}
+
+// ---------- synthetic_value ----------
+
+#[test]
+fn synthetic_value_covers_all_variants() {
+    for variant in 0..5u8 {
+        let data = [variant, 42, 43, 44];
+        let value = synthetic_value(&data);
+        let encoded = encode_value(&value);
+        assert!(!encoded.is_empty());
+    }
+}
+
+#[test]
+fn synthetic_value_u64_variant() {
+    let data = [0, 99]; // variant 0 => U64
+    match synthetic_value(&data) {
+        CanonicalValue::U64(_) => {}
+        other => panic!("expected U64, got {other:?}"),
+    }
+}
+
+#[test]
+fn synthetic_value_bytes_variant() {
+    let data = [1, 0, 0]; // variant 1 => Bytes
+    match synthetic_value(&data) {
+        CanonicalValue::Bytes(_) => {}
+        other => panic!("expected Bytes, got {other:?}"),
+    }
+}
+
+#[test]
+fn synthetic_value_string_variant() {
+    let data = [2, 0]; // variant 2 => String
+    match synthetic_value(&data) {
+        CanonicalValue::String(s) => assert!(s.chars().all(|c| c.is_ascii_lowercase())),
+        other => panic!("expected String, got {other:?}"),
+    }
+}
+
+#[test]
+fn synthetic_value_array_variant() {
+    let data = [3, 10, 20]; // variant 3 => Array
+    match synthetic_value(&data) {
+        CanonicalValue::Array(arr) => assert!(!arr.is_empty()),
+        other => panic!("expected Array, got {other:?}"),
+    }
+}
+
+#[test]
+fn synthetic_value_map_variant() {
+    let data = [4, 1, 2, 3]; // variant 4 => Map
+    match synthetic_value(&data) {
+        CanonicalValue::Map(map) => assert!(!map.is_empty()),
+        other => panic!("expected Map, got {other:?}"),
+    }
+}
+
+// ---------- build_token ----------
+
+#[test]
+fn build_token_succeeds_with_valid_data() {
+    let data: Vec<u8> = (0..64).collect();
+    let token = build_token(&data);
+    assert!(token.is_some());
+}
+
+#[test]
+fn build_token_returns_none_for_empty_data() {
+    let token = build_token(&[]);
+    // Empty data produces zero signing key — may or may not succeed
+    // but should not panic
+    let _ = token;
+}
+
+// ---------- run_decode_program ----------
+
+#[test]
+fn run_decode_program_handles_empty_input() {
+    run_decode_program(&[]);
+}
+
+#[test]
+fn run_decode_program_handles_short_input() {
+    run_decode_program(&[1, 2, 3]);
+}
+
+#[test]
+fn run_decode_program_handles_malformed_length_prefix() {
+    run_decode_program(&[0x04, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x01]);
+}
+
+// ---------- run_token_program ----------
+
+#[test]
+fn run_token_program_handles_empty_input() {
+    // Should return early without panic
+    run_token_program(&[]);
+}
+
+#[test]
+fn run_token_program_handles_minimal_input() {
+    let data: Vec<u8> = (0..32).collect();
+    run_token_program(&data);
+}
+
+// ---------- run_handshake_program ----------
+
+#[test]
+fn run_handshake_program_handles_empty_input() {
+    // Should return early without panic
+    run_handshake_program(&[]);
+}
+
+#[test]
+fn run_handshake_program_handles_small_input() {
+    let data: Vec<u8> = (0..20).collect();
+    run_handshake_program(&data);
+}

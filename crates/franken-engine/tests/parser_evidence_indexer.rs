@@ -364,3 +364,77 @@ fn empty_index_correlates_to_no_regressions() {
     let clusters = index.correlate_regressions();
     assert!(clusters.is_empty());
 }
+
+#[test]
+fn correlation_key_serde_roundtrip() {
+    let key = CorrelationKey {
+        component: "parser_evidence_indexer".to_string(),
+        event: "drift_detected".to_string(),
+        scenario_id: Some("fixture-foo".to_string()),
+        error_code: Some("FE-PARSER-DRIFT-0001".to_string()),
+        outcome: "fail".to_string(),
+    };
+    let json = serde_json::to_string(&key).expect("serialize");
+    let recovered: CorrelationKey = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(key, recovered);
+}
+
+#[test]
+fn builder_build_produces_correct_schema_version() {
+    let builder = ParserEvidenceIndexBuilder::new();
+    let index = builder.build();
+    assert_eq!(index.schema_version, PARSER_EVIDENCE_INDEX_SCHEMA_V1);
+}
+
+#[test]
+fn single_run_single_pass_event_produces_no_regression_clusters() {
+    let mut builder = ParserEvidenceIndexBuilder::new();
+    builder
+        .add_run(
+            &manifest(
+                "run-pass-only",
+                "franken-engine.parser-evidence-index.run.v1",
+                "./scripts/replay_pass.sh",
+            ),
+            "artifacts/p/run_manifest.json",
+            "artifacts/p/events.jsonl",
+            "artifacts/p/commands.txt",
+        )
+        .unwrap();
+    builder
+        .add_events_jsonl(
+            "run-pass-only",
+            r#"{"schema_version":"franken-engine.parser-log-event.v1","trace_id":"t","decision_id":"d","policy_id":"p","component":"c","event":"done","outcome":"pass","error_code":null}"#,
+        )
+        .unwrap();
+    let index = builder.build();
+    assert_eq!(index.runs.len(), 1);
+    assert_eq!(index.events.len(), 1);
+    let clusters = index.correlate_regressions();
+    assert!(clusters.is_empty());
+}
+
+#[test]
+fn parser_evidence_index_schema_constant_is_non_empty() {
+    assert!(!PARSER_EVIDENCE_INDEX_SCHEMA_V1.trim().is_empty());
+}
+
+#[test]
+fn correlation_key_serde_round_trip() {
+    let key = CorrelationKey {
+        component: "parser".to_string(),
+        event: "gate_completed".to_string(),
+        scenario_id: Some("s1".to_string()),
+        error_code: None,
+        outcome: "pass".to_string(),
+    };
+    let json = serde_json::to_string(&key).expect("serialize");
+    let recovered: CorrelationKey = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(key, recovered);
+}
+
+#[test]
+fn evidence_indexer_error_debug_is_non_empty() {
+    let err = EvidenceIndexerError::MissingField("test_field");
+    assert!(!format!("{err:?}").is_empty());
+}

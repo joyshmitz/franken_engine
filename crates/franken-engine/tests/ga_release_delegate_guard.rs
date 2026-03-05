@@ -360,3 +360,68 @@ fn duplicate_slot_registration_returns_error() {
     );
     assert!(dup.is_err());
 }
+
+#[test]
+fn ga_signed_lineage_artifact_serde_round_trip() {
+    let parser_id = SlotId::new("parser").expect("valid");
+    let artifact = lineage_artifact(&parser_id, "sha256:old", "sha256:new");
+    let json = serde_json::to_string(&artifact).expect("serialize");
+    let recovered: GaSignedLineageArtifact = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(artifact.slot_id, recovered.slot_id);
+    assert_eq!(artifact.former_delegate_digest, recovered.former_delegate_digest);
+    assert_eq!(artifact.replacement_component_digest, recovered.replacement_component_digest);
+    assert!(recovered.signature_verified);
+    assert!(recovered.equivalence_passed);
+}
+
+#[test]
+fn ga_release_guard_config_serde_round_trip() {
+    let core_slots = BTreeSet::from([SlotId::new("parser").expect("valid")]);
+    let config = GaReleaseGuardConfig {
+        core_slots,
+        non_core_delegate_limit: Some(5),
+        lineage_dashboard_ref: "frankentui://test".to_string(),
+    };
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: GaReleaseGuardConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(config, recovered);
+}
+
+#[test]
+fn slot_registry_new_is_empty() {
+    let registry = SlotRegistry::new();
+    let json = serde_json::to_string(&registry).expect("serialize");
+    let recovered: SlotRegistry = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(json, serde_json::to_string(&recovered).expect("re-serialize"));
+}
+
+#[test]
+fn pipeline_input_has_correct_governance_fields() {
+    let core_slots = BTreeSet::new();
+    let input = pipeline_input(core_slots, None);
+    assert_eq!(input.trace_id, "trace-ga-pipeline-001");
+    assert_eq!(input.decision_id, "decision-ga-pipeline-001");
+    assert_eq!(input.policy_id, "policy-ga-release-readiness-v1");
+}
+
+#[test]
+fn narrower_authority_permitted_is_subset_of_test_authority() {
+    let full = test_authority();
+    let narrow = narrower_authority();
+    for cap in &narrow.permitted {
+        assert!(
+            full.permitted.contains(cap),
+            "narrower authority cap {cap:?} not in full permitted list"
+        );
+    }
+    assert!(narrow.permitted.len() <= full.permitted.len());
+}
+
+#[test]
+fn slot_id_serde_round_trip() {
+    let id = SlotId::new("parser").expect("valid");
+    let json = serde_json::to_string(&id).expect("serialize");
+    let recovered: SlotId = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(id, recovered);
+    assert_eq!(id.as_str(), recovered.as_str());
+}

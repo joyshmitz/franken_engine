@@ -435,3 +435,512 @@ fn rgc_061_invalid_signals_json_reports_actionable_error() {
     cleanup_path(&input_path);
     cleanup_path(&signals_path);
 }
+
+// ---------- contract field completeness ----------
+
+#[test]
+fn rgc_061_contract_failure_scenarios_have_nonempty_templates() {
+    let contract = parse_contract();
+    for scenario in &contract.failure_scenarios {
+        assert!(
+            !scenario.command_template.trim().is_empty(),
+            "scenario {} must have a non-empty command_template",
+            scenario.scenario_id
+        );
+        assert!(
+            !scenario.expected_error_code.trim().is_empty(),
+            "scenario {} must have a non-empty error code",
+            scenario.scenario_id
+        );
+        assert!(
+            !scenario.expected_message_fragment.trim().is_empty(),
+            "scenario {} must have a non-empty message fragment",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn rgc_061_contract_failure_scenario_ids_are_unique() {
+    let contract = parse_contract();
+    let mut ids = BTreeSet::new();
+    for scenario in &contract.failure_scenarios {
+        assert!(
+            ids.insert(scenario.scenario_id.as_str()),
+            "duplicate failure scenario id: {}",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn rgc_061_contract_all_failure_scenarios_are_failure_path_type() {
+    let contract = parse_contract();
+    for scenario in &contract.failure_scenarios {
+        assert_eq!(
+            scenario.path_type, "failure",
+            "scenario {} should be failure path_type",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn rgc_061_readme_gate_section_documents_contract_and_artifacts() {
+    let path = repo_root().join("README.md");
+    let readme = read_to_string(&path);
+
+    for fragment in [
+        "## RGC CLI and Operator Workflow Verification Pack",
+        "./scripts/run_rgc_cli_operator_workflow_verification_pack.sh ci",
+        "./scripts/e2e/rgc_cli_operator_workflow_verification_pack_replay.sh ci",
+        "docs/rgc_cli_operator_workflow_verification_pack_v1.json",
+        "artifacts/rgc_cli_operator_workflow_verification_pack/<timestamp>/run_manifest.json",
+        "artifacts/rgc_cli_operator_workflow_verification_pack/<timestamp>/events.jsonl",
+        "artifacts/rgc_cli_operator_workflow_verification_pack/<timestamp>/commands.txt",
+    ] {
+        assert!(
+            readme.contains(fragment),
+            "missing README fragment in {}: {fragment}",
+            path.display()
+        );
+    }
+}
+
+// ---------- diagnostics subcommand ----------
+
+#[test]
+fn rgc_061_diagnostics_subcommand_produces_json_output() {
+    let input_path = write_runtime_input(&build_clean_input());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "diagnostics",
+            "--input",
+            input_path.to_str().expect("input path should be utf8"),
+        ])
+        .output()
+        .expect("diagnostics command should execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    let json: Value = serde_json::from_str(&stdout).expect("output should be valid json");
+    assert!(json["snapshot_timestamp_ns"].is_number());
+    assert!(json["loaded_extensions"].is_array());
+
+    cleanup_path(&input_path);
+}
+
+#[test]
+fn rgc_061_diagnostics_summary_mode_produces_text() {
+    let input_path = write_runtime_input(&build_clean_input());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "diagnostics",
+            "--input",
+            input_path.to_str().expect("input path should be utf8"),
+            "--summary",
+        ])
+        .output()
+        .expect("diagnostics --summary command should execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    assert!(
+        stdout.contains("snapshot_timestamp_ns:"),
+        "summary should contain snapshot_timestamp_ns"
+    );
+
+    cleanup_path(&input_path);
+}
+
+// ---------- export-evidence subcommand ----------
+
+#[test]
+fn rgc_061_export_evidence_produces_json_with_records_and_summary() {
+    let input_path = write_runtime_input(&build_clean_input());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "export-evidence",
+            "--input",
+            input_path.to_str().expect("input path should be utf8"),
+        ])
+        .output()
+        .expect("export-evidence command should execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    let json: Value = serde_json::from_str(&stdout).expect("output should be valid json");
+    assert!(json["records"].is_array());
+    assert!(json["summary"].is_object());
+
+    cleanup_path(&input_path);
+}
+
+// ---------- support-bundle subcommand ----------
+
+#[test]
+fn rgc_061_support_bundle_writes_artifacts_to_out_dir() {
+    let input_path = write_runtime_input(&build_clean_input());
+    let out_dir = unique_temp_path("rgc_061_bundle_out", "dir");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "support-bundle",
+            "--input",
+            input_path.to_str().expect("input path should be utf8"),
+            "--out-dir",
+            out_dir.to_str().expect("output dir should be utf8"),
+        ])
+        .output()
+        .expect("support-bundle command should execute");
+
+    assert!(output.status.success());
+    let index_path = out_dir.join("support_bundle/index.json");
+    assert!(
+        index_path.exists(),
+        "support bundle index should exist at {}",
+        index_path.display()
+    );
+
+    let index_json: Value = serde_json::from_str(&read_to_string(&index_path))
+        .expect("index should parse");
+    assert!(index_json["files"].is_array());
+    assert!(index_json["bundle_id"].is_string());
+
+    cleanup_path(&input_path);
+    cleanup_path(&out_dir);
+}
+
+// ---------- doctor subcommand ----------
+
+#[test]
+fn rgc_061_doctor_subcommand_produces_preflight_verdict() {
+    let input_path = write_runtime_input(&build_clean_input());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "doctor",
+            "--input",
+            input_path.to_str().expect("input path should be utf8"),
+        ])
+        .output()
+        .expect("doctor command should execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    let json: Value = serde_json::from_str(&stdout).expect("output should be valid json");
+    assert!(
+        ["green", "yellow", "red"]
+            .iter()
+            .any(|v| json["verdict"].as_str() == Some(v)),
+        "doctor must produce a valid verdict"
+    );
+
+    cleanup_path(&input_path);
+}
+
+// ---------- onboarding-scorecard variations ----------
+
+#[test]
+fn rgc_061_onboarding_scorecard_no_signals_produces_ready() {
+    let input_path = write_runtime_input(&build_clean_input());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "onboarding-scorecard",
+            "--input",
+            input_path.to_str().expect("input path should be utf8"),
+            "--workload-id",
+            "pkg/clean-app",
+            "--package-name",
+            "clean-app",
+        ])
+        .output()
+        .expect("onboarding-scorecard command should execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    let json: Value = serde_json::from_str(&stdout).expect("output should be valid json");
+    assert_eq!(json["readiness"], "ready");
+    assert_eq!(json["score"]["critical_signals"], 0);
+    assert_eq!(json["score"]["warning_signals"], 0);
+
+    cleanup_path(&input_path);
+}
+
+#[test]
+fn rgc_061_onboarding_scorecard_warning_signal_produces_conditional() {
+    let input_path = write_runtime_input(&build_clean_input());
+    let signals_path = write_json_value(&serde_json::json!([
+        {
+            "signal_id": "compat:deprecated-api",
+            "source": "compatibility_advisory",
+            "severity": "warning",
+            "summary": "deprecated API usage",
+            "remediation": "migrate to new API",
+            "reproducible_command": "frankenctl verify --api-compat",
+            "evidence_links": [],
+            "owner_hint": "api-team"
+        }
+    ]));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "onboarding-scorecard",
+            "--input",
+            input_path.to_str().expect("input path should be utf8"),
+            "--signals",
+            signals_path.to_str().expect("signals path should be utf8"),
+            "--workload-id",
+            "pkg/warn-app",
+            "--package-name",
+            "warn-app",
+        ])
+        .output()
+        .expect("onboarding-scorecard command should execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    let json: Value = serde_json::from_str(&stdout).expect("output should be valid json");
+    assert_eq!(json["readiness"], "conditional");
+    assert_eq!(json["score"]["warning_signals"], 1);
+
+    cleanup_path(&input_path);
+    cleanup_path(&signals_path);
+}
+
+#[test]
+fn rgc_061_onboarding_scorecard_multiple_critical_signals_produces_blocked() {
+    let input_path = write_runtime_input(&build_clean_input());
+    let signals_path = write_json_value(&serde_json::json!([
+        {
+            "signal_id": "sec:vuln-1",
+            "source": "security_scan",
+            "severity": "critical",
+            "summary": "critical vulnerability",
+            "remediation": "patch immediately",
+            "reproducible_command": "frankenctl verify --security",
+            "evidence_links": []
+        },
+        {
+            "signal_id": "sec:vuln-2",
+            "source": "security_scan",
+            "severity": "critical",
+            "summary": "another critical vulnerability",
+            "remediation": "patch immediately",
+            "reproducible_command": "frankenctl verify --security",
+            "evidence_links": []
+        }
+    ]));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "onboarding-scorecard",
+            "--input",
+            input_path.to_str().expect("input path should be utf8"),
+            "--signals",
+            signals_path.to_str().expect("signals path should be utf8"),
+            "--workload-id",
+            "pkg/vuln-app",
+            "--package-name",
+            "vuln-app",
+        ])
+        .output()
+        .expect("onboarding-scorecard command should execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    let json: Value = serde_json::from_str(&stdout).expect("output should be valid json");
+    assert_eq!(json["readiness"], "blocked");
+    assert_eq!(json["score"]["critical_signals"], 2);
+
+    cleanup_path(&input_path);
+    cleanup_path(&signals_path);
+}
+
+#[test]
+fn rgc_061_onboarding_scorecard_schema_version_is_correct() {
+    let input_path = write_runtime_input(&build_clean_input());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "onboarding-scorecard",
+            "--input",
+            input_path.to_str().expect("input path should be utf8"),
+            "--workload-id",
+            "pkg/schema-check",
+            "--package-name",
+            "schema-check",
+        ])
+        .output()
+        .expect("onboarding-scorecard command should execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    let json: Value = serde_json::from_str(&stdout).expect("output should be valid json");
+    assert_eq!(
+        json["schema_version"],
+        "franken-engine.runtime-diagnostics.onboarding-scorecard.v1"
+    );
+
+    cleanup_path(&input_path);
+}
+
+#[test]
+fn rgc_061_onboarding_scorecard_logs_contain_structured_events() {
+    let input_path = write_runtime_input(&build_clean_input());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "onboarding-scorecard",
+            "--input",
+            input_path.to_str().expect("input path should be utf8"),
+            "--workload-id",
+            "pkg/log-check",
+            "--package-name",
+            "log-check",
+        ])
+        .output()
+        .expect("onboarding-scorecard command should execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    let json: Value = serde_json::from_str(&stdout).expect("output should be valid json");
+
+    let logs = json["logs"].as_array().expect("logs should be an array");
+    assert!(
+        !logs.is_empty(),
+        "onboarding scorecard should produce structured logs"
+    );
+    for log in logs {
+        assert!(log["event"].is_string(), "log event must be a string");
+        assert!(log["outcome"].is_string(), "log outcome must be a string");
+    }
+
+    cleanup_path(&input_path);
+}
+
+#[test]
+fn rgc_061_onboarding_scorecard_empty_signals_array_is_valid() {
+    let input_path = write_runtime_input(&build_clean_input());
+    let signals_path = write_json_value(&serde_json::json!([]));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "onboarding-scorecard",
+            "--input",
+            input_path.to_str().expect("input path should be utf8"),
+            "--signals",
+            signals_path.to_str().expect("signals path should be utf8"),
+            "--workload-id",
+            "pkg/empty-signals",
+            "--package-name",
+            "empty-signals",
+        ])
+        .output()
+        .expect("onboarding-scorecard command should execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    let json: Value = serde_json::from_str(&stdout).expect("output should be valid json");
+    assert_eq!(json["readiness"], "ready");
+
+    cleanup_path(&input_path);
+    cleanup_path(&signals_path);
+}
+
+// ---------- lane script ----------
+
+#[test]
+fn rgc_061_lane_script_preserves_step_logs_and_failure_classification() {
+    let path = repo_root().join("scripts/run_rgc_cli_operator_workflow_verification_pack.sh");
+    let script = read_to_string(&path);
+
+    for required_fragment in [
+        "step_log_path=\"${run_dir}/step_",
+        "(timeout-${rch_timeout_seconds}s)",
+        "(rch-exit=${status}; remote-exit=${remote_exit_code})",
+        "(rch-exit=${status}; missing-remote-exit-marker)",
+        "(rch-local-fallback-detected)",
+        "rgc-cli-operator-workflow-verification-pack.run-manifest.v1",
+    ] {
+        assert!(
+            script.contains(required_fragment),
+            "missing script fragment in {}: {required_fragment}",
+            path.display()
+        );
+    }
+}
+
+// ---------- contract and doc files exist ----------
+
+#[test]
+fn rgc_061_contract_and_doc_files_exist_at_declared_paths() {
+    let root = repo_root();
+    for path in [
+        "docs/RGC_CLI_OPERATOR_WORKFLOW_VERIFICATION_PACK_V1.md",
+        "docs/rgc_cli_operator_workflow_verification_pack_v1.json",
+        "scripts/run_rgc_cli_operator_workflow_verification_pack.sh",
+        "scripts/e2e/rgc_cli_operator_workflow_verification_pack_replay.sh",
+        "crates/franken-engine/tests/rgc_cli_operator_workflow_verification_pack.rs",
+    ] {
+        let full = root.join(path);
+        assert!(full.exists(), "expected path to exist: {}", full.display());
+    }
+}
+
+// ---------- rollout-decision-artifact subcommand ----------
+
+#[test]
+fn rgc_061_rollout_decision_artifact_subcommand_produces_output() {
+    let input_path = write_runtime_input(&build_clean_input());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "rollout-decision-artifact",
+            "--input",
+            input_path.to_str().expect("input path should be utf8"),
+            "--workload-id",
+            "pkg/rollout-test",
+            "--package-name",
+            "rollout-test",
+        ])
+        .output()
+        .expect("rollout-decision-artifact command should execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    let json: Value = serde_json::from_str(&stdout).expect("output should be valid json");
+    assert!(
+        ["promote", "canary_hold", "rollback", "defer"]
+            .iter()
+            .any(|r| json["recommendation"].as_str() == Some(r)),
+        "rollout decision must produce a valid recommendation"
+    );
+    assert_eq!(
+        json["schema_version"],
+        "franken-engine.runtime-diagnostics.rollout-decision-artifact.v1"
+    );
+
+    cleanup_path(&input_path);
+}
+
+// ---------- runtime diagnostics input serde ----------
+
+#[test]
+fn rgc_061_runtime_diagnostics_input_serde_roundtrip() {
+    let input = build_clean_input();
+    let json = serde_json::to_string(&input).expect("input should serialize");
+    let recovered: RuntimeDiagnosticsCliInput =
+        serde_json::from_str(&json).expect("input should deserialize");
+    assert_eq!(recovered.trace_id, input.trace_id);
+    assert_eq!(recovered.decision_id, input.decision_id);
+    assert_eq!(recovered.policy_id, input.policy_id);
+    assert_eq!(
+        recovered.runtime_state.loaded_extensions.len(),
+        input.runtime_state.loaded_extensions.len()
+    );
+}

@@ -192,3 +192,184 @@ fn cross_version_matrix_drives_release_claim_projection_and_logs() {
         .join("\n");
     assert!(jsonl.contains("matrix_case_validated"));
 }
+
+// ---------- parse_matrix ----------
+
+#[test]
+fn parse_matrix_schema_version_matches_constant() {
+    let matrix = parse_matrix();
+    assert_eq!(matrix.schema_version, MATRIX_SCHEMA_VERSION);
+}
+
+#[test]
+fn parse_matrix_cases_have_unique_ids() {
+    let matrix = parse_matrix();
+    let ids: BTreeSet<_> = matrix.cases.iter().map(|c| c.case_id.clone()).collect();
+    assert_eq!(ids.len(), matrix.cases.len());
+}
+
+#[test]
+fn parse_matrix_dimensions_nonempty() {
+    let matrix = parse_matrix();
+    assert!(!matrix.dimensions.react_versions.is_empty());
+    assert!(!matrix.dimensions.browsers.is_empty());
+    assert!(!matrix.dimensions.api_families.is_empty());
+    assert!(!matrix.dimensions.compatibility_routes.is_empty());
+}
+
+// ---------- projection_from_tags ----------
+
+#[test]
+fn projection_from_tags_empty_cases() {
+    let cases: Vec<CompatibilityCase> = vec![];
+    let projection = projection_from_tags(&cases, |c| &c.test_selector_tags);
+    assert!(projection.is_empty());
+}
+
+#[test]
+fn projection_from_tags_deduplicates_case_ids() {
+    let matrix = parse_matrix();
+    let projection = projection_from_tags(&matrix.cases, |c| &c.test_selector_tags);
+    for case_ids in projection.values() {
+        let set: BTreeSet<_> = case_ids.iter().collect();
+        assert_eq!(set.len(), case_ids.len(), "case IDs should be unique per tag");
+    }
+}
+
+#[test]
+fn projection_from_tags_is_deterministic() {
+    let matrix = parse_matrix();
+    let a = projection_from_tags(&matrix.cases, |c| &c.release_claim_tags);
+    let b = projection_from_tags(&matrix.cases, |c| &c.release_claim_tags);
+    assert_eq!(a, b);
+}
+
+#[test]
+fn projection_from_tags_case_ids_are_sorted() {
+    let matrix = parse_matrix();
+    let projection = projection_from_tags(&matrix.cases, |c| &c.test_selector_tags);
+    for case_ids in projection.values() {
+        let mut sorted = case_ids.clone();
+        sorted.sort();
+        assert_eq!(*case_ids, sorted);
+    }
+}
+
+// ---------- MatrixLogEvent serde ----------
+
+#[test]
+fn matrix_log_event_serde_roundtrip() {
+    let event = MatrixLogEvent {
+        schema_version: "franken-engine.parser-log-event.v1".to_string(),
+        trace_id: "trace-1".to_string(),
+        decision_id: "decision-1".to_string(),
+        policy_id: "policy-1".to_string(),
+        component: "test".to_string(),
+        event: "validated".to_string(),
+        scenario_id: "s1".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        replay_command: "./replay.sh".to_string(),
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let deserialized: MatrixLogEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(event, deserialized);
+}
+
+#[test]
+fn matrix_log_event_with_error_code_serde() {
+    let event = MatrixLogEvent {
+        schema_version: "v1".to_string(),
+        trace_id: "t".to_string(),
+        decision_id: "d".to_string(),
+        policy_id: "p".to_string(),
+        component: "c".to_string(),
+        event: "e".to_string(),
+        scenario_id: "s".to_string(),
+        outcome: "fail".to_string(),
+        error_code: Some("FE-TEST-001".to_string()),
+        replay_command: "./replay.sh".to_string(),
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    assert!(json.contains("FE-TEST-001"));
+    let deserialized: MatrixLogEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(deserialized.error_code, Some("FE-TEST-001".to_string()));
+}
+
+// ---------- matrix risk levels ----------
+
+#[test]
+fn all_cases_have_valid_risk_levels() {
+    let matrix = parse_matrix();
+    let valid_levels = ["low", "medium", "high", "critical"];
+    for case in &matrix.cases {
+        assert!(
+            valid_levels.contains(&case.risk_level.as_str()),
+            "unexpected risk level `{}` for case {}",
+            case.risk_level,
+            case.case_id
+        );
+    }
+}
+
+// ---------- compatibility routes ----------
+
+#[test]
+fn all_cases_use_declared_compatibility_routes() {
+    let matrix = parse_matrix();
+    for case in &matrix.cases {
+        assert!(
+            matrix.dimensions.compatibility_routes.contains(&case.compatibility_route),
+            "case {} uses undeclared route: {}",
+            case.case_id,
+            case.compatibility_route
+        );
+    }
+}
+
+// ---------- deterministic double parse ----------
+
+#[test]
+fn cross_version_matrix_deterministic_double_parse() {
+    let a = parse_matrix();
+    let b = parse_matrix();
+    assert_eq!(a, b);
+}
+
+// ---------- all cases have test_selector_tags ----------
+
+#[test]
+fn all_cases_have_at_least_one_test_selector_tag() {
+    let matrix = parse_matrix();
+    for case in &matrix.cases {
+        assert!(
+            !case.test_selector_tags.is_empty(),
+            "case {} missing test_selector_tags",
+            case.case_id
+        );
+    }
+}
+
+// ---------- all cases have release_claim_tags ----------
+
+#[test]
+fn all_cases_have_at_least_one_release_claim_tag() {
+    let matrix = parse_matrix();
+    for case in &matrix.cases {
+        assert!(
+            !case.release_claim_tags.is_empty(),
+            "case {} missing release_claim_tags",
+            case.case_id
+        );
+    }
+}
+
+// ---------- doc file exists and is nonempty ----------
+
+#[test]
+fn cross_version_compatibility_doc_is_nonempty() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRX_CROSS_VERSION_COMPATIBILITY_MATRIX_V1.md");
+    let content = std::fs::read_to_string(&path).expect("read doc");
+    assert!(!content.is_empty());
+}

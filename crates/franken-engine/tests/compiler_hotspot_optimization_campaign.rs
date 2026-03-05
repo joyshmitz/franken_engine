@@ -399,3 +399,202 @@ fn compiler_hotspot_events_and_replay_contract_are_deterministic() {
         }
     }
 }
+
+// ---------- load_fixture helper ----------
+
+#[test]
+fn load_fixture_returns_valid_fixture() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.is_empty());
+    assert!(!fixture.campaign_runs.is_empty());
+}
+
+// ---------- load_doc helper ----------
+
+#[test]
+fn load_doc_returns_nonempty_string() {
+    let doc = load_doc();
+    assert!(!doc.is_empty());
+    assert!(doc.contains("Hotspot"));
+}
+
+// ---------- scaled_delta_higher_is_better ----------
+
+#[test]
+fn scaled_delta_higher_is_better_returns_positive_for_improvement() {
+    let delta = scaled_delta_higher_is_better(100, 150);
+    assert_eq!(delta, 500_000); // 50% improvement
+}
+
+#[test]
+fn scaled_delta_higher_is_better_returns_negative_for_regression() {
+    let delta = scaled_delta_higher_is_better(200, 100);
+    assert_eq!(delta, -500_000); // 50% regression
+}
+
+#[test]
+fn scaled_delta_higher_is_better_returns_zero_for_same() {
+    let delta = scaled_delta_higher_is_better(100, 100);
+    assert_eq!(delta, 0);
+}
+
+#[test]
+fn scaled_delta_higher_is_better_handles_zero_baseline() {
+    let delta = scaled_delta_higher_is_better(0, 100);
+    // baseline.max(1) → 1, so (100-1)*1_000_000/1 = 99_000_000
+    assert_eq!(delta, 99_000_000);
+}
+
+// ---------- scaled_delta_lower_is_better ----------
+
+#[test]
+fn scaled_delta_lower_is_better_returns_positive_for_improvement() {
+    let delta = scaled_delta_lower_is_better(200, 100);
+    assert_eq!(delta, 500_000); // 50% improvement
+}
+
+#[test]
+fn scaled_delta_lower_is_better_returns_negative_for_regression() {
+    let delta = scaled_delta_lower_is_better(100, 200);
+    assert_eq!(delta, -1_000_000); // 100% regression
+}
+
+#[test]
+fn scaled_delta_lower_is_better_returns_zero_for_same() {
+    let delta = scaled_delta_lower_is_better(100, 100);
+    assert_eq!(delta, 0);
+}
+
+// ---------- ev_score_millionths ----------
+
+#[test]
+fn ev_score_with_zero_effort_or_friction_returns_large() {
+    let inputs = EvInputs {
+        impact: 10,
+        confidence: 10,
+        reuse: 10,
+        effort: 1,
+        friction: 1,
+    };
+    let score = ev_score_millionths(&inputs);
+    assert_eq!(score, 1_000_000_000); // 10*10*10*1M / (1*1) = 1B
+}
+
+// ---------- classify_compiler_lever ----------
+
+#[test]
+fn classify_compiler_lever_returns_correct_categories() {
+    assert_eq!(
+        classify_compiler_lever("src/static_analysis_graph/mod.rs"),
+        Some("analysis_graph")
+    );
+    assert_eq!(
+        classify_compiler_lever("src/lowering_pipeline/pass.rs"),
+        Some("lowering_throughput")
+    );
+    assert_eq!(
+        classify_compiler_lever("src/budgeted_optimization/stack.rs"),
+        Some("optimization_pass")
+    );
+    assert_eq!(
+        classify_compiler_lever("src/frir_schema/emit.rs"),
+        Some("codegen_latency")
+    );
+    assert_eq!(
+        classify_compiler_lever("src/codegen/backend.rs"),
+        Some("codegen_latency")
+    );
+}
+
+#[test]
+fn classify_compiler_lever_returns_none_for_unknown() {
+    assert_eq!(classify_compiler_lever("src/parser/mod.rs"), None);
+    assert_eq!(classify_compiler_lever("README.md"), None);
+}
+
+// ---------- emit_structured_events ----------
+
+#[test]
+fn emit_structured_events_marks_regression_outcome() {
+    let results = vec![
+        CampaignResult {
+            campaign_id: "c1".to_string(),
+            ev_score_millionths: 100,
+            gain_millionths: 500,
+        },
+        CampaignResult {
+            campaign_id: "c2".to_string(),
+            ev_score_millionths: 200,
+            gain_millionths: -300,
+        },
+    ];
+    let events = emit_structured_events(&results);
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["outcome"], "improved");
+    assert_eq!(events[1]["outcome"], "regressed");
+}
+
+// ---------- rank_by_ev / rank_by_gain ----------
+
+#[test]
+fn rank_by_ev_orders_descending() {
+    let results = vec![
+        CampaignResult {
+            campaign_id: "low".to_string(),
+            ev_score_millionths: 100,
+            gain_millionths: 0,
+        },
+        CampaignResult {
+            campaign_id: "high".to_string(),
+            ev_score_millionths: 900,
+            gain_millionths: 0,
+        },
+    ];
+    assert_eq!(rank_by_ev(&results), vec!["high", "low"]);
+}
+
+#[test]
+fn rank_by_gain_orders_descending() {
+    let results = vec![
+        CampaignResult {
+            campaign_id: "neg".to_string(),
+            ev_score_millionths: 0,
+            gain_millionths: -500,
+        },
+        CampaignResult {
+            campaign_id: "pos".to_string(),
+            ev_score_millionths: 0,
+            gain_millionths: 1000,
+        },
+    ];
+    assert_eq!(rank_by_gain(&results), vec!["pos", "neg"]);
+}
+
+// ---------- selected_campaign ----------
+
+#[test]
+fn selected_campaign_picks_highest_ev() {
+    let results = vec![
+        CampaignResult {
+            campaign_id: "a".to_string(),
+            ev_score_millionths: 50,
+            gain_millionths: 1000,
+        },
+        CampaignResult {
+            campaign_id: "b".to_string(),
+            ev_score_millionths: 500,
+            gain_millionths: -100,
+        },
+    ];
+    assert_eq!(selected_campaign(&results), "b");
+}
+
+// ---------- determinism ----------
+
+#[test]
+fn compute_campaign_results_is_deterministic() {
+    let fixture = load_fixture();
+    let a = compute_campaign_results(&fixture);
+    let b = compute_campaign_results(&fixture);
+    assert_eq!(a, b);
+}

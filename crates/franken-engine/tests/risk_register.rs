@@ -262,3 +262,178 @@ fn crossed_phase_gates_require_register_review_evidence() {
         .collect();
     assert_eq!(phases, expected_phases, "phase gate table must cover A-E");
 }
+
+// ---------- helper function tests ----------
+
+#[test]
+fn is_iso_date_accepts_valid_dates() {
+    assert!(is_iso_date("2026-01-15"));
+    assert!(is_iso_date("2025-12-31"));
+    assert!(is_iso_date("2024-06-01"));
+}
+
+#[test]
+fn is_iso_date_rejects_malformed_inputs() {
+    assert!(!is_iso_date("not-a-date"));
+    assert!(!is_iso_date("2026/01/15"));
+    assert!(!is_iso_date("26-01-15"));
+    assert!(!is_iso_date("2026-1-5"));
+    assert!(!is_iso_date(""));
+}
+
+#[test]
+fn parse_table_row_splits_pipe_separated_cells() {
+    let row = parse_table_row("| A | B | C |");
+    assert_eq!(row, vec!["A", "B", "C"]);
+}
+
+#[test]
+fn parse_table_row_trims_whitespace() {
+    let row = parse_table_row("|  spaced  |  out  |");
+    assert_eq!(row, vec!["spaced", "out"]);
+}
+
+// ---------- risk content invariants ----------
+
+#[test]
+fn at_least_five_active_risks() {
+    let register = read_risk_register();
+    let (_, rows) = parse_table_by_heading(&register, "## Active Risks");
+    assert!(
+        rows.len() >= 5,
+        "expected at least 5 active risks, got {}",
+        rows.len()
+    );
+}
+
+#[test]
+fn at_least_one_critical_severity_risk() {
+    let register = read_risk_register();
+    let (_, rows) = parse_table_by_heading(&register, "## Active Risks");
+    let critical_count = rows
+        .iter()
+        .filter(|r| r.len() > 2 && r[2] == "Critical")
+        .count();
+    assert!(
+        critical_count >= 1,
+        "expected at least one Critical severity risk"
+    );
+}
+
+#[test]
+fn all_risk_titles_are_unique() {
+    let register = read_risk_register();
+    let (_, rows) = parse_table_by_heading(&register, "## Active Risks");
+    let mut titles = BTreeSet::new();
+    for row in &rows {
+        assert!(row.len() > 1);
+        assert!(
+            titles.insert(row[1].clone()),
+            "duplicate risk title: {}",
+            row[1]
+        );
+    }
+}
+
+#[test]
+fn risk_ids_are_sequential_starting_from_001() {
+    let register = read_risk_register();
+    let (_, rows) = parse_table_by_heading(&register, "## Active Risks");
+    for (i, row) in rows.iter().enumerate() {
+        let expected = format!("R-{:03}", i + 1);
+        assert_eq!(
+            row[0], expected,
+            "risk IDs must be sequential; row {} has {}",
+            i, row[0]
+        );
+    }
+}
+
+#[test]
+fn update_procedure_section_has_content() {
+    let register = read_risk_register();
+    let lines: Vec<&str> = register.lines().collect();
+    let idx = lines
+        .iter()
+        .position(|l| l.trim() == "## Update Procedure")
+        .expect("update procedure heading");
+    let content_after = lines[idx + 1..]
+        .iter()
+        .take(10)
+        .any(|l| !l.trim().is_empty());
+    assert!(content_after, "update procedure section must have content");
+}
+
+#[test]
+fn risk_schema_section_defines_key_fields() {
+    let register = read_risk_register();
+    let lines: Vec<&str> = register.lines().collect();
+    let idx = lines
+        .iter()
+        .position(|l| l.trim() == "## Risk Schema")
+        .expect("risk schema heading");
+    let section_content: String = lines[idx + 1..]
+        .iter()
+        .take_while(|l| !l.starts_with("## "))
+        .cloned()
+        .collect::<Vec<&str>>()
+        .join("\n");
+    assert!(
+        section_content.contains("Risk ID"),
+        "risk schema must define Risk ID field"
+    );
+    assert!(
+        section_content.contains("Severity"),
+        "risk schema must define Severity field"
+    );
+}
+
+#[test]
+fn risk_register_file_exists_at_expected_path() {
+    let path = repo_root().join("docs/RISK_REGISTER.md");
+    assert!(
+        path.exists(),
+        "RISK_REGISTER.md must exist at docs/"
+    );
+}
+
+#[test]
+fn phase_gate_table_has_valid_gate_statuses() {
+    let register = read_risk_register();
+    let (_, rows) = parse_table_by_heading(&register, "## Phase Gate Review Log");
+    for row in &rows {
+        let status = row[1].as_str();
+        assert!(
+            ["Pending", "Crossed"].contains(&status),
+            "gate status must be Pending or Crossed, got: {status}"
+        );
+    }
+}
+
+#[test]
+fn no_risk_has_empty_monitor_field() {
+    let register = read_risk_register();
+    let (_, rows) = parse_table_by_heading(&register, "## Active Risks");
+    for row in &rows {
+        assert!(row.len() > 7);
+        assert!(
+            !row[7].is_empty(),
+            "monitor field must not be empty for {}",
+            row[0]
+        );
+    }
+}
+
+#[test]
+fn all_risks_reference_at_least_one_bead() {
+    let register = read_risk_register();
+    let (_, rows) = parse_table_by_heading(&register, "## Active Risks");
+    for row in &rows {
+        assert!(row.len() > 5);
+        assert!(
+            row[5].contains("bd-"),
+            "countermeasure must reference bead IDs for {}",
+            row[0]
+        );
+    }
+}

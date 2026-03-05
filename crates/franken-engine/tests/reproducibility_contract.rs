@@ -251,3 +251,92 @@ fn json_templates_are_canonicalization_stable() {
         );
     }
 }
+
+// ---------- read_file helper ----------
+
+#[test]
+fn read_file_returns_nonempty() {
+    let content = read_file("docs/REPRODUCIBILITY_CONTRACT.md");
+    assert!(!content.is_empty());
+}
+
+// ---------- parse_json_file helper ----------
+
+#[test]
+fn parse_json_file_returns_valid_value() {
+    let value = parse_json_file("docs/templates/env.json.template");
+    assert!(value.is_object());
+}
+
+// ---------- value_at_path ----------
+
+#[test]
+fn value_at_path_navigates_nested() {
+    let value: Value = serde_json::json!({
+        "a": { "b": { "c": "deep" } }
+    });
+    let result = value_at_path(&value, &["a", "b", "c"]);
+    assert_eq!(result.as_str(), Some("deep"));
+}
+
+// ---------- canonicalize_json ----------
+
+#[test]
+fn canonicalize_json_null() {
+    assert_eq!(canonicalize_json(&Value::Null), "null");
+}
+
+#[test]
+fn canonicalize_json_bool() {
+    assert_eq!(canonicalize_json(&Value::Bool(true)), "true");
+    assert_eq!(canonicalize_json(&Value::Bool(false)), "false");
+}
+
+#[test]
+fn canonicalize_json_string() {
+    let val = Value::String("hello".to_string());
+    assert_eq!(canonicalize_json(&val), "\"hello\"");
+}
+
+#[test]
+fn canonicalize_json_array() {
+    let val: Value = serde_json::json!([1, 2, 3]);
+    let result = canonicalize_json(&val);
+    assert_eq!(result, "[1,2,3]");
+}
+
+#[test]
+fn canonicalize_json_object_sorts_keys() {
+    let val: Value = serde_json::json!({"z": 1, "a": 2});
+    let result = canonicalize_json(&val);
+    assert!(result.starts_with("{\"a\":2"));
+}
+
+#[test]
+fn canonicalize_json_is_idempotent() {
+    let val: Value = serde_json::json!({"b": [1, null], "a": true});
+    let once = canonicalize_json(&val);
+    let reparsed: Value = serde_json::from_str(&once).expect("parse");
+    let twice = canonicalize_json(&reparsed);
+    assert_eq!(once, twice);
+}
+
+// ---------- assert helpers ----------
+
+#[test]
+fn assert_string_field_passes_for_string() {
+    let val: Value = serde_json::json!({"key": "value"});
+    assert_string_field(&val, &["key"]);
+}
+
+#[test]
+fn assert_bool_field_passes_for_bool() {
+    let val: Value = serde_json::json!({"flag": true});
+    assert_bool_field(&val, &["flag"]);
+}
+
+#[test]
+fn assert_array_field_passes_for_array() {
+    let val: Value = serde_json::json!({"items": [1, 2]});
+    assert_array_field(&val, &["items"]);
+}

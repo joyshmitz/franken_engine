@@ -159,3 +159,124 @@ fn await_nesting_relation_preserves_nested_identifier_target() {
 
     assert_eq!(extract(&baseline), extract(&transformed));
 }
+
+// ---------- parse_hash helper ----------
+
+#[test]
+fn parse_hash_is_deterministic() {
+    let h1 = parse_hash("42", ParseGoal::Script);
+    let h2 = parse_hash("42", ParseGoal::Script);
+    assert_eq!(h1, h2);
+}
+
+#[test]
+fn parse_hash_starts_with_sha256() {
+    let h = parse_hash("true", ParseGoal::Script);
+    assert!(h.starts_with("sha256:"));
+}
+
+#[test]
+fn parse_hash_differs_for_different_sources() {
+    let h1 = parse_hash("1", ParseGoal::Script);
+    let h2 = parse_hash("2", ParseGoal::Script);
+    assert_ne!(h1, h2);
+}
+
+// ---------- semantic_signature helper ----------
+
+#[test]
+fn semantic_signature_expression_statement() {
+    let tree = parser().parse("42", ParseGoal::Script).unwrap();
+    let sig = semantic_signature(&tree);
+    assert_eq!(sig.len(), 1);
+    assert!(sig[0].starts_with("expression:"));
+}
+
+#[test]
+fn semantic_signature_import_declaration() {
+    let tree = parser()
+        .parse("import dep from 'pkg'", ParseGoal::Module)
+        .unwrap();
+    let sig = semantic_signature(&tree);
+    assert_eq!(sig.len(), 1);
+    assert!(sig[0].starts_with("import:"));
+    assert!(sig[0].contains("pkg"));
+}
+
+#[test]
+fn semantic_signature_variable_declaration() {
+    let tree = parser().parse("let x = 1", ParseGoal::Script).unwrap();
+    let sig = semantic_signature(&tree);
+    assert_eq!(sig.len(), 1);
+    assert!(sig[0].starts_with("variable_declaration:"));
+}
+
+#[test]
+fn semantic_signature_multiple_statements() {
+    let tree = parser()
+        .parse("let x = 1; let y = 2; x", ParseGoal::Script)
+        .unwrap();
+    let sig = semantic_signature(&tree);
+    assert_eq!(sig.len(), 3);
+}
+
+// ---------- parser() helper ----------
+
+#[test]
+fn parser_parses_single_identifier() {
+    let tree = parser().parse("x", ParseGoal::Script).unwrap();
+    assert_eq!(tree.body.len(), 1);
+}
+
+// ---------- SyntaxTree canonical_hash ----------
+
+#[test]
+fn syntax_tree_canonical_hash_is_stable() {
+    let t1 = parser().parse("x + 1", ParseGoal::Script).unwrap();
+    let t2 = parser().parse("x + 1", ParseGoal::Script).unwrap();
+    assert_eq!(t1.canonical_hash(), t2.canonical_hash());
+}
+
+// ---------- export kinds ----------
+
+#[test]
+fn semantic_signature_export_default() {
+    let tree = parser()
+        .parse("export default 42", ParseGoal::Module)
+        .unwrap();
+    let sig = semantic_signature(&tree);
+    assert_eq!(sig.len(), 1);
+    assert!(sig[0].starts_with("export_default:"));
+}
+
+#[test]
+fn semantic_signature_export_named() {
+    let tree = parser()
+        .parse("export { a, b }", ParseGoal::Module)
+        .unwrap();
+    let sig = semantic_signature(&tree);
+    assert_eq!(sig.len(), 1);
+    assert!(sig[0].starts_with("export_named:"));
+}
+
+#[test]
+fn parse_hash_script_vs_module_differ() {
+    let h1 = parse_hash("42", ParseGoal::Script);
+    let h2 = parse_hash("42", ParseGoal::Module);
+    assert_ne!(h1, h2);
+}
+
+#[test]
+fn semantic_signature_single_statement_length() {
+    let tree = parser().parse(";", ParseGoal::Script).unwrap();
+    let sig = semantic_signature(&tree);
+    assert_eq!(sig.len(), tree.body.len());
+}
+
+#[test]
+fn canonical_hash_stable_across_multiple_calls() {
+    let tree = parser().parse("var x = 1;", ParseGoal::Script).unwrap();
+    let h1 = tree.canonical_hash();
+    let h2 = tree.canonical_hash();
+    assert_eq!(h1, h2);
+}

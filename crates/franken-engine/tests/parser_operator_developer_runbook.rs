@@ -267,3 +267,100 @@ fn readme_references_operator_runbook_gate_and_replay() {
         "README missing parser operator/developer runbook replay command"
     );
 }
+
+#[test]
+fn parser_operator_runbook_triage_action_unknown() {
+    let scenario = IncidentScenario {
+        scenario_id: "novel".to_string(),
+        symptom: "completely new failure".to_string(),
+        severity: "high".to_string(),
+        expected_triage: "unknown".to_string(),
+        replay_command: "./scripts/e2e/novel.sh".to_string(),
+    };
+    assert_eq!(triage_action(&scenario), "unknown");
+}
+
+#[test]
+fn parser_operator_runbook_scenario_ids_are_unique() {
+    let fixture = load_fixture();
+    let mut seen = BTreeSet::new();
+    for scenario in &fixture.incident_matrix {
+        assert!(
+            seen.insert(&scenario.scenario_id),
+            "duplicate scenario_id: {}",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn parser_operator_runbook_deterministic_double_parse() {
+    let a = load_fixture();
+    let b = load_fixture();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn parser_operator_runbook_doc_file_is_nonempty() {
+    let doc = load_doc();
+    assert!(!doc.is_empty());
+}
+
+#[test]
+fn parser_operator_runbook_drill_commands_are_unique() {
+    let fixture = load_fixture();
+    let unique: BTreeSet<_> = fixture.drill_replay_commands.iter().collect();
+    assert_eq!(unique.len(), fixture.drill_replay_commands.len());
+}
+
+#[test]
+fn parser_operator_runbook_incident_replay_commands_are_unique() {
+    let fixture = load_fixture();
+    let mut seen = BTreeSet::new();
+    for scenario in &fixture.incident_matrix {
+        assert!(
+            seen.insert(&scenario.replay_command),
+            "duplicate incident replay_command: {}",
+            scenario.replay_command
+        );
+    }
+}
+
+#[test]
+fn parser_operator_runbook_required_log_keys_are_nonempty() {
+    let fixture = load_fixture();
+    assert!(!fixture.required_log_keys.is_empty());
+    for key in &fixture.required_log_keys {
+        assert!(!key.trim().is_empty(), "log key must not be empty");
+    }
+}
+
+#[test]
+fn parser_operator_runbook_all_symptoms_nonempty() {
+    let fixture = load_fixture();
+    for scenario in &fixture.incident_matrix {
+        assert!(
+            !scenario.symptom.trim().is_empty(),
+            "scenario {} must have nonempty symptom",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn parser_operator_runbook_fixture_has_bead_id() {
+    let fixture = load_fixture();
+    assert!(!fixture.bead_id.trim().is_empty());
+}
+
+#[test]
+fn parser_operator_runbook_fixture_has_policy_id() {
+    let fixture = load_fixture();
+    assert!(!fixture.policy_id.trim().is_empty());
+}
+
+#[test]
+fn parser_operator_runbook_fixture_has_contract_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.contract_version.trim().is_empty());
+}

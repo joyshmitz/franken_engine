@@ -475,3 +475,356 @@ fn replay_scenarios_map_to_governance_outcomes() {
         );
     }
 }
+
+// ---------- fnv1a64 ----------
+
+#[test]
+fn fnv1a64_empty_input_returns_basis() {
+    assert_eq!(fnv1a64(b""), 0xcbf2_9ce4_8422_2325_u64);
+}
+
+#[test]
+fn fnv1a64_deterministic() {
+    let a = fnv1a64(b"hello world");
+    let b = fnv1a64(b"hello world");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn fnv1a64_different_inputs_differ() {
+    assert_ne!(fnv1a64(b"hello"), fnv1a64(b"world"));
+}
+
+#[test]
+fn fnv1a64_single_byte_differs_from_basis() {
+    assert_ne!(fnv1a64(b"\x00"), fnv1a64(b""));
+}
+
+// ---------- scheduler_manifest_fingerprint ----------
+
+#[test]
+fn scheduler_manifest_fingerprint_starts_with_fnv1a64() {
+    let fixture = load_fixture();
+    let fp = scheduler_manifest_fingerprint(&fixture.scheduler_manifest);
+    assert!(fp.starts_with("fnv1a64:"), "fingerprint must start with fnv1a64:");
+}
+
+#[test]
+fn scheduler_manifest_fingerprint_deterministic() {
+    let fixture = load_fixture();
+    let fp1 = scheduler_manifest_fingerprint(&fixture.scheduler_manifest);
+    let fp2 = scheduler_manifest_fingerprint(&fixture.scheduler_manifest);
+    assert_eq!(fp1, fp2);
+}
+
+#[test]
+fn scheduler_manifest_fingerprint_changes_with_seed() {
+    let fixture = load_fixture();
+    let fp1 = scheduler_manifest_fingerprint(&fixture.scheduler_manifest);
+    let mut modified = fixture.scheduler_manifest.clone();
+    modified.deterministic_seed = modified.deterministic_seed.wrapping_add(1);
+    let fp2 = scheduler_manifest_fingerprint(&modified);
+    assert_ne!(fp1, fp2);
+}
+
+// ---------- find_matching_waiver ----------
+
+#[test]
+fn find_matching_waiver_matches_fingerprint_and_severity() {
+    let finding = DriftFinding {
+        finding_id: "f1".to_string(),
+        fixture_id: "fix1".to_string(),
+        fingerprint: "sha256:abc".to_string(),
+        severity: "critical".to_string(),
+        classification: "class1".to_string(),
+        owner_hint: "owner1".to_string(),
+        replay_command: "./replay.sh".to_string(),
+        artifact_path: "path".to_string(),
+        minimized_source_hash: "hash1".to_string(),
+        provenance_hash: "hash2".to_string(),
+    };
+    let waivers = vec![WaiverRecord {
+        waiver_id: "w1".to_string(),
+        fingerprint: "sha256:abc".to_string(),
+        severity: "critical".to_string(),
+        expires_utc: "2027-01-01T00:00:00Z".to_string(),
+        approved_by: "admin".to_string(),
+    }];
+    assert!(find_matching_waiver(&finding, &waivers).is_some());
+}
+
+#[test]
+fn find_matching_waiver_no_match_wrong_severity() {
+    let finding = DriftFinding {
+        finding_id: "f1".to_string(),
+        fixture_id: "fix1".to_string(),
+        fingerprint: "sha256:abc".to_string(),
+        severity: "minor".to_string(),
+        classification: "class1".to_string(),
+        owner_hint: "owner1".to_string(),
+        replay_command: "./replay.sh".to_string(),
+        artifact_path: "path".to_string(),
+        minimized_source_hash: "hash1".to_string(),
+        provenance_hash: "hash2".to_string(),
+    };
+    let waivers = vec![WaiverRecord {
+        waiver_id: "w1".to_string(),
+        fingerprint: "sha256:abc".to_string(),
+        severity: "critical".to_string(),
+        expires_utc: "2027-01-01T00:00:00Z".to_string(),
+        approved_by: "admin".to_string(),
+    }];
+    assert!(find_matching_waiver(&finding, &waivers).is_none());
+}
+
+#[test]
+fn find_matching_waiver_no_match_empty() {
+    let finding = DriftFinding {
+        finding_id: "f1".to_string(),
+        fixture_id: "fix1".to_string(),
+        fingerprint: "sha256:abc".to_string(),
+        severity: "critical".to_string(),
+        classification: "class1".to_string(),
+        owner_hint: "owner1".to_string(),
+        replay_command: "./replay.sh".to_string(),
+        artifact_path: "path".to_string(),
+        minimized_source_hash: "hash1".to_string(),
+        provenance_hash: "hash2".to_string(),
+    };
+    assert!(find_matching_waiver(&finding, &[]).is_none());
+}
+
+// ---------- auto_bead_id ----------
+
+#[test]
+fn auto_bead_id_strips_sha256_prefix() {
+    assert_eq!(auto_bead_id("sha256:abcdef01234"), "bd-auto-abcdef01");
+}
+
+#[test]
+fn auto_bead_id_no_prefix() {
+    assert_eq!(auto_bead_id("abcdef01234"), "bd-auto-abcdef01");
+}
+
+#[test]
+fn auto_bead_id_short_input() {
+    assert_eq!(auto_bead_id("abc"), "bd-auto-abc");
+}
+
+// ---------- evaluate_gate synthetic ----------
+
+fn make_finding(id: &str, severity: &str, fingerprint: &str) -> DriftFinding {
+    DriftFinding {
+        finding_id: id.to_string(),
+        fixture_id: format!("fixture-{id}"),
+        fingerprint: fingerprint.to_string(),
+        severity: severity.to_string(),
+        classification: "class".to_string(),
+        owner_hint: "owner".to_string(),
+        replay_command: format!("./scripts/e2e/{id}.sh"),
+        artifact_path: "path".to_string(),
+        minimized_source_hash: "hash".to_string(),
+        provenance_hash: "hash".to_string(),
+    }
+}
+
+fn make_gov_fixture(
+    findings: Vec<DriftFinding>,
+    waivers: Vec<WaiverRecord>,
+) -> DifferentialNightlyGovernanceFixture {
+    DifferentialNightlyGovernanceFixture {
+        schema_version: "franken-engine.parser-differential-nightly-governance.v1".to_string(),
+        governance_version: "1.0.0".to_string(),
+        bead_id: "bd-test".to_string(),
+        evaluation_time_utc: "2026-06-01T00:00:00Z".to_string(),
+        scheduler_manifest: SchedulerManifest {
+            nightly_cron_utc: "0 3 * * *".to_string(),
+            timezone: "UTC".to_string(),
+            locale: "C".to_string(),
+            deterministic_seed: 42,
+            partitions: vec![],
+            expected_manifest_fingerprint: String::new(),
+        },
+        waivers,
+        existing_remediations: vec![],
+        drift_findings: findings,
+        required_log_keys: vec![],
+        expected_gate: ExpectedGate {
+            expected_outcome: String::new(),
+            expected_blockers: vec![],
+            expected_escalations: vec![],
+        },
+        expected_remediation_actions: vec![],
+        replay_scenarios: vec![],
+    }
+}
+
+#[test]
+fn evaluate_gate_promotes_with_no_findings() {
+    let fixture = make_gov_fixture(vec![], vec![]);
+    let decision = evaluate_gate(&fixture);
+    assert_eq!(decision.outcome, "promote");
+    assert!(decision.blockers.is_empty());
+}
+
+#[test]
+fn evaluate_gate_holds_on_critical_unwaived() {
+    let fixture = make_gov_fixture(vec![make_finding("f1", "critical", "sha256:aaa")], vec![]);
+    let decision = evaluate_gate(&fixture);
+    assert_eq!(decision.outcome, "hold");
+    assert!(decision.blockers.iter().any(|b| b.contains("critical_unwaived:f1")));
+    assert!(decision.escalations.iter().any(|e| e.contains("page_owner:owner")));
+}
+
+#[test]
+fn evaluate_gate_promotes_with_waived_critical() {
+    let waiver = WaiverRecord {
+        waiver_id: "w1".to_string(),
+        fingerprint: "sha256:aaa".to_string(),
+        severity: "critical".to_string(),
+        expires_utc: "2027-01-01T00:00:00Z".to_string(),
+        approved_by: "admin".to_string(),
+    };
+    let fixture = make_gov_fixture(
+        vec![make_finding("f1", "critical", "sha256:aaa")],
+        vec![waiver],
+    );
+    let decision = evaluate_gate(&fixture);
+    assert_eq!(decision.outcome, "promote");
+    assert_eq!(
+        decision.finding_outcomes.get("f1").unwrap(),
+        "waived_critical"
+    );
+}
+
+#[test]
+fn evaluate_gate_holds_on_expired_waiver() {
+    let waiver = WaiverRecord {
+        waiver_id: "w1".to_string(),
+        fingerprint: "sha256:aaa".to_string(),
+        severity: "critical".to_string(),
+        expires_utc: "2025-01-01T00:00:00Z".to_string(),
+        approved_by: "admin".to_string(),
+    };
+    let fixture = make_gov_fixture(
+        vec![make_finding("f1", "critical", "sha256:aaa")],
+        vec![waiver],
+    );
+    let decision = evaluate_gate(&fixture);
+    assert_eq!(decision.outcome, "hold");
+    assert!(decision.blockers.iter().any(|b| b.contains("waiver_expired:w1")));
+}
+
+#[test]
+fn evaluate_gate_minor_unwaived_does_not_block() {
+    let fixture = make_gov_fixture(vec![make_finding("f1", "minor", "sha256:bbb")], vec![]);
+    let decision = evaluate_gate(&fixture);
+    assert_eq!(decision.outcome, "promote");
+    assert_eq!(
+        decision.finding_outcomes.get("f1").unwrap(),
+        "minor_unwaived"
+    );
+}
+
+#[test]
+fn evaluate_gate_unknown_severity_blocks() {
+    let fixture = make_gov_fixture(vec![make_finding("f1", "exotic", "sha256:ccc")], vec![]);
+    let decision = evaluate_gate(&fixture);
+    assert_eq!(decision.outcome, "hold");
+    assert!(decision.blockers.iter().any(|b| b.contains("unknown_severity:f1")));
+}
+
+// ---------- remediation_actions ----------
+
+#[test]
+fn remediation_actions_creates_for_unknown_fingerprint() {
+    let fixture = make_gov_fixture(vec![make_finding("f1", "critical", "sha256:new12345")], vec![]);
+    let decision = evaluate_gate(&fixture);
+    let actions = remediation_actions(&fixture, &decision);
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].action, "create");
+    assert_eq!(actions[0].bead_id, "bd-auto-new12345");
+}
+
+#[test]
+fn remediation_actions_updates_for_existing_fingerprint() {
+    let mut fixture =
+        make_gov_fixture(vec![make_finding("f1", "critical", "sha256:existing")], vec![]);
+    fixture.existing_remediations.push(ExistingRemediation {
+        fingerprint: "sha256:existing".to_string(),
+        bead_id: "bd-existing-1".to_string(),
+        status: "open".to_string(),
+        owner_hint: "existing-owner".to_string(),
+    });
+    let decision = evaluate_gate(&fixture);
+    let actions = remediation_actions(&fixture, &decision);
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].action, "update");
+    assert_eq!(actions[0].bead_id, "bd-existing-1");
+}
+
+#[test]
+fn remediation_actions_skips_waived() {
+    let waiver = WaiverRecord {
+        waiver_id: "w1".to_string(),
+        fingerprint: "sha256:aaa".to_string(),
+        severity: "critical".to_string(),
+        expires_utc: "2027-01-01T00:00:00Z".to_string(),
+        approved_by: "admin".to_string(),
+    };
+    let fixture = make_gov_fixture(
+        vec![make_finding("f1", "critical", "sha256:aaa")],
+        vec![waiver],
+    );
+    let decision = evaluate_gate(&fixture);
+    let actions = remediation_actions(&fixture, &decision);
+    assert!(actions.is_empty());
+}
+
+// ---------- emit_structured_events ----------
+
+#[test]
+fn emit_structured_events_one_per_finding() {
+    let fixture = make_gov_fixture(
+        vec![
+            make_finding("f1", "critical", "sha256:aaa"),
+            make_finding("f2", "minor", "sha256:bbb"),
+        ],
+        vec![],
+    );
+    let decision = evaluate_gate(&fixture);
+    let actions = remediation_actions(&fixture, &decision);
+    let events = emit_structured_events(&fixture, &actions, &decision);
+    assert_eq!(events.len(), 2);
+}
+
+#[test]
+fn emit_structured_events_critical_has_error_code() {
+    let fixture = make_gov_fixture(vec![make_finding("f1", "critical", "sha256:aaa")], vec![]);
+    let decision = evaluate_gate(&fixture);
+    let actions = remediation_actions(&fixture, &decision);
+    let events = emit_structured_events(&fixture, &actions, &decision);
+    assert_eq!(
+        events[0].get("error_code").unwrap(),
+        "FE-PARSER-DIFF-NIGHTLY-CRITICAL"
+    );
+}
+
+#[test]
+fn emit_structured_events_minor_has_none_error_code() {
+    let fixture = make_gov_fixture(vec![make_finding("f1", "minor", "sha256:bbb")], vec![]);
+    let decision = evaluate_gate(&fixture);
+    let actions = remediation_actions(&fixture, &decision);
+    let events = emit_structured_events(&fixture, &actions, &decision);
+    assert_eq!(events[0].get("error_code").unwrap(), "none");
+}
+
+// ---------- evaluate_gate determinism ----------
+
+#[test]
+fn evaluate_gate_deterministic() {
+    let fixture = load_fixture();
+    let d1 = evaluate_gate(&fixture);
+    let d2 = evaluate_gate(&fixture);
+    assert_eq!(d1, d2);
+}

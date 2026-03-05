@@ -394,3 +394,116 @@ fn frx_09_3_structured_log_requirements_and_operator_commands_are_present() {
         "operator verification must include JSON validation command"
     );
 }
+
+#[test]
+fn frx_09_3_scenario_ids_are_unique() {
+    let blueprint = parse_blueprint();
+    let mut seen = BTreeSet::new();
+    for scenario in &blueprint.scenarios {
+        assert!(
+            seen.insert(&scenario.scenario_id),
+            "duplicate scenario_id: {}",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn frx_09_3_security_policy_boundaries_are_fail_closed() {
+    let blueprint = parse_blueprint();
+    for boundary in &blueprint.architecture.security_policy_boundaries {
+        assert!(boundary.requires_signed_receipt);
+        assert!(
+            boundary.fallback_route.contains("deny")
+                || boundary.fallback_route.contains("safe_mode"),
+            "security boundary fallback must deny or safe_mode: {}",
+            boundary.fallback_route
+        );
+    }
+}
+
+#[test]
+fn frx_09_3_deterministic_double_parse() {
+    let a = parse_blueprint();
+    let b = parse_blueprint();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn frx_09_3_prerequisite_beads_are_unique() {
+    let blueprint = parse_blueprint();
+    let mut seen = BTreeSet::new();
+    for p in &blueprint.prerequisites {
+        assert!(
+            seen.insert(&p.bead_id),
+            "duplicate prerequisite: {}",
+            p.bead_id
+        );
+    }
+}
+
+#[test]
+fn frx_09_3_doc_file_is_nonempty() {
+    let path = repo_root().join("docs/FRX_FRANKENBROWSER_INTEGRATION_BLUEPRINT_V1.md");
+    let content = fs::read_to_string(&path).expect("read doc");
+    assert!(!content.is_empty());
+}
+
+#[test]
+fn frx_09_3_migration_phase_ids_are_unique() {
+    let blueprint = parse_blueprint();
+    let mut seen = BTreeSet::new();
+    for phase in &blueprint.migration_phases {
+        assert!(
+            seen.insert(&phase.phase_id),
+            "duplicate migration phase_id: {}",
+            phase.phase_id
+        );
+    }
+}
+
+#[test]
+fn frx_09_3_operator_verification_commands_are_all_nonempty() {
+    let blueprint = parse_blueprint();
+    assert!(
+        !blueprint.operator_verification.is_empty(),
+        "operator verification must not be empty"
+    );
+    for cmd in &blueprint.operator_verification {
+        assert!(
+            !cmd.trim().is_empty(),
+            "operator verification command must not be empty"
+        );
+    }
+}
+
+#[test]
+fn frx_09_3_security_policy_boundary_surfaces_are_unique() {
+    let blueprint = parse_blueprint();
+    let mut seen = BTreeSet::new();
+    for boundary in &blueprint.architecture.security_policy_boundaries {
+        assert!(
+            seen.insert(&boundary.policy_surface),
+            "duplicate security policy surface: {}",
+            boundary.policy_surface
+        );
+    }
+}
+
+#[test]
+fn frx_09_3_contract_has_nonempty_bead_id() {
+    let blueprint = parse_blueprint();
+    assert!(!blueprint.bead_id.trim().is_empty());
+}
+
+#[test]
+fn frx_09_3_contract_has_nonempty_schema_version() {
+    let blueprint = parse_blueprint();
+    assert!(!blueprint.schema_version.trim().is_empty());
+}
+
+#[test]
+fn frx_09_3_generated_at_utc_ends_with_z() {
+    let blueprint = parse_blueprint();
+    assert!(blueprint.generated_at_utc.ends_with('Z'));
+}

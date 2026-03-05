@@ -285,3 +285,140 @@ fn parser_grammar_closure_backlog_fixtures_are_replayable_by_family() {
 
     assert!(executed_families > 0, "no families executed in replay loop");
 }
+
+// ---------- parse_goal ----------
+
+#[test]
+fn parse_goal_maps_correctly() {
+    assert_eq!(parse_goal("script"), ParseGoal::Script);
+    assert_eq!(parse_goal("module"), ParseGoal::Module);
+}
+
+#[test]
+#[should_panic(expected = "unknown goal")]
+fn parse_goal_panics_on_unknown() {
+    parse_goal("expression");
+}
+
+// ---------- coverage_score ----------
+
+#[test]
+fn coverage_score_supported_is_1000() {
+    assert_eq!(coverage_score(GrammarCoverageStatus::Supported), 1000);
+}
+
+#[test]
+fn coverage_score_not_applicable_is_1000() {
+    assert_eq!(coverage_score(GrammarCoverageStatus::NotApplicable), 1000);
+}
+
+#[test]
+fn coverage_score_partial_is_500() {
+    assert_eq!(coverage_score(GrammarCoverageStatus::Partial), 500);
+}
+
+#[test]
+fn coverage_score_unsupported_is_0() {
+    assert_eq!(coverage_score(GrammarCoverageStatus::Unsupported), 0);
+}
+
+// ---------- aggregate_family_status ----------
+
+#[test]
+fn aggregate_family_status_both_supported() {
+    assert_eq!(
+        aggregate_family_status(GrammarCoverageStatus::Supported, GrammarCoverageStatus::Supported),
+        "supported"
+    );
+}
+
+#[test]
+fn aggregate_family_status_both_unsupported() {
+    assert_eq!(
+        aggregate_family_status(GrammarCoverageStatus::Unsupported, GrammarCoverageStatus::Unsupported),
+        "unsupported"
+    );
+}
+
+#[test]
+fn aggregate_family_status_mixed_is_partial() {
+    assert_eq!(
+        aggregate_family_status(GrammarCoverageStatus::Supported, GrammarCoverageStatus::Unsupported),
+        "partial"
+    );
+}
+
+#[test]
+fn aggregate_family_status_partial_partial() {
+    assert_eq!(
+        aggregate_family_status(GrammarCoverageStatus::Partial, GrammarCoverageStatus::Partial),
+        "partial"
+    );
+}
+
+// ---------- catalog loading ----------
+
+#[test]
+fn semantic_fixture_catalog_schema_is_v1() {
+    let catalog = load_semantic_fixture_catalog();
+    assert_eq!(
+        catalog.schema_version,
+        "franken-engine.parser-phase0.semantic-fixtures.v1"
+    );
+}
+
+#[test]
+fn grammar_closure_backlog_has_21_families() {
+    let backlog = load_grammar_closure_backlog();
+    assert_eq!(backlog.coverage_target_family_count, 21);
+}
+
+#[test]
+fn grammar_closure_backlog_schema_is_v1() {
+    let backlog = load_grammar_closure_backlog();
+    assert_eq!(
+        backlog.schema_version,
+        "franken-engine.parser-grammar-closure-backlog.v1"
+    );
+}
+
+// ---------- GrammarCoverageStatus serde ----------
+
+#[test]
+fn grammar_coverage_status_serde_roundtrip() {
+    use frankenengine_engine::parser::GrammarCoverageStatus;
+    for status in [
+        GrammarCoverageStatus::Supported,
+        GrammarCoverageStatus::Partial,
+        GrammarCoverageStatus::Unsupported,
+        GrammarCoverageStatus::NotApplicable,
+    ] {
+        let json = serde_json::to_string(&status).expect("serialize");
+        let recovered: GrammarCoverageStatus = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, status);
+    }
+}
+
+#[test]
+fn grammar_closure_backlog_deterministic_double_parse() {
+    let a = load_grammar_closure_backlog();
+    let b = load_grammar_closure_backlog();
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.coverage_target_family_count, b.coverage_target_family_count);
+    assert_eq!(a.families.len(), b.families.len());
+}
+
+#[test]
+fn semantic_fixture_catalog_has_fixtures() {
+    let catalog = load_semantic_fixture_catalog();
+    assert!(!catalog.fixtures.is_empty());
+}
+
+#[test]
+fn grammar_closure_backlog_families_are_nonempty() {
+    let backlog = load_grammar_closure_backlog();
+    assert!(!backlog.families.is_empty());
+    for family in &backlog.families {
+        assert!(!family.family_id.trim().is_empty());
+    }
+}

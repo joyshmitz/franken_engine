@@ -9,11 +9,11 @@ use std::collections::BTreeSet;
 
 use frankenengine_engine::benchmark_e2e::{
     BENCHMARK_E2E_COMPONENT, BENCHMARK_E2E_SCHEMA_VERSION, BENCHMARK_ENV_SCHEMA_VERSION,
-    BenchmarkFamily, BenchmarkFairnessPolicy, BenchmarkHarnessContract,
-    BenchmarkHarnessContractError, BenchmarkRuntimePins, BenchmarkSuiteConfig,
-    LatencyDistribution, MIN_START_BUDGET_MILLIONTHS, RegressionThresholds, ScaleProfile,
-    Xorshift64, detect_regression, run_benchmark,
-    run_benchmark_suite, run_benchmark_suite_with_regression, validate_harness_contract,
+    BenchmarkFairnessPolicy, BenchmarkFamily, BenchmarkHarnessContract,
+    BenchmarkHarnessContractError, BenchmarkRuntimePins, BenchmarkSuiteConfig, LatencyDistribution,
+    MIN_START_BUDGET_MILLIONTHS, RegressionThresholds, ScaleProfile, Xorshift64, detect_regression,
+    run_benchmark, run_benchmark_suite, run_benchmark_suite_with_regression,
+    validate_harness_contract,
 };
 
 // ===========================================================================
@@ -261,7 +261,10 @@ fn validate_harness_contract_rejects_empty_runtime_pin() {
     let mut contract = BenchmarkHarnessContract::default();
     contract.runtime_pins.franken_engine = String::new();
     let err = validate_harness_contract(&contract).expect_err("should reject");
-    assert!(matches!(err, BenchmarkHarnessContractError::EmptyRuntimePin { .. }));
+    assert!(matches!(
+        err,
+        BenchmarkHarnessContractError::EmptyRuntimePin { .. }
+    ));
 }
 
 #[test]
@@ -269,7 +272,10 @@ fn validate_harness_contract_rejects_empty_node_pin() {
     let mut contract = BenchmarkHarnessContract::default();
     contract.runtime_pins.node_lts = String::new();
     let err = validate_harness_contract(&contract).expect_err("should reject");
-    assert!(matches!(err, BenchmarkHarnessContractError::EmptyRuntimePin { .. }));
+    assert!(matches!(
+        err,
+        BenchmarkHarnessContractError::EmptyRuntimePin { .. }
+    ));
 }
 
 #[test]
@@ -277,7 +283,10 @@ fn validate_harness_contract_rejects_empty_bun_pin() {
     let mut contract = BenchmarkHarnessContract::default();
     contract.runtime_pins.bun_stable = String::new();
     let err = validate_harness_contract(&contract).expect_err("should reject");
-    assert!(matches!(err, BenchmarkHarnessContractError::EmptyRuntimePin { .. }));
+    assert!(matches!(
+        err,
+        BenchmarkHarnessContractError::EmptyRuntimePin { .. }
+    ));
 }
 
 #[test]
@@ -285,7 +294,10 @@ fn validate_harness_contract_rejects_zero_warmup_runs() {
     let mut contract = BenchmarkHarnessContract::default();
     contract.fairness_policy.warmup_runs = 0;
     let err = validate_harness_contract(&contract).expect_err("should reject");
-    assert!(matches!(err, BenchmarkHarnessContractError::InvalidWarmupRuns { .. }));
+    assert!(matches!(
+        err,
+        BenchmarkHarnessContractError::InvalidWarmupRuns { .. }
+    ));
 }
 
 #[test]
@@ -293,7 +305,10 @@ fn validate_harness_contract_rejects_low_sample_count() {
     let mut contract = BenchmarkHarnessContract::default();
     contract.fairness_policy.sample_count = 2;
     let err = validate_harness_contract(&contract).expect_err("should reject");
-    assert!(matches!(err, BenchmarkHarnessContractError::InvalidSampleCount { .. }));
+    assert!(matches!(
+        err,
+        BenchmarkHarnessContractError::InvalidSampleCount { .. }
+    ));
 }
 
 #[test]
@@ -301,7 +316,10 @@ fn validate_harness_contract_rejects_zero_timeout() {
     let mut contract = BenchmarkHarnessContract::default();
     contract.fairness_policy.case_timeout_ms = 0;
     let err = validate_harness_contract(&contract).expect_err("should reject");
-    assert!(matches!(err, BenchmarkHarnessContractError::InvalidCaseTimeoutMs { .. }));
+    assert!(matches!(
+        err,
+        BenchmarkHarnessContractError::InvalidCaseTimeoutMs { .. }
+    ));
 }
 
 #[test]
@@ -376,7 +394,11 @@ fn run_each_family_small() {
 
 #[test]
 fn run_benchmark_medium_profile() {
-    let m = run_benchmark(BenchmarkFamily::MixedCpuIoAgentMesh, ScaleProfile::Medium, 42);
+    let m = run_benchmark(
+        BenchmarkFamily::MixedCpuIoAgentMesh,
+        ScaleProfile::Medium,
+        42,
+    );
     assert_eq!(m.profile, ScaleProfile::Medium);
     assert!(m.total_operations > 0);
 }
@@ -460,7 +482,12 @@ fn suite_events_contain_case_completed() {
         ..BenchmarkSuiteConfig::default()
     };
     let result = run_benchmark_suite(&config);
-    assert!(result.events.iter().any(|e| e.event == "benchmark_case_completed"));
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|e| e.event == "benchmark_case_completed")
+    );
 }
 
 // ===========================================================================

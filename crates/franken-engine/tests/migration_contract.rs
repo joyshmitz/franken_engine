@@ -478,3 +478,122 @@ fn all_object_classes_have_stable_display() {
         assert_eq!(oc.to_string(), *exp);
     }
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: enum serde, error display, state transitions
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn cutover_type_serde_round_trip() {
+    for ct in [
+        CutoverType::HardCutover,
+        CutoverType::SoftMigration,
+        CutoverType::ParallelRun,
+    ] {
+        let json = serde_json::to_string(&ct).unwrap();
+        let recovered: CutoverType = serde_json::from_str(&json).unwrap();
+        assert_eq!(ct, recovered);
+    }
+}
+
+#[test]
+fn migration_state_serde_round_trip() {
+    for state in [
+        MigrationState::Declared,
+        MigrationState::DryRunPassed,
+        MigrationState::Executing,
+        MigrationState::Verifying,
+        MigrationState::Verified,
+        MigrationState::Committed,
+        MigrationState::RolledBack,
+    ] {
+        let json = serde_json::to_string(&state).unwrap();
+        let recovered: MigrationState = serde_json::from_str(&json).unwrap();
+        assert_eq!(state, recovered);
+    }
+}
+
+#[test]
+fn object_class_serde_round_trip() {
+    for oc in ObjectClass::ALL {
+        let json = serde_json::to_string(&oc).unwrap();
+        let recovered: ObjectClass = serde_json::from_str(&json).unwrap();
+        assert_eq!(oc, recovered);
+    }
+}
+
+#[test]
+fn migration_contract_error_is_std_error() {
+    let err: Box<dyn std::error::Error> = Box::new(MigrationContractError::MigrationNotFound {
+        migration_id: "x".to_string(),
+    });
+    assert!(!err.to_string().is_empty());
+}
+
+#[test]
+fn migration_contract_error_display_all_unique() {
+    let errors = [
+        MigrationContractError::MigrationNotFound {
+            migration_id: "a".to_string(),
+        },
+        MigrationContractError::DuplicateMigration {
+            migration_id: "b".to_string(),
+        },
+        MigrationContractError::InvalidTransition {
+            from: MigrationState::Declared,
+            to: MigrationState::Committed,
+        },
+    ];
+    let msgs: std::collections::BTreeSet<String> = errors.iter().map(|e| e.to_string()).collect();
+    assert_eq!(msgs.len(), errors.len());
+}
+
+#[test]
+fn duplicate_declaration_rejected() {
+    let mut runner = MigrationRunner::new();
+    runner
+        .declare(declaration("dup-1", CutoverType::HardCutover), "t")
+        .unwrap();
+    let err = runner
+        .declare(declaration("dup-1", CutoverType::HardCutover), "t")
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        MigrationContractError::DuplicateMigration { .. }
+    ));
+}
+
+#[test]
+fn unknown_migration_returns_not_found() {
+    let runner = MigrationRunner::new();
+    assert_eq!(runner.state("nonexistent"), None);
+}
+
+#[test]
+fn dry_run_with_unconvertible_objects_fails() {
+    let mut runner = MigrationRunner::new();
+    runner
+        .declare(declaration("dry-fail", CutoverType::HardCutover), "t")
+        .unwrap();
+    let failed_dry = DryRunResult {
+        migration_id: "dry-fail".to_string(),
+        total_objects: 200,
+        convertible: 190,
+        unconvertible: 10,
+        details: vec!["10 objects incompatible".to_string()],
+    };
+    let err = runner.dry_run("dry-fail", failed_dry, "t").unwrap_err();
+    assert!(matches!(
+        err,
+        MigrationContractError::DryRunFailed { .. }
+    ));
+}
+
+#[test]
+fn migration_step_serde_round_trip() {
+    for step in MigrationStep::FORWARD_PIPELINE {
+        let json = serde_json::to_string(&step).unwrap();
+        let recovered: MigrationStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(step, recovered);
+    }
+}

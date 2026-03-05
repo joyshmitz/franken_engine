@@ -549,3 +549,163 @@ fn parser_ci_quality_structured_logs_and_replay_scenarios_are_complete() {
         assert_eq!(scenario.expected_outcome, "pass");
     }
 }
+
+#[test]
+fn parser_ci_quality_dominant_error_signature_returns_most_frequent() {
+    let fixture = load_fixture();
+    let fail_runs: Vec<&CiRunRecord> = fixture
+        .runs
+        .iter()
+        .filter(|run| run.outcome == "fail")
+        .collect();
+    if !fail_runs.is_empty() {
+        let signature = dominant_error_signature(&fail_runs);
+        assert_ne!(signature, "none");
+    }
+}
+
+#[test]
+fn parser_ci_quality_dominant_error_signature_returns_none_for_no_fails() {
+    let pass_only: Vec<CiRunRecord> = vec![];
+    let refs: Vec<&CiRunRecord> = pass_only.iter().collect();
+    let signature = dominant_error_signature(&refs);
+    assert_eq!(signature, "none");
+}
+
+#[test]
+fn parser_ci_quality_classify_flakes_only_mixed_outcomes() {
+    let fixture = load_fixture();
+    let flakes = classify_flakes(&fixture);
+    for flake in &flakes {
+        assert!(
+            flake.pass_count > 0 && flake.fail_count > 0,
+            "flake {} must have both passes and fails",
+            flake.case_id
+        );
+    }
+}
+
+#[test]
+fn parser_ci_quality_flake_rate_is_within_unit_interval() {
+    let fixture = load_fixture();
+    let flakes = classify_flakes(&fixture);
+    for flake in &flakes {
+        assert!(
+            flake.flake_rate_millionths <= 500_000,
+            "flake rate for {} should be <= 50% (min/total): {}",
+            flake.case_id,
+            flake.flake_rate_millionths
+        );
+    }
+}
+
+#[test]
+fn parser_ci_quality_gate_with_empty_flakes_promotes() {
+    let fixture = load_fixture();
+    let empty_flakes: Vec<FlakeClassification> = vec![];
+    let gate = evaluate_gate(&fixture, &empty_flakes);
+    // gate only holds if latest suites aren't green or high flakes exist
+    if gate.latest_suites_green {
+        assert_eq!(gate.outcome, "promote");
+    }
+}
+
+#[test]
+fn parser_ci_quality_search_index_contains_all_tokens() {
+    let fixture = load_fixture();
+    let index = build_search_index(&fixture.retention_bundles);
+    for bundle in &fixture.retention_bundles {
+        for token in &bundle.searchable_tokens {
+            assert!(
+                index.contains_key(token),
+                "search index missing token: {token}"
+            );
+            assert!(
+                index[token].contains(&bundle.bundle_id),
+                "search index for {token} missing bundle {}",
+                bundle.bundle_id
+            );
+        }
+    }
+}
+
+#[test]
+fn parser_ci_quality_run_ids_are_unique() {
+    let fixture = load_fixture();
+    let mut seen = BTreeSet::new();
+    for run in &fixture.runs {
+        assert!(
+            seen.insert(&run.run_id),
+            "duplicate run_id: {}",
+            run.run_id
+        );
+    }
+}
+
+#[test]
+fn parser_ci_quality_retention_bundle_ids_are_unique() {
+    let fixture = load_fixture();
+    let mut seen = BTreeSet::new();
+    for bundle in &fixture.retention_bundles {
+        assert!(
+            seen.insert(&bundle.bundle_id),
+            "duplicate bundle_id: {}",
+            bundle.bundle_id
+        );
+    }
+}
+
+#[test]
+fn parser_ci_quality_replay_scenario_ids_are_unique() {
+    let fixture = load_fixture();
+    let mut seen = BTreeSet::new();
+    for scenario in &fixture.replay_scenarios {
+        assert!(
+            seen.insert(&scenario.scenario_id),
+            "duplicate scenario_id: {}",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn parser_ci_quality_structured_events_have_schema_version() {
+    let fixture = load_fixture();
+    let flakes = classify_flakes(&fixture);
+    let gate = evaluate_gate(&fixture, &flakes);
+    let events = emit_structured_events(&flakes, &gate);
+    for event in &events {
+        assert_eq!(
+            event["schema_version"],
+            "franken-engine.parser-log-event.v1"
+        );
+        assert_eq!(event["component"], "parser_ci_quality_gates");
+    }
+}
+
+#[test]
+fn parser_ci_quality_deterministic_double_fixture_parse() {
+    let a = load_fixture();
+    let b = load_fixture();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn parser_ci_quality_fixture_has_nonempty_schema_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.trim().is_empty());
+}
+
+#[test]
+fn parser_ci_quality_fixture_has_nonempty_gate_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.gate_version.trim().is_empty());
+}
+
+#[test]
+fn parser_ci_quality_expected_flakes_have_nonempty_case_ids() {
+    let fixture = load_fixture();
+    for flake in &fixture.expected_flakes {
+        assert!(!flake.case_id.trim().is_empty());
+    }
+}

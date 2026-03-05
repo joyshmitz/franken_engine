@@ -302,3 +302,107 @@ fn rgc_059_contract_and_vectors_files_exist_at_declared_paths() {
         assert!(full.exists(), "expected path to exist: {}", full.display());
     }
 }
+
+// ---------- parse_contract ----------
+
+#[test]
+fn parse_contract_schema_matches_constant() {
+    let contract = parse_contract();
+    assert_eq!(contract.schema_version, PACK_SCHEMA_VERSION);
+}
+
+// ---------- parse_vectors ----------
+
+#[test]
+fn parse_vectors_schema_matches_constant() {
+    let vectors = parse_vectors();
+    assert_eq!(vectors.schema_version, VECTORS_SCHEMA_VERSION);
+}
+
+// ---------- contract fields ----------
+
+#[test]
+fn contract_failure_scenarios_nonempty() {
+    let contract = parse_contract();
+    assert!(!contract.failure_scenarios.is_empty());
+}
+
+#[test]
+fn contract_failure_scenarios_have_unique_ids() {
+    let contract = parse_contract();
+    let ids: BTreeSet<&str> = contract.failure_scenarios.iter().map(|s| s.scenario_id.as_str()).collect();
+    assert_eq!(ids.len(), contract.failure_scenarios.len());
+}
+
+#[test]
+fn contract_operator_verification_nonempty() {
+    let contract = parse_contract();
+    assert!(!contract.operator_verification.is_empty());
+}
+
+// ---------- vectors fields ----------
+
+#[test]
+fn vectors_bead_id_matches_contract() {
+    let contract = parse_contract();
+    let vectors = parse_vectors();
+    assert_eq!(vectors.bead_id, contract.bead_id);
+}
+
+#[test]
+fn vectors_have_unique_scenario_ids() {
+    let vectors = parse_vectors();
+    let ids: BTreeSet<&str> = vectors.vectors.iter().map(|v| v.scenario_id.as_str()).collect();
+    assert_eq!(ids.len(), vectors.vectors.len());
+}
+
+#[test]
+fn vectors_have_unique_seeds() {
+    let vectors = parse_vectors();
+    let seeds: BTreeSet<u64> = vectors.vectors.iter().map(|v| v.deterministic_seed).collect();
+    assert_eq!(seeds.len(), vectors.vectors.len());
+}
+
+#[test]
+fn contract_deterministic_double_parse() {
+    let a = parse_contract();
+    let b = parse_contract();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn vectors_deterministic_double_parse() {
+    let a = parse_vectors();
+    let b = parse_vectors();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn contract_failure_scenario_error_codes_are_nonempty() {
+    let contract = parse_contract();
+    for scenario in &contract.failure_scenarios {
+        assert!(
+            !scenario.expected_error_code.trim().is_empty(),
+            "scenario {} has empty error_code",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn contract_has_nonempty_bead_id() {
+    let contract = parse_contract();
+    assert!(!contract.bead_id.trim().is_empty());
+}
+
+#[test]
+fn contract_has_nonempty_policy_id() {
+    let contract = parse_contract();
+    assert!(!contract.policy_id.trim().is_empty());
+}
+
+#[test]
+fn vectors_have_nonempty_schema_version() {
+    let vectors = parse_vectors();
+    assert!(!vectors.schema_version.trim().is_empty());
+}

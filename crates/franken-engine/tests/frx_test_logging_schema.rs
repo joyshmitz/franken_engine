@@ -291,3 +291,136 @@ fn frx_20_4_validation_report_passes_on_consistent_cross_lane_events() {
     assert_eq!(report.outcome, "pass");
     assert_eq!(report.error_code, "none");
 }
+
+// ---------- baseline_event helper ----------
+
+#[test]
+fn baseline_event_sets_correct_fields() {
+    let event = baseline_event();
+    assert_eq!(event.schema_version, TEST_LOG_EVENT_SCHEMA_VERSION);
+    assert_eq!(event.lane, TestLane::Runtime);
+    assert_eq!(event.outcome, "pass");
+    assert_eq!(event.error_code, "none");
+    assert!(event.failure_taxonomy.is_none());
+    assert!(event.seed > 0);
+}
+
+// ---------- TestLane ----------
+
+#[test]
+fn test_lane_serde_roundtrip() {
+    for lane in [TestLane::Runtime, TestLane::Compiler, TestLane::Router] {
+        let json = serde_json::to_string(&lane).expect("serialize");
+        let recovered: TestLane = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, lane);
+    }
+}
+
+// ---------- FailureTaxonomy ----------
+
+#[test]
+fn failure_taxonomy_serde_roundtrip() {
+    let taxonomy = FailureTaxonomy::SchemaDrift;
+    let json = serde_json::to_string(&taxonomy).expect("serialize");
+    let recovered: FailureTaxonomy = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, taxonomy);
+}
+
+// ---------- TestLogEvent ----------
+
+#[test]
+fn test_log_event_serde_roundtrip() {
+    let event = baseline_event();
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: TestLogEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.trace_id, "trace-frx-20-4");
+    assert_eq!(recovered.lane, TestLane::Runtime);
+}
+
+#[test]
+fn test_log_event_correlation_key_matches_trace() {
+    let event = baseline_event();
+    let key = event.correlation_key();
+    assert!(key.contains("trace-frx-20-4"));
+}
+
+// ---------- TestLoggingSchemaSpec ----------
+
+#[test]
+fn schema_spec_default_has_required_fields() {
+    let spec = TestLoggingSchemaSpec::default();
+    assert!(!spec.required_fields.is_empty());
+    assert!(spec.required_fields.contains(&"trace_id".to_string()));
+    assert!(spec.required_fields.contains(&"outcome".to_string()));
+}
+
+#[test]
+fn schema_spec_default_has_correlation_ids() {
+    let spec = TestLoggingSchemaSpec::default();
+    assert!(!spec.required_correlation_ids.is_empty());
+}
+
+// ---------- validate_events ----------
+
+#[test]
+fn validate_events_single_valid_event_passes() {
+    let event = baseline_event();
+    let report = validate_events(&[event]);
+    assert!(report.valid);
+    assert_eq!(report.outcome, "pass");
+}
+
+#[test]
+fn validate_events_empty_trace_id_fails() {
+    let mut event = baseline_event();
+    event.trace_id.clear();
+    let report = validate_events(&[event]);
+    assert!(!report.valid);
+    assert_eq!(report.outcome, "fail");
+}
+
+// ---------- schema version constants ----------
+
+#[test]
+fn schema_version_constants_are_nonempty() {
+    assert!(!TEST_LOG_EVENT_SCHEMA_VERSION.is_empty());
+    assert!(!TEST_LOGGING_CONTRACT_SCHEMA_VERSION.is_empty());
+    assert!(!TEST_LOGGING_FAILURE_CODE.is_empty());
+}
+
+// ---------- validation report determinism ----------
+
+#[test]
+fn validation_report_is_deterministic() {
+    let events = vec![baseline_event()];
+    let a = validate_events(&events);
+    let b = validate_events(&events);
+    assert_eq!(a.valid, b.valid);
+    assert_eq!(a.outcome, b.outcome);
+    assert_eq!(a.failures.len(), b.failures.len());
+}
+
+#[test]
+fn test_lane_all_variants_serialize() {
+    for lane in [TestLane::Runtime, TestLane::Compiler, TestLane::Router] {
+        let json = serde_json::to_string(&lane).expect("serialize");
+        assert!(!json.is_empty());
+    }
+}
+
+#[test]
+fn failure_taxonomy_all_variants_roundtrip() {
+    for taxonomy in [FailureTaxonomy::SchemaDrift, FailureTaxonomy::DeterminismDrift, FailureTaxonomy::InvariantViolation, FailureTaxonomy::Timeout, FailureTaxonomy::ResourceBudget, FailureTaxonomy::Unknown] {
+        let json = serde_json::to_string(&taxonomy).expect("serialize");
+        let recovered: FailureTaxonomy = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, taxonomy);
+    }
+}
+
+#[test]
+fn validate_events_empty_list_returns_report() {
+    let report = validate_events(&[]);
+    // Empty list may fail (no events) or pass depending on implementation
+    // Just verify a report is returned with a valid outcome string
+    assert!(!report.outcome.is_empty());
+}

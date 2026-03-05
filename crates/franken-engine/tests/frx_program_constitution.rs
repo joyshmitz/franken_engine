@@ -187,3 +187,141 @@ fn frx_freeze_manifest_and_lane_charters_reference_program_constitution() {
         "adoption/release lane charter must reference program constitution"
     );
 }
+
+// ---------- repo_root ----------
+
+#[test]
+fn repo_root_exists() {
+    assert!(repo_root().exists());
+}
+
+// ---------- doc content ----------
+
+#[test]
+fn constitution_doc_is_nonempty() {
+    let path = repo_root().join("docs/FRX_PROGRAM_CONSTITUTION_V1.md");
+    let doc = fs::read_to_string(&path).expect("read constitution doc");
+    assert!(!doc.is_empty());
+}
+
+#[test]
+fn constitution_doc_references_invariants() {
+    let path = repo_root().join("docs/FRX_PROGRAM_CONSTITUTION_V1.md");
+    let doc = fs::read_to_string(&path).expect("read constitution doc");
+    assert!(doc.contains("FRX-CI-001"));
+    assert!(doc.contains("FRX-CI-005"));
+}
+
+// ---------- objective function JSON ----------
+
+#[test]
+fn objective_function_json_has_decision_model() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["decision_model"].is_object());
+}
+
+#[test]
+fn objective_function_json_is_deterministic() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let v1: Value = serde_json::from_str(&raw).expect("parse first");
+    let v2: Value = serde_json::from_str(&raw).expect("parse second");
+    assert_eq!(v1, v2);
+}
+
+// ---------- freeze manifest ----------
+
+#[test]
+fn freeze_manifest_has_schema_version() {
+    let path = repo_root().join("docs/FRX_C0_FREEZE_MANIFEST_V1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["schema_version"].is_string());
+}
+
+#[test]
+fn freeze_manifest_artifacts_are_nonempty() {
+    let path = repo_root().join("docs/FRX_C0_FREEZE_MANIFEST_V1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let artifacts = value["artifacts"].as_object().expect("artifacts object");
+    assert!(!artifacts.is_empty());
+}
+
+#[test]
+fn objective_function_has_objective_dimensions() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let dims = value["objective"]["dimensions"].as_array().expect("dimensions array");
+    assert!(!dims.is_empty());
+}
+
+#[test]
+fn objective_function_has_constitution_ref() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let cr = value["constitution_ref"].as_str().expect("constitution_ref");
+    assert!(!cr.is_empty());
+}
+
+#[test]
+fn constitution_doc_mentions_safe_mode() {
+    let path = repo_root().join("docs/FRX_PROGRAM_CONSTITUTION_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.contains("safe mode"));
+}
+
+#[test]
+fn objective_function_has_schema_version() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let sv = value["schema_version"].as_str().expect("schema_version must be string");
+    assert!(!sv.trim().is_empty());
+}
+
+#[test]
+fn freeze_manifest_json_is_deterministic() {
+    let path = repo_root().join("docs/FRX_C0_FREEZE_MANIFEST_V1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let v1: Value = serde_json::from_str(&raw).expect("parse first");
+    let v2: Value = serde_json::from_str(&raw).expect("parse second");
+    assert_eq!(v1, v2);
+}
+
+#[test]
+fn constitution_doc_mentions_deterministic() {
+    let path = repo_root().join("docs/FRX_PROGRAM_CONSTITUTION_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.to_ascii_lowercase().contains("deterministic"));
+}
+
+#[test]
+fn objective_function_has_generated_at_utc() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let ts = value["generated_at_utc"].as_str().expect("generated_at_utc");
+    assert!(ts.ends_with('Z'));
+}
+
+#[test]
+fn objective_function_has_testable_invariants() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let invariants = value["testable_invariants"].as_array().expect("testable_invariants array");
+    assert!(!invariants.is_empty());
+}
+
+#[test]
+fn objective_function_has_primary_bead() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["primary_bead"].as_str().is_some_and(|s| !s.is_empty()));
+}

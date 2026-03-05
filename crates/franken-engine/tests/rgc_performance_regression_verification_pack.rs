@@ -440,3 +440,172 @@ fn rgc_060_regression_gate_blocks_integrity_failures_before_publication() {
         "missing baseline must block publication"
     );
 }
+
+#[test]
+fn rgc_060_regression_millionths_zero_for_improvement() {
+    assert_eq!(regression_millionths(100_000, 90_000), 0);
+    assert_eq!(regression_millionths(100_000, 100_000), 0);
+}
+
+#[test]
+fn rgc_060_regression_millionths_zero_baseline() {
+    assert_eq!(regression_millionths(0, 100_000), 0);
+}
+
+#[test]
+fn rgc_060_regression_millionths_correct_computation() {
+    // 10% regression: (110_000 - 100_000) / 100_000 = 0.1 = 100_000 millionths
+    assert_eq!(regression_millionths(100_000, 110_000), 100_000);
+}
+
+#[test]
+fn rgc_060_regression_gate_blocks_missing_metadata_hash() {
+    let contract = parse_contract();
+    let observations = vec![BenchmarkObservation {
+        workload_id: "missing_hash_test".to_string(),
+        baseline_ns: 100_000,
+        observed_ns: 101_000,
+        p_value_millionths: 10_000,
+        profiler_receipt_id: Some("receipt-ok".to_string()),
+        benchmark_metadata_hash: String::new(),
+    }];
+    let decision = evaluate_regression_gate(&observations, &contract.regression_thresholds);
+    assert_eq!(decision.outcome, "hold");
+    assert!(decision
+        .findings
+        .iter()
+        .any(|f| f.error_code == "FE-RGC-060-INTEGRITY-0004"));
+}
+
+#[test]
+fn rgc_060_regression_gate_blocks_high_p_value() {
+    let contract = parse_contract();
+    let observations = vec![BenchmarkObservation {
+        workload_id: "high_p_value_test".to_string(),
+        baseline_ns: 100_000,
+        observed_ns: 130_000,
+        p_value_millionths: 999_999,
+        profiler_receipt_id: Some("receipt-ok".to_string()),
+        benchmark_metadata_hash: "sha256:abc".to_string(),
+    }];
+    let decision = evaluate_regression_gate(&observations, &contract.regression_thresholds);
+    assert_eq!(decision.outcome, "hold");
+    assert!(decision
+        .findings
+        .iter()
+        .any(|f| f.error_code == "FE-RGC-060-SIGNIFICANCE-0005"));
+}
+
+#[test]
+fn rgc_060_regression_gate_empty_observations_promotes() {
+    let contract = parse_contract();
+    let decision = evaluate_regression_gate(&[], &contract.regression_thresholds);
+    assert_eq!(decision.outcome, "promote");
+    assert!(decision.culprits.is_empty());
+    assert!(decision.findings.is_empty());
+}
+
+#[test]
+fn rgc_060_regression_gate_warning_level_does_not_block() {
+    let contract = parse_contract();
+    // warning threshold is lower than fail — find a regression between them
+    let warning = contract.regression_thresholds.warning_millionths;
+    let fail = contract.regression_thresholds.fail_millionths;
+    assert!(warning < fail, "warning must be below fail threshold");
+    let midpoint = (warning + fail) / 2;
+    // Engineer a regression exactly at midpoint: observed = baseline * (1 + midpoint/1_000_000)
+    let baseline_ns = 1_000_000u64;
+    let observed_ns = baseline_ns + baseline_ns * midpoint as u64 / 1_000_000;
+    let observations = vec![BenchmarkObservation {
+        workload_id: "warning_only".to_string(),
+        baseline_ns,
+        observed_ns,
+        p_value_millionths: 1_000,
+        profiler_receipt_id: Some("receipt-ok".to_string()),
+        benchmark_metadata_hash: "sha256:abc".to_string(),
+    }];
+    let decision = evaluate_regression_gate(&observations, &contract.regression_thresholds);
+    assert_eq!(decision.outcome, "promote");
+    // should have a warning finding but no culprits
+    assert!(decision.culprits.is_empty());
+    assert!(decision
+        .findings
+        .iter()
+        .any(|f| f.error_code == "WARN-RGC-060-REGRESSION-0001"));
+}
+
+#[test]
+fn rgc_060_failure_scenarios_have_unique_ids() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for scenario in &contract.failure_scenarios {
+        assert!(
+            seen.insert(&scenario.scenario_id),
+            "duplicate scenario_id: {}",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn rgc_060_deterministic_double_parse() {
+    let a = parse_contract();
+    let b = parse_contract();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn rgc_060_doc_file_exists_and_is_nonempty() {
+    let path = repo_root().join("docs/RGC_PERFORMANCE_REGRESSION_VERIFICATION_PACK_V1.md");
+    let content = read_to_string(&path);
+    assert!(!content.is_empty());
+}
+
+// ---------- operator verification has JSON validation ----------
+
+#[test]
+fn rgc_060_operator_verification_includes_json_validation() {
+    let contract = parse_contract();
+    assert!(
+        contract
+            .operator_verification
+            .iter()
+            .any(|cmd| cmd.contains("jq empty")),
+        "operator verification must include JSON validation"
+    );
+}
+
+// ---------- sample_observations workload_ids unique ----------
+
+#[test]
+fn rgc_060_sample_observations_have_unique_workload_ids() {
+    let obs = sample_observations();
+    let mut seen = BTreeSet::new();
+    for o in &obs {
+        assert!(
+            seen.insert(&o.workload_id),
+            "duplicate workload_id: {}",
+            o.workload_id
+        );
+    }
+}
+
+// ---------- gate runner fields nonempty ----------
+
+#[test]
+fn rgc_060_gate_runner_fields_are_nonempty() {
+    let contract = parse_contract();
+    assert!(!contract.gate_runner.script.trim().is_empty());
+    assert!(!contract.gate_runner.replay_wrapper.trim().is_empty());
+    assert!(!contract.gate_runner.strict_mode.trim().is_empty());
+    assert!(!contract.gate_runner.manifest_schema_version.trim().is_empty());
+}
+
+// ---------- regression_millionths saturation ----------
+
+#[test]
+fn rgc_060_regression_millionths_large_values_do_not_overflow() {
+    // Very large regression should saturate, not overflow
+    let result = regression_millionths(1, u64::MAX / 2);
+    assert!(result > 0);
+}

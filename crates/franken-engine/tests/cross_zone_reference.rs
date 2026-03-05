@@ -248,3 +248,94 @@ fn checker_events_are_recorded() {
     let event = &checker.events()[0];
     assert_eq!(event.trace_id, "trace-event-check");
 }
+
+#[test]
+fn zone_hierarchy_deterministic_double_create() {
+    let a = ZoneHierarchy::standard("test-maintainer", 1).expect("hierarchy");
+    let b = ZoneHierarchy::standard("test-maintainer", 1).expect("hierarchy");
+    let json_a = serde_json::to_string(&a).expect("serialize a");
+    let json_b = serde_json::to_string(&b).expect("serialize b");
+    assert_eq!(json_a, json_b);
+}
+
+#[test]
+fn multiple_provenance_allowances_do_not_interfere() {
+    let hierarchy = ZoneHierarchy::standard("test-maintainer", 1).expect("hierarchy");
+    let mut checker = CrossZoneReferenceChecker::new();
+    checker.allow_provenance("community", "team");
+    checker.allow_provenance("team", "private");
+
+    // First allowance should still work
+    hierarchy
+        .validate_cross_zone_reference(
+            &mut checker,
+            CrossZoneReferenceRequest::new(
+                "community",
+                "team",
+                ReferenceType::Provenance,
+                "trace-multi-1",
+            ),
+        )
+        .expect("community->team provenance should succeed");
+
+    // Second allowance should also work
+    hierarchy
+        .validate_cross_zone_reference(
+            &mut checker,
+            CrossZoneReferenceRequest::new(
+                "team",
+                "private",
+                ReferenceType::Provenance,
+                "trace-multi-2",
+            ),
+        )
+        .expect("team->private provenance should succeed");
+
+    assert!(checker.events().len() >= 2);
+}
+
+#[test]
+fn capset_produces_correct_size() {
+    let set = capset(&[RuntimeCapability::VmDispatch, RuntimeCapability::NetworkEgress]);
+    assert_eq!(set.len(), 2);
+    assert!(set.contains(&RuntimeCapability::VmDispatch));
+    assert!(set.contains(&RuntimeCapability::NetworkEgress));
+}
+
+#[test]
+fn checker_starts_with_no_events() {
+    let checker = CrossZoneReferenceChecker::new();
+    assert!(checker.events().is_empty());
+}
+
+#[test]
+fn cross_zone_reference_request_populates_all_fields() {
+    let req = CrossZoneReferenceRequest::new(
+        "community",
+        "team",
+        ReferenceType::Provenance,
+        "trace-populate",
+    );
+    assert_eq!(req.source_zone, "community");
+    assert_eq!(req.target_zone, "team");
+    assert_eq!(req.reference_type, ReferenceType::Provenance);
+    assert_eq!(req.trace_id, "trace-populate");
+}
+
+#[test]
+fn authority_reference_within_same_zone_is_allowed() {
+    let hierarchy = ZoneHierarchy::standard("test-maintainer", 1).expect("hierarchy");
+    let mut checker = CrossZoneReferenceChecker::new();
+    // Same-zone authority reference should be allowed (not cross-zone)
+    hierarchy
+        .validate_cross_zone_reference(
+            &mut checker,
+            CrossZoneReferenceRequest::new(
+                "team",
+                "team",
+                ReferenceType::Authority,
+                "trace-same-zone",
+            ),
+        )
+        .expect("same-zone authority reference should succeed");
+}

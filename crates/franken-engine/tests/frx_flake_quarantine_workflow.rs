@@ -403,3 +403,183 @@ fn frx_20_5_quarantine_gate_confidence_and_events_are_complete() {
         "structured event contract should pass for replay commands and required linkage fields: {event_violations:?}"
     );
 }
+
+// ---------- constants ----------
+
+#[test]
+fn flake_workflow_constants_are_nonempty() {
+    assert!(!FLAKE_WORKFLOW_COMPONENT.is_empty());
+    assert!(!FLAKE_WORKFLOW_CONTRACT_SCHEMA_VERSION.is_empty());
+    assert!(!FLAKE_WORKFLOW_EVENT_SCHEMA_VERSION.is_empty());
+    assert!(!FLAKE_WORKFLOW_FAILURE_CODE.is_empty());
+}
+
+// ---------- sample_runs ----------
+
+#[test]
+fn sample_runs_has_four_records() {
+    assert_eq!(sample_runs().len(), 4);
+}
+
+#[test]
+fn sample_runs_contains_pass_and_fail() {
+    let runs = sample_runs();
+    assert!(runs.iter().any(|r| r.outcome == "pass"));
+    assert!(runs.iter().any(|r| r.outcome == "fail"));
+}
+
+// ---------- classify_flakes ----------
+
+#[test]
+fn classify_flakes_produces_one_flake_from_sample_runs() {
+    let policy = FlakePolicy {
+        warning_flake_threshold_millionths: 100_000,
+        high_flake_threshold_millionths: 500_000,
+        quarantine_ttl_epochs: 3,
+        max_flake_burden_millionths: 200_000,
+        trend_stability_epsilon_millionths: 10_000,
+    };
+    let flakes = classify_flakes(&sample_runs(), &policy);
+    assert_eq!(flakes.len(), 1);
+}
+
+// ---------- FlakeRunRecord ----------
+
+#[test]
+fn flake_run_record_serde_roundtrip() {
+    let record = &sample_runs()[0];
+    let json = serde_json::to_string(record).expect("serialize");
+    let recovered: FlakeRunRecord = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.run_id, record.run_id);
+    assert_eq!(recovered.scenario_id, record.scenario_id);
+}
+
+// ---------- FlakePolicy ----------
+
+#[test]
+fn flake_policy_serde_roundtrip() {
+    let policy = FlakePolicy {
+        warning_flake_threshold_millionths: 100_000,
+        high_flake_threshold_millionths: 500_000,
+        quarantine_ttl_epochs: 3,
+        max_flake_burden_millionths: 200_000,
+        trend_stability_epsilon_millionths: 10_000,
+    };
+    let json = serde_json::to_string(&policy).expect("serialize");
+    let recovered: FlakePolicy = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(
+        recovered.warning_flake_threshold_millionths,
+        policy.warning_flake_threshold_millionths
+    );
+}
+
+// ---------- build_quarantine_records ----------
+
+#[test]
+fn quarantine_records_require_owners() {
+    let policy = FlakePolicy {
+        warning_flake_threshold_millionths: 100_000,
+        high_flake_threshold_millionths: 500_000,
+        quarantine_ttl_epochs: 3,
+        max_flake_burden_millionths: 200_000,
+        trend_stability_epsilon_millionths: 10_000,
+    };
+    let flakes = classify_flakes(&sample_runs(), &policy);
+    let empty_owners = BTreeMap::new();
+    let quarantines = build_quarantine_records(&flakes, &empty_owners, 12, &policy);
+    let violations = validate_quarantine_records(&quarantines, 12);
+    assert!(
+        violations.iter().any(|v| v.contains("owner")),
+        "missing owners should produce violations"
+    );
+}
+
+// ---------- evaluate_gate_confidence ----------
+
+#[test]
+fn gate_confidence_has_per_epoch_burden() {
+    let policy = FlakePolicy {
+        warning_flake_threshold_millionths: 100_000,
+        high_flake_threshold_millionths: 500_000,
+        quarantine_ttl_epochs: 3,
+        max_flake_burden_millionths: 200_000,
+        trend_stability_epsilon_millionths: 10_000,
+    };
+    let flakes = classify_flakes(&sample_runs(), &policy);
+    let report = evaluate_gate_confidence(&sample_runs(), &flakes, &policy);
+    assert!(!report.per_epoch_burden.is_empty());
+}
+
+// ---------- validate_reproducer_replay_commands ----------
+
+#[test]
+fn valid_reproducers_pass_validation() {
+    let policy = FlakePolicy {
+        warning_flake_threshold_millionths: 100_000,
+        high_flake_threshold_millionths: 500_000,
+        quarantine_ttl_epochs: 3,
+        max_flake_burden_millionths: 200_000,
+        trend_stability_epsilon_millionths: 10_000,
+    };
+    let flakes = classify_flakes(&sample_runs(), &policy);
+    let violations = validate_reproducer_replay_commands(&flakes);
+    assert!(violations.is_empty());
+}
+
+#[test]
+fn sample_runs_run_ids_are_unique() {
+    let runs = sample_runs();
+    let mut seen = BTreeSet::new();
+    for run in &runs {
+        assert!(
+            seen.insert(&run.run_id),
+            "duplicate run_id: {}",
+            run.run_id
+        );
+    }
+}
+
+#[test]
+fn classify_flakes_is_deterministic_across_invocations() {
+    let policy = FlakePolicy {
+        warning_flake_threshold_millionths: 100_000,
+        high_flake_threshold_millionths: 500_000,
+        quarantine_ttl_epochs: 3,
+        max_flake_burden_millionths: 200_000,
+        trend_stability_epsilon_millionths: 10_000,
+    };
+    let a = classify_flakes(&sample_runs(), &policy);
+    let b = classify_flakes(&sample_runs(), &policy);
+    assert_eq!(a, b);
+}
+
+#[test]
+fn contract_operator_verification_commands_are_nonempty() {
+    let path = repo_root().join("docs/frx_flake_quarantine_workflow_v1.json");
+    let contract: FlakeWorkflowContract = load_json(&path);
+    assert!(!contract.operator_verification.is_empty());
+    for cmd in &contract.operator_verification {
+        assert!(!cmd.trim().is_empty(), "operator verification command must not be empty");
+    }
+}
+
+#[test]
+fn contract_has_nonempty_schema_version() {
+    let path = repo_root().join("docs/frx_flake_quarantine_workflow_v1.json");
+    let contract: FlakeWorkflowContract = load_json(&path);
+    assert!(!contract.schema_version.trim().is_empty());
+}
+
+#[test]
+fn contract_has_nonempty_bead_id() {
+    let path = repo_root().join("docs/frx_flake_quarantine_workflow_v1.json");
+    let contract: FlakeWorkflowContract = load_json(&path);
+    assert!(!contract.bead_id.trim().is_empty());
+}
+
+#[test]
+fn contract_has_nonempty_generated_by() {
+    let path = repo_root().join("docs/frx_flake_quarantine_workflow_v1.json");
+    let contract: FlakeWorkflowContract = load_json(&path);
+    assert!(!contract.generated_by.trim().is_empty());
+}

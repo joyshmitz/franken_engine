@@ -481,3 +481,162 @@ fn structured_log_contract_and_replay_drills_are_complete() {
         }
     }
 }
+
+// ---------- load_fixture helper ----------
+
+#[test]
+fn load_fixture_returns_valid_fixture() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.is_empty());
+    assert!(!fixture.history.is_empty());
+    assert!(!fixture.metric_definitions.is_empty());
+}
+
+// ---------- load_doc helper ----------
+
+#[test]
+fn load_doc_returns_nonempty_string() {
+    let doc = load_doc();
+    assert!(!doc.is_empty());
+    assert!(doc.contains("Bisector"));
+}
+
+// ---------- metric_score_millionths ----------
+
+#[test]
+fn metric_score_higher_is_better_above_baseline() {
+    let def = MetricDefinition {
+        metric_id: "x".to_string(),
+        direction: MetricDirection::HigherIsBetter,
+        weight_millionths: 500_000,
+    };
+    // candidate 200, baseline 100 → 2_000_000
+    let score = metric_score_millionths(&def, 100, 200);
+    assert_eq!(score, 2_000_000);
+}
+
+#[test]
+fn metric_score_lower_is_better_below_baseline() {
+    let def = MetricDefinition {
+        metric_id: "y".to_string(),
+        direction: MetricDirection::LowerIsBetter,
+        weight_millionths: 500_000,
+    };
+    // baseline 200, current 100 → 2_000_000
+    let score = metric_score_millionths(&def, 200, 100);
+    assert_eq!(score, 2_000_000);
+}
+
+#[test]
+fn metric_score_equal_values_returns_million() {
+    let def = MetricDefinition {
+        metric_id: "z".to_string(),
+        direction: MetricDirection::HigherIsBetter,
+        weight_millionths: 250_000,
+    };
+    let score = metric_score_millionths(&def, 100, 100);
+    assert_eq!(score, 1_000_000);
+}
+
+// ---------- is_regression ----------
+
+#[test]
+fn is_regression_below_threshold() {
+    assert!(is_regression(-100_001, 100_000));
+    assert!(!is_regression(-100_000, 100_000));
+    assert!(!is_regression(0, 100_000));
+    assert!(!is_regression(500_000, 100_000));
+}
+
+// ---------- build_commit_scores ----------
+
+#[test]
+fn build_commit_scores_baseline_delta_is_zero() {
+    let fixture = load_fixture();
+    let scores = build_commit_scores(&fixture);
+    let base_idx = baseline_index(&fixture);
+    assert_eq!(scores[base_idx].delta_from_baseline_millionths, 0);
+}
+
+#[test]
+fn build_commit_scores_is_deterministic() {
+    let fixture = load_fixture();
+    let a = build_commit_scores(&fixture);
+    let b = build_commit_scores(&fixture);
+    assert_eq!(a, b);
+}
+
+// ---------- run_bisect ----------
+
+#[test]
+fn run_bisect_is_deterministic() {
+    let fixture = load_fixture();
+    let a = run_bisect(&fixture);
+    let b = run_bisect(&fixture);
+    assert_eq!(a, b);
+}
+
+// ---------- top_improvement_commit / worst_regression_commit ----------
+
+#[test]
+fn top_and_worst_commits_are_different() {
+    let fixture = load_fixture();
+    let scores = build_commit_scores(&fixture);
+    let top = top_improvement_commit(&scores);
+    let worst = worst_regression_commit(&scores);
+    // Top and worst should differ when there are both improvements and regressions
+    assert_ne!(top, worst);
+}
+
+// ---------- regression_alert_commits ----------
+
+#[test]
+fn regression_alert_commits_only_contains_regressions() {
+    let fixture = load_fixture();
+    let scores = build_commit_scores(&fixture);
+    let alerts = regression_alert_commits(&scores);
+    for commit in &alerts {
+        let score = scores.iter().find(|s| &s.commit == commit).expect("score");
+        assert!(score.regression);
+    }
+}
+
+// ---------- emit_structured_events ----------
+
+#[test]
+fn emit_structured_events_includes_bisect_event() {
+    let fixture = load_fixture();
+    let scores = build_commit_scores(&fixture);
+    let bisect = run_bisect(&fixture);
+    let events = emit_structured_events(&fixture, &scores, &bisect);
+    // Last event is bisect_completed
+    let last = events.last().expect("at least one event");
+    assert_eq!(last["event"], "bisect_completed");
+    assert_eq!(last["component"], "parser_regression_bisector_scoreboard");
+}
+
+#[test]
+fn fixture_metric_definitions_have_unique_ids() {
+    let fixture = load_fixture();
+    let mut ids = BTreeSet::new();
+    for metric in &fixture.metric_definitions {
+        assert!(ids.insert(&metric.metric_id), "duplicate metric id: {}", metric.metric_id);
+    }
+}
+
+#[test]
+fn fixture_history_commits_are_nonempty() {
+    let fixture = load_fixture();
+    for entry in &fixture.history {
+        assert!(!entry.commit.trim().is_empty(), "history commit must not be empty");
+    }
+}
+
+#[test]
+fn emit_structured_events_count_matches_scores_plus_one() {
+    let fixture = load_fixture();
+    let scores = build_commit_scores(&fixture);
+    let bisect = run_bisect(&fixture);
+    let events = emit_structured_events(&fixture, &scores, &bisect);
+    assert_eq!(events.len(), scores.len() + 1, "events = score rows + bisect event");
+}

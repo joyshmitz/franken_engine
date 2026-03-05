@@ -393,3 +393,132 @@ fn import_style_as_str_variants() {
     assert_eq!(ImportStyle::Import.as_str(), "import");
     assert_eq!(ImportStyle::Require.as_str(), "require");
 }
+
+// ---------- serde roundtrips ----------
+
+#[test]
+fn module_syntax_serde_roundtrip() {
+    for syntax in [ModuleSyntax::EsModule, ModuleSyntax::CommonJs] {
+        let json = serde_json::to_string(&syntax).expect("serialize");
+        let recovered: ModuleSyntax = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, syntax);
+    }
+}
+
+#[test]
+fn import_style_serde_roundtrip() {
+    for style in [ImportStyle::Import, ImportStyle::Require] {
+        let json = serde_json::to_string(&style).expect("serialize");
+        let recovered: ImportStyle = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, style);
+    }
+}
+
+#[test]
+fn module_source_kind_serde_roundtrip() {
+    use frankenengine_engine::module_resolver::ModuleSourceKind;
+    for kind in [
+        ModuleSourceKind::BuiltIn,
+        ModuleSourceKind::Workspace,
+        ModuleSourceKind::ExternalRegistry,
+    ] {
+        let json = serde_json::to_string(&kind).expect("serialize");
+        let recovered: ModuleSourceKind = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, kind);
+    }
+}
+
+#[test]
+fn resolution_error_code_serde_roundtrip() {
+    let codes = [
+        ResolutionErrorCode::EmptySpecifier,
+        ResolutionErrorCode::InvalidReferrer,
+        ResolutionErrorCode::UnsupportedSpecifier,
+        ResolutionErrorCode::ModuleNotFound,
+        ResolutionErrorCode::PolicyDenied,
+    ];
+    for code in &codes {
+        let json = serde_json::to_string(code).expect("serialize");
+        let recovered: ResolutionErrorCode = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(&recovered, code);
+    }
+}
+
+#[test]
+fn resolution_error_code_stable_codes_unique() {
+    let codes = [
+        ResolutionErrorCode::EmptySpecifier,
+        ResolutionErrorCode::InvalidReferrer,
+        ResolutionErrorCode::UnsupportedSpecifier,
+        ResolutionErrorCode::ModuleNotFound,
+        ResolutionErrorCode::PolicyDenied,
+    ];
+    let stable: BTreeSet<&str> = codes.iter().map(|c| c.stable_code()).collect();
+    assert_eq!(stable.len(), codes.len());
+}
+
+#[test]
+fn module_definition_serde_roundtrip() {
+    let def = ModuleDefinition::new(ModuleSyntax::EsModule, "export const x = 1;")
+        .with_dependency(ModuleDependency::new("./util", ImportStyle::Import));
+    let json = serde_json::to_string(&def).expect("serialize");
+    let recovered: ModuleDefinition = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.syntax, def.syntax);
+    assert_eq!(recovered.dependencies.len(), 1);
+}
+
+#[test]
+fn resolution_error_is_std_error() {
+    let resolver = DeterministicModuleResolver::new("/app");
+    let request = ModuleRequest::new("nonexistent", ImportStyle::Import);
+    let err = resolver
+        .resolve(&request, &context(), &AllowAllPolicy)
+        .expect_err("not found");
+    let dyn_err: &dyn std::error::Error = &err;
+    assert!(!dyn_err.to_string().is_empty());
+}
+
+#[test]
+fn registry_error_is_std_error() {
+    let mut resolver = DeterministicModuleResolver::new("/app");
+    let err = resolver
+        .register_builtin(
+            "",
+            ModuleDefinition::new(ModuleSyntax::EsModule, "x"),
+        )
+        .expect_err("empty key");
+    let dyn_err: &dyn std::error::Error = &err;
+    assert!(dyn_err.to_string().contains("empty"));
+}
+
+#[test]
+fn module_source_kind_as_str() {
+    use frankenengine_engine::module_resolver::ModuleSourceKind;
+    assert_eq!(ModuleSourceKind::BuiltIn.as_str(), "builtin");
+    assert_eq!(ModuleSourceKind::Workspace.as_str(), "workspace");
+    assert_eq!(ModuleSourceKind::ExternalRegistry.as_str(), "external_registry");
+}
+
+#[test]
+fn duplicate_workspace_registration_overwrites() {
+    let mut resolver = DeterministicModuleResolver::new("/app");
+    resolver
+        .register_workspace_module(
+            "/app/lib.mjs",
+            ModuleDefinition::new(ModuleSyntax::EsModule, "export const v1 = 1;"),
+        )
+        .unwrap();
+    resolver
+        .register_workspace_module(
+            "/app/lib.mjs",
+            ModuleDefinition::new(ModuleSyntax::EsModule, "export const v2 = 2;"),
+        )
+        .unwrap();
+
+    let request = ModuleRequest::new("/app/lib.mjs", ImportStyle::Import);
+    let outcome = resolver
+        .resolve(&request, &context(), &AllowAllPolicy)
+        .expect("should resolve latest");
+    // Should resolve successfully (last registration wins)
+    assert_eq!(outcome.module.canonical_specifier, "/app/lib.mjs");
+}

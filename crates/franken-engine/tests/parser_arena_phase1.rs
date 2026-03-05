@@ -217,3 +217,131 @@ fn corruption_injection_guards_fail_closed_deterministically() {
     assert!(matches!(expr_err, ArenaError::MissingExpression { .. }));
     assert!(matches!(span_err, ArenaError::MissingSpan { .. }));
 }
+
+// ---------- span helper ----------
+
+#[test]
+fn span_helper_sets_fields() {
+    let s = span(10, 20, 3, 5);
+    assert_eq!(s.start_offset, 10);
+    assert_eq!(s.end_offset, 20);
+    assert_eq!(s.start_line, 3);
+    assert_eq!(s.start_column, 5);
+}
+
+// ---------- fixture_tree ----------
+
+#[test]
+fn fixture_tree_has_three_statements() {
+    let tree = fixture_tree();
+    assert_eq!(tree.body.len(), 3);
+    assert_eq!(tree.goal, ParseGoal::Module);
+}
+
+#[test]
+fn fixture_tree_starts_with_import() {
+    let tree = fixture_tree();
+    assert!(matches!(tree.body[0], Statement::Import(_)));
+}
+
+#[test]
+fn fixture_tree_ends_with_export() {
+    let tree = fixture_tree();
+    assert!(matches!(tree.body[2], Statement::Export(_)));
+}
+
+// ---------- ArenaBudget ----------
+
+#[test]
+fn arena_budget_default_has_positive_limits() {
+    let budget = ArenaBudget::default();
+    assert!(budget.max_nodes > 0);
+    assert!(budget.max_expressions > 0);
+    assert!(budget.max_spans > 0);
+    assert!(budget.max_bytes > 0);
+}
+
+#[test]
+fn arena_budget_serde_roundtrip() {
+    let budget = ArenaBudget {
+        max_nodes: 100,
+        max_expressions: 50,
+        max_spans: 200,
+        max_bytes: 8192,
+    };
+    let json = serde_json::to_string(&budget).expect("serialize");
+    let recovered: ArenaBudget = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.max_nodes, 100);
+    assert_eq!(recovered.max_expressions, 50);
+}
+
+// ---------- ArenaBudgetKind ----------
+
+#[test]
+fn arena_budget_kind_serde_roundtrip() {
+    for kind in [
+        ArenaBudgetKind::Nodes,
+        ArenaBudgetKind::Expressions,
+        ArenaBudgetKind::Spans,
+        ArenaBudgetKind::Bytes,
+    ] {
+        let json = serde_json::to_string(&kind).expect("serialize");
+        let recovered: ArenaBudgetKind = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, kind);
+    }
+}
+
+// ---------- ArenaError ----------
+
+#[test]
+fn arena_error_display_is_nonempty() {
+    let err = ArenaError::BudgetExceeded {
+        kind: ArenaBudgetKind::Nodes,
+        limit: 10,
+        attempted: 11,
+    };
+    let msg = format!("{err}");
+    assert!(!msg.is_empty());
+}
+
+// ---------- HandleAuditKind ----------
+
+#[test]
+fn handle_audit_kind_serde_roundtrip() {
+    for kind in [
+        HandleAuditKind::Node,
+        HandleAuditKind::Expression,
+        HandleAuditKind::Span,
+    ] {
+        let json = serde_json::to_string(&kind).expect("serialize");
+        let recovered: HandleAuditKind = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, kind);
+    }
+}
+
+// ---------- NodeHandle ----------
+
+#[test]
+fn node_handle_from_parts_roundtrips() {
+    let handle = NodeHandle::from_parts(7, 3);
+    assert_eq!(handle.index(), 7);
+    assert_eq!(handle.generation(), 3);
+}
+
+// ---------- ParserArena ----------
+
+#[test]
+fn arena_bytes_used_is_positive_for_nonempty_tree() {
+    let tree = fixture_tree();
+    let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).expect("arena");
+    assert!(arena.bytes_used() > 0);
+}
+
+#[test]
+fn arena_to_syntax_tree_preserves_statement_count() {
+    let tree = fixture_tree();
+    let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).expect("arena");
+    let recovered = arena.to_syntax_tree().expect("recover");
+    assert_eq!(recovered.body.len(), tree.body.len());
+    assert_eq!(recovered.goal, tree.goal);
+}

@@ -233,3 +233,167 @@ fn rgc_702_pipeline_flags_regression_failure() {
         "expected workload evaluation log event"
     );
 }
+
+// ---------- parse_contract ----------
+
+#[test]
+fn contract_schema_version_is_stable() {
+    let contract = parse_contract();
+    assert_eq!(contract.schema_version, RGC_702_CONTRACT_SCHEMA_VERSION);
+}
+
+#[test]
+fn contract_bead_id_is_correct() {
+    let contract = parse_contract();
+    assert_eq!(contract.bead_id, "bd-1lsy.8.2");
+}
+
+// ---------- Rgc702Thresholds ----------
+
+#[test]
+fn contract_thresholds_warning_less_than_fail() {
+    let contract = parse_contract();
+    assert!(
+        contract.thresholds.fail_regression_millionths
+            >= contract.thresholds.warning_regression_millionths
+    );
+}
+
+#[test]
+fn contract_thresholds_p_value_within_range() {
+    let contract = parse_contract();
+    assert!(contract.thresholds.max_p_value_millionths <= 1_000_000);
+}
+
+// ---------- Rgc702FailureScenario ----------
+
+#[test]
+fn failure_scenarios_have_unique_ids() {
+    let contract = parse_contract();
+    let mut ids = std::collections::BTreeSet::new();
+    for scenario in &contract.failure_scenarios {
+        assert!(
+            ids.insert(scenario.scenario_id.clone()),
+            "duplicate failure scenario id"
+        );
+    }
+}
+
+#[test]
+fn failure_scenarios_all_have_error_codes() {
+    let contract = parse_contract();
+    for scenario in &contract.failure_scenarios {
+        assert!(scenario.expected_error_code.starts_with("FE-RGC-702"));
+    }
+}
+
+// ---------- sample_workload ----------
+
+#[test]
+fn sample_workload_has_correct_id() {
+    let workload = sample_workload();
+    assert_eq!(workload.workload_id, "router_hot_path");
+}
+
+#[test]
+fn sample_workload_serde_roundtrip() {
+    let workload = sample_workload();
+    let json = serde_json::to_string(&workload).expect("serialize");
+    let recovered: WorkloadSamples = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.workload_id, workload.workload_id);
+}
+
+// ---------- StatisticalValidationPolicy ----------
+
+#[test]
+fn statistical_validation_policy_default_has_thresholds() {
+    let policy = StatisticalValidationPolicy::default();
+    assert!(policy.thresholds.fail_regression_millionths > 0);
+    assert!(policy.thresholds.max_p_value_millionths > 0);
+}
+
+#[test]
+fn statistical_validation_policy_serde_roundtrip() {
+    let policy = StatisticalValidationPolicy::default();
+    let json = serde_json::to_string(&policy).expect("serialize");
+    let recovered: StatisticalValidationPolicy = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(
+        recovered.thresholds.fail_regression_millionths,
+        policy.thresholds.fail_regression_millionths
+    );
+}
+
+// ---------- evaluate_statistical_validation ----------
+
+#[test]
+fn pipeline_with_no_regression_allows_promotion() {
+    let mut policy = StatisticalValidationPolicy::default();
+    policy.warmup_drop_samples = 0;
+    policy.min_samples_after_filter = 5;
+    policy.outlier_policy.min_retained_samples = 5;
+
+    let input = StatisticalValidationInput::new(
+        "trace-rgc-702-pass",
+        "decision-rgc-702-pass",
+        "policy-rgc-statistical-validation-pipeline-v1",
+        vec![WorkloadSamples::new(
+            "stable_path",
+            "golden",
+            "sha256:stable",
+            vec![1000, 1001, 999, 1000, 1002, 998, 1000, 1001, 999],
+            vec![1000, 1001, 999, 1000, 1002, 998, 1000, 1001, 999],
+        )],
+    );
+
+    let report = evaluate_statistical_validation(&input, &policy);
+    assert!(report.promote_allowed);
+    assert!(report.failed_workloads.is_empty());
+}
+
+#[test]
+fn pipeline_evaluation_is_deterministic() {
+    let mut policy = StatisticalValidationPolicy::default();
+    policy.warmup_drop_samples = 0;
+    policy.min_samples_after_filter = 5;
+    policy.outlier_policy.min_retained_samples = 5;
+
+    let input = StatisticalValidationInput::new(
+        "trace-det",
+        "decision-det",
+        "policy-det",
+        vec![sample_workload()],
+    );
+
+    let left = evaluate_statistical_validation(&input, &policy);
+    let right = evaluate_statistical_validation(&input, &policy);
+    assert_eq!(
+        serde_json::to_string(&left).unwrap(),
+        serde_json::to_string(&right).unwrap()
+    );
+}
+
+// ---------- operator verification ----------
+
+#[test]
+fn operator_verification_includes_ci_command() {
+    let contract = parse_contract();
+    assert!(
+        contract
+            .operator_verification
+            .iter()
+            .any(|entry| entry.contains("run_rgc_statistical_validation_pipeline.sh ci")),
+    );
+}
+
+// ---------- required artifacts ----------
+
+#[test]
+fn required_artifacts_includes_manifest() {
+    let contract = parse_contract();
+    assert!(
+        contract
+            .required_artifacts
+            .iter()
+            .any(|a| a.contains("run_manifest")),
+    );
+}

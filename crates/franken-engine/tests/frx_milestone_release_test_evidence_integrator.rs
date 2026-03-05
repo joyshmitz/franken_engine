@@ -368,3 +368,177 @@ fn frx_20_6_release_checklist_binding_is_automatic_and_fail_closed() {
     assert_eq!(adversarial.status.as_str(), "fail");
     assert!(!adversarial.artifact_refs.is_empty());
 }
+
+// ---------- signed_artifact helper ----------
+
+#[test]
+fn signed_artifact_has_signed_status() {
+    let link = signed_artifact("test-prefix", 1_000);
+    assert_eq!(link.signature_status, SignatureStatus::Signed);
+    assert!(link.signer.is_some());
+    assert!(link.signature_ref.is_some());
+    assert_eq!(link.schema_major, 1);
+    assert!(link.artifact_id.contains("test-prefix"));
+}
+
+// ---------- baseline_signal helper ----------
+
+#[test]
+fn baseline_signal_sets_fields() {
+    let signal = baseline_signal(EvidenceSource::UnitDepthGate, 900_000, 5_000);
+    assert_eq!(signal.source, EvidenceSource::UnitDepthGate);
+    assert!(signal.passed);
+    assert_eq!(signal.score_millionths, 900_000);
+    assert_eq!(signal.schema_major, 1);
+    assert!(!signal.artifact_links.is_empty());
+}
+
+// ---------- baseline_input helper ----------
+
+#[test]
+fn baseline_input_covers_all_required_sources() {
+    let input = baseline_input(10_000);
+    let sources: BTreeSet<_> = input.signals.iter().map(|s| s.source).collect();
+    for required in EvidenceSource::REQUIRED {
+        assert!(
+            sources.contains(&required),
+            "missing required source: {:?}",
+            required
+        );
+    }
+}
+
+#[test]
+fn baseline_input_has_previous_summary() {
+    let input = baseline_input(10_000);
+    assert!(input.previous_summary.is_some());
+    assert_eq!(input.release_tag, "v0.9.0-rc2");
+}
+
+// ---------- EvidenceSource ----------
+
+#[test]
+fn evidence_source_required_is_nonempty() {
+    assert!(!EvidenceSource::REQUIRED.is_empty());
+}
+
+#[test]
+fn evidence_source_as_str_is_nonempty() {
+    for source in EvidenceSource::REQUIRED {
+        assert!(!source.as_str().is_empty());
+    }
+}
+
+#[test]
+fn evidence_source_serde_roundtrip() {
+    for source in EvidenceSource::REQUIRED {
+        let json = serde_json::to_string(&source).expect("serialize");
+        let recovered: EvidenceSource = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, source);
+    }
+}
+
+// ---------- SignatureStatus ----------
+
+#[test]
+fn signature_status_serde_roundtrip() {
+    for status in [
+        SignatureStatus::Signed,
+        SignatureStatus::Unsigned,
+        SignatureStatus::Invalid,
+    ] {
+        let json = serde_json::to_string(&status).expect("serialize");
+        let recovered: SignatureStatus = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, status);
+    }
+}
+
+// ---------- IntegratorPolicy ----------
+
+#[test]
+fn integrator_policy_default_has_thresholds() {
+    let policy = IntegratorPolicy::default();
+    let threshold = policy.threshold_for_cut_line(CutLine::C1);
+    assert!(threshold > 0);
+}
+
+#[test]
+fn integrator_policy_thresholds_increase_with_cut_line() {
+    let policy = IntegratorPolicy::default();
+    let c1 = policy.threshold_for_cut_line(CutLine::C1);
+    let c5 = policy.threshold_for_cut_line(CutLine::C5);
+    assert!(c5 >= c1);
+}
+
+// ---------- EvidenceArtifactLink ----------
+
+#[test]
+fn evidence_artifact_link_serde_roundtrip() {
+    let link = signed_artifact("serde-test", 2_000);
+    let json = serde_json::to_string(&link).expect("serialize");
+    let recovered: EvidenceArtifactLink = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.artifact_id, link.artifact_id);
+    assert_eq!(recovered.signature_status, SignatureStatus::Signed);
+}
+
+// ---------- EvidenceSignal ----------
+
+#[test]
+fn evidence_signal_serde_roundtrip() {
+    let signal = baseline_signal(EvidenceSource::EndToEndScenarioMatrix, 950_000, 3_000);
+    let json = serde_json::to_string(&signal).expect("serialize");
+    let recovered: EvidenceSignal = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.source, EvidenceSource::EndToEndScenarioMatrix);
+    assert_eq!(recovered.score_millionths, 950_000);
+}
+
+// ---------- MilestoneQualitySummary ----------
+
+#[test]
+fn milestone_quality_summary_serde_roundtrip() {
+    let summary = MilestoneQualitySummary {
+        cut_line: CutLine::C3,
+        aggregate_score_millionths: 900_000,
+        unit_depth_score_millionths: 910_000,
+        e2e_stability_score_millionths: 920_000,
+        logging_integrity_score_millionths: 930_000,
+        flake_resilience_score_millionths: 940_000,
+        artifact_integrity_score_millionths: 950_000,
+        delta_from_previous_millionths: BTreeMap::new(),
+    };
+    let json = serde_json::to_string(&summary).expect("serialize");
+    let recovered: MilestoneQualitySummary = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.aggregate_score_millionths, 900_000);
+}
+
+// ---------- TestEvidenceIntegratorInput ----------
+
+#[test]
+fn test_evidence_integrator_input_serde_roundtrip() {
+    let input = baseline_input(10_000);
+    let json = serde_json::to_string(&input).expect("serialize");
+    let recovered: TestEvidenceIntegratorInput =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.trace_id, "trace-frx-20-6");
+    assert_eq!(recovered.signals.len(), input.signals.len());
+}
+
+// ---------- integration decision determinism ----------
+
+#[test]
+fn integration_decision_is_deterministic() {
+    let input = baseline_input(10_000);
+    let policy = IntegratorPolicy::default();
+    let a = integrate_milestone_release_test_evidence(&input, &policy);
+    let b = integrate_milestone_release_test_evidence(&input, &policy);
+    assert_eq!(a, b);
+}
+
+// ---------- schema version constants ----------
+
+#[test]
+fn schema_version_constants_are_nonempty() {
+    assert!(!TEST_EVIDENCE_INTEGRATOR_CONTRACT_SCHEMA_VERSION.is_empty());
+    assert!(!TEST_EVIDENCE_INTEGRATOR_EVENT_SCHEMA_VERSION.is_empty());
+    assert!(!TEST_EVIDENCE_INTEGRATOR_FAILURE_CODE.is_empty());
+}

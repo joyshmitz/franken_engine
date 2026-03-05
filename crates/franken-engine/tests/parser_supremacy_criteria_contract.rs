@@ -446,3 +446,162 @@ fn parser_supremacy_gate_simulation_is_deterministic_and_log_complete() {
         );
     }
 }
+
+// ---------- load_fixture helper ----------
+
+#[test]
+fn load_fixture_returns_valid_fixture() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.is_empty());
+    assert!(!fixture.artifact_bundles.is_empty());
+    assert!(!fixture.rule_definitions.is_empty());
+}
+
+// ---------- load_doc helper ----------
+
+#[test]
+fn load_doc_returns_nonempty_string() {
+    let doc = load_doc();
+    assert!(!doc.is_empty());
+    assert!(doc.contains("Supremacy"));
+}
+
+// ---------- RuleClass ----------
+
+#[test]
+fn rule_class_parse_all_variants() {
+    assert_eq!(RuleClass::parse("correctness"), RuleClass::Correctness);
+    assert_eq!(RuleClass::parse("determinism"), RuleClass::Determinism);
+    assert_eq!(RuleClass::parse("performance"), RuleClass::Performance);
+    assert_eq!(RuleClass::parse("reproducibility"), RuleClass::Reproducibility);
+    assert_eq!(RuleClass::parse("verification_rigor"), RuleClass::VerificationRigor);
+    assert_eq!(RuleClass::parse("user_facing_quality"), RuleClass::UserFacingQuality);
+}
+
+#[test]
+#[should_panic(expected = "unknown rule class")]
+fn rule_class_parse_panics_on_unknown() {
+    RuleClass::parse("nonsense");
+}
+
+#[test]
+fn rule_class_as_str_roundtrips() {
+    for class in [
+        RuleClass::Correctness,
+        RuleClass::Determinism,
+        RuleClass::Performance,
+        RuleClass::Reproducibility,
+        RuleClass::VerificationRigor,
+        RuleClass::UserFacingQuality,
+    ] {
+        assert_eq!(RuleClass::parse(class.as_str()), class);
+    }
+}
+
+// ---------- Verdict ----------
+
+#[test]
+fn verdict_from_raw_all_variants() {
+    assert_eq!(Verdict::from_raw("pass"), Verdict::Pass);
+    assert_eq!(Verdict::from_raw("hold"), Verdict::Hold);
+    assert_eq!(Verdict::from_raw("fail"), Verdict::Fail);
+}
+
+#[test]
+#[should_panic(expected = "unknown verdict")]
+fn verdict_from_raw_panics_on_unknown() {
+    Verdict::from_raw("invalid");
+}
+
+#[test]
+fn verdict_as_str_roundtrips() {
+    for verdict in [Verdict::Pass, Verdict::Hold, Verdict::Fail] {
+        assert_eq!(Verdict::from_raw(verdict.as_str()), verdict);
+    }
+}
+
+// ---------- metric_for_class ----------
+
+#[test]
+fn metric_for_class_returns_correct_field() {
+    let metrics = BundleMetrics {
+        correctness: 100,
+        determinism: 200,
+        performance: 300,
+        reproducibility: 400,
+        verification_rigor: 500,
+        user_facing_quality: 600,
+    };
+    assert_eq!(metric_for_class(&metrics, RuleClass::Correctness), 100);
+    assert_eq!(metric_for_class(&metrics, RuleClass::Determinism), 200);
+    assert_eq!(metric_for_class(&metrics, RuleClass::Performance), 300);
+    assert_eq!(metric_for_class(&metrics, RuleClass::Reproducibility), 400);
+    assert_eq!(metric_for_class(&metrics, RuleClass::VerificationRigor), 500);
+    assert_eq!(metric_for_class(&metrics, RuleClass::UserFacingQuality), 600);
+}
+
+// ---------- fnv1a64 ----------
+
+#[test]
+fn fnv1a64_is_deterministic() {
+    let a = fnv1a64(b"test");
+    let b = fnv1a64(b"test");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn fnv1a64_differs_for_different_inputs() {
+    assert_ne!(fnv1a64(b"a"), fnv1a64(b"b"));
+}
+
+// ---------- deterministic_run_id ----------
+
+#[test]
+fn deterministic_run_id_is_stable() {
+    let a = deterministic_run_id("v1", "bundle-1", "abc123");
+    let b = deterministic_run_id("v1", "bundle-1", "abc123");
+    assert_eq!(a, b);
+    assert!(a.starts_with("supremacy-run-"));
+}
+
+#[test]
+fn deterministic_run_id_changes_with_inputs() {
+    let a = deterministic_run_id("v1", "bundle-1", "abc123");
+    let b = deterministic_run_id("v2", "bundle-1", "abc123");
+    assert_ne!(a, b);
+}
+
+// ---------- evaluate_bundle determinism ----------
+
+#[test]
+fn evaluate_bundle_is_deterministic() {
+    let fixture = load_fixture();
+    let bundle = &fixture.artifact_bundles[0];
+    let a = evaluate_bundle(&fixture, bundle);
+    let b = evaluate_bundle(&fixture, bundle);
+    assert_eq!(a, b);
+}
+
+// ---------- GateEvent ----------
+
+#[test]
+fn gate_event_serde_has_required_fields() {
+    let event = GateEvent {
+        schema_version: "v1".to_string(),
+        run_id: "run-1".to_string(),
+        criteria_version: "0.1.0".to_string(),
+        git_sha: "abc".to_string(),
+        artifact_bundle_id: "bundle-1".to_string(),
+        verdict: "pass".to_string(),
+        replay_command: "./replay.sh".to_string(),
+        component: "gate".to_string(),
+        event: "evaluated".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+    };
+    let value = serde_json::to_value(&event).expect("serialize");
+    let obj = value.as_object().expect("object");
+    assert!(obj.contains_key("run_id"));
+    assert!(obj.contains_key("verdict"));
+    assert!(obj.contains_key("error_code"));
+}

@@ -2,15 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::capability_witness::{
     CapabilityEscrowReceiptRecord, CapabilityWitness, ConfidenceInterval, ConsistencyProofLink,
-    CustomTheoremExtension, DenialRecord, LifecycleState, ProofKind, ProofObligation,
-    PromotionTheoremInput, PromotionTheoremKind,
-    PromotionTheoremReport, PublicationEntryKind,
-    SourceCapabilitySet, WitnessBuilder,
-    WitnessError, WitnessIndexError, WitnessIndexQuery,
-    WitnessIndexStore, WitnessPublicationConfig, WitnessPublicationError,
-    WitnessPublicationPipeline, WitnessPublicationQuery,
-    WitnessReplayJoinQuery, WitnessSchemaVersion, WitnessStore,
-    WitnessTreeHead, WitnessValidator, RollbackToken,
+    CustomTheoremExtension, DenialRecord, LifecycleState, PromotionTheoremInput,
+    PromotionTheoremKind, PromotionTheoremReport, ProofKind, ProofObligation, PublicationEntryKind,
+    RollbackToken, SourceCapabilitySet, WitnessBuilder, WitnessError, WitnessIndexError,
+    WitnessIndexQuery, WitnessIndexStore, WitnessPublicationConfig, WitnessPublicationError,
+    WitnessPublicationPipeline, WitnessPublicationQuery, WitnessReplayJoinQuery,
+    WitnessSchemaVersion, WitnessStore, WitnessTreeHead, WitnessValidator,
 };
 use frankenengine_engine::engine_object_id::{self, EngineObjectId, ObjectDomain, SchemaId};
 use frankenengine_engine::hash_tiers::ContentHash;
@@ -168,7 +165,9 @@ fn build_promoted_witness(seed: u64) -> CapabilityWitness {
     .proof(make_proof(&cap))
     .confidence(ConfidenceInterval::from_trials(120, 118))
     .replay_seed(seed)
-    .transcript_hash(ContentHash::compute(format!("transcript-{seed}").as_bytes()))
+    .transcript_hash(ContentHash::compute(
+        format!("transcript-{seed}").as_bytes(),
+    ))
     .build()
     .unwrap();
     apply_passing_promotion_theorems(&mut witness);
@@ -994,9 +993,11 @@ fn validator_detects_incompatible_schema() {
         minor: 0,
     };
     let errors = WitnessValidator::new().validate(&witness);
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, WitnessError::IncompatibleSchema { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, WitnessError::IncompatibleSchema { .. }))
+    );
 }
 
 #[test]
@@ -1015,9 +1016,11 @@ fn validator_detects_low_confidence() {
     .build()
     .unwrap();
     let errors = WitnessValidator::new().validate(&witness);
-    assert!(errors
-        .iter()
-        .any(|e| matches!(e, WitnessError::InvalidConfidence { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, WitnessError::InvalidConfidence { .. }))
+    );
 }
 
 #[test]
@@ -1183,10 +1186,12 @@ fn index_store_lookup_missing_returns_none() {
     let adapter = InMemoryStorageAdapter::new();
     let mut store = WitnessIndexStore::new(adapter);
     let ctx = test_event_context();
-    assert!(store
-        .witness_by_id(&test_extension_id(), &ctx)
-        .unwrap()
-        .is_none());
+    assert!(
+        store
+            .witness_by_id(&test_extension_id(), &ctx)
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
@@ -1330,9 +1335,7 @@ fn index_store_escrow_receipt_validation() {
     let mut empty_outcome = base;
     empty_outcome.outcome = "".to_string();
     assert!(matches!(
-        store
-            .index_escrow_receipt(empty_outcome, &ctx)
-            .unwrap_err(),
+        store.index_escrow_receipt(empty_outcome, &ctx).unwrap_err(),
         WitnessIndexError::InvalidInput { .. }
     ));
 }
@@ -1479,8 +1482,12 @@ fn pipeline_second_publish_has_consistency_chain() {
         },
     )
     .unwrap();
-    pipeline.publish_witness(build_promoted_witness(10), 100).unwrap();
-    let pub2 = pipeline.publish_witness(build_promoted_witness(11), 200).unwrap();
+    pipeline
+        .publish_witness(build_promoted_witness(10), 100)
+        .unwrap();
+    let pub2 = pipeline
+        .publish_witness(build_promoted_witness(11), 200)
+        .unwrap();
     let artifact = pipeline
         .publications()
         .iter()
@@ -1535,7 +1542,9 @@ fn pipeline_query_filters_by_extension_and_revoked() {
     let w1_ext = w1.extension_id.clone();
     let w1_id = w1.witness_id.clone();
     pipeline.publish_witness(w1, 10).unwrap();
-    pipeline.publish_witness(build_promoted_witness(32), 20).unwrap();
+    pipeline
+        .publish_witness(build_promoted_witness(32), 20)
+        .unwrap();
     pipeline.revoke_witness(&w1_id, "reason", 30).unwrap();
 
     let by_ext = pipeline.query(&WitnessPublicationQuery {
@@ -2158,8 +2167,7 @@ fn witness_index_query_json_field_names_stable() {
 fn witness_clone_independence() {
     let w1 = build_test_witness();
     let mut w2 = w1.clone();
-    w2.metadata
-        .insert("cloned".to_string(), "true".to_string());
+    w2.metadata.insert("cloned".to_string(), "true".to_string());
     assert!(w1.metadata.get("cloned").is_none());
 }
 

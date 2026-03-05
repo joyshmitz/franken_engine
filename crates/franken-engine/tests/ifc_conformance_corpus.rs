@@ -338,3 +338,176 @@ fn ifc_false_positive_injection_meta_test_allows_benign_network_egress() {
     assert_eq!(benign_network_log.evidence_type.as_deref(), Some("none"));
     assert_eq!(benign_network_log.outcome, "pass");
 }
+
+// ---------- parse_manifest_assets ----------
+
+#[test]
+fn manifest_assets_are_non_empty() {
+    let assets = parse_manifest_assets();
+    assert!(!assets.is_empty());
+}
+
+// ---------- manifest_path ----------
+
+#[test]
+fn manifest_path_exists() {
+    assert!(manifest_path().exists());
+}
+
+// ---------- REQUIRED constants ----------
+
+#[test]
+fn required_source_labels_are_four() {
+    assert_eq!(REQUIRED_SOURCE_LABELS.len(), 4);
+}
+
+#[test]
+fn required_sink_clearances_are_four() {
+    assert_eq!(REQUIRED_SINK_CLEARANCES.len(), 4);
+}
+
+#[test]
+fn required_flow_paths_are_five() {
+    assert_eq!(REQUIRED_FLOW_PATHS.len(), 5);
+}
+
+// ---------- ConformanceRunner ----------
+
+#[test]
+fn conformance_runner_default_produces_valid_runner() {
+    let runner = ConformanceRunner::default();
+    let waivers = ConformanceWaiverSet::default();
+    let result = runner.run(manifest_path(), &waivers).expect("ifc run");
+    assert!(result.summary.total_assets >= 210);
+}
+
+// ---------- ConformanceWaiverSet ----------
+
+#[test]
+fn conformance_waiver_set_default_has_no_waivers() {
+    let waivers = ConformanceWaiverSet::default();
+    assert!(waivers.waivers.is_empty());
+}
+
+// ---------- category counts ----------
+
+#[test]
+fn ifc_manifest_has_all_three_categories() {
+    let assets = parse_manifest_assets();
+    let categories: BTreeSet<_> = assets
+        .iter()
+        .map(|asset| asset["category"].as_str().unwrap().to_string())
+        .collect();
+    assert!(categories.contains("benign"));
+    assert!(categories.contains("exfil"));
+    assert!(categories.contains("declassify"));
+}
+
+// ---------- asset fields ----------
+
+#[test]
+fn every_asset_has_expected_outcome_field() {
+    let assets = parse_manifest_assets();
+    for asset in &assets {
+        assert!(asset["expected_outcome"].as_str().is_some());
+    }
+}
+
+#[test]
+fn every_asset_has_flow_path_type_field() {
+    let assets = parse_manifest_assets();
+    for asset in &assets {
+        assert!(asset["flow_path_type"].as_str().is_some());
+    }
+}
+
+// ---------- ConformanceEvidenceCollector ----------
+
+#[test]
+fn evidence_collector_creates_artifact_directory() {
+    let temp = test_temp_dir("evidence-collector-test");
+    let _collector = ConformanceEvidenceCollector::new(temp.clone()).expect("collector");
+    assert!(temp.exists());
+}
+
+// ---------- copy_tree ----------
+
+#[test]
+fn copy_tree_copies_files() {
+    let src = test_temp_dir("copy-src");
+    let dst = test_temp_dir("copy-dst").join("subtree");
+    fs::write(src.join("test.txt"), "hello").expect("write test file");
+    copy_tree(&src, &dst);
+    assert!(dst.join("test.txt").exists());
+    assert_eq!(
+        fs::read_to_string(dst.join("test.txt")).unwrap(),
+        "hello"
+    );
+}
+
+// ---------- asset_ids are unique ----------
+
+#[test]
+fn ifc_manifest_asset_ids_are_unique() {
+    let assets = parse_manifest_assets();
+    let mut seen = BTreeSet::new();
+    for asset in &assets {
+        let asset_id = asset["asset_id"].as_str().expect("asset_id string");
+        assert!(
+            seen.insert(asset_id.to_string()),
+            "duplicate asset_id: {asset_id}"
+        );
+    }
+}
+
+// ---------- semantic_domain prefixed correctly ----------
+
+#[test]
+fn ifc_manifest_assets_have_semantic_domain_prefix() {
+    let assets = parse_manifest_assets();
+    for asset in &assets {
+        let domain = asset["semantic_domain"]
+            .as_str()
+            .expect("semantic_domain string");
+        assert!(
+            domain.starts_with("ifc_corpus/"),
+            "unexpected semantic_domain prefix: {domain}"
+        );
+    }
+}
+
+// ---------- test_temp_dir creates unique paths ----------
+
+#[test]
+fn ifc_test_temp_dir_creates_unique_paths() {
+    let a = test_temp_dir("unique-a");
+    let b = test_temp_dir("unique-b");
+    assert_ne!(a, b);
+    assert!(a.exists());
+    assert!(b.exists());
+    fs::remove_dir_all(a).ok();
+    fs::remove_dir_all(b).ok();
+}
+
+// ---------- every asset has evidence_type ----------
+
+#[test]
+fn every_asset_has_expected_evidence_type_field() {
+    let assets = parse_manifest_assets();
+    for asset in &assets {
+        assert!(asset["expected_evidence_type"].as_str().is_some());
+    }
+}
+
+// ---------- every asset has source_labels and sink_clearances ----------
+
+#[test]
+fn every_asset_has_non_empty_source_and_sink_labels() {
+    let assets = parse_manifest_assets();
+    for asset in &assets {
+        let source = asset["source_labels"].as_array().expect("source_labels");
+        let sink = asset["sink_clearances"].as_array().expect("sink_clearances");
+        assert!(!source.is_empty());
+        assert!(!sink.is_empty());
+    }
+}

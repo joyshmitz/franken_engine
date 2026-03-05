@@ -183,3 +183,269 @@ fn verdict_to_action(verdict: DecisionVerdict) -> &'static str {
         DecisionVerdict::Timeout => "timeout",
     }
 }
+
+// ---------- LossMatrix construction ----------
+
+#[test]
+fn loss_matrix_state_and_action_names_match_constructor_inputs() {
+    let contract = MiniContract::new();
+    let matrix = contract.loss_matrix();
+    assert_eq!(matrix.state_names(), &["good", "bad"]);
+    assert_eq!(matrix.action_names(), &["allow", "deny", "timeout"]);
+}
+
+#[test]
+fn loss_matrix_bayes_action_returns_valid_index() {
+    let contract = MiniContract::new();
+    let posterior = Posterior::uniform(2);
+    let action_index = contract.loss_matrix().bayes_action(&posterior);
+    assert!(action_index < contract.action_set().len());
+}
+
+// ---------- Posterior ----------
+
+#[test]
+fn posterior_uniform_serde_roundtrip() {
+    let posterior = Posterior::uniform(3);
+    let json = serde_json::to_string(&posterior).expect("serialize");
+    let recovered: Posterior = serde_json::from_str(&json).expect("deserialize");
+    let json_again = serde_json::to_string(&recovered).expect("re-serialize");
+    assert_eq!(json, json_again);
+}
+
+#[test]
+fn posterior_bayesian_update_produces_valid_posterior() {
+    let mut posterior = Posterior::uniform(2);
+    posterior.bayesian_update(&[0.9, 0.1]);
+    let json = serde_json::to_string(&posterior).expect("serialize updated posterior");
+    assert!(!json.is_empty());
+}
+
+// ---------- DecisionVerdict ----------
+
+#[test]
+fn decision_verdict_serde_roundtrip() {
+    for verdict in [
+        DecisionVerdict::Allow,
+        DecisionVerdict::Deny,
+        DecisionVerdict::Timeout,
+    ] {
+        let json = serde_json::to_string(&verdict).expect("serialize verdict");
+        let recovered: DecisionVerdict =
+            serde_json::from_str(&json).expect("deserialize verdict");
+        assert_eq!(recovered, verdict);
+    }
+}
+
+// ---------- DecisionRequest ----------
+
+#[test]
+fn decision_request_serde_roundtrip() {
+    let request = DecisionRequest {
+        decision_id: control_plane::DecisionId::from_parts(1_700_000_000_500, 55),
+        policy_id: control_plane::PolicyId::new("test.policy", 1),
+        trace_id: control_plane::TraceId::from_parts(1_700_000_000_500, 7),
+        ts_unix_ms: 1_700_000_000_500,
+        calibration_score_bps: 9_500,
+        e_process_milli: 100,
+        ci_width_milli: 50,
+    };
+    let json = serde_json::to_string(&request).expect("serialize");
+    let recovered: DecisionRequest = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, request);
+}
+
+// ---------- ControlPlaneAdapterError ----------
+
+#[test]
+fn control_plane_adapter_error_codes_are_stable() {
+    let budget_err = control_plane::ControlPlaneAdapterError::BudgetExhausted {
+        requested_ms: 1000,
+    };
+    assert_eq!(budget_err.error_code(), "budget_exhausted");
+
+    let gateway_err = control_plane::ControlPlaneAdapterError::DecisionGateway {
+        code: "test_code",
+    };
+    assert_eq!(gateway_err.error_code(), "test_code");
+
+    let evidence_err = control_plane::ControlPlaneAdapterError::EvidenceEmission {
+        code: "emit_fail",
+    };
+    assert_eq!(evidence_err.error_code(), "emit_fail");
+}
+
+// ---------- Mock infrastructure ----------
+
+#[test]
+fn mock_budget_tracks_consumption() {
+    let mut budget = control_plane::mocks::MockBudget::new(100);
+    assert_eq!(budget.remaining_ms(), 100);
+    assert_eq!(budget.consumed_ms(), 0);
+
+    budget.consume(30).expect("consume 30ms");
+    assert_eq!(budget.remaining_ms(), 70);
+    assert_eq!(budget.consumed_ms(), 30);
+}
+
+#[test]
+fn mock_budget_rejects_overspend() {
+    let mut budget = control_plane::mocks::MockBudget::new(10);
+    let result = budget.consume(20);
+    assert!(result.is_err());
+}
+
+#[test]
+fn mock_decision_contract_drains_queued_verdicts() {
+    let mut mock = control_plane::mocks::MockDecisionContract::new(vec![
+        DecisionVerdict::Allow,
+        DecisionVerdict::Deny,
+    ]);
+    let request = DecisionRequest {
+        decision_id: control_plane::DecisionId::from_parts(1_000, 1_u128),
+        policy_id: control_plane::PolicyId::new("test.mock", 1),
+        trace_id: control_plane::TraceId::from_parts(1_000, 1_u128),
+        ts_unix_ms: 1_000,
+        calibration_score_bps: 5_000,
+        e_process_milli: 100,
+        ci_width_milli: 50,
+    };
+    assert_eq!(mock.evaluate(&request).unwrap(), DecisionVerdict::Allow);
+    assert_eq!(mock.evaluate(&request).unwrap(), DecisionVerdict::Deny);
+}
+
+#[test]
+fn mock_evidence_emitter_collects_entries() {
+    let mut emitter = control_plane::mocks::MockEvidenceEmitter::new();
+    assert!(emitter.entries().is_empty());
+    assert!(emitter.events().is_empty());
+
+    let request = DecisionRequest {
+        decision_id: control_plane::DecisionId::from_parts(1_000, 1_u128),
+        policy_id: control_plane::PolicyId::new("test.mock", 1),
+        trace_id: control_plane::TraceId::from_parts(1_000, 1_u128),
+        ts_unix_ms: 1_000,
+        calibration_score_bps: 5_000,
+        e_process_milli: 100,
+        ci_width_milli: 50,
+    };
+
+    let entry = control_plane::EvidenceLedgerBuilder::new()
+        .ts_unix_ms(1_000)
+        .component("test_emitter")
+        .action("allow")
+        .posterior(vec![0.5, 0.5])
+        .expected_loss("allow", 0.1)
+        .expected_loss("deny", 0.9)
+        .chosen_expected_loss(0.1)
+        .calibration_score(0.5)
+        .fallback_active(false)
+        .build()
+        .expect("valid evidence entry");
+
+    emitter.emit(&request, entry).expect("emit evidence");
+    assert_eq!(emitter.entries().len(), 1);
+    assert_eq!(emitter.events().len(), 1);
+}
+
+// ---------- ContractDecisionAdapter ----------
+
+#[test]
+fn adapter_accumulates_events_across_multiple_evaluations() {
+    let contract = MiniContract::new();
+    let posterior = Posterior::uniform(2);
+    let mut adapter = ContractDecisionAdapter::new(contract, posterior);
+
+    for i in 0..3u64 {
+        let request = DecisionRequest {
+            decision_id: control_plane::DecisionId::from_parts(1_000 + i, i as u128),
+            policy_id: control_plane::PolicyId::new("test.multi", 1),
+            trace_id: control_plane::TraceId::from_parts(1_000 + i, i as u128),
+            ts_unix_ms: 1_000 + i,
+            calibration_score_bps: 9_500,
+            e_process_milli: 100,
+            ci_width_milli: 50,
+        };
+        adapter.evaluate(&request).expect("evaluate");
+    }
+    assert_eq!(adapter.events().len(), 3);
+}
+
+// ---------- InMemoryEvidenceEmitter ----------
+
+#[test]
+fn in_memory_evidence_emitter_component_is_control_plane_adapter() {
+    let mut emitter = InMemoryEvidenceEmitter::new();
+    let request = DecisionRequest {
+        decision_id: control_plane::DecisionId::from_parts(2_000, 1_u128),
+        policy_id: control_plane::PolicyId::new("test.component", 1),
+        trace_id: control_plane::TraceId::from_parts(2_000, 1_u128),
+        ts_unix_ms: 2_000,
+        calibration_score_bps: 5_000,
+        e_process_milli: 50,
+        ci_width_milli: 25,
+    };
+
+    let entry = control_plane::EvidenceLedgerBuilder::new()
+        .ts_unix_ms(2_000)
+        .component("test_component")
+        .action("deny")
+        .posterior(vec![0.3, 0.7])
+        .expected_loss("allow", 0.5)
+        .expected_loss("deny", 0.2)
+        .chosen_expected_loss(0.2)
+        .calibration_score(0.5)
+        .fallback_active(false)
+        .build()
+        .expect("valid evidence entry");
+
+    emitter.emit(&request, entry).expect("emit");
+    assert_eq!(emitter.events()[0].component, "control_plane_adapter");
+    assert_eq!(emitter.events()[0].event, "evidence_emit");
+    assert_eq!(emitter.events()[0].outcome, "ok");
+}
+
+// ---------- FallbackPolicy ----------
+
+#[test]
+fn fallback_policy_default_is_deterministic() {
+    let a = FallbackPolicy::default();
+    let b = FallbackPolicy::default();
+    assert_eq!(a, b);
+}
+
+// ---------- AdapterEvent serde ----------
+
+#[test]
+fn adapter_event_serde_roundtrip() {
+    let event = control_plane::AdapterEvent {
+        trace_id: "trace-1".to_string(),
+        decision_id: "decision-1".to_string(),
+        policy_id: "policy-1".to_string(),
+        component: "test".to_string(),
+        event: "evaluate".to_string(),
+        outcome: "success".to_string(),
+        error_code: None,
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: control_plane::AdapterEvent =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, event);
+}
+
+// ---------- Mock seed constructors ----------
+
+#[test]
+fn mock_id_constructors_produce_distinct_ids_for_different_seeds() {
+    let trace_a = control_plane::mocks::trace_id_from_seed(1);
+    let trace_b = control_plane::mocks::trace_id_from_seed(2);
+    assert_ne!(trace_a, trace_b);
+
+    let decision_a = control_plane::mocks::decision_id_from_seed(1);
+    let decision_b = control_plane::mocks::decision_id_from_seed(2);
+    assert_ne!(decision_a, decision_b);
+
+    let policy_a = control_plane::mocks::policy_id_from_seed(1);
+    let policy_b = control_plane::mocks::policy_id_from_seed(2);
+    assert_ne!(policy_a, policy_b);
+}

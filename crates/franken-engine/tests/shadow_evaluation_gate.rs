@@ -298,6 +298,386 @@ fn shadow_gate_early_terminates_when_false_deny_exceeds_threshold() {
     );
 }
 
+// ---------- metric improvement checks ----------
+
+#[test]
+fn shadow_gate_rejects_when_no_significant_improvement() {
+    let contract = contract();
+    let mut gate = gate();
+    let signing = governance_signing_key();
+
+    let artifact = gate
+        .evaluate_candidate(
+            &contract,
+            candidate("decision-no-improve", baseline_metrics(), 90_000, 900),
+            &signing,
+        )
+        .expect("shadow evaluation");
+    assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
+    assert!(
+        artifact
+            .failure_reasons
+            .iter()
+            .any(|r| r.contains("improvement")),
+        "failure reasons: {:?}",
+        artifact.failure_reasons
+    );
+}
+
+#[test]
+fn shadow_gate_pass_generates_signed_artifact() {
+    let contract = contract();
+    let mut gate = gate();
+    let signing = governance_signing_key();
+
+    let artifact = gate
+        .evaluate_candidate(
+            &contract,
+            candidate("decision-signed", improved_metrics(), 90_000, 900),
+            &signing,
+        )
+        .expect("pass");
+    assert_eq!(artifact.verdict, ShadowPromotionVerdict::Pass);
+    assert!(!artifact.trace_id.is_empty());
+    assert!(!artifact.decision_id.is_empty());
+    assert!(!artifact.artifact_hash.is_empty());
+}
+
+// ---------- privacy budget ----------
+
+#[test]
+fn shadow_gate_checks_privacy_budget_status() {
+    let contract = contract();
+    let mut gate = gate();
+    let signing = governance_signing_key();
+
+    let artifact = gate
+        .evaluate_candidate(
+            &contract,
+            candidate("decision-budget", improved_metrics(), 90_000, 900),
+            &signing,
+        )
+        .expect("pass");
+    assert!(artifact.privacy_budget_status.within_budget);
+}
+
+// ---------- rollback readiness ----------
+
+#[test]
+fn shadow_gate_rejects_unverified_rollback_artifacts() {
+    let contract = contract();
+    let mut gate = gate();
+    let signing = governance_signing_key();
+
+    let mut unverified = candidate("decision-unverified-rollback", improved_metrics(), 90_000, 900);
+    unverified.rollback_readiness.rollback_command_tested = false;
+    unverified.rollback_readiness.transition_receipt_signed = false;
+
+    let artifact = gate
+        .evaluate_candidate(&contract, unverified, &signing)
+        .expect("shadow evaluation");
+    assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
+    assert!(
+        artifact
+            .failure_reasons
+            .iter()
+            .any(|r| r.contains("rollback")),
+        "failure reasons: {:?}",
+        artifact.failure_reasons
+    );
+}
+
+// ---------- human override ----------
+
+#[test]
+fn shadow_gate_human_override_requires_acknowledged_bypass() {
+    let contract = contract();
+    let mut gate = gate();
+    let signing = governance_signing_key();
+
+    let rejected = gate
+        .evaluate_candidate(
+            &contract,
+            candidate("decision-override-fail", regressed_metrics(), 90_000, 900),
+            &signing,
+        )
+        .expect("reject");
+
+    let err = gate
+        .apply_human_override(
+            &rejected,
+            HumanOverrideRequest {
+                operator_id: "human-1".to_string(),
+                summary: "override justification".to_string(),
+                bypassed_risk_criteria: vec!["criteria-1".to_string()],
+                acknowledged_bypass: false,
+            },
+            &signing,
+        )
+        .expect_err("unacknowledged override must fail");
+    assert!(err.to_string().contains("acknowledged"));
+}
+
+// ---------- events ----------
+
+#[test]
+fn shadow_gate_events_contain_component_field() {
+    let contract = contract();
+    let mut gate = gate();
+    let signing = governance_signing_key();
+
+    let _artifact = gate
+        .evaluate_candidate(
+            &contract,
+            candidate("decision-events", improved_metrics(), 90_000, 900),
+            &signing,
+        )
+        .expect("pass");
+
+    for event in gate.events() {
+        assert!(
+            !event.component.is_empty(),
+            "event component must not be empty"
+        );
+    }
+}
+
+#[test]
+fn shadow_gate_drain_events_clears_event_log() {
+    let contract = contract();
+    let mut gate = gate();
+    let signing = governance_signing_key();
+
+    let _artifact = gate
+        .evaluate_candidate(
+            &contract,
+            candidate("decision-drain", improved_metrics(), 90_000, 900),
+            &signing,
+        )
+        .expect("pass");
+
+    let drained = gate.drain_events();
+    assert!(!drained.is_empty());
+    assert!(gate.events().is_empty());
+}
+
+// ---------- scorecard ----------
+
+#[test]
+fn scorecard_empty_before_any_evaluation() {
+    let gate = gate();
+    assert!(gate.scorecard_entries().is_empty());
+}
+
+// ---------- metric assessments ----------
+
+#[test]
+fn pass_artifact_contains_metric_assessments_for_all_metrics() {
+    let contract = contract();
+    let mut gate = gate();
+    let signing = governance_signing_key();
+
+    let artifact = gate
+        .evaluate_candidate(
+            &contract,
+            candidate("decision-assessments", improved_metrics(), 90_000, 900),
+            &signing,
+        )
+        .expect("pass");
+
+    assert!(!artifact.metric_assessments.is_empty());
+    for (metric, assessment) in &artifact.metric_assessments {
+        assert!(
+            !format!("{metric:?}").is_empty(),
+            "metric key should be displayable"
+        );
+        assert!(
+            assessment.improvement_millionths != 0
+                || (assessment.baseline_value_millionths == assessment.candidate_value_millionths),
+            "improvement should be non-zero unless values are equal"
+        );
+    }
+}
+
+// ---------- extension class profiles ----------
+
+#[test]
+fn low_risk_extension_uses_default_profile() {
+    let contract = contract();
+    let mut gate = gate();
+    let signing = governance_signing_key();
+
+    let mut low_risk = candidate("decision-low-risk", improved_metrics(), 90_000, 900);
+    low_risk.extension_class = ShadowExtensionClass::LowRisk;
+    let artifact = gate
+        .evaluate_candidate(&contract, low_risk, &signing)
+        .expect("evaluation");
+    assert_eq!(artifact.verdict, ShadowPromotionVerdict::Pass);
+}
+
+// ---------- serde roundtrip ----------
+
+#[test]
+fn shadow_evaluation_candidate_serde_roundtrip() {
+    let c = candidate("decision-serde", improved_metrics(), 90_000, 900);
+    let json = serde_json::to_string(&c).expect("serialize");
+    let recovered: ShadowEvaluationCandidate =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.decision_id, c.decision_id);
+    assert_eq!(
+        recovered.shadow_success_rate_millionths,
+        c.shadow_success_rate_millionths
+    );
+}
+
+#[test]
+fn safety_metric_snapshot_serde_roundtrip() {
+    let snapshot = improved_metrics();
+    let json = serde_json::to_string(&snapshot).expect("serialize");
+    let recovered: SafetyMetricSnapshot =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.values_millionths, snapshot.values_millionths);
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde roundtrips, defaults, enum coverage
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn shadow_extension_class_serde_round_trip() {
+    for class in [
+        ShadowExtensionClass::LowRisk,
+        ShadowExtensionClass::Standard,
+        ShadowExtensionClass::HighRisk,
+        ShadowExtensionClass::Critical,
+    ] {
+        let json = serde_json::to_string(&class).expect("serialize");
+        let recovered: ShadowExtensionClass = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(class, recovered);
+    }
+}
+
+#[test]
+fn shadow_extension_class_default_is_standard() {
+    assert_eq!(ShadowExtensionClass::default(), ShadowExtensionClass::Standard);
+}
+
+#[test]
+fn shadow_extension_class_ordering() {
+    assert!(ShadowExtensionClass::LowRisk < ShadowExtensionClass::Standard);
+    assert!(ShadowExtensionClass::Standard < ShadowExtensionClass::HighRisk);
+    assert!(ShadowExtensionClass::HighRisk < ShadowExtensionClass::Critical);
+}
+
+#[test]
+fn shadow_promotion_verdict_serde_round_trip() {
+    for verdict in [
+        ShadowPromotionVerdict::Pass,
+        ShadowPromotionVerdict::Reject,
+        ShadowPromotionVerdict::OverrideApproved,
+    ] {
+        let json = serde_json::to_string(&verdict).expect("serialize");
+        let recovered: ShadowPromotionVerdict = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(verdict, recovered);
+    }
+}
+
+#[test]
+fn safety_metric_all_constant_covers_five_metrics() {
+    assert_eq!(SafetyMetric::ALL.len(), 5);
+    let set: std::collections::BTreeSet<_> = SafetyMetric::ALL.iter().collect();
+    assert_eq!(set.len(), 5);
+}
+
+#[test]
+fn safety_metric_serde_round_trip() {
+    for metric in SafetyMetric::ALL {
+        let json = serde_json::to_string(metric).expect("serialize");
+        let recovered: SafetyMetric = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(*metric, recovered);
+    }
+}
+
+#[test]
+fn shadow_burn_in_threshold_profile_serde_round_trip() {
+    let profile = ShadowBurnInThresholdProfile {
+        min_shadow_success_rate_millionths: 995_000,
+        max_false_deny_rate_millionths: 5_000,
+        min_burn_in_duration_ns: 100,
+        require_verified_rollback_artifacts: true,
+    };
+    let json = serde_json::to_string(&profile).expect("serialize");
+    let recovered: ShadowBurnInThresholdProfile = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(profile, recovered);
+}
+
+#[test]
+fn shadow_rollback_readiness_artifacts_default() {
+    let arts = ShadowRollbackReadinessArtifacts::default();
+    assert!(!arts.rollback_command_tested);
+    assert!(arts.previous_policy_snapshot_id.is_empty());
+    assert!(!arts.transition_receipt_signed);
+    assert!(arts.rollback_playbook_ref.is_empty());
+}
+
+#[test]
+fn shadow_rollback_readiness_artifacts_serde_round_trip() {
+    let arts = rollback_readiness();
+    let json = serde_json::to_string(&arts).expect("serialize");
+    let recovered: ShadowRollbackReadinessArtifacts = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(arts, recovered);
+}
+
+#[test]
+fn shadow_evaluation_gate_config_serde_round_trip() {
+    let config = ShadowEvaluationGateConfig {
+        regression_tolerance_millionths: 5_000,
+        min_required_improvement_millionths: 2_500,
+        default_burn_in_profile: ShadowBurnInThresholdProfile::default(),
+        burn_in_profiles_by_extension_class: BTreeMap::new(),
+    };
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: ShadowEvaluationGateConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(config, recovered);
+}
+
+#[test]
+fn shadow_replay_reference_serde_round_trip() {
+    let rr = replay_reference();
+    let json = serde_json::to_string(&rr).expect("serialize");
+    let recovered: ShadowReplayReference = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(rr, recovered);
+}
+
+#[test]
+fn human_override_request_serde_round_trip() {
+    let req = HumanOverrideRequest {
+        operator_id: "op-1".to_string(),
+        summary: "justification".to_string(),
+        bypassed_risk_criteria: vec!["c1".to_string()],
+        acknowledged_bypass: true,
+    };
+    let json = serde_json::to_string(&req).expect("serialize");
+    let recovered: HumanOverrideRequest = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(req, recovered);
+}
+
+#[test]
+fn shadow_gate_critical_class_uses_strictest_default_profile() {
+    let contract = contract();
+    let mut g = gate();
+    let signing = governance_signing_key();
+
+    let mut critical = candidate("decision-critical", improved_metrics(), 90_000, 900);
+    critical.extension_class = ShadowExtensionClass::Critical;
+    // Critical is not in our gate's custom profiles, so uses default
+    let artifact = g
+        .evaluate_candidate(&contract, critical, &signing)
+        .expect("evaluation");
+    // Default profile has 995k success rate requirement; our candidate has 997k, should pass
+    assert_eq!(artifact.verdict, ShadowPromotionVerdict::Pass);
+}
+
 #[test]
 fn shadow_gate_applies_stricter_high_risk_threshold_profile() {
     let contract = contract();

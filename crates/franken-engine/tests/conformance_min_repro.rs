@@ -329,3 +329,247 @@ fn minimization_property_sweep_keeps_replayable_failure_class() {
         artifact.verify_replay().expect("replay verification");
     }
 }
+
+// ---------- ConformanceFailureClass ----------
+
+#[test]
+fn conformance_failure_class_serde_roundtrip() {
+    for class in [
+        ConformanceFailureClass::Breaking,
+        ConformanceFailureClass::Behavioral,
+        ConformanceFailureClass::Observability,
+        ConformanceFailureClass::Performance,
+    ] {
+        let json = serde_json::to_string(&class).expect("serialize");
+        let recovered: ConformanceFailureClass =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, class);
+    }
+}
+
+// ---------- ConformanceDeltaKind ----------
+
+#[test]
+fn conformance_delta_kind_serde_roundtrip() {
+    use conformance_harness::ConformanceDeltaKind;
+    for kind in [
+        ConformanceDeltaKind::SchemaFieldAdded,
+        ConformanceDeltaKind::SchemaFieldRemoved,
+        ConformanceDeltaKind::SchemaFieldModified,
+        ConformanceDeltaKind::BehavioralSemanticShift,
+        ConformanceDeltaKind::TimingChange,
+        ConformanceDeltaKind::ErrorFormatChange,
+    ] {
+        let json = serde_json::to_string(&kind).expect("serialize");
+        let recovered: ConformanceDeltaKind =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, kind);
+    }
+}
+
+// ---------- classify_conformance_delta ----------
+
+#[test]
+fn identical_outputs_produce_empty_delta() {
+    let delta = classify_conformance_delta("props:a,b", "props:a,b");
+    assert!(delta.is_empty());
+}
+
+#[test]
+fn schema_field_removed_is_classified() {
+    let delta = classify_conformance_delta("props:a,b,c", "props:a,b");
+    assert!(
+        delta
+            .iter()
+            .any(|d| d.kind == conformance_harness::ConformanceDeltaKind::SchemaFieldRemoved),
+        "expected schema field-removed classification"
+    );
+}
+
+#[test]
+fn behavioral_semantic_shift_is_classified() {
+    let delta = classify_conformance_delta("result ok", "result changed");
+    assert!(
+        delta
+            .iter()
+            .any(|d| d.kind == conformance_harness::ConformanceDeltaKind::BehavioralSemanticShift),
+        "expected behavioral semantic shift classification"
+    );
+}
+
+// ---------- classify_failure_class priority ----------
+
+#[test]
+fn classify_failure_class_empty_deltas_is_behavioral() {
+    assert_eq!(
+        classify_failure_class(&[]),
+        ConformanceFailureClass::Behavioral
+    );
+}
+
+#[test]
+fn classify_failure_class_timing_only_is_performance() {
+    let delta = classify_conformance_delta("latency 10", "latency 20");
+    assert_eq!(
+        classify_failure_class(&delta),
+        ConformanceFailureClass::Performance
+    );
+}
+
+// ---------- severity_for_failure_class ----------
+
+#[test]
+fn severity_for_all_failure_classes() {
+    use conformance_harness::{severity_for_failure_class, ConformanceFailureSeverity};
+    assert_eq!(
+        severity_for_failure_class(ConformanceFailureClass::Breaking),
+        ConformanceFailureSeverity::Critical
+    );
+    assert_eq!(
+        severity_for_failure_class(ConformanceFailureClass::Behavioral),
+        ConformanceFailureSeverity::Error
+    );
+    assert_eq!(
+        severity_for_failure_class(ConformanceFailureClass::Observability),
+        ConformanceFailureSeverity::Warning
+    );
+    assert_eq!(
+        severity_for_failure_class(ConformanceFailureClass::Performance),
+        ConformanceFailureSeverity::Warning
+    );
+}
+
+// ---------- ConformanceRunnerConfig ----------
+
+#[test]
+fn conformance_runner_config_default_has_expected_seed() {
+    let config = ConformanceRunnerConfig::default();
+    assert_eq!(config.seed, 7);
+}
+
+#[test]
+fn conformance_runner_config_serde_roundtrip() {
+    let config = ConformanceRunnerConfig::default();
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: ConformanceRunnerConfig =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.seed, config.seed);
+    assert_eq!(recovered.run_date, config.run_date);
+}
+
+// ---------- ConformanceReproMetadata ----------
+
+#[test]
+fn conformance_repro_metadata_default_has_beads_project() {
+    let meta = ConformanceReproMetadata::default();
+    assert_eq!(meta.issue_tracker_project, "beads");
+}
+
+#[test]
+fn conformance_repro_metadata_serde_roundtrip() {
+    let meta = ConformanceReproMetadata {
+        version_combination: BTreeMap::from([
+            ("franken_engine".to_string(), "0.1.0".to_string()),
+        ]),
+        first_seen_commit: "abc123".to_string(),
+        regression_commit: Some("def456".to_string()),
+        ci_run_id: Some("ci-42".to_string()),
+        issue_tracker_project: "beads".to_string(),
+        issue_tracking_bead: Some("bd-test".to_string()),
+    };
+    let json = serde_json::to_string(&meta).expect("serialize");
+    let recovered: ConformanceReproMetadata =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.first_seen_commit, meta.first_seen_commit);
+    assert_eq!(recovered.regression_commit, meta.regression_commit);
+}
+
+// ---------- ConformanceWaiverSet ----------
+
+#[test]
+fn conformance_waiver_set_default_is_empty() {
+    let waivers = ConformanceWaiverSet::default();
+    assert!(waivers.waivers.is_empty());
+}
+
+// ---------- ConformanceRunResult ----------
+
+#[test]
+fn run_result_enforce_ci_gate_fails_on_failures() {
+    let temp = test_temp_dir("ci-gate");
+    let manifest = write_case_manifest(
+        &temp,
+        "let x = 1;",
+        "value 2",
+        "value 1",
+    );
+    let run = runner_with_metadata()
+        .run(&manifest, &ConformanceWaiverSet::default())
+        .expect("run should succeed");
+    assert!(run.summary.failed > 0);
+    assert!(run.enforce_ci_gate().is_err());
+}
+
+// ---------- ConformanceMinimizedReproArtifact ----------
+
+#[test]
+fn artifact_schema_version_is_v1() {
+    use conformance_harness::ConformanceMinimizedReproArtifact;
+    assert_eq!(
+        ConformanceMinimizedReproArtifact::CURRENT_SCHEMA,
+        "franken-engine.conformance-min-repro.v1"
+    );
+}
+
+#[test]
+fn artifact_serde_roundtrip_preserves_failure_class() {
+    let temp = test_temp_dir("artifact-serde");
+    let manifest = write_case_manifest(
+        &temp,
+        "let a = 1;",
+        "props:a,b,c",
+        "props:a,b",
+    );
+    let run = runner_with_metadata()
+        .run(&manifest, &ConformanceWaiverSet::default())
+        .expect("run");
+    let artifact = run.minimized_repros.first().expect("artifact");
+    let json = serde_json::to_string(artifact).expect("serialize");
+    let recovered: conformance_harness::ConformanceMinimizedReproArtifact =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.failure_class, artifact.failure_class);
+    assert_eq!(recovered.failure_id, artifact.failure_id);
+}
+
+// ---------- ConformanceLogEvent ----------
+
+#[test]
+fn run_result_has_log_events() {
+    let temp = test_temp_dir("log-events");
+    let manifest = write_case_manifest(
+        &temp,
+        "let x = 1;",
+        "value 2",
+        "value 1",
+    );
+    let run = runner_with_metadata()
+        .run(&manifest, &ConformanceWaiverSet::default())
+        .expect("run");
+    assert!(!run.logs.is_empty());
+    for log in &run.logs {
+        assert!(!log.component.is_empty());
+        assert!(!log.event.is_empty());
+        assert!(!log.outcome.is_empty());
+    }
+}
+
+// ---------- ConformanceAssetManifest ----------
+
+#[test]
+fn asset_manifest_schema_is_v1() {
+    use conformance_harness::ConformanceAssetManifest;
+    assert_eq!(
+        ConformanceAssetManifest::CURRENT_SCHEMA,
+        "franken-engine.conformance-assets.v1"
+    );
+}

@@ -6,12 +6,12 @@ use std::{
     path::PathBuf,
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const CONTRACT_SCHEMA_VERSION: &str = "frx.pilot-rollout-harness.v1";
 const CONTRACT_JSON: &str = include_str!("../../../docs/frx_pilot_rollout_harness_v1.json");
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PilotRolloutHarnessContract {
     schema_version: String,
     bead_id: String,
@@ -27,20 +27,20 @@ struct PilotRolloutHarnessContract {
     operator_verification: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Track {
     id: String,
     name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PilotPortfolio {
     strata: Vec<PilotStratum>,
     stratification_required: bool,
     fail_closed_on_unclassified_workload: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PilotStratum {
     stratum_id: String,
     workload_archetype: String,
@@ -50,7 +50,7 @@ struct PilotStratum {
     exclusion_criteria: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ExperimentHarness {
     modes: Vec<String>,
     deterministic_assignment_required: bool,
@@ -58,7 +58,7 @@ struct ExperimentHarness {
     required_observation_fields: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct OffPolicyEvaluation {
     estimators: Vec<String>,
     propensity_clip_min_millionths: u64,
@@ -68,7 +68,7 @@ struct OffPolicyEvaluation {
     fail_closed_on_weight_explosion: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct SequentialMonitoring {
     evidence_mode: String,
     decision_actions: Vec<String>,
@@ -76,7 +76,7 @@ struct SequentialMonitoring {
     require_loss_aware_decision_path: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Thresholds {
     promote_min_confidence: u64,
     stop_max_regret: u64,
@@ -84,7 +84,7 @@ struct Thresholds {
     rollback_tail_latency_delta: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct IncidentLinkage {
     required_fields: Vec<String>,
     require_replay_bundle: bool,
@@ -432,4 +432,153 @@ fn frx_09_1_contract_matches_logging_and_runtime_surfaces() {
             "forensic_replayer missing: {snippet}"
         );
     }
+}
+
+#[test]
+fn frx_09_1_strata_ids_are_unique() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for stratum in &contract.pilot_portfolio.strata {
+        assert!(
+            seen.insert(&stratum.stratum_id),
+            "duplicate stratum_id: {}",
+            stratum.stratum_id
+        );
+    }
+}
+
+#[test]
+fn frx_09_1_thresholds_are_positive() {
+    let contract = parse_contract();
+    let t = &contract.sequential_monitoring.thresholds_millionths;
+    assert!(t.promote_min_confidence > 0, "promote_min_confidence must be positive");
+    assert!(t.stop_max_regret > 0, "stop_max_regret must be positive");
+    assert!(
+        t.rollback_incident_delta > 0,
+        "rollback_incident_delta must be positive"
+    );
+    assert!(
+        t.rollback_tail_latency_delta > 0,
+        "rollback_tail_latency_delta must be positive"
+    );
+}
+
+#[test]
+fn frx_09_1_promote_confidence_is_above_ninety_percent() {
+    let contract = parse_contract();
+    assert!(
+        contract
+            .sequential_monitoring
+            .thresholds_millionths
+            .promote_min_confidence
+            >= 900_000,
+        "promote confidence must be at least 90%"
+    );
+}
+
+#[test]
+fn frx_09_1_serde_roundtrip_preserves_contract() {
+    let contract = parse_contract();
+    let serialized = serde_json::to_string(&contract).expect("serialize");
+    let deserialized: PilotRolloutHarnessContract =
+        serde_json::from_str(&serialized).expect("deserialize");
+    assert_eq!(contract, deserialized);
+}
+
+#[test]
+fn frx_09_1_deterministic_double_parse() {
+    let a = parse_contract();
+    let b = parse_contract();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn frx_09_1_assignment_fields_are_nonempty_and_unique() {
+    let contract = parse_contract();
+    let fields = &contract.experiment_harness.required_assignment_fields;
+    assert!(!fields.is_empty());
+    let unique: BTreeSet<&str> = fields.iter().map(String::as_str).collect();
+    assert_eq!(
+        unique.len(),
+        fields.len(),
+        "duplicate assignment fields detected"
+    );
+}
+
+#[test]
+fn frx_09_1_observation_fields_are_nonempty_and_unique() {
+    let contract = parse_contract();
+    let fields = &contract.experiment_harness.required_observation_fields;
+    assert!(!fields.is_empty());
+    let unique: BTreeSet<&str> = fields.iter().map(String::as_str).collect();
+    assert_eq!(
+        unique.len(),
+        fields.len(),
+        "duplicate observation fields detected"
+    );
+}
+
+#[test]
+fn frx_09_1_propensity_clip_is_within_unit_interval() {
+    let contract = parse_contract();
+    let clip = contract.off_policy_evaluation.propensity_clip_min_millionths;
+    assert!(clip > 0 && clip < 1_000_000, "propensity clip must be in (0, 1)");
+}
+
+#[test]
+fn frx_09_1_doc_file_exists_and_is_nonempty() {
+    let path = repo_root().join("docs/FRX_PILOT_ROLLOUT_HARNESS_V1.md");
+    let content = fs::read_to_string(&path).expect("read doc");
+    assert!(!content.is_empty());
+}
+
+#[test]
+fn frx_09_1_estimators_are_nonempty_and_unique() {
+    let contract = parse_contract();
+    let estimators = &contract.off_policy_evaluation.estimators;
+    assert!(!estimators.is_empty());
+    let unique: BTreeSet<&str> = estimators.iter().map(String::as_str).collect();
+    assert_eq!(unique.len(), estimators.len(), "duplicate estimators detected");
+}
+
+#[test]
+fn frx_09_1_operator_verification_includes_json_validation() {
+    let contract = parse_contract();
+    assert!(
+        contract
+            .operator_verification
+            .iter()
+            .any(|cmd| cmd.contains("jq empty")),
+        "operator verification must include JSON validation"
+    );
+}
+
+#[test]
+fn frx_09_1_all_strata_have_nonempty_inclusion_and_exclusion() {
+    let contract = parse_contract();
+    for stratum in &contract.pilot_portfolio.strata {
+        assert!(
+            !stratum.inclusion_criteria.is_empty(),
+            "stratum {} must have inclusion criteria",
+            stratum.stratum_id
+        );
+        assert!(
+            !stratum.exclusion_criteria.is_empty(),
+            "stratum {} must have exclusion criteria",
+            stratum.stratum_id
+        );
+    }
+}
+
+#[test]
+fn frx_09_1_incident_linkage_fields_are_nonempty_and_unique() {
+    let contract = parse_contract();
+    let fields = &contract.incident_linkage.required_fields;
+    assert!(!fields.is_empty());
+    let unique: BTreeSet<&str> = fields.iter().map(String::as_str).collect();
+    assert_eq!(
+        unique.len(),
+        fields.len(),
+        "duplicate incident linkage fields detected"
+    );
 }

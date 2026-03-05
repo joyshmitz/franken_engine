@@ -7,12 +7,12 @@ use std::{
     process::Command,
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const MATRIX_SCHEMA_VERSION: &str = "rgc.verification-coverage-matrix.v1";
 const MATRIX_JSON: &str = include_str!("../../../docs/rgc_verification_coverage_matrix_v1.json");
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct VerificationCoverageMatrix {
     schema_version: String,
     bead_id: String,
@@ -28,13 +28,13 @@ struct VerificationCoverageMatrix {
     operator_verification: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MatrixTrack {
     id: String,
     name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MatrixScope {
     project_epic: String,
     snapshot_source: String,
@@ -42,7 +42,7 @@ struct MatrixScope {
     open_bead_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MilestoneTarget {
     milestone: String,
     description: String,
@@ -50,7 +50,7 @@ struct MilestoneTarget {
     stop_go_rule: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CoverageRow {
     row_id: String,
     bead_selectors: Vec<String>,
@@ -64,7 +64,7 @@ struct CoverageRow {
     pass_fail_interpretation: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct WaiverGovernance {
     waiver_required_fields: Vec<String>,
     max_waiver_age_hours: u64,
@@ -438,4 +438,73 @@ fn rgc_051_snapshot_matches_live_beads_state() {
         matrix.scope.open_bead_ids, live,
         "matrix scope snapshot must match live non-closed bd-1lsy* beads from `br list --json`"
     );
+}
+
+#[test]
+fn rgc_051_selector_matches_exact_bead_id() {
+    assert!(selector_matches("bd-1lsy.2.1", "bd-1lsy.2.1"));
+    assert!(!selector_matches("bd-1lsy.2.1", "bd-1lsy.2.2"));
+}
+
+#[test]
+fn rgc_051_selector_matches_wildcard_prefix() {
+    assert!(selector_matches("bd-1lsy.*", "bd-1lsy.2.1"));
+    assert!(selector_matches("bd-1lsy.*", "bd-1lsy"));
+    assert!(!selector_matches("bd-1lsy.*", "bd-2abc"));
+}
+
+#[test]
+fn rgc_051_matched_row_ids_empty_for_unknown_bead() {
+    let matrix = parse_matrix();
+    let rows = matched_row_ids(&matrix, "bd-nonexistent-bead");
+    assert!(rows.is_empty());
+}
+
+#[test]
+fn rgc_051_row_ids_are_unique() {
+    let matrix = parse_matrix();
+    let mut seen = BTreeSet::new();
+    for row in &matrix.coverage_rows {
+        assert!(
+            seen.insert(&row.row_id),
+            "duplicate row_id: {}",
+            row.row_id
+        );
+    }
+}
+
+#[test]
+fn rgc_051_serde_roundtrip_preserves_matrix() {
+    let matrix = parse_matrix();
+    let serialized = serde_json::to_string(&matrix).expect("serialize");
+    let deserialized: VerificationCoverageMatrix =
+        serde_json::from_str(&serialized).expect("deserialize");
+    assert_eq!(matrix, deserialized);
+}
+
+#[test]
+fn rgc_051_deterministic_double_parse() {
+    let a = parse_matrix();
+    let b = parse_matrix();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn rgc_051_doc_file_is_nonempty() {
+    let path = repo_root().join("docs/RGC_VERIFICATION_COVERAGE_MATRIX_V1.md");
+    let content = fs::read_to_string(&path).expect("read doc");
+    assert!(!content.is_empty());
+}
+
+#[test]
+fn rgc_051_milestone_ids_are_unique() {
+    let matrix = parse_matrix();
+    let mut seen = BTreeSet::new();
+    for target in &matrix.milestone_targets {
+        assert!(
+            seen.insert(&target.milestone),
+            "duplicate milestone: {}",
+            target.milestone
+        );
+    }
 }

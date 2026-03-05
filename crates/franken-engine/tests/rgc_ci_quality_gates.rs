@@ -248,3 +248,295 @@ fn rgc_ci_quality_doc_and_replay_wrapper_exist_and_reference_contract() {
         "replay wrapper must bootstrap deterministic env"
     );
 }
+
+// ── Severity classification tests ─────────────────────────────────────
+
+#[test]
+fn severity_critical_is_blocking() {
+    assert!(severity_is_blocking("critical"));
+}
+
+#[test]
+fn severity_high_is_blocking() {
+    assert!(severity_is_blocking("high"));
+}
+
+#[test]
+fn severity_medium_is_not_blocking() {
+    assert!(!severity_is_blocking("medium"));
+}
+
+#[test]
+fn severity_low_is_not_blocking() {
+    assert!(!severity_is_blocking("low"));
+}
+
+#[test]
+fn severity_none_is_not_blocking() {
+    assert!(!severity_is_blocking("none"));
+}
+
+#[test]
+fn severity_empty_is_not_blocking() {
+    assert!(!severity_is_blocking(""));
+}
+
+// ── Verdict blocking tests ────────────────────────────────────────────
+
+#[test]
+fn verdict_blocks_when_blocking_flag_true() {
+    let verdict = serde_json::json!({
+        "blocking": true,
+        "severity": "low"
+    });
+    assert!(verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_blocks_when_is_blocking_flag_true() {
+    let verdict = serde_json::json!({
+        "is_blocking": true,
+        "severity": "low"
+    });
+    assert!(verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_blocks_when_highest_severity_critical() {
+    let verdict = serde_json::json!({
+        "highest_severity": "critical",
+        "blocking": false
+    });
+    assert!(verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_blocks_when_highest_severity_high() {
+    let verdict = serde_json::json!({
+        "highest_severity": "high"
+    });
+    assert!(verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_does_not_block_when_highest_severity_medium() {
+    let verdict = serde_json::json!({
+        "highest_severity": "medium",
+        "blocking": false
+    });
+    assert!(!verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_does_not_block_when_empty_object() {
+    let verdict = serde_json::json!({});
+    assert!(!verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_blocks_when_regressions_have_critical_severity() {
+    let verdict = serde_json::json!({
+        "regressions": [
+            {"severity": "critical", "status": "active"}
+        ]
+    });
+    assert!(verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_blocks_when_regressions_have_high_severity() {
+    let verdict = serde_json::json!({
+        "regressions": [
+            {"severity": "high", "status": "active"}
+        ]
+    });
+    assert!(verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_does_not_block_when_regressions_waived() {
+    let verdict = serde_json::json!({
+        "regressions": [
+            {"severity": "critical", "status": "waived"}
+        ]
+    });
+    assert!(!verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_does_not_block_when_regressions_only_medium() {
+    let verdict = serde_json::json!({
+        "regressions": [
+            {"severity": "medium", "status": "active"}
+        ]
+    });
+    assert!(!verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_blocks_when_mixed_regressions_contain_high() {
+    let verdict = serde_json::json!({
+        "regressions": [
+            {"severity": "low", "status": "active"},
+            {"severity": "high", "status": "active"},
+            {"severity": "medium", "status": "active"}
+        ]
+    });
+    assert!(verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_uses_level_as_fallback_for_severity() {
+    let verdict = serde_json::json!({
+        "regressions": [
+            {"level": "critical", "status": "active"}
+        ]
+    });
+    assert!(verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_uses_severity_over_level_when_both_present() {
+    let verdict = serde_json::json!({
+        "regressions": [
+            {"severity": "low", "level": "critical", "status": "active"}
+        ]
+    });
+    assert!(!verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_default_status_is_active_when_missing() {
+    let verdict = serde_json::json!({
+        "regressions": [
+            {"severity": "critical"}
+        ]
+    });
+    assert!(verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_highest_severity_takes_precedence_over_severity() {
+    let verdict = serde_json::json!({
+        "highest_severity": "critical",
+        "severity": "low"
+    });
+    assert!(verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_falls_back_to_severity_when_no_highest() {
+    let verdict = serde_json::json!({
+        "severity": "high"
+    });
+    assert!(verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_does_not_block_when_regressions_empty_array() {
+    let verdict = serde_json::json!({
+        "regressions": []
+    });
+    assert!(!verdict_blocks(&verdict));
+}
+
+#[test]
+fn verdict_does_not_block_when_all_low_severity() {
+    let verdict = serde_json::json!({
+        "highest_severity": "low",
+        "blocking": false,
+        "regressions": [
+            {"severity": "low", "status": "active"}
+        ]
+    });
+    assert!(!verdict_blocks(&verdict));
+}
+
+// ── Fixture contract stability tests ──────────────────────────────────
+
+#[test]
+fn fixture_required_modes_are_complete() {
+    let fixture = load_fixture();
+    let modes: BTreeSet<_> = fixture.required_modes.into_iter().collect();
+    assert!(modes.len() >= 8, "expected at least 8 required modes");
+}
+
+#[test]
+fn fixture_error_codes_follow_naming_convention() {
+    let fixture = load_fixture();
+    for code in &fixture.required_error_codes {
+        assert!(
+            code.starts_with("FE-RGC-CI-QUALITY-GATE-"),
+            "error code must follow naming convention: {code}"
+        );
+    }
+}
+
+#[test]
+fn fixture_lane_command_contract_is_non_empty() {
+    let fixture = load_fixture();
+    assert!(
+        !fixture.lane_command_contract.is_empty(),
+        "lane command contract should not be empty"
+    );
+}
+
+#[test]
+fn fixture_lane_commands_have_valid_lanes() {
+    let fixture = load_fixture();
+    let valid_lanes = [
+        "check",
+        "clippy",
+        "unit",
+        "integration",
+        "e2e",
+        "replay",
+        "regression",
+    ];
+    for contract in &fixture.lane_command_contract {
+        assert!(
+            valid_lanes.contains(&contract.lane.as_str()),
+            "unexpected lane: {}",
+            contract.lane
+        );
+    }
+}
+
+#[test]
+fn fixture_regression_samples_cover_both_blocking_and_non_blocking() {
+    let fixture = load_fixture();
+    let has_blocking = fixture
+        .regression_verdict_samples
+        .iter()
+        .any(|s| s.expected_blocking);
+    let has_non_blocking = fixture
+        .regression_verdict_samples
+        .iter()
+        .any(|s| !s.expected_blocking);
+    assert!(has_blocking, "should have at least one blocking sample");
+    assert!(
+        has_non_blocking,
+        "should have at least one non-blocking sample"
+    );
+}
+
+#[test]
+fn fixture_required_artifacts_include_run_manifest() {
+    let fixture = load_fixture();
+    assert!(
+        fixture
+            .required_artifacts
+            .contains(&"run_manifest.json".to_string())
+    );
+}
+
+#[test]
+fn fixture_regression_sample_ids_are_unique() {
+    let fixture = load_fixture();
+    let ids: BTreeSet<_> = fixture
+        .regression_verdict_samples
+        .iter()
+        .map(|s| s.sample_id.as_str())
+        .collect();
+    assert_eq!(ids.len(), fixture.regression_verdict_samples.len());
+}

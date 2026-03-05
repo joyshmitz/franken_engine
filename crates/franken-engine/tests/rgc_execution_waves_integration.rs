@@ -267,8 +267,14 @@ fn select_anti_stall_healthy_below_warn() {
         reassign_after_seconds: 1800,
         split_after_seconds: 3600,
     };
-    assert_eq!(select_anti_stall_action(&thresholds, 0), AntiStallAction::Healthy);
-    assert_eq!(select_anti_stall_action(&thresholds, 299), AntiStallAction::Healthy);
+    assert_eq!(
+        select_anti_stall_action(&thresholds, 0),
+        AntiStallAction::Healthy
+    );
+    assert_eq!(
+        select_anti_stall_action(&thresholds, 299),
+        AntiStallAction::Healthy
+    );
 }
 
 #[test]
@@ -279,8 +285,14 @@ fn select_anti_stall_warn_at_threshold() {
         reassign_after_seconds: 1800,
         split_after_seconds: 3600,
     };
-    assert_eq!(select_anti_stall_action(&thresholds, 300), AntiStallAction::Warn);
-    assert_eq!(select_anti_stall_action(&thresholds, 599), AntiStallAction::Warn);
+    assert_eq!(
+        select_anti_stall_action(&thresholds, 300),
+        AntiStallAction::Warn
+    );
+    assert_eq!(
+        select_anti_stall_action(&thresholds, 599),
+        AntiStallAction::Warn
+    );
 }
 
 #[test]
@@ -291,8 +303,14 @@ fn select_anti_stall_escalate_at_threshold() {
         reassign_after_seconds: 1800,
         split_after_seconds: 3600,
     };
-    assert_eq!(select_anti_stall_action(&thresholds, 600), AntiStallAction::Escalate);
-    assert_eq!(select_anti_stall_action(&thresholds, 1799), AntiStallAction::Escalate);
+    assert_eq!(
+        select_anti_stall_action(&thresholds, 600),
+        AntiStallAction::Escalate
+    );
+    assert_eq!(
+        select_anti_stall_action(&thresholds, 1799),
+        AntiStallAction::Escalate
+    );
 }
 
 #[test]
@@ -303,8 +321,14 @@ fn select_anti_stall_reassign_at_threshold() {
         reassign_after_seconds: 1800,
         split_after_seconds: 3600,
     };
-    assert_eq!(select_anti_stall_action(&thresholds, 1800), AntiStallAction::Reassign);
-    assert_eq!(select_anti_stall_action(&thresholds, 3599), AntiStallAction::Reassign);
+    assert_eq!(
+        select_anti_stall_action(&thresholds, 1800),
+        AntiStallAction::Reassign
+    );
+    assert_eq!(
+        select_anti_stall_action(&thresholds, 3599),
+        AntiStallAction::Reassign
+    );
 }
 
 #[test]
@@ -315,8 +339,14 @@ fn select_anti_stall_split_at_threshold() {
         reassign_after_seconds: 1800,
         split_after_seconds: 3600,
     };
-    assert_eq!(select_anti_stall_action(&thresholds, 3600), AntiStallAction::Split);
-    assert_eq!(select_anti_stall_action(&thresholds, 999_999), AntiStallAction::Split);
+    assert_eq!(
+        select_anti_stall_action(&thresholds, 3600),
+        AntiStallAction::Split
+    );
+    assert_eq!(
+        select_anti_stall_action(&thresholds, 999_999),
+        AntiStallAction::Split
+    );
 }
 
 #[test]
@@ -324,7 +354,10 @@ fn protocol_rejects_invalid_schema_version() {
     let mut protocol = default_rgc_execution_wave_protocol();
     protocol.schema_version = "wrong-version".to_string();
     let err = validate_execution_wave_protocol(&protocol).expect_err("should reject");
-    assert!(matches!(err, CoordinationValidationError::InvalidSchemaVersion { .. }));
+    assert!(matches!(
+        err,
+        CoordinationValidationError::InvalidSchemaVersion { .. }
+    ));
 }
 
 #[test]
@@ -332,7 +365,10 @@ fn protocol_rejects_empty_policy_id() {
     let mut protocol = default_rgc_execution_wave_protocol();
     protocol.policy_id = "   ".to_string();
     let err = validate_execution_wave_protocol(&protocol).expect_err("should reject");
-    assert!(matches!(err, CoordinationValidationError::EmptyField { .. }));
+    assert!(matches!(
+        err,
+        CoordinationValidationError::EmptyField { .. }
+    ));
 }
 
 #[test]
@@ -340,7 +376,10 @@ fn protocol_rejects_invalid_threshold_order() {
     let mut protocol = default_rgc_execution_wave_protocol();
     protocol.anti_stall.warn_after_seconds = 9999;
     let err = validate_execution_wave_protocol(&protocol).expect_err("should reject");
-    assert!(matches!(err, CoordinationValidationError::InvalidThresholdOrder));
+    assert!(matches!(
+        err,
+        CoordinationValidationError::InvalidThresholdOrder
+    ));
 }
 
 #[test]
@@ -348,7 +387,10 @@ fn protocol_rejects_invalid_mail_policy() {
     let mut protocol = default_rgc_execution_wave_protocol();
     protocol.agent_mail.urgent_poll_interval_seconds = 0;
     let err = validate_execution_wave_protocol(&protocol).expect_err("should reject");
-    assert!(matches!(err, CoordinationValidationError::InvalidMailPolicy));
+    assert!(matches!(
+        err,
+        CoordinationValidationError::InvalidMailPolicy
+    ));
 }
 
 #[test]
@@ -356,7 +398,10 @@ fn protocol_rejects_invalid_reservation_policy_low_ttl() {
     let mut protocol = default_rgc_execution_wave_protocol();
     protocol.file_reservation.min_ttl_seconds = 10; // must be >= 60
     let err = validate_execution_wave_protocol(&protocol).expect_err("should reject");
-    assert!(matches!(err, CoordinationValidationError::InvalidReservationPolicy));
+    assert!(matches!(
+        err,
+        CoordinationValidationError::InvalidReservationPolicy
+    ));
 }
 
 #[test]
@@ -365,7 +410,10 @@ fn handoff_rejects_invalid_schema_version() {
     let mut handoff = default_wave_handoff_package();
     handoff.schema_version = "wrong".to_string();
     let err = validate_wave_handoff_package(&protocol, &handoff).expect_err("should reject");
-    assert!(matches!(err, CoordinationValidationError::InvalidSchemaVersion { .. }));
+    assert!(matches!(
+        err,
+        CoordinationValidationError::InvalidSchemaVersion { .. }
+    ));
 }
 
 #[test]
@@ -374,7 +422,10 @@ fn handoff_rejects_empty_from_owner() {
     let mut handoff = default_wave_handoff_package();
     handoff.from_owner = String::new();
     let err = validate_wave_handoff_package(&protocol, &handoff).expect_err("should reject");
-    assert!(matches!(err, CoordinationValidationError::EmptyField { .. }));
+    assert!(matches!(
+        err,
+        CoordinationValidationError::EmptyField { .. }
+    ));
 }
 
 #[test]
@@ -383,7 +434,10 @@ fn handoff_rejects_empty_to_owner() {
     let mut handoff = default_wave_handoff_package();
     handoff.to_owner = "  ".to_string();
     let err = validate_wave_handoff_package(&protocol, &handoff).expect_err("should reject");
-    assert!(matches!(err, CoordinationValidationError::EmptyField { .. }));
+    assert!(matches!(
+        err,
+        CoordinationValidationError::EmptyField { .. }
+    ));
 }
 
 #[test]
@@ -393,7 +447,10 @@ fn handoff_rejects_same_from_and_to_owner() {
     handoff.from_owner = "SameAgent".to_string();
     handoff.to_owner = "SameAgent".to_string();
     let err = validate_wave_handoff_package(&protocol, &handoff).expect_err("should reject");
-    assert!(matches!(err, CoordinationValidationError::HandoffOwnersMustDiffer));
+    assert!(matches!(
+        err,
+        CoordinationValidationError::HandoffOwnersMustDiffer
+    ));
 }
 
 #[test]
@@ -402,7 +459,10 @@ fn handoff_rejects_empty_changed_beads() {
     let mut handoff = default_wave_handoff_package();
     handoff.changed_beads = Vec::new();
     let err = validate_wave_handoff_package(&protocol, &handoff).expect_err("should reject");
-    assert!(matches!(err, CoordinationValidationError::EmptyField { .. }));
+    assert!(matches!(
+        err,
+        CoordinationValidationError::EmptyField { .. }
+    ));
 }
 
 #[test]
@@ -411,7 +471,10 @@ fn handoff_rejects_empty_artifact_links() {
     let mut handoff = default_wave_handoff_package();
     handoff.artifact_links = Vec::new();
     let err = validate_wave_handoff_package(&protocol, &handoff).expect_err("should reject");
-    assert!(matches!(err, CoordinationValidationError::EmptyField { .. }));
+    assert!(matches!(
+        err,
+        CoordinationValidationError::EmptyField { .. }
+    ));
 }
 
 #[test]
@@ -420,7 +483,10 @@ fn handoff_rejects_empty_next_steps() {
     let mut handoff = default_wave_handoff_package();
     handoff.next_steps = Vec::new();
     let err = validate_wave_handoff_package(&protocol, &handoff).expect_err("should reject");
-    assert!(matches!(err, CoordinationValidationError::EmptyField { .. }));
+    assert!(matches!(
+        err,
+        CoordinationValidationError::EmptyField { .. }
+    ));
 }
 
 #[test]
@@ -430,15 +496,18 @@ fn handoff_rejects_duplicate_changed_beads() {
     let dup = handoff.changed_beads[0].clone();
     handoff.changed_beads.push(dup);
     let err = validate_wave_handoff_package(&protocol, &handoff).expect_err("should reject");
-    assert!(matches!(err, CoordinationValidationError::DuplicateHandoffFieldValue { .. }));
+    assert!(matches!(
+        err,
+        CoordinationValidationError::DuplicateHandoffFieldValue { .. }
+    ));
 }
 
 #[test]
 fn dry_run_healthy_at_zero_idle() {
     let protocol = default_rgc_execution_wave_protocol();
     let handoff = default_wave_handoff_package();
-    let report = run_coordination_dry_run(&protocol, &handoff, 0, "t1", "d1")
-        .expect("should succeed");
+    let report =
+        run_coordination_dry_run(&protocol, &handoff, 0, "t1", "d1").expect("should succeed");
     assert_eq!(report.action, AntiStallAction::Healthy);
     assert!(!report.events.is_empty());
 }
@@ -448,9 +517,12 @@ fn dry_run_rejects_invalid_protocol() {
     let mut protocol = default_rgc_execution_wave_protocol();
     protocol.schema_version = "bad".to_string();
     let handoff = default_wave_handoff_package();
-    let err = run_coordination_dry_run(&protocol, &handoff, 0, "t1", "d1")
-        .expect_err("should fail");
-    assert!(matches!(err, CoordinationValidationError::InvalidSchemaVersion { .. }));
+    let err =
+        run_coordination_dry_run(&protocol, &handoff, 0, "t1", "d1").expect_err("should fail");
+    assert!(matches!(
+        err,
+        CoordinationValidationError::InvalidSchemaVersion { .. }
+    ));
 }
 
 #[test]
@@ -521,8 +593,8 @@ fn anti_stall_thresholds_serde_round_trip() {
 fn coordination_event_serde_round_trip() {
     let protocol = default_rgc_execution_wave_protocol();
     let handoff = default_wave_handoff_package();
-    let report = run_coordination_dry_run(&protocol, &handoff, 0, "t1", "d1")
-        .expect("should succeed");
+    let report =
+        run_coordination_dry_run(&protocol, &handoff, 0, "t1", "d1").expect("should succeed");
     for event in &report.events {
         let json = serde_json::to_string(event).expect("serialize");
         let recovered: CoordinationEvent = serde_json::from_str(&json).expect("deserialize");
@@ -534,8 +606,8 @@ fn coordination_event_serde_round_trip() {
 fn dry_run_report_serde_round_trip() {
     let protocol = default_rgc_execution_wave_protocol();
     let handoff = default_wave_handoff_package();
-    let report = run_coordination_dry_run(&protocol, &handoff, 1000, "t1", "d1")
-        .expect("should succeed");
+    let report =
+        run_coordination_dry_run(&protocol, &handoff, 1000, "t1", "d1").expect("should succeed");
     let json = serde_json::to_string(&report).expect("serialize");
     let recovered: CoordinationDryRunReport = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(report, recovered);
@@ -656,8 +728,16 @@ fn dry_run_determinism() {
 fn protocol_wave_entries_have_non_empty_criteria() {
     let protocol = default_rgc_execution_wave_protocol();
     for entry in &protocol.waves {
-        assert!(!entry.entry_criteria.is_empty(), "empty entry_criteria for {:?}", entry.wave);
-        assert!(!entry.exit_criteria.is_empty(), "empty exit_criteria for {:?}", entry.wave);
+        assert!(
+            !entry.entry_criteria.is_empty(),
+            "empty entry_criteria for {:?}",
+            entry.wave
+        );
+        assert!(
+            !entry.exit_criteria.is_empty(),
+            "empty exit_criteria for {:?}",
+            entry.wave
+        );
     }
 }
 

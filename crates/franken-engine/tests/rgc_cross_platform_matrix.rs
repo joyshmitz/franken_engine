@@ -450,3 +450,109 @@ fn rgc_063_gate_runner_and_operator_commands_are_wired() {
             .any(|cmd| cmd.contains("run_rgc_cross_platform_matrix_gate.sh ci"))
     );
 }
+
+#[test]
+fn rgc_063_normalize_platform_path_identity_for_unix() {
+    assert_eq!(
+        normalize_platform_path("/tmp/franken/events.jsonl"),
+        "/tmp/franken/events.jsonl"
+    );
+}
+
+#[test]
+fn rgc_063_normalize_line_endings_identity_for_lf() {
+    assert_eq!(normalize_line_endings("line1\nline2\n"), "line1\nline2\n");
+}
+
+#[test]
+fn rgc_063_drift_classifier_deterministic() {
+    let baseline = TargetRunSummary {
+        outcome: "pass".to_string(),
+        error_code: None,
+        witness_digest: "sha256:a".to_string(),
+        toolchain_fingerprint: "fp-a".to_string(),
+        normalized_runtime_digest: "sha256:r".to_string(),
+        normalized_cli_digest: "sha256:c".to_string(),
+    };
+    let a = classify_drift(&baseline, &baseline);
+    let b = classify_drift(&baseline, &baseline);
+    assert_eq!(a, b);
+    assert_eq!(a.class_id, "none");
+}
+
+#[test]
+fn rgc_063_target_ids_are_unique() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for target in &contract.targets {
+        assert!(
+            seen.insert(&target.target_id),
+            "duplicate target_id: {}",
+            target.target_id
+        );
+    }
+}
+
+#[test]
+fn rgc_063_drift_class_ids_are_unique() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for dc in &contract.drift_classes {
+        assert!(
+            seen.insert(&dc.class_id),
+            "duplicate drift class_id: {}",
+            dc.class_id
+        );
+    }
+}
+
+#[test]
+fn rgc_063_deterministic_double_parse() {
+    let a = parse_contract();
+    let b = parse_contract();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn rgc_063_doc_file_is_nonempty() {
+    let doc = load_doc();
+    assert!(!doc.is_empty());
+}
+
+// ---------- normalize_platform_path edge cases ----------
+
+#[test]
+fn rgc_063_normalize_platform_path_empty_input() {
+    assert_eq!(normalize_platform_path(""), "");
+}
+
+#[test]
+fn rgc_063_normalize_platform_path_only_slashes() {
+    assert_eq!(normalize_platform_path("///"), "/");
+}
+
+// ---------- normalize_line_endings edge cases ----------
+
+#[test]
+fn rgc_063_normalize_line_endings_empty() {
+    assert_eq!(normalize_line_endings(""), "");
+}
+
+#[test]
+fn rgc_063_normalize_line_endings_standalone_cr() {
+    assert_eq!(normalize_line_endings("a\rb\rc"), "a\nb\nc");
+}
+
+// ---------- all drift classes have non-empty description ----------
+
+#[test]
+fn rgc_063_all_drift_classes_have_nonempty_description() {
+    let contract = parse_contract();
+    for dc in &contract.drift_classes {
+        assert!(
+            !dc.description.trim().is_empty(),
+            "drift class {} has empty description",
+            dc.class_id
+        );
+    }
+}

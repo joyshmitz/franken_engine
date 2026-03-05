@@ -245,3 +245,155 @@ fn metadata_in_package_is_preserved() {
     assert_eq!(recovered.metadata, metadata);
     assert_eq!(recovered.capabilities, vec!["cap_a"]);
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment batch: serde, error paths, accessors, result fields
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn loss_matrix_preset_serde_round_trip() {
+    for preset in [
+        LossMatrixPreset::Balanced,
+        LossMatrixPreset::Conservative,
+        LossMatrixPreset::Permissive,
+    ] {
+        let json = serde_json::to_string(&preset).expect("serialize");
+        let recovered: LossMatrixPreset = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(preset, recovered);
+    }
+}
+
+#[test]
+fn orchestrator_config_default_values() {
+    let cfg = OrchestratorConfig::default();
+    assert_eq!(cfg.loss_matrix_preset, LossMatrixPreset::Balanced);
+    assert_eq!(cfg.drain_deadline_ticks, 10_000);
+    assert_eq!(cfg.max_concurrent_sagas, 4);
+    assert_eq!(cfg.epoch, SecurityEpoch::from_raw(1));
+    assert!(cfg.force_lane.is_none());
+    assert_eq!(cfg.trace_id_prefix, "orch");
+    assert_eq!(cfg.policy_id, "default-policy");
+}
+
+#[test]
+fn orchestrator_error_is_std_error() {
+    let err: Box<dyn std::error::Error> = Box::new(OrchestratorError::EmptySource);
+    assert!(!err.to_string().is_empty());
+}
+
+#[test]
+fn orchestrator_error_display_all_variants_unique() {
+    let errors = [
+        OrchestratorError::EmptySource,
+        OrchestratorError::EmptyExtensionId,
+    ];
+    let msgs: std::collections::BTreeSet<String> = errors.iter().map(|e| e.to_string()).collect();
+    assert_eq!(msgs.len(), errors.len());
+}
+
+#[test]
+fn result_lowering_events_populated() {
+    let mut orch = ExecutionOrchestrator::with_defaults();
+    let pkg = simple_package("ext-lower", "42");
+    let result = orch.execute(&pkg).expect("execute");
+    // Lowering pipeline should produce at least one event and one witness
+    assert!(!result.lowering_events.is_empty());
+    assert!(!result.lowering_witnesses.is_empty());
+}
+
+#[test]
+fn result_lane_and_reason_populated() {
+    let mut orch = ExecutionOrchestrator::with_defaults();
+    let pkg = simple_package("ext-lane", "42");
+    let result = orch.execute(&pkg).expect("execute");
+    // Lane reason should have a non-empty description
+    let reason_str = format!("{:?}", result.lane_reason);
+    assert!(!reason_str.is_empty());
+}
+
+#[test]
+fn result_containment_action_populated() {
+    let mut orch = ExecutionOrchestrator::with_defaults();
+    let pkg = simple_package("ext-cont", "42");
+    let result = orch.execute(&pkg).expect("execute");
+    let action_str = format!("{:?}", result.containment_action);
+    assert!(!action_str.is_empty());
+}
+
+#[test]
+fn result_risk_state_populated() {
+    let mut orch = ExecutionOrchestrator::with_defaults();
+    let pkg = simple_package("ext-risk", "42");
+    let result = orch.execute(&pkg).expect("execute");
+    let risk_str = format!("{:?}", result.risk_state);
+    assert!(!risk_str.is_empty());
+}
+
+#[test]
+fn result_action_decision_populated() {
+    let mut orch = ExecutionOrchestrator::with_defaults();
+    let pkg = simple_package("ext-action", "42");
+    let result = orch.execute(&pkg).expect("execute");
+    let decision_str = format!("{:?}", result.action_decision);
+    assert!(!decision_str.is_empty());
+}
+
+#[test]
+fn saga_orchestrator_accessor_returns_reference() {
+    let orch = ExecutionOrchestrator::with_defaults();
+    let saga = orch.saga_orchestrator();
+    let debug = format!("{:?}", saga);
+    assert!(!debug.is_empty());
+}
+
+#[test]
+fn trace_id_uses_configured_prefix() {
+    let config = OrchestratorConfig {
+        trace_id_prefix: "custom-prefix".to_string(),
+        ..OrchestratorConfig::default()
+    };
+    let mut orch = ExecutionOrchestrator::new(config);
+    let pkg = simple_package("ext-prefix", "42");
+    let result = orch.execute(&pkg).expect("execute");
+    assert!(
+        result.trace_id.starts_with("custom-prefix"),
+        "trace_id {} should start with custom-prefix",
+        result.trace_id
+    );
+}
+
+#[test]
+fn balanced_preset_is_default() {
+    let cfg = OrchestratorConfig::default();
+    assert_eq!(cfg.loss_matrix_preset, LossMatrixPreset::Balanced);
+    let mut orch = ExecutionOrchestrator::new(cfg);
+    let pkg = simple_package("ext-bal", "42");
+    let result = orch.execute(&pkg).expect("execute");
+    assert!(result.posterior.is_valid());
+}
+
+#[test]
+fn execution_value_is_deterministic_across_configs() {
+    let configs = [
+        OrchestratorConfig::default(),
+        OrchestratorConfig {
+            loss_matrix_preset: LossMatrixPreset::Conservative,
+            ..OrchestratorConfig::default()
+        },
+        OrchestratorConfig {
+            loss_matrix_preset: LossMatrixPreset::Permissive,
+            ..OrchestratorConfig::default()
+        },
+    ];
+    let values: Vec<String> = configs
+        .into_iter()
+        .map(|c| {
+            let mut orch = ExecutionOrchestrator::new(c);
+            let pkg = simple_package("ext-val", "42");
+            orch.execute(&pkg).expect("execute").execution_value
+        })
+        .collect();
+    // Same source should produce the same execution value regardless of loss preset
+    assert_eq!(values[0], values[1]);
+    assert_eq!(values[1], values[2]);
+}

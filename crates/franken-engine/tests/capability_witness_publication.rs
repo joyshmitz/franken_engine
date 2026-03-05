@@ -295,3 +295,292 @@ fn capability_divergence_inputs_do_not_leak_into_query_filtering() {
         .collect();
     assert_eq!(seen_policy_ids.len(), 1);
 }
+
+// ---------- PublicationEntryKind ----------
+
+#[test]
+fn publication_entry_kind_as_str_values() {
+    assert_eq!(PublicationEntryKind::Publish.as_str(), "publish");
+    assert_eq!(PublicationEntryKind::Revoke.as_str(), "revoke");
+}
+
+// ---------- WitnessPublicationQuery ----------
+
+#[test]
+fn witness_publication_query_all_includes_revoked() {
+    let query = WitnessPublicationQuery::all();
+    assert!(query.include_revoked);
+    assert!(query.extension_id.is_none());
+    assert!(query.policy_id.is_none());
+    assert!(query.epoch.is_none());
+    assert!(query.content_hash.is_none());
+}
+
+// ---------- PublishedWitnessArtifact ----------
+
+#[test]
+fn published_witness_artifact_is_not_revoked_before_revocation() {
+    let synthesizer_key = synthesizer_signing_key();
+    let mut pipeline = build_pipeline();
+    let witness = build_promoted_witness(200, &synthesizer_key);
+    pipeline
+        .publish_witness(witness, 500_000)
+        .expect("publish witness");
+
+    assert!(!pipeline.publications()[0].is_revoked());
+}
+
+#[test]
+fn published_witness_artifact_is_revoked_after_revocation() {
+    let synthesizer_key = synthesizer_signing_key();
+    let mut pipeline = build_pipeline();
+    let witness = build_promoted_witness(201, &synthesizer_key);
+    let witness_id = witness.witness_id.clone();
+    pipeline
+        .publish_witness(witness, 500_000)
+        .expect("publish witness");
+    pipeline
+        .revoke_witness(&witness_id, "test revocation", 600_000)
+        .expect("revoke witness");
+
+    assert!(pipeline.publications()[0].is_revoked());
+}
+
+// ---------- Pipeline error cases ----------
+
+#[test]
+fn pipeline_rejects_non_promoted_witness() {
+    let synthesizer_key = synthesizer_signing_key();
+    let mut pipeline = build_pipeline();
+
+    let capability = Capability::new("read-slot-unpromoted".to_string());
+    let witness = WitnessBuilder::new(
+        extension_id(300),
+        policy_id(),
+        SecurityEpoch::from_raw(1_300),
+        100_300,
+        synthesizer_key.clone(),
+    )
+    .require(capability.clone())
+    .proof(make_proof(300, &capability))
+    .confidence(ConfidenceInterval::from_trials(128, 123))
+    .replay_seed(300)
+    .transcript_hash(ContentHash::compute(b"transcript-300"))
+    .build()
+    .expect("build witness");
+
+    let result = pipeline.publish_witness(witness, 700_000);
+    assert!(matches!(
+        result,
+        Err(WitnessPublicationError::WitnessNotPromoted { .. })
+    ));
+}
+
+#[test]
+fn pipeline_rejects_empty_revocation_reason() {
+    let synthesizer_key = synthesizer_signing_key();
+    let mut pipeline = build_pipeline();
+    let witness = build_promoted_witness(301, &synthesizer_key);
+    let witness_id = witness.witness_id.clone();
+    pipeline
+        .publish_witness(witness, 800_000)
+        .expect("publish");
+
+    let result = pipeline.revoke_witness(&witness_id, "", 900_000);
+    assert!(matches!(
+        result,
+        Err(WitnessPublicationError::EmptyRevocationReason)
+    ));
+}
+
+#[test]
+fn pipeline_rejects_revocation_of_non_existent_witness() {
+    let mut pipeline = build_pipeline();
+    let fake_id = engine_object_id::derive_id(
+        ObjectDomain::Attestation,
+        "fake-zone",
+        &SchemaId::from_definition(b"Fake.v1"),
+        b"fake-data",
+    )
+    .expect("derive fake id");
+
+    let result = pipeline.revoke_witness(&fake_id, "no such witness", 1_000_000);
+    assert!(matches!(
+        result,
+        Err(WitnessPublicationError::WitnessNotPublished { .. })
+    ));
+}
+
+#[test]
+fn pipeline_rejects_double_revocation() {
+    let synthesizer_key = synthesizer_signing_key();
+    let mut pipeline = build_pipeline();
+    let witness = build_promoted_witness(302, &synthesizer_key);
+    let witness_id = witness.witness_id.clone();
+    pipeline
+        .publish_witness(witness, 1_100_000)
+        .expect("publish");
+    pipeline
+        .revoke_witness(&witness_id, "first revocation", 1_200_000)
+        .expect("first revoke");
+
+    let result = pipeline.revoke_witness(&witness_id, "second revocation", 1_300_000);
+    assert!(matches!(
+        result,
+        Err(WitnessPublicationError::AlreadyRevoked { .. })
+    ));
+}
+
+// ---------- Pipeline queries ----------
+
+#[test]
+fn query_by_epoch_filters_correctly() {
+    let synthesizer_key = synthesizer_signing_key();
+    let mut pipeline = build_pipeline();
+    let witness_a = build_promoted_witness(400, &synthesizer_key);
+    let witness_b = build_promoted_witness(401, &synthesizer_key);
+    let epoch_a = witness_a.epoch;
+
+    pipeline
+        .publish_witness(witness_a, 2_000_000)
+        .expect("publish A");
+    pipeline
+        .publish_witness(witness_b, 2_100_000)
+        .expect("publish B");
+
+    let filtered = pipeline.query(&WitnessPublicationQuery {
+        extension_id: None,
+        policy_id: None,
+        epoch: Some(epoch_a),
+        content_hash: None,
+        include_revoked: true,
+    });
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].witness.epoch, epoch_a);
+}
+
+#[test]
+fn query_exclude_revoked_filters_revoked_entries() {
+    let synthesizer_key = synthesizer_signing_key();
+    let mut pipeline = build_pipeline();
+    let witness_a = build_promoted_witness(500, &synthesizer_key);
+    let witness_b = build_promoted_witness(501, &synthesizer_key);
+    let witness_a_id = witness_a.witness_id.clone();
+
+    pipeline
+        .publish_witness(witness_a, 3_000_000)
+        .expect("publish A");
+    pipeline
+        .publish_witness(witness_b, 3_100_000)
+        .expect("publish B");
+    pipeline
+        .revoke_witness(&witness_a_id, "test", 3_200_000)
+        .expect("revoke A");
+
+    let live = pipeline.query(&WitnessPublicationQuery {
+        extension_id: None,
+        policy_id: None,
+        epoch: None,
+        content_hash: None,
+        include_revoked: false,
+    });
+    assert_eq!(live.len(), 1);
+
+    let all = pipeline.query(&WitnessPublicationQuery::all());
+    assert_eq!(all.len(), 2);
+}
+
+// ---------- Pipeline accessors ----------
+
+#[test]
+fn pipeline_log_entries_accumulate() {
+    let synthesizer_key = synthesizer_signing_key();
+    let mut pipeline = build_pipeline();
+    let witness = build_promoted_witness(600, &synthesizer_key);
+    let witness_id = witness.witness_id.clone();
+
+    assert!(pipeline.log_entries().is_empty());
+    pipeline
+        .publish_witness(witness, 4_000_000)
+        .expect("publish");
+    assert_eq!(pipeline.log_entries().len(), 1);
+
+    pipeline
+        .revoke_witness(&witness_id, "test log", 4_100_000)
+        .expect("revoke");
+    assert_eq!(pipeline.log_entries().len(), 2);
+}
+
+#[test]
+fn pipeline_checkpoints_created_with_interval_1() {
+    let synthesizer_key = synthesizer_signing_key();
+    let mut pipeline = build_pipeline();
+    let witness = build_promoted_witness(700, &synthesizer_key);
+    pipeline
+        .publish_witness(witness, 5_000_000)
+        .expect("publish");
+
+    assert!(
+        !pipeline.checkpoints().is_empty(),
+        "checkpoint_interval=1 should create checkpoints"
+    );
+}
+
+// ---------- Evidence entries ----------
+
+#[test]
+fn evidence_entries_grow_with_each_operation() {
+    let synthesizer_key = synthesizer_signing_key();
+    let mut pipeline = build_pipeline();
+    let witness = build_promoted_witness(800, &synthesizer_key);
+    let witness_id = witness.witness_id.clone();
+
+    let before = pipeline.evidence_entries().len();
+    pipeline
+        .publish_witness(witness, 6_000_000)
+        .expect("publish");
+    let after_publish = pipeline.evidence_entries().len();
+    assert!(after_publish > before);
+
+    pipeline
+        .revoke_witness(&witness_id, "evidence test", 6_100_000)
+        .expect("revoke");
+    let after_revoke = pipeline.evidence_entries().len();
+    assert!(after_revoke > after_publish);
+}
+
+// ---------- Serde roundtrip ----------
+
+#[test]
+fn witness_publication_event_serde_roundtrip() {
+    let synthesizer_key = synthesizer_signing_key();
+    let mut pipeline = build_pipeline();
+    let witness = build_promoted_witness(900, &synthesizer_key);
+    pipeline
+        .publish_witness(witness, 7_000_000)
+        .expect("publish");
+
+    let event = &pipeline.events()[0];
+    let json = serde_json::to_string(event).expect("serialize");
+    let recovered: WitnessPublicationEvent =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.event, event.event);
+    assert_eq!(recovered.outcome, event.outcome);
+}
+
+#[test]
+fn witness_publication_query_serde_roundtrip() {
+    let query = WitnessPublicationQuery {
+        extension_id: Some(extension_id(999)),
+        policy_id: Some(policy_id()),
+        epoch: Some(SecurityEpoch::from_raw(2_000)),
+        content_hash: Some(ContentHash::compute(b"test-hash")),
+        include_revoked: false,
+    };
+    let json = serde_json::to_string(&query).expect("serialize");
+    let recovered: WitnessPublicationQuery =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.include_revoked, false);
+    assert!(recovered.extension_id.is_some());
+    assert!(recovered.epoch.is_some());
+}

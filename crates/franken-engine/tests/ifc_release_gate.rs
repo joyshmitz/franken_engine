@@ -324,3 +324,286 @@ fn ifc_release_gate_blocks_when_declassification_receipt_is_missing() {
             .any(|entry| entry.contains("missing signed receipt handle"))
     );
 }
+
+// ---------- IfcReleaseGateDecision ----------
+
+#[test]
+fn allows_release_true_when_no_blockers() {
+    let decision = IfcReleaseGateDecision {
+        blocked: false,
+        error_code: None,
+        blockers: Vec::new(),
+        metrics: IfcReleaseGateMetrics {
+            benign_total: 100,
+            exfil_total: 80,
+            declassify_total: 30,
+            false_positive_count: 0,
+            unauthorized_exfil_success_count: 0,
+            direct_indirect_bypass_count: 0,
+        },
+    };
+    assert!(decision.allows_release());
+}
+
+#[test]
+fn allows_release_false_when_blocked() {
+    let decision = IfcReleaseGateDecision {
+        blocked: true,
+        error_code: Some("FE-IFCR-1001".to_string()),
+        blockers: vec!["some blocker".to_string()],
+        metrics: IfcReleaseGateMetrics {
+            benign_total: 0,
+            exfil_total: 0,
+            declassify_total: 0,
+            false_positive_count: 0,
+            unauthorized_exfil_success_count: 0,
+            direct_indirect_bypass_count: 0,
+        },
+    };
+    assert!(!decision.allows_release());
+}
+
+#[test]
+fn allows_release_false_when_error_code_present() {
+    let decision = IfcReleaseGateDecision {
+        blocked: false,
+        error_code: Some("FE-IFCR-1001".to_string()),
+        blockers: Vec::new(),
+        metrics: IfcReleaseGateMetrics {
+            benign_total: 100,
+            exfil_total: 80,
+            declassify_total: 30,
+            false_positive_count: 0,
+            unauthorized_exfil_success_count: 0,
+            direct_indirect_bypass_count: 0,
+        },
+    };
+    assert!(!decision.allows_release());
+}
+
+// ---------- event_has_required_fields ----------
+
+#[test]
+fn event_has_required_fields_accepts_valid_event() {
+    let event = ConformanceLogEvent {
+        trace_id: "trace-1".to_string(),
+        decision_id: "decision-1".to_string(),
+        policy_id: "policy-1".to_string(),
+        component: "ifc".to_string(),
+        event: "evaluate".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        asset_id: "asset-1".to_string(),
+        workload_id: "asset-1".to_string(),
+        semantic_domain: "test".to_string(),
+        category: None,
+        source_labels: Vec::new(),
+        sink_clearances: Vec::new(),
+        flow_path_type: None,
+        expected_outcome: None,
+        actual_outcome: None,
+        evidence_type: None,
+        evidence_id: None,
+        duration_us: 100,
+        error_detail: None,
+    };
+    assert!(event_has_required_fields(&event));
+}
+
+#[test]
+fn event_has_required_fields_rejects_empty_trace_id() {
+    let event = ConformanceLogEvent {
+        trace_id: "".to_string(),
+        decision_id: "decision-1".to_string(),
+        policy_id: "policy-1".to_string(),
+        component: "ifc".to_string(),
+        event: "evaluate".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        asset_id: "asset-1".to_string(),
+        workload_id: "asset-1".to_string(),
+        semantic_domain: "test".to_string(),
+        category: None,
+        source_labels: Vec::new(),
+        sink_clearances: Vec::new(),
+        flow_path_type: None,
+        expected_outcome: None,
+        actual_outcome: None,
+        evidence_type: None,
+        evidence_id: None,
+        duration_us: 100,
+        error_detail: None,
+    };
+    assert!(!event_has_required_fields(&event));
+}
+
+// ---------- constants ----------
+
+#[test]
+fn ifc_release_gate_error_constant() {
+    assert_eq!(IFC_RELEASE_GATE_ERROR, "FE-IFCR-1001");
+}
+
+#[test]
+fn required_flow_path_types_has_five_entries() {
+    assert_eq!(REQUIRED_FLOW_PATH_TYPES.len(), 5);
+}
+
+#[test]
+fn required_exfil_vector_domains_has_six_entries() {
+    assert_eq!(REQUIRED_EXFIL_VECTOR_DOMAINS.len(), 6);
+}
+
+// ---------- gate blocks on false positive ----------
+
+#[test]
+fn ifc_release_gate_blocks_when_benign_is_blocked() {
+    let mut run = run_ifc_corpus();
+    let benign_event = run
+        .logs
+        .iter_mut()
+        .find(|event| event.category.as_deref() == Some("benign"))
+        .expect("expected at least one benign workload");
+    benign_event.actual_outcome = Some("block".to_string());
+
+    let decision = evaluate_ifc_release_gate(&run);
+    assert!(decision.blocked);
+    assert!(decision.metrics.false_positive_count > 0);
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|entry| entry.contains("false positives"))
+    );
+}
+
+// ---------- gate metrics on clean run ----------
+
+#[test]
+fn ifc_release_gate_clean_metrics() {
+    let run = run_ifc_corpus();
+    let decision = evaluate_ifc_release_gate(&run);
+    assert_eq!(decision.metrics.false_positive_count, 0);
+    assert_eq!(decision.metrics.unauthorized_exfil_success_count, 0);
+    assert_eq!(decision.metrics.direct_indirect_bypass_count, 0);
+}
+
+// ---------- manifest_path ----------
+
+#[test]
+fn ifc_manifest_path_exists() {
+    assert!(manifest_path().exists());
+}
+
+// ---------- gate blocks on missing evidence_id for exfil ----------
+
+#[test]
+fn ifc_release_gate_blocks_when_exfil_missing_evidence_id() {
+    let mut run = run_ifc_corpus();
+    let exfil_event = run
+        .logs
+        .iter_mut()
+        .find(|event| event.category.as_deref() == Some("exfil"))
+        .expect("expected at least one exfil workload");
+
+    exfil_event.evidence_id = None;
+
+    let decision = evaluate_ifc_release_gate(&run);
+    assert!(decision.blocked);
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|entry| entry.contains("missing evidence_id receipt handle"))
+    );
+}
+
+// ---------- gate blocks on empty structured log fields ----------
+
+#[test]
+fn ifc_release_gate_blocks_when_event_has_empty_component() {
+    let mut run = run_ifc_corpus();
+    let event = run
+        .logs
+        .iter_mut()
+        .find(|event| event.category.is_some())
+        .expect("expected at least one ifc event");
+    event.component = "".to_string();
+
+    let decision = evaluate_ifc_release_gate(&run);
+    assert!(decision.blocked);
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|entry| entry.contains("missing required structured log fields"))
+    );
+}
+
+// ---------- gate blocks on missing source/sink labels ----------
+
+#[test]
+fn ifc_release_gate_blocks_when_source_labels_empty() {
+    let mut run = run_ifc_corpus();
+    let event = run
+        .logs
+        .iter_mut()
+        .find(|event| event.category.is_some())
+        .expect("expected at least one ifc event");
+    event.source_labels.clear();
+
+    let decision = evaluate_ifc_release_gate(&run);
+    assert!(decision.blocked);
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|entry| entry.contains("missing source/sink IFC labels"))
+    );
+}
+
+// ---------- gate blocks on wrong declassify outcome ----------
+
+#[test]
+fn ifc_release_gate_blocks_when_declassify_outcome_is_wrong() {
+    let mut run = run_ifc_corpus();
+    let declass_event = run
+        .logs
+        .iter_mut()
+        .find(|event| event.category.as_deref() == Some("declassify"))
+        .expect("expected at least one declassify workload");
+
+    declass_event.actual_outcome = Some("allow".to_string());
+
+    let decision = evaluate_ifc_release_gate(&run);
+    assert!(decision.blocked);
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|entry| entry.contains("did not produce declassify outcome"))
+    );
+}
+
+// ---------- gate blocks on wrong declassify evidence type ----------
+
+#[test]
+fn ifc_release_gate_blocks_when_declassify_evidence_type_is_wrong() {
+    let mut run = run_ifc_corpus();
+    let declass_event = run
+        .logs
+        .iter_mut()
+        .find(|event| event.category.as_deref() == Some("declassify"))
+        .expect("expected at least one declassify workload");
+
+    declass_event.evidence_type = Some("none".to_string());
+
+    let decision = evaluate_ifc_release_gate(&run);
+    assert!(decision.blocked);
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|entry| entry.contains("missing declassification receipt type"))
+    );
+}

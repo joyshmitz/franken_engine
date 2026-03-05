@@ -175,3 +175,184 @@ fn bundle_id_is_deterministic_for_reordered_samples() {
     assert_eq!(decision_a.overall_summary, decision_b.overall_summary);
     assert_eq!(decision_a.publish_allowed, decision_b.publish_allowed);
 }
+
+// ---------- base_sample helper ----------
+
+#[test]
+fn base_sample_sets_correct_fields() {
+    let s = base_sample("ext-test", PlasBenchmarkCohort::Simple);
+    assert_eq!(s.extension_id, "ext-test");
+    assert_eq!(s.cohort, PlasBenchmarkCohort::Simple);
+    assert_eq!(s.synthesized_capability_count, 11);
+    assert_eq!(s.empirically_required_capability_count, 10);
+    assert!(s.witness_present);
+}
+
+// ---------- representative_samples ----------
+
+#[test]
+fn representative_samples_cover_all_cohorts() {
+    let samples = representative_samples();
+    assert_eq!(samples.len(), 4);
+    let cohorts: Vec<_> = samples.iter().map(|s| s.cohort).collect();
+    assert!(cohorts.contains(&PlasBenchmarkCohort::Simple));
+    assert!(cohorts.contains(&PlasBenchmarkCohort::Complex));
+    assert!(cohorts.contains(&PlasBenchmarkCohort::HighRisk));
+    assert!(cohorts.contains(&PlasBenchmarkCohort::Boundary));
+}
+
+// ---------- PlasBenchmarkCohort ----------
+
+#[test]
+fn plas_benchmark_cohort_serde_roundtrip() {
+    for cohort in [
+        PlasBenchmarkCohort::Simple,
+        PlasBenchmarkCohort::Complex,
+        PlasBenchmarkCohort::HighRisk,
+        PlasBenchmarkCohort::Boundary,
+    ] {
+        let json = serde_json::to_string(&cohort).expect("serialize");
+        let recovered: PlasBenchmarkCohort = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, cohort);
+    }
+}
+
+// ---------- PlasBenchmarkExtensionSample ----------
+
+#[test]
+fn extension_sample_serde_roundtrip() {
+    let s = base_sample("ext-serde", PlasBenchmarkCohort::Complex);
+    let json = serde_json::to_string(&s).expect("serialize");
+    let recovered: PlasBenchmarkExtensionSample = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.extension_id, "ext-serde");
+    assert_eq!(recovered.cohort, PlasBenchmarkCohort::Complex);
+}
+
+// ---------- PlasBenchmarkBundleRequest ----------
+
+#[test]
+fn request_serde_roundtrip() {
+    let req = request_with_samples(representative_samples());
+    let json = serde_json::to_string(&req).expect("serialize");
+    let recovered: PlasBenchmarkBundleRequest = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.trace_id, "trace-plas-benchmark");
+    assert_eq!(recovered.samples.len(), 4);
+}
+
+// ---------- PlasBenchmarkThresholds ----------
+
+#[test]
+fn default_thresholds_do_not_fail_on_trend() {
+    let t = PlasBenchmarkThresholds::default();
+    assert!(!t.fail_on_trend_regression);
+}
+
+// ---------- PLAS_BENCHMARK_BUNDLE_SCHEMA_VERSION ----------
+
+#[test]
+fn schema_version_constant_is_nonempty() {
+    assert!(!PLAS_BENCHMARK_BUNDLE_SCHEMA_VERSION.is_empty());
+    assert!(PLAS_BENCHMARK_BUNDLE_SCHEMA_VERSION.contains("plas"));
+}
+
+// ---------- decision events ----------
+
+#[test]
+fn decision_events_have_correct_trace_ids() {
+    let req = request_with_samples(representative_samples());
+    let decision = build_plas_benchmark_bundle(&req).expect("build");
+    for event in &decision.events {
+        assert_eq!(event.trace_id, "trace-plas-benchmark");
+        assert_eq!(event.decision_id, "decision-plas-benchmark");
+        assert_eq!(event.policy_id, "policy-plas-v1");
+    }
+}
+
+// ---------- to_markdown_report ----------
+
+#[test]
+fn markdown_report_contains_cohort_names() {
+    let req = request_with_samples(representative_samples());
+    let decision = build_plas_benchmark_bundle(&req).expect("build");
+    let md = decision.to_markdown_report();
+    assert!(md.contains("Simple") || md.contains("simple"));
+    assert!(md.contains("Complex") || md.contains("complex"));
+}
+
+// ---------- PlasBenchmarkTrendPoint ----------
+
+#[test]
+fn trend_point_serde_roundtrip() {
+    let point = PlasBenchmarkTrendPoint {
+        benchmark_run_id: "run-serde".to_string(),
+        generated_at_ns: 1_000_000,
+        mean_over_privilege_ratio_millionths: 1_050_000,
+        mean_authoring_time_reduction_millionths: 800_000,
+        mean_false_deny_rate_millionths: 2_000,
+        mean_escrow_event_rate_per_hour_millionths: 2_000_000,
+        witness_coverage_millionths: 1_000_000,
+    };
+    let json = serde_json::to_string(&point).expect("serialize");
+    let recovered: PlasBenchmarkTrendPoint = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.benchmark_run_id, "run-serde");
+}
+
+// ---------- empty samples ----------
+
+#[test]
+fn bundle_with_empty_samples_returns_error() {
+    let request = request_with_samples(Vec::new());
+    let err = build_plas_benchmark_bundle(&request)
+        .expect_err("empty samples should be rejected");
+    let msg = err.to_string();
+    assert!(msg.contains("samples") || msg.contains("empty"));
+}
+
+// ---------- bundle_id starts with plas-bundle- ----------
+
+#[test]
+fn bundle_id_starts_with_plas_bundle_prefix() {
+    let request = request_with_samples(representative_samples());
+    let decision = build_plas_benchmark_bundle(&request).expect("bundle");
+    assert!(
+        decision.bundle_id.starts_with("plas-bundle-"),
+        "bundle_id should start with 'plas-bundle-', got: {}",
+        decision.bundle_id
+    );
+}
+
+// ---------- witness coverage is tracked ----------
+
+#[test]
+fn bundle_tracks_witness_coverage() {
+    let request = request_with_samples(representative_samples());
+    let decision = build_plas_benchmark_bundle(&request).expect("bundle");
+    assert!(decision.overall_summary.witness_coverage_millionths > 0);
+}
+
+// ---------- bundle denies on missing witness ----------
+
+#[test]
+fn bundle_extension_result_reflects_witness_absence() {
+    let mut samples = representative_samples();
+    samples[0].witness_present = false;
+    let request = request_with_samples(samples);
+    let decision = build_plas_benchmark_bundle(&request).expect("bundle");
+    let ext_result = decision
+        .extension_results
+        .iter()
+        .find(|r| r.extension_id == "ext-simple")
+        .expect("ext-simple result");
+    assert!(!ext_result.witness_present);
+}
+
+// ---------- to_json_pretty is valid JSON ----------
+
+#[test]
+fn bundle_to_json_pretty_is_valid_json() {
+    let request = request_with_samples(representative_samples());
+    let decision = build_plas_benchmark_bundle(&request).expect("bundle");
+    let json = decision.to_json_pretty().expect("json");
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse json");
+    assert!(parsed.is_object());
+}

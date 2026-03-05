@@ -415,3 +415,122 @@ fn non_determinism_detection_runs_10x_with_identical_output() {
         );
     }
 }
+
+#[test]
+fn sha256_hex_is_deterministic() {
+    let input = b"franken-engine conformance test";
+    let a = sha256_hex(input);
+    let b = sha256_hex(input);
+    assert_eq!(a, b);
+    assert_eq!(a.len(), 64, "sha256 hex must be 64 characters");
+    assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+}
+
+#[test]
+fn sha256_hex_empty_input_produces_known_hash() {
+    let hash = sha256_hex(b"");
+    // SHA-256 of empty input is the well-known constant
+    assert_eq!(
+        hash,
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
+}
+
+#[test]
+fn manifest_asset_ids_are_unique() {
+    let manifest = conformance_harness::ConformanceAssetManifest::load(sample_manifest_path())
+        .expect("load manifest");
+    let mut seen = std::collections::BTreeSet::new();
+    for asset in &manifest.assets {
+        assert!(
+            seen.insert(&asset.asset_id),
+            "duplicate asset_id: {}",
+            asset.asset_id
+        );
+    }
+}
+
+#[test]
+fn default_waiver_set_has_no_waivers() {
+    let waivers = ConformanceWaiverSet::default();
+    let runner = ConformanceRunner::default();
+    let run = runner
+        .run(sample_manifest_path(), &waivers)
+        .expect("conformance run with default waivers");
+    assert_eq!(run.summary.waived, 0);
+}
+
+#[test]
+fn sample_waiver_path_exists() {
+    let path = sample_waiver_path();
+    assert!(path.exists(), "waiver path must exist: {}", path.display());
+}
+
+#[test]
+fn manifest_assets_have_nonempty_semantic_domains() {
+    let manifest = conformance_harness::ConformanceAssetManifest::load(sample_manifest_path())
+        .expect("load manifest");
+    for asset in &manifest.assets {
+        assert!(
+            !asset.semantic_domain.trim().is_empty(),
+            "asset {} has empty semantic_domain",
+            asset.asset_id
+        );
+    }
+}
+
+#[test]
+fn manifest_assets_have_nonempty_expected_output_hashes() {
+    let manifest = conformance_harness::ConformanceAssetManifest::load(sample_manifest_path())
+        .expect("load manifest");
+    for asset in &manifest.assets {
+        assert!(
+            !asset.expected_output_hash.trim().is_empty(),
+            "asset {} has empty expected_output_hash",
+            asset.asset_id
+        );
+    }
+}
+
+#[test]
+fn all_conformance_logs_have_unique_trace_ids() {
+    let runner = ConformanceRunner::default();
+    let waivers = ConformanceWaiverSet::load_toml(sample_waiver_path()).expect("waiver load");
+    let run = runner
+        .run(sample_manifest_path(), &waivers)
+        .expect("conformance run");
+    let trace_ids: std::collections::BTreeSet<&str> =
+        run.logs.iter().map(|log| log.trace_id.as_str()).collect();
+    // Each asset gets its own unique trace_id
+    assert_eq!(
+        trace_ids.len(),
+        run.logs.len(),
+        "each conformance asset must have a unique trace_id"
+    );
+}
+
+#[test]
+fn manifest_assets_have_nonempty_asset_ids() {
+    let manifest = conformance_harness::ConformanceAssetManifest::load(sample_manifest_path())
+        .expect("load manifest");
+    for asset in &manifest.assets {
+        assert!(
+            !asset.asset_id.trim().is_empty(),
+            "asset must have non-empty asset_id"
+        );
+    }
+}
+
+#[test]
+fn sha256_hex_different_inputs_produce_different_hashes() {
+    let a = sha256_hex(b"input_a");
+    let b = sha256_hex(b"input_b");
+    assert_ne!(a, b, "different inputs must produce different hashes");
+}
+
+#[test]
+fn conformance_runner_default_seed_is_deterministic() {
+    let r1 = ConformanceRunner::default();
+    let r2 = ConformanceRunner::default();
+    assert_eq!(r1.config.seed, r2.config.seed);
+}

@@ -470,3 +470,205 @@ fn diagnostics_rubric_user_journey_logs_are_structured_and_replayable() {
         );
     }
 }
+
+// ---------- parse_goal helper ----------
+
+#[test]
+fn rubric_parse_goal_maps_script() {
+    assert_eq!(parse_goal("script"), ParseGoal::Script);
+}
+
+#[test]
+fn rubric_parse_goal_maps_module() {
+    assert_eq!(parse_goal("module"), ParseGoal::Module);
+}
+
+#[test]
+#[should_panic(expected = "unknown parse goal")]
+fn rubric_parse_goal_panics_on_unknown() {
+    parse_goal("eval");
+}
+
+// ---------- parse_error_code helper ----------
+
+#[test]
+fn rubric_parse_error_code_maps_all_known() {
+    let codes = [
+        ("empty_source", ParseErrorCode::EmptySource),
+        ("invalid_goal", ParseErrorCode::InvalidGoal),
+        ("unsupported_syntax", ParseErrorCode::UnsupportedSyntax),
+        ("io_read_failed", ParseErrorCode::IoReadFailed),
+        ("invalid_utf8", ParseErrorCode::InvalidUtf8),
+        ("source_too_large", ParseErrorCode::SourceTooLarge),
+        ("budget_exceeded", ParseErrorCode::BudgetExceeded),
+    ];
+    for (raw, expected) in codes {
+        assert_eq!(parse_error_code(raw), expected);
+    }
+}
+
+// ---------- parse_budget_kind helper ----------
+
+#[test]
+fn rubric_parse_budget_kind_maps_all_known() {
+    let kinds = [
+        ("source_bytes", ParseBudgetKind::SourceBytes),
+        ("token_count", ParseBudgetKind::TokenCount),
+        ("recursion_depth", ParseBudgetKind::RecursionDepth),
+    ];
+    for (raw, expected) in kinds {
+        assert_eq!(parse_budget_kind(raw), expected);
+    }
+}
+
+// ---------- ScoreDimension ----------
+
+#[test]
+fn score_dimensions_are_unique_and_sum_to_million() {
+    let fixture = load_fixture();
+    let mut ids = BTreeSet::new();
+    let total: u64 = fixture
+        .score_dimensions
+        .iter()
+        .map(|dim| {
+            assert!(ids.insert(dim.dimension_id.clone()), "duplicate dimension");
+            u64::from(dim.weight_millionths)
+        })
+        .sum();
+    assert_eq!(total, 1_000_000);
+}
+
+// ---------- RubricCase ----------
+
+#[test]
+fn rubric_cases_have_unique_ids() {
+    let fixture = load_fixture();
+    let mut ids = BTreeSet::new();
+    for case in &fixture.cases {
+        assert!(ids.insert(case.case_id.clone()), "duplicate case id");
+        assert!(!case.family_id.is_empty());
+        assert!(!case.source.is_empty());
+        assert!(!case.replay_command.is_empty());
+    }
+}
+
+#[test]
+fn rubric_cases_cover_expected_families() {
+    let fixture = load_fixture();
+    let families: BTreeSet<_> = fixture
+        .cases
+        .iter()
+        .map(|case| {
+            case.family_id
+                .split('.')
+                .next()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    for expected in ["goal", "input", "resource", "syntax"] {
+        assert!(families.contains(expected), "missing family: {expected}");
+    }
+}
+
+// ---------- weighted_composite_score ----------
+
+#[test]
+fn rubric_weighted_composite_uniform_million() {
+    let dims = vec![
+        ScoreDimension {
+            dimension_id: "a".to_string(),
+            description: "dim a".to_string(),
+            weight_millionths: 500_000,
+        },
+        ScoreDimension {
+            dimension_id: "b".to_string(),
+            description: "dim b".to_string(),
+            weight_millionths: 500_000,
+        },
+    ];
+    let mut scores = BTreeMap::new();
+    scores.insert("a".to_string(), 1_000_000_u32);
+    scores.insert("b".to_string(), 1_000_000_u32);
+    assert_eq!(weighted_composite_score(&scores, &dims), 1_000_000);
+}
+
+#[test]
+fn rubric_weighted_composite_zero() {
+    let dims = vec![ScoreDimension {
+        dimension_id: "x".to_string(),
+        description: "dim x".to_string(),
+        weight_millionths: 1_000_000,
+    }];
+    let mut scores = BTreeMap::new();
+    scores.insert("x".to_string(), 0_u32);
+    assert_eq!(weighted_composite_score(&scores, &dims), 0);
+}
+
+// ---------- evaluate_case ----------
+
+#[test]
+fn evaluate_case_produces_deterministic_hash() {
+    let fixture = load_fixture();
+    let parser = CanonicalEs2020Parser;
+    let case = &fixture.cases[0];
+    let left = evaluate_case(&parser, case, &fixture);
+    let right = evaluate_case(&parser, case, &fixture);
+    assert_eq!(left.diagnostic_hash, right.diagnostic_hash);
+    assert!(left.diagnostic_hash.starts_with("sha256:"));
+}
+
+#[test]
+fn evaluate_case_composite_is_within_bounds() {
+    let fixture = load_fixture();
+    let parser = CanonicalEs2020Parser;
+    for case in &fixture.cases {
+        let eval = evaluate_case(&parser, case, &fixture);
+        assert!(eval.composite_score_millionths <= 1_000_000);
+    }
+}
+
+// ---------- build_structured_log ----------
+
+#[test]
+fn structured_log_has_required_keys() {
+    let fixture = load_fixture();
+    let evaluations = evaluate_all_cases(&fixture);
+    let log = build_structured_log(&evaluations[0]);
+    for key in &fixture.structured_log_required_keys {
+        assert!(log.get(key.as_str()).is_some(), "missing key: {key}");
+    }
+}
+
+#[test]
+fn structured_log_trace_id_has_rubric_prefix() {
+    let fixture = load_fixture();
+    let evaluations = evaluate_all_cases(&fixture);
+    let log = build_structured_log(&evaluations[0]);
+    let trace_id = log["trace_id"].as_str().unwrap();
+    assert!(trace_id.starts_with("trace-parser-diagnostics-rubric-"));
+}
+
+// ---------- aggregate_scores ----------
+
+#[test]
+fn aggregate_scores_include_composite_key() {
+    let fixture = load_fixture();
+    let evaluations = evaluate_all_cases(&fixture);
+    let aggregate = aggregate_scores(&evaluations, &fixture.score_dimensions);
+    assert!(aggregate.contains_key("composite"));
+}
+
+#[test]
+fn aggregate_scores_include_all_dimensions() {
+    let fixture = load_fixture();
+    let evaluations = evaluate_all_cases(&fixture);
+    let aggregate = aggregate_scores(&evaluations, &fixture.score_dimensions);
+    for dim in &fixture.score_dimensions {
+        assert!(
+            aggregate.contains_key(&dim.dimension_id),
+            "missing dimension: {}",
+            dim.dimension_id
+        );
+    }
+}

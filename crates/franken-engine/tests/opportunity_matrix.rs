@@ -242,3 +242,215 @@ fn security_clearance_zero_prevents_selection() {
     assert_eq!(first.status, OpportunityStatus::RejectedSecurityClearance);
     assert!(!first.threshold_met);
 }
+
+// ---------- constants ----------
+
+#[test]
+fn opportunity_matrix_constants_are_nonempty() {
+    use frankenengine_engine::opportunity_matrix::{
+        OPPORTUNITY_MATRIX_COMPONENT, OPPORTUNITY_MATRIX_SCHEMA_VERSION,
+        OPPORTUNITY_SCORE_THRESHOLD_MILLIONTHS,
+    };
+    assert!(!OPPORTUNITY_MATRIX_COMPONENT.is_empty());
+    assert!(!OPPORTUNITY_MATRIX_SCHEMA_VERSION.is_empty());
+    assert!(OPPORTUNITY_SCORE_THRESHOLD_MILLIONTHS > 0);
+}
+
+// ---------- hotspot_profile_from_flamegraphs ----------
+
+#[test]
+fn hotspot_profile_from_empty_artifacts_is_empty() {
+    let hotspots = hotspot_profile_from_flamegraphs(&[]);
+    assert!(hotspots.is_empty());
+}
+
+#[test]
+fn hotspot_profile_aggregates_across_artifacts() {
+    let artifacts = vec![
+        flamegraph_artifact(
+            "fg-a",
+            "bench-a",
+            vec![FoldedStackSample {
+                stack: "vm;dispatch".to_string(),
+                sample_count: 100,
+            }],
+        ),
+        flamegraph_artifact(
+            "fg-b",
+            "bench-b",
+            vec![FoldedStackSample {
+                stack: "vm;dispatch".to_string(),
+                sample_count: 50,
+            }],
+        ),
+    ];
+    let hotspots = hotspot_profile_from_flamegraphs(&artifacts);
+    let dispatch = hotspots
+        .iter()
+        .find(|h| h.function == "dispatch")
+        .expect("dispatch hotspot");
+    assert_eq!(dispatch.sample_count, 150);
+}
+
+#[test]
+fn hotspot_profile_entry_key_combines_module_and_function() {
+    let entry = HotspotProfileEntry {
+        module: "vm".to_string(),
+        function: "dispatch".to_string(),
+        sample_count: 100,
+    };
+    assert_eq!(entry.key(), "vm::dispatch");
+}
+
+// ---------- benchmark_pressure_from_cases ----------
+
+#[test]
+fn benchmark_pressure_neutral_when_equal_throughput() {
+    let cases = vec![benchmark_case("equal", 100.0, 100.0)];
+    let pressure = benchmark_pressure_from_cases(&cases, &cases);
+    assert!(
+        pressure >= 1_000_000,
+        "pressure must be at least neutral (1.0)"
+    );
+}
+
+#[test]
+fn benchmark_pressure_differs_for_different_throughput_ratios() {
+    let franken_better = vec![benchmark_case("fast", 200.0, 100.0)];
+    let equal = vec![benchmark_case("fast", 100.0, 100.0)];
+    let pressure_win = benchmark_pressure_from_cases(&franken_better, &equal);
+    let pressure_equal = benchmark_pressure_from_cases(&equal, &equal);
+    assert_ne!(pressure_win, pressure_equal);
+}
+
+// ---------- derive_candidates_from_hotspots ----------
+
+#[test]
+fn derive_candidates_respects_max_candidates() {
+    let hotspots = vec![
+        HotspotProfileEntry {
+            module: "a".to_string(),
+            function: "f1".to_string(),
+            sample_count: 100,
+        },
+        HotspotProfileEntry {
+            module: "b".to_string(),
+            function: "f2".to_string(),
+            sample_count: 80,
+        },
+        HotspotProfileEntry {
+            module: "c".to_string(),
+            function: "f3".to_string(),
+            sample_count: 60,
+        },
+    ];
+    let candidates =
+        derive_candidates_from_hotspots(&hotspots, 1_000_000, 2, 200_000, 1_000_000, 1_000_000, 2);
+    assert!(candidates.len() <= 2);
+}
+
+#[test]
+fn derive_candidates_from_empty_hotspots_is_empty() {
+    let candidates =
+        derive_candidates_from_hotspots(&[], 1_000_000, 2, 200_000, 1_000_000, 1_000_000, 4);
+    assert!(candidates.is_empty());
+}
+
+// ---------- OpportunityStatus ----------
+
+#[test]
+fn opportunity_status_serde_roundtrip() {
+    for status in [
+        OpportunityStatus::Selected,
+        OpportunityStatus::RejectedLowScore,
+        OpportunityStatus::RejectedSecurityClearance,
+        OpportunityStatus::RejectedMissingHotspot,
+    ] {
+        let json = serde_json::to_string(&status).expect("serialize");
+        let recovered: OpportunityStatus = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, status);
+    }
+}
+
+// ---------- OpportunityMatrixDecision ----------
+
+#[test]
+fn decision_schema_version_matches_constant() {
+    let hotspots = vec![HotspotProfileEntry {
+        module: "vm".to_string(),
+        function: "dispatch".to_string(),
+        sample_count: 100,
+    }];
+    let request = base_request_from_hotspots(hotspots);
+    let decision = run_opportunity_matrix_scoring(&request);
+    assert_eq!(
+        decision.schema_version,
+        frankenengine_engine::opportunity_matrix::OPPORTUNITY_MATRIX_SCHEMA_VERSION
+    );
+}
+
+#[test]
+fn decision_serde_roundtrip() {
+    let hotspots = vec![HotspotProfileEntry {
+        module: "vm".to_string(),
+        function: "dispatch".to_string(),
+        sample_count: 100,
+    }];
+    let request = base_request_from_hotspots(hotspots);
+    let decision = run_opportunity_matrix_scoring(&request);
+    let json = serde_json::to_string(&decision).expect("serialize");
+    let recovered: frankenengine_engine::opportunity_matrix::OpportunityMatrixDecision =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.outcome, decision.outcome);
+    assert_eq!(recovered.matrix_id, decision.matrix_id);
+}
+
+// ---------- OpportunityMatrixRequest serde ----------
+
+#[test]
+fn opportunity_matrix_request_serde_roundtrip() {
+    let hotspots = vec![HotspotProfileEntry {
+        module: "vm".to_string(),
+        function: "dispatch".to_string(),
+        sample_count: 100,
+    }];
+    let request = base_request_from_hotspots(hotspots);
+    let json = serde_json::to_string(&request).expect("serialize");
+    let recovered: OpportunityMatrixRequest = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.trace_id, request.trace_id);
+    assert_eq!(recovered.candidates.len(), request.candidates.len());
+}
+
+// ---------- empty request ----------
+
+#[test]
+fn empty_candidates_produce_no_selections() {
+    let request = OpportunityMatrixRequest {
+        trace_id: "trace-empty".to_string(),
+        decision_id: "decision-empty".to_string(),
+        policy_id: "policy-empty".to_string(),
+        optimization_run_id: "opt-empty".to_string(),
+        benchmark_pressure_millionths: 1_000_000,
+        hotspots: Vec::new(),
+        candidates: Vec::new(),
+        historical_outcomes: Vec::new(),
+    };
+    let decision = run_opportunity_matrix_scoring(&request);
+    assert!(!decision.has_selected_opportunities());
+    assert!(decision.selected_opportunity_ids.is_empty());
+}
+
+// ---------- historical tracking ----------
+
+#[test]
+fn historical_tracking_empty_when_no_outcomes() {
+    let hotspots = vec![HotspotProfileEntry {
+        module: "vm".to_string(),
+        function: "dispatch".to_string(),
+        sample_count: 100,
+    }];
+    let mut request = base_request_from_hotspots(hotspots);
+    request.historical_outcomes = Vec::new();
+    let decision = run_opportunity_matrix_scoring(&request);
+    assert!(decision.historical_tracking.is_empty());
+}

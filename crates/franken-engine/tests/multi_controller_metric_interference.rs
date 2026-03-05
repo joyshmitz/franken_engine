@@ -392,3 +392,79 @@ fn counterexample_synthesizer_construction_preserves_config() {
     let json = serde_json::to_string(&synthesizer).expect("serialize");
     assert!(json.contains(&config.budget_ns.to_string()));
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: controller config serde, error serde, event fields
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn controller_config_serde_round_trip() {
+    let config = controller("ctrl-serde", &["m1", "m2"], &["m3"], 500_000, "every 500ms");
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: ControllerConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(config, recovered);
+}
+
+#[test]
+fn synthesis_error_is_std_error() {
+    let err: Box<dyn std::error::Error> = Box::new(SynthesisError::NoViolations);
+    assert!(!err.to_string().is_empty());
+}
+
+#[test]
+fn synthesis_error_serde_round_trip() {
+    let err = SynthesisError::NoViolations;
+    let json = serde_json::to_string(&err).expect("serialize");
+    let recovered: SynthesisError = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(err, recovered);
+}
+
+#[test]
+fn interference_events_have_unique_decision_ids() {
+    let synth = synth();
+    let configs = vec![
+        controller("w-a", &[], &["m1"], 100_000, "100ms"),
+        controller("w-b", &[], &["m1"], 120_000, "120ms"),
+        controller("w-c", &[], &["m1", "m2"], 110_000, "110ms"),
+    ];
+    let interferences = synth.detect_interference(&configs);
+    let events = synth.build_interference_events(
+        &interferences,
+        "trace-unique",
+        "policy-unique",
+    );
+    let decision_ids: std::collections::BTreeSet<&str> =
+        events.iter().map(|e| e.decision_id.as_str()).collect();
+    assert_eq!(decision_ids.len(), events.len(), "decision IDs must be unique per event");
+}
+
+#[test]
+fn disjoint_metric_sets_produce_no_interference() {
+    let synth = synth();
+    let configs = vec![
+        controller("w-x", &[], &["metric_a"], 100_000, "100ms"),
+        controller("w-y", &[], &["metric_b"], 100_000, "100ms"),
+        controller("w-z", &[], &["metric_c"], 100_000, "100ms"),
+    ];
+    let interferences = synth.detect_interference(&configs);
+    assert!(interferences.is_empty(), "disjoint metrics should not interfere");
+}
+
+#[test]
+fn oscillation_detection_with_many_writers() {
+    let synth = synth();
+    let configs: Vec<ControllerConfig> = (0..5)
+        .map(|i| {
+            controller(
+                &format!("writer-{i}"),
+                &[],
+                &["shared_metric"],
+                100_000 + i * 10_000,
+                "various timescales",
+            )
+        })
+        .collect();
+    let interferences = synth.detect_interference(&configs);
+    assert!(!interferences.is_empty(), "5 writers on shared metric should produce interference");
+    assert!(interferences.iter().all(|i| i.shared_metrics.contains("shared_metric")));
+}

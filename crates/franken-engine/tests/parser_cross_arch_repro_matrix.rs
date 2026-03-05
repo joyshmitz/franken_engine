@@ -392,3 +392,267 @@ fn parser_cross_arch_matrix_structured_events_include_required_keys() {
         Some("toolchain_fingerprint_delta")
     );
 }
+
+// ---------- load_fixture helper ----------
+
+#[test]
+fn load_fixture_returns_valid_fixture() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.is_empty());
+    assert!(!fixture.architecture_targets.is_empty());
+    assert!(!fixture.required_lanes.is_empty());
+    assert!(!fixture.delta_classes.is_empty());
+}
+
+// ---------- load_doc helper ----------
+
+#[test]
+fn load_doc_returns_nonempty_string() {
+    let doc = load_doc();
+    assert!(!doc.is_empty());
+    assert!(doc.contains("Reproducibility"));
+}
+
+// ---------- explain_delta ----------
+
+#[test]
+fn explain_delta_no_diff_returns_none_class() {
+    let run_a = LaneRunSummary {
+        lane_id: "lane1".to_string(),
+        arch_profile: "x86".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        witness_digest: "sha256:same".to_string(),
+        toolchain_fingerprint: "fp1".to_string(),
+    };
+    let run_b = run_a.clone();
+    let delta = explain_delta(&run_a, &run_b, false);
+    assert_eq!(delta.class_id, "none");
+    assert_eq!(delta.severity, "info");
+}
+
+#[test]
+fn explain_delta_outcome_divergence_is_critical() {
+    let x86 = LaneRunSummary {
+        lane_id: "lane1".to_string(),
+        arch_profile: "x86".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        witness_digest: "sha256:a".to_string(),
+        toolchain_fingerprint: "fp1".to_string(),
+    };
+    let arm = LaneRunSummary {
+        lane_id: "lane1".to_string(),
+        arch_profile: "arm".to_string(),
+        outcome: "fail".to_string(),
+        error_code: Some("ERR".to_string()),
+        witness_digest: "sha256:b".to_string(),
+        toolchain_fingerprint: "fp1".to_string(),
+    };
+    let delta = explain_delta(&x86, &arm, false);
+    assert_eq!(delta.class_id, "upstream_lane_regression");
+    assert_eq!(delta.severity, "critical");
+}
+
+#[test]
+fn explain_delta_digest_divergence_same_toolchain_is_unexplained() {
+    let x86 = LaneRunSummary {
+        lane_id: "lane1".to_string(),
+        arch_profile: "x86".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        witness_digest: "sha256:a".to_string(),
+        toolchain_fingerprint: "fp-same".to_string(),
+    };
+    let arm = LaneRunSummary {
+        lane_id: "lane1".to_string(),
+        arch_profile: "arm".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        witness_digest: "sha256:b".to_string(),
+        toolchain_fingerprint: "fp-same".to_string(),
+    };
+    let delta = explain_delta(&x86, &arm, false);
+    assert_eq!(delta.class_id, "digest_delta_unexplained");
+    assert_eq!(delta.severity, "critical");
+}
+
+// ---------- classify_matrix_input_status ----------
+
+#[test]
+fn classify_matrix_status_complete_no_deltas_is_ready() {
+    assert_eq!(
+        classify_matrix_input_status(true, false, 0),
+        "ready_for_external_rerun"
+    );
+}
+
+#[test]
+fn classify_matrix_status_complete_strict_no_deltas_is_ready() {
+    assert_eq!(
+        classify_matrix_input_status(true, true, 0),
+        "ready_for_external_rerun"
+    );
+}
+
+// ---------- build_lane_delta_event ----------
+
+#[test]
+fn build_lane_delta_event_none_has_null_error_code() {
+    let fixture = load_fixture();
+    let delta = DeltaExplanation {
+        class_id: "none".to_string(),
+        severity: "info".to_string(),
+        reason: "ok".to_string(),
+    };
+    let event = build_lane_delta_event(&fixture, "lane1", &delta);
+    assert!(event["error_code"].is_null());
+    assert_eq!(event["outcome"], "pass");
+}
+
+#[test]
+fn build_lane_delta_event_critical_has_fail_outcome() {
+    let fixture = load_fixture();
+    let delta = DeltaExplanation {
+        class_id: "digest_delta_unexplained".to_string(),
+        severity: "critical".to_string(),
+        reason: "unexplained".to_string(),
+    };
+    let event = build_lane_delta_event(&fixture, "lane1", &delta);
+    assert_eq!(event["outcome"], "fail");
+    assert_eq!(
+        event["error_code"],
+        "FE-PARSER-CROSS-ARCH-MATRIX-0001"
+    );
+}
+
+// ---------- assert_required_event_keys ----------
+
+#[test]
+fn assert_required_event_keys_passes_for_valid_event() {
+    let event = json!({
+        "trace_id": "t1",
+        "decision_id": "d1",
+        "policy_id": "p1",
+        "component": "c1",
+        "event": "e1",
+        "outcome": "pass",
+        "error_code": serde_json::Value::Null,
+        "scenario_id": "s1",
+        "replay_command": "cmd"
+    });
+    let keys = vec![
+        "trace_id".to_string(),
+        "error_code".to_string(),
+    ];
+    assert_required_event_keys(&event, &keys);
+}
+
+// ---------- determinism ----------
+
+#[test]
+fn delta_classifier_is_deterministic() {
+    let x86 = LaneRunSummary {
+        lane_id: "lane1".to_string(),
+        arch_profile: "x86".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        witness_digest: "sha256:a".to_string(),
+        toolchain_fingerprint: "fp1".to_string(),
+    };
+    let arm = LaneRunSummary {
+        lane_id: "lane1".to_string(),
+        arch_profile: "arm".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        witness_digest: "sha256:b".to_string(),
+        toolchain_fingerprint: "fp2".to_string(),
+    };
+    let a = explain_delta(&x86, &arm, false);
+    let b = explain_delta(&x86, &arm, false);
+    assert_eq!(a, b);
+}
+
+// ---------- delta_classes uniqueness ----------
+
+#[test]
+fn fixture_delta_class_ids_are_unique() {
+    let fixture = load_fixture();
+    let mut seen = BTreeSet::new();
+    for dc in &fixture.delta_classes {
+        assert!(
+            seen.insert(&dc.class_id),
+            "duplicate delta class_id: {}",
+            dc.class_id
+        );
+    }
+}
+
+// ---------- required_lanes uniqueness ----------
+
+#[test]
+fn fixture_required_lane_ids_are_unique() {
+    let fixture = load_fixture();
+    let mut seen = BTreeSet::new();
+    for lane in &fixture.required_lanes {
+        assert!(
+            seen.insert(&lane.lane_id),
+            "duplicate lane_id: {}",
+            lane.lane_id
+        );
+    }
+}
+
+// ---------- missing_input with allow_missing=false ----------
+
+#[test]
+fn explain_delta_missing_input_ignored_when_allow_missing_false() {
+    let x86 = LaneRunSummary {
+        lane_id: "lane1".to_string(),
+        arch_profile: "x86".to_string(),
+        outcome: "unknown".to_string(),
+        error_code: Some("ERR".to_string()),
+        witness_digest: "missing-input".to_string(),
+        toolchain_fingerprint: "fp".to_string(),
+    };
+    let arm = LaneRunSummary {
+        lane_id: "lane1".to_string(),
+        arch_profile: "arm".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        witness_digest: "sha256:ok".to_string(),
+        toolchain_fingerprint: "fp".to_string(),
+    };
+    // allow_missing=false means the missing-input sentinel is NOT special-cased
+    let delta = explain_delta(&x86, &arm, false);
+    assert_ne!(delta.class_id, "missing_input");
+    // outcome divergence should trigger upstream_lane_regression instead
+    assert_eq!(delta.class_id, "upstream_lane_regression");
+}
+
+// ---------- build_lane_delta_event missing_input error code ----------
+
+#[test]
+fn build_lane_delta_event_missing_input_has_correct_error_code() {
+    let fixture = load_fixture();
+    let delta = DeltaExplanation {
+        class_id: "missing_input".to_string(),
+        severity: "critical".to_string(),
+        reason: "missing".to_string(),
+    };
+    let event = build_lane_delta_event(&fixture, "lane1", &delta);
+    assert_eq!(event["error_code"], "FE-PARSER-CROSS-ARCH-MATRIX-0003");
+    assert_eq!(event["outcome"], "fail");
+}
+
+// ---------- classify_matrix_input_status incomplete + critical deltas ----------
+
+#[test]
+fn classify_matrix_status_incomplete_strict_ignores_critical_deltas() {
+    // When matrix is incomplete in strict mode, the status is incomplete
+    // regardless of critical delta count
+    assert_eq!(
+        classify_matrix_input_status(false, true, 5),
+        "incomplete_matrix"
+    );
+}

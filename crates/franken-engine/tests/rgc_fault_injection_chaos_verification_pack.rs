@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const PACK_SCHEMA_VERSION: &str = "franken-engine.rgc-fault-injection-chaos-verification-pack.v1";
 const VECTORS_SCHEMA_VERSION: &str =
@@ -14,7 +14,7 @@ const PACK_JSON: &str =
 const VECTORS_JSON: &str =
     include_str!("../../../docs/rgc_fault_injection_chaos_verification_vectors_v1.json");
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ChaosVerificationPackContract {
     schema_version: String,
     contract_version: String,
@@ -29,7 +29,7 @@ struct ChaosVerificationPackContract {
     operator_verification: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct FailureScenario {
     scenario_id: String,
     path_type: String,
@@ -39,7 +39,7 @@ struct FailureScenario {
     expected_message_fragment: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct GateRunner {
     script: String,
     replay_wrapper: String,
@@ -47,7 +47,7 @@ struct GateRunner {
     manifest_schema_version: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ChaosVerificationVectors {
     schema_version: String,
     contract_version: String,
@@ -57,7 +57,7 @@ struct ChaosVerificationVectors {
     vectors: Vec<ChaosScenarioVector>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ChaosScenarioVector {
     scenario_id: String,
     chaos_class: String,
@@ -399,5 +399,227 @@ fn rgc_056_contract_and_vectors_files_exist_at_declared_paths() {
     ] {
         let full = root.join(path);
         assert!(full.exists(), "expected path to exist: {}", full.display());
+    }
+}
+
+// ---------- contract field completeness ----------
+
+#[test]
+fn rgc_056_contract_failure_scenarios_have_unique_ids() {
+    let contract = parse_contract();
+    let mut ids = BTreeSet::new();
+    for scenario in &contract.failure_scenarios {
+        assert!(
+            ids.insert(scenario.scenario_id.as_str()),
+            "duplicate failure scenario id: {}",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn rgc_056_contract_failure_scenarios_all_have_failure_path_type() {
+    let contract = parse_contract();
+    for scenario in &contract.failure_scenarios {
+        assert_eq!(
+            scenario.path_type, "failure",
+            "scenario {} should be failure path_type",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn rgc_056_contract_error_codes_all_start_with_fe_rgc_056() {
+    let contract = parse_contract();
+    for scenario in &contract.failure_scenarios {
+        assert!(
+            scenario
+                .expected_error_code
+                .starts_with("FE-RGC-056-"),
+            "scenario {} error code should start with FE-RGC-056-: {}",
+            scenario.scenario_id,
+            scenario.expected_error_code
+        );
+    }
+}
+
+#[test]
+fn rgc_056_contract_chaos_classes_are_exactly_three() {
+    let contract = parse_contract();
+    assert_eq!(contract.required_chaos_classes.len(), 3);
+    let classes: BTreeSet<&str> = contract
+        .required_chaos_classes
+        .iter()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        classes,
+        ["containment_trigger", "degraded_mode_recovery", "fault_containment"]
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+    );
+}
+
+#[test]
+fn rgc_056_contract_required_log_keys_exactly_ten() {
+    let contract = parse_contract();
+    assert_eq!(contract.required_log_keys.len(), 10);
+}
+
+#[test]
+fn rgc_056_contract_required_artifacts_exactly_five() {
+    let contract = parse_contract();
+    assert_eq!(contract.required_artifacts.len(), 5);
+}
+
+// ---------- vectors cross-referencing ----------
+
+#[test]
+fn rgc_056_vectors_match_contract_version() {
+    let contract = parse_contract();
+    let vectors = parse_vectors();
+    assert_eq!(contract.contract_version, vectors.contract_version);
+}
+
+#[test]
+fn rgc_056_vectors_bead_id_matches_contract() {
+    let contract = parse_contract();
+    let vectors = parse_vectors();
+    assert_eq!(contract.bead_id, vectors.bead_id);
+}
+
+#[test]
+fn rgc_056_vectors_test_vectors_source_path_matches_actual_file() {
+    let contract = parse_contract();
+    let root = repo_root();
+    let vectors_path = root.join(&contract.test_vectors_source);
+    assert!(
+        vectors_path.exists(),
+        "test_vectors_source path should exist: {}",
+        vectors_path.display()
+    );
+}
+
+#[test]
+fn rgc_056_all_vector_scenario_ids_are_nonempty() {
+    let vectors = parse_vectors();
+    for vector in &vectors.vectors {
+        assert!(
+            !vector.scenario_id.trim().is_empty(),
+            "scenario_id must not be empty"
+        );
+    }
+}
+
+#[test]
+fn rgc_056_all_vector_chaos_classes_are_in_contract() {
+    let contract = parse_contract();
+    let vectors = parse_vectors();
+    let required: BTreeSet<&str> = contract
+        .required_chaos_classes
+        .iter()
+        .map(String::as_str)
+        .collect();
+    for vector in &vectors.vectors {
+        assert!(
+            required.contains(vector.chaos_class.as_str()),
+            "vector chaos_class {} not in contract required classes",
+            vector.chaos_class
+        );
+    }
+}
+
+#[test]
+fn rgc_056_vectors_have_positive_deterministic_seeds() {
+    let vectors = parse_vectors();
+    for vector in &vectors.vectors {
+        assert!(
+            vector.deterministic_seed > 0,
+            "deterministic_seed must be positive for {}",
+            vector.scenario_id
+        );
+    }
+}
+
+// ---------- serde roundtrip ----------
+
+#[test]
+fn rgc_056_contract_json_serde_roundtrip() {
+    let contract = parse_contract();
+    let json = serde_json::to_string(&contract).expect("contract should serialize");
+    let recovered: ChaosVerificationPackContract =
+        serde_json::from_str(&json).expect("contract should deserialize");
+    assert_eq!(contract, recovered);
+}
+
+#[test]
+fn rgc_056_vectors_json_serde_roundtrip() {
+    let vectors = parse_vectors();
+    let json = serde_json::to_string(&vectors).expect("vectors should serialize");
+    let recovered: ChaosVerificationVectors =
+        serde_json::from_str(&json).expect("vectors should deserialize");
+    assert_eq!(vectors, recovered);
+}
+
+// ---------- gate runner fields ----------
+
+#[test]
+fn rgc_056_gate_runner_script_exists_on_disk() {
+    let contract = parse_contract();
+    let root = repo_root();
+    let script_path = root.join(&contract.gate_runner.script);
+    assert!(
+        script_path.exists(),
+        "gate runner script should exist: {}",
+        script_path.display()
+    );
+}
+
+#[test]
+fn rgc_056_gate_runner_replay_wrapper_exists_on_disk() {
+    let contract = parse_contract();
+    let root = repo_root();
+    let replay_path = root.join(&contract.gate_runner.replay_wrapper);
+    assert!(
+        replay_path.exists(),
+        "gate runner replay wrapper should exist: {}",
+        replay_path.display()
+    );
+}
+
+// ---------- expected_policy_action_for_class coverage ----------
+
+#[test]
+fn rgc_056_expected_policy_action_for_class_unknown_returns_unknown() {
+    assert_eq!(expected_policy_action_for_class("nonexistent"), "unknown");
+}
+
+#[test]
+fn rgc_056_expected_outcome_for_class_unknown_returns_unknown() {
+    assert_eq!(expected_outcome_for_class("nonexistent"), "unknown");
+}
+
+#[test]
+fn rgc_056_expected_policy_action_for_all_classes_is_not_unknown() {
+    let contract = parse_contract();
+    for class in &contract.required_chaos_classes {
+        let action = expected_policy_action_for_class(class);
+        assert_ne!(
+            action, "unknown",
+            "expected_policy_action_for_class should handle {class}"
+        );
+    }
+}
+
+#[test]
+fn rgc_056_expected_outcome_for_all_classes_is_not_unknown() {
+    let contract = parse_contract();
+    for class in &contract.required_chaos_classes {
+        let outcome = expected_outcome_for_class(class);
+        assert_ne!(
+            outcome, "unknown",
+            "expected_outcome_for_class should handle {class}"
+        );
     }
 }

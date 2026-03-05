@@ -381,3 +381,223 @@ fn frx_15_3_deterministic_sequence_replays_identically() {
         "deterministic replay must produce identical demotion traces"
     );
 }
+
+// ---------- default_risk_posteriors ----------
+
+#[test]
+fn default_risk_posteriors_has_four_keys() {
+    let posteriors = default_risk_posteriors();
+    assert_eq!(posteriors.len(), 4);
+    assert!(posteriors.contains_key("compatibility"));
+    assert!(posteriors.contains_key("latency"));
+    assert!(posteriors.contains_key("memory"));
+    assert!(posteriors.contains_key("incident_severity"));
+}
+
+// ---------- make_input ----------
+
+#[test]
+fn make_input_sets_correct_fields() {
+    let input = make_input(500, true, 42_000);
+    assert_eq!(input.observed_latency_us, 500);
+    assert!(input.calibration_covered);
+    assert_eq!(input.timestamp_ns, 42_000);
+    assert_eq!(input.confidence_millionths, 950_000);
+    assert!(!input.is_adverse);
+    assert_eq!(input.epoch, SecurityEpoch::from_raw(1));
+}
+
+// ---------- neutral_observation ----------
+
+#[test]
+fn neutral_observation_is_successful() {
+    let obs = neutral_observation(LaneChoice::Js);
+    assert_eq!(obs.lane, LaneChoice::Js);
+    assert!(obs.success);
+    assert_eq!(obs.latency_us, 1_000);
+    assert_eq!(obs.compatibility_errors, 0);
+    assert!(!obs.safe_mode_entered);
+}
+
+#[test]
+fn neutral_observation_wasm_sets_lane() {
+    let obs = neutral_observation(LaneChoice::Wasm);
+    assert_eq!(obs.lane, LaneChoice::Wasm);
+}
+
+// ---------- LaneChoice ----------
+
+#[test]
+fn lane_choice_serde_roundtrip() {
+    for lane in [LaneChoice::Js, LaneChoice::Wasm] {
+        let json = serde_json::to_string(&lane).expect("serialize");
+        let recovered: LaneChoice = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, lane);
+    }
+}
+
+// ---------- RoutingPolicy ----------
+
+#[test]
+fn routing_policy_serde_roundtrip() {
+    for policy in [RoutingPolicy::Conservative, RoutingPolicy::Adaptive] {
+        let json = serde_json::to_string(&policy).expect("serialize");
+        let recovered: RoutingPolicy = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, policy);
+    }
+}
+
+// ---------- DemotionReason ----------
+
+#[test]
+fn demotion_reason_regret_serde_roundtrip() {
+    let reason = DemotionReason::RegretExceeded {
+        realized_millionths: 100,
+        bound_millionths: 50,
+    };
+    let json = serde_json::to_string(&reason).expect("serialize");
+    let recovered: DemotionReason = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, reason);
+}
+
+#[test]
+fn demotion_reason_change_point_serde_roundtrip() {
+    let reason = DemotionReason::ChangePointDetected {
+        cusum_stat_millionths: 200,
+        threshold_millionths: 100,
+    };
+    let json = serde_json::to_string(&reason).expect("serialize");
+    let recovered: DemotionReason = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, reason);
+}
+
+// ---------- RouterConfig ----------
+
+#[test]
+fn router_config_default_is_conservative() {
+    let config = RouterConfig::default_config();
+    assert!(config.risk_budget.tail_latency_budget_us > 0);
+    assert!(config.risk_budget.compatibility_error_budget > 0);
+}
+
+// ---------- HybridLaneRouter ----------
+
+#[test]
+fn hybrid_lane_router_starts_conservative() {
+    let router = HybridLaneRouter::new(RouterConfig::default_config());
+    assert_eq!(router.policy, RoutingPolicy::Conservative);
+}
+
+#[test]
+fn hybrid_lane_router_summary_reflects_initial_state() {
+    let router = HybridLaneRouter::new(RouterConfig::default_config());
+    let summary = router.summary();
+    assert_eq!(summary.policy, RoutingPolicy::Conservative);
+    assert_eq!(summary.round, 0);
+    assert_eq!(summary.total_js_routes, 0);
+    assert_eq!(summary.total_wasm_routes, 0);
+}
+
+#[test]
+fn hybrid_lane_router_promote_then_observe_tracks_round() {
+    let mut config = RouterConfig::default_config();
+    config.risk_budget = RiskBudget {
+        tail_latency_budget_us: u64::MAX,
+        compatibility_error_budget: u64::MAX,
+        regret_budget_millionths: i64::MAX,
+    };
+    config.change_point = ChangePointConfig {
+        threshold_millionths: i64::MAX,
+        drift_millionths: 50_000,
+        min_observations: u64::MAX,
+    };
+    config.conformal = ConformalConfig {
+        target_coverage_millionths: 0,
+        min_observations: u64::MAX,
+        window_size: 1,
+    };
+
+    let mut router = HybridLaneRouter::new(config);
+    router.conformal = ConformalState::new(router.config.conformal.clone());
+    router.change_point = ChangePointMonitor::new(router.config.change_point.clone());
+    router
+        .promote_to_adaptive()
+        .expect("promote");
+
+    let trace = router.observe(
+        LaneChoice::Js,
+        &neutral_observation(LaneChoice::Js),
+        Some(10_000),
+    );
+    assert_eq!(trace.round, 0);
+    assert_eq!(trace.policy, RoutingPolicy::Adaptive);
+    assert!(trace.demotion_reason.is_none());
+}
+
+// ---------- ChangePointMonitor ----------
+
+#[test]
+fn change_point_monitor_serde_roundtrip() {
+    let monitor = ChangePointMonitor::new(ChangePointConfig {
+        threshold_millionths: 500_000,
+        drift_millionths: 50_000,
+        min_observations: 10,
+    });
+    let json = serde_json::to_string(&monitor).expect("serialize");
+    let recovered: ChangePointMonitor = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.observation_count, 0);
+}
+
+// ---------- ConformalState ----------
+
+#[test]
+fn conformal_state_serde_roundtrip() {
+    let state = ConformalState::new(ConformalConfig {
+        target_coverage_millionths: 900_000,
+        min_observations: 50,
+        window_size: 100,
+    });
+    let json = serde_json::to_string(&state).expect("serialize");
+    let recovered: ConformalState = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(
+        recovered.config.target_coverage_millionths,
+        900_000
+    );
+}
+
+// ---------- RiskBudget ----------
+
+#[test]
+fn risk_budget_serde_roundtrip() {
+    let budget = RiskBudget {
+        tail_latency_budget_us: 5_000,
+        compatibility_error_budget: 10,
+        regret_budget_millionths: 100_000,
+    };
+    let json = serde_json::to_string(&budget).expect("serialize");
+    let recovered: RiskBudget = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.tail_latency_budget_us, 5_000);
+    assert_eq!(recovered.regret_budget_millionths, 100_000);
+}
+
+// ---------- RoutingDecisionInput ----------
+
+#[test]
+fn routing_decision_input_serde_roundtrip() {
+    let input = make_input(1_000, true, 99);
+    let json = serde_json::to_string(&input).expect("serialize");
+    let recovered: RoutingDecisionInput = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.observed_latency_us, 1_000);
+    assert_eq!(recovered.timestamp_ns, 99);
+}
+
+// ---------- LaneObservation ----------
+
+#[test]
+fn lane_observation_serde_roundtrip() {
+    let obs = neutral_observation(LaneChoice::Wasm);
+    let json = serde_json::to_string(&obs).expect("serialize");
+    let recovered: LaneObservation = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.lane, LaneChoice::Wasm);
+    assert!(recovered.success);
+}

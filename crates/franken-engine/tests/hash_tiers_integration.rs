@@ -227,7 +227,11 @@ fn all_tiers_deterministic_10_runs() {
 
 #[test]
 fn hash_tier_serde_round_trip_all_variants() {
-    for tier in [HashTier::Integrity, HashTier::Content, HashTier::Authenticity] {
+    for tier in [
+        HashTier::Integrity,
+        HashTier::Content,
+        HashTier::Authenticity,
+    ] {
         let json = serde_json::to_string(&tier).expect("serialize");
         let recovered: HashTier = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(tier, recovered);
@@ -236,7 +240,11 @@ fn hash_tier_serde_round_trip_all_variants() {
 
 #[test]
 fn hash_tier_display_non_empty() {
-    for tier in [HashTier::Integrity, HashTier::Content, HashTier::Authenticity] {
+    for tier in [
+        HashTier::Integrity,
+        HashTier::Content,
+        HashTier::Authenticity,
+    ] {
         assert!(!tier.to_string().is_empty());
     }
 }
@@ -275,7 +283,10 @@ fn hash_algorithm_serde_round_trip_all_variants() {
 fn hash_algorithm_tier_mapping() {
     assert_eq!(HashAlgorithm::WyhashInspired.tier(), HashTier::Integrity);
     assert_eq!(HashAlgorithm::SipInspiredCr.tier(), HashTier::Content);
-    assert_eq!(HashAlgorithm::SipInspiredKeyed.tier(), HashTier::Authenticity);
+    assert_eq!(
+        HashAlgorithm::SipInspiredKeyed.tier(),
+        HashTier::Authenticity
+    );
 }
 
 #[test]

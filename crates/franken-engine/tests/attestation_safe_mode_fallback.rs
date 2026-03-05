@@ -441,3 +441,63 @@ fn multiple_degraded_actions_accumulate_pending_decisions() {
     assert_eq!(mgr.pending_decisions().len(), 3);
     assert_eq!(mgr.state(), AttestationFallbackState::Degraded);
 }
+
+#[test]
+fn action_tier_serde_round_trip() {
+    for tier in [ActionTier::LowImpact, ActionTier::Standard, ActionTier::HighImpact] {
+        let json = serde_json::to_string(&tier).expect("serialize");
+        let recovered: ActionTier = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(tier, recovered);
+    }
+}
+
+#[test]
+fn autonomous_action_serde_round_trip() {
+    for action in [
+        AutonomousAction::Terminate,
+        AutonomousAction::Quarantine,
+        AutonomousAction::PolicyPromotion,
+        AutonomousAction::RoutineMonitoring,
+        AutonomousAction::MetricsEmission,
+    ] {
+        let json = serde_json::to_string(&action).expect("serialize");
+        let recovered: AutonomousAction = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(action, recovered);
+    }
+}
+
+#[test]
+fn attestation_fallback_error_is_std_error() {
+    let err: Box<dyn std::error::Error> = Box::new(AttestationFallbackError::SignatureFailure {
+        detail: "test".to_string(),
+    });
+    assert!(!err.to_string().is_empty());
+}
+
+#[test]
+fn events_are_populated_after_evaluation() {
+    let mut mgr = mk_manager(1_000);
+    let req = mk_request(
+        "trace-drain",
+        "decision-drain",
+        "policy-drain",
+        AutonomousAction::RoutineMonitoring,
+        ActionTier::Standard,
+        100,
+    );
+    mgr.evaluate_action(req, AttestationHealth::EvidenceExpired)
+        .expect("decision");
+    assert!(!mgr.events().is_empty());
+    let event = &mgr.events()[0];
+    assert_eq!(event.component, "attestation_safe_mode");
+}
+
+#[test]
+fn attestation_action_request_serde_round_trip() {
+    let req = AttestationActionRequest::new("t1", "d1", "p1", AutonomousAction::Terminate, 500);
+    let json = serde_json::to_string(&req).expect("serialize");
+    let recovered: AttestationActionRequest = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(req.trace_id, recovered.trace_id);
+    assert_eq!(req.decision_id, recovered.decision_id);
+    assert_eq!(req.tier, recovered.tier);
+}

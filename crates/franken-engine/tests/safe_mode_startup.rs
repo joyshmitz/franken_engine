@@ -185,3 +185,344 @@ fn incident_recovery_flow_enters_safe_mode_and_exits_after_checks() {
         .expect("exit safe mode");
     assert!(!detector.is_safe_mode("zone-a"));
 }
+
+// ---------- startup source selection ----------
+
+#[test]
+fn startup_env_franken_safe_mode_triggers_safe_mode() {
+    let mut environment = BTreeMap::new();
+    environment.insert("FRANKEN_SAFE_MODE".to_string(), "1".to_string());
+    let input = SafeModeStartupInput {
+        trace_id: "trace-env-trigger".to_string(),
+        decision_id: "decision-env-trigger".to_string(),
+        policy_id: "policy-safe-startup-v1".to_string(),
+        cli_safe_mode: false,
+        environment,
+    };
+    let artifact = evaluate_safe_mode_startup(&input).expect("startup artifact");
+    assert!(artifact.safe_mode_active);
+    assert_eq!(artifact.source, SafeModeStartupSource::EnvironmentVariable);
+}
+
+#[test]
+fn startup_frankenengine_safe_mode_env_triggers_safe_mode() {
+    let mut environment = BTreeMap::new();
+    environment.insert("FRANKENENGINE_SAFE_MODE".to_string(), "true".to_string());
+    let input = SafeModeStartupInput {
+        trace_id: "trace-env-trigger-2".to_string(),
+        decision_id: "decision-env-trigger-2".to_string(),
+        policy_id: "policy-safe-startup-v1".to_string(),
+        cli_safe_mode: false,
+        environment,
+    };
+    let artifact = evaluate_safe_mode_startup(&input).expect("startup artifact");
+    assert!(artifact.safe_mode_active);
+}
+
+#[test]
+fn startup_no_flags_results_in_normal_mode() {
+    let input = SafeModeStartupInput {
+        trace_id: "trace-normal".to_string(),
+        decision_id: "decision-normal".to_string(),
+        policy_id: "policy-safe-startup-v1".to_string(),
+        cli_safe_mode: false,
+        environment: BTreeMap::new(),
+    };
+    let artifact = evaluate_safe_mode_startup(&input).expect("startup artifact");
+    assert!(!artifact.safe_mode_active);
+    assert_eq!(artifact.source, SafeModeStartupSource::NotRequested);
+}
+
+// ---------- restricted features ----------
+
+#[test]
+fn safe_mode_restricts_extension_auto_promotion() {
+    let input = SafeModeStartupInput {
+        trace_id: "trace-restrict".to_string(),
+        decision_id: "decision-restrict".to_string(),
+        policy_id: "policy-safe-startup-v1".to_string(),
+        cli_safe_mode: true,
+        environment: BTreeMap::new(),
+    };
+    let artifact = evaluate_safe_mode_startup(&input).expect("startup artifact");
+    assert!(artifact.safe_mode_active);
+    assert!(
+        artifact
+            .restricted_features
+            .contains(&"extension_auto_promotion".to_string()),
+        "safe mode should restrict extension auto-promotion"
+    );
+}
+
+// ---------- exit checks ----------
+
+#[test]
+fn exit_blocked_when_incidents_unacknowledged() {
+    let exit = evaluate_safe_mode_exit(&SafeModeExitCheckInput {
+        trace_id: "trace-exit-incidents".to_string(),
+        decision_id: "decision-exit-incidents".to_string(),
+        policy_id: "policy-safe-startup-v1".to_string(),
+        active_incidents: 2,
+        pending_quarantines: 0,
+        evidence_ledger_flushed: true,
+    })
+    .expect("exit artifact");
+    assert!(!exit.can_exit);
+    assert!(!exit.blocking_reasons.is_empty());
+}
+
+#[test]
+fn exit_blocked_when_quarantines_pending() {
+    let exit = evaluate_safe_mode_exit(&SafeModeExitCheckInput {
+        trace_id: "trace-exit-quarantine".to_string(),
+        decision_id: "decision-exit-quarantine".to_string(),
+        policy_id: "policy-safe-startup-v1".to_string(),
+        active_incidents: 0,
+        pending_quarantines: 1,
+        evidence_ledger_flushed: true,
+    })
+    .expect("exit artifact");
+    assert!(!exit.can_exit);
+}
+
+#[test]
+fn exit_blocked_when_ledger_not_flushed() {
+    let exit = evaluate_safe_mode_exit(&SafeModeExitCheckInput {
+        trace_id: "trace-exit-ledger".to_string(),
+        decision_id: "decision-exit-ledger".to_string(),
+        policy_id: "policy-safe-startup-v1".to_string(),
+        active_incidents: 0,
+        pending_quarantines: 0,
+        evidence_ledger_flushed: false,
+    })
+    .expect("exit artifact");
+    assert!(!exit.can_exit);
+}
+
+#[test]
+fn exit_passes_when_all_conditions_met() {
+    let exit = evaluate_safe_mode_exit(&SafeModeExitCheckInput {
+        trace_id: "trace-exit-pass".to_string(),
+        decision_id: "decision-exit-pass".to_string(),
+        policy_id: "policy-safe-startup-v1".to_string(),
+        active_incidents: 0,
+        pending_quarantines: 0,
+        evidence_ledger_flushed: true,
+    })
+    .expect("exit artifact");
+    assert!(exit.can_exit);
+    assert_eq!(exit.event.outcome, "pass");
+}
+
+// ---------- fork detector ----------
+
+#[test]
+fn fork_detector_starts_not_in_safe_mode() {
+    let detector = ForkDetector::with_defaults();
+    assert!(!detector.is_safe_mode("zone-a"));
+}
+
+#[test]
+fn fork_detector_accepts_sequential_checkpoints() {
+    let signing_key = make_signing_key(20);
+    let base = genesis(std::slice::from_ref(&signing_key), "zone-b");
+    let cp1 = checkpoint_after(
+        &base,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        std::slice::from_ref(&signing_key),
+        "zone-b",
+        2,
+    );
+
+    let mut detector = ForkDetector::with_defaults();
+    detector
+        .record_checkpoint(&RecordCheckpointInput {
+            zone: "zone-b",
+            checkpoint: &base,
+            accepted: true,
+            frontier_seq: 0,
+            frontier_epoch: SecurityEpoch::GENESIS,
+            tick: 100,
+            trace_id: "trace-genesis-b",
+        })
+        .expect("record genesis");
+    detector
+        .record_checkpoint(&RecordCheckpointInput {
+            zone: "zone-b",
+            checkpoint: &cp1,
+            accepted: true,
+            frontier_seq: 1,
+            frontier_epoch: SecurityEpoch::GENESIS,
+            tick: 200,
+            trace_id: "trace-cp1-b",
+        })
+        .expect("record cp1");
+    assert!(!detector.is_safe_mode("zone-b"));
+}
+
+#[test]
+fn fork_detector_incidents_start_empty() {
+    let detector = ForkDetector::with_defaults();
+    assert!(detector.incidents("zone-a").is_empty());
+}
+
+#[test]
+fn fork_detector_safe_mode_sticky_across_zones() {
+    let signing_key = make_signing_key(21);
+    let base = genesis(std::slice::from_ref(&signing_key), "zone-c");
+    let cp1 = checkpoint_after(
+        &base,
+        1,
+        SecurityEpoch::GENESIS,
+        200,
+        std::slice::from_ref(&signing_key),
+        "zone-c",
+        2,
+    );
+    let cp1_fork = checkpoint_after(
+        &base,
+        1,
+        SecurityEpoch::GENESIS,
+        210,
+        std::slice::from_ref(&signing_key),
+        "zone-c",
+        3,
+    );
+
+    let mut detector = ForkDetector::with_defaults();
+    detector
+        .record_checkpoint(&RecordCheckpointInput {
+            zone: "zone-c",
+            checkpoint: &base,
+            accepted: true,
+            frontier_seq: 0,
+            frontier_epoch: SecurityEpoch::GENESIS,
+            tick: 100,
+            trace_id: "trace-genesis-c",
+        })
+        .expect("record");
+    detector
+        .record_checkpoint(&RecordCheckpointInput {
+            zone: "zone-c",
+            checkpoint: &cp1,
+            accepted: true,
+            frontier_seq: 1,
+            frontier_epoch: SecurityEpoch::GENESIS,
+            tick: 200,
+            trace_id: "trace-cp1-c",
+        })
+        .expect("record");
+    let _report = detector
+        .record_checkpoint(&RecordCheckpointInput {
+            zone: "zone-c",
+            checkpoint: &cp1_fork,
+            accepted: false,
+            frontier_seq: 1,
+            frontier_epoch: SecurityEpoch::GENESIS,
+            tick: 210,
+            trace_id: "trace-fork-c",
+        })
+        .expect_err("fork must trigger safe mode");
+
+    assert!(detector.is_safe_mode("zone-c"));
+    assert!(!detector.is_safe_mode("zone-d"));
+}
+
+// ---------- serde roundtrip ----------
+
+#[test]
+fn safe_mode_startup_input_serde_roundtrip() {
+    let input = SafeModeStartupInput {
+        trace_id: "trace-serde".to_string(),
+        decision_id: "decision-serde".to_string(),
+        policy_id: "policy-serde".to_string(),
+        cli_safe_mode: true,
+        environment: BTreeMap::from([("KEY".to_string(), "VALUE".to_string())]),
+    };
+    let json = serde_json::to_string(&input).expect("serialize");
+    let recovered: SafeModeStartupInput =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.trace_id, input.trace_id);
+    assert_eq!(recovered.cli_safe_mode, input.cli_safe_mode);
+}
+
+#[test]
+fn safe_mode_exit_check_input_serde_roundtrip() {
+    let input = SafeModeExitCheckInput {
+        trace_id: "trace-exit-serde".to_string(),
+        decision_id: "decision-exit-serde".to_string(),
+        policy_id: "policy-exit-serde".to_string(),
+        active_incidents: 0,
+        pending_quarantines: 0,
+        evidence_ledger_flushed: true,
+    };
+    let json = serde_json::to_string(&input).expect("serialize");
+    let recovered: SafeModeExitCheckInput =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.trace_id, input.trace_id);
+    assert_eq!(recovered.active_incidents, 0);
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde, display, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn safe_mode_startup_source_serde_round_trip() {
+    for source in [
+        SafeModeStartupSource::CliFlag,
+        SafeModeStartupSource::EnvironmentVariable,
+        SafeModeStartupSource::NotRequested,
+    ] {
+        let json = serde_json::to_string(&source).expect("serialize");
+        let recovered: SafeModeStartupSource = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(source, recovered);
+    }
+}
+
+#[test]
+fn safe_mode_startup_artifact_serde_round_trip() {
+    let input = SafeModeStartupInput {
+        trace_id: "trace-serde-art".to_string(),
+        decision_id: "decision-serde-art".to_string(),
+        policy_id: "policy-serde-art".to_string(),
+        cli_safe_mode: true,
+        environment: BTreeMap::new(),
+    };
+    let artifact = evaluate_safe_mode_startup(&input).expect("artifact");
+    let json = serde_json::to_string(&artifact).expect("serialize");
+    assert!(json.contains("trace-serde-art"));
+}
+
+#[test]
+fn exit_artifact_has_structured_event() {
+    let exit = evaluate_safe_mode_exit(&SafeModeExitCheckInput {
+        trace_id: "trace-exit-event".to_string(),
+        decision_id: "decision-exit-event".to_string(),
+        policy_id: "policy-exit-event".to_string(),
+        active_incidents: 0,
+        pending_quarantines: 0,
+        evidence_ledger_flushed: true,
+    })
+    .expect("exit artifact");
+    assert_eq!(exit.event.trace_id, "trace-exit-event");
+    assert_eq!(exit.event.decision_id, "decision-exit-event");
+    assert!(!exit.event.component.is_empty());
+}
+
+#[test]
+fn multiple_blocking_reasons_accumulate() {
+    let exit = evaluate_safe_mode_exit(&SafeModeExitCheckInput {
+        trace_id: "trace-multi-block".to_string(),
+        decision_id: "decision-multi-block".to_string(),
+        policy_id: "policy-multi-block".to_string(),
+        active_incidents: 2,
+        pending_quarantines: 3,
+        evidence_ledger_flushed: false,
+    })
+    .expect("exit artifact");
+    assert!(!exit.can_exit);
+    assert!(exit.blocking_reasons.len() >= 3, "all 3 blockers should be reported");
+}

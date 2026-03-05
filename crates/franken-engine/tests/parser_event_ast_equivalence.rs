@@ -375,3 +375,155 @@ fn parser_event_ast_equivalence_contract_doc_and_logs_are_well_formed() {
         assert!(schema_version.starts_with("franken-engine.parser"));
     }
 }
+
+// ---------- parse_goal helper ----------
+
+#[test]
+fn event_ast_parse_goal_script() {
+    assert_eq!(parse_goal("script"), ParseGoal::Script);
+}
+
+#[test]
+fn event_ast_parse_goal_module() {
+    assert_eq!(parse_goal("module"), ParseGoal::Module);
+}
+
+#[test]
+#[should_panic(expected = "unsupported fixture goal")]
+fn event_ast_parse_goal_panics_on_unknown() {
+    parse_goal("expression");
+}
+
+// ---------- parse_error_code helper ----------
+
+#[test]
+fn event_ast_parse_error_code_all_known() {
+    let codes = [
+        ("empty_source", ParseErrorCode::EmptySource),
+        ("invalid_goal", ParseErrorCode::InvalidGoal),
+        ("unsupported_syntax", ParseErrorCode::UnsupportedSyntax),
+        ("io_read_failed", ParseErrorCode::IoReadFailed),
+        ("invalid_utf8", ParseErrorCode::InvalidUtf8),
+        ("source_too_large", ParseErrorCode::SourceTooLarge),
+        ("budget_exceeded", ParseErrorCode::BudgetExceeded),
+    ];
+    for (raw, expected) in codes {
+        assert_eq!(parse_error_code(raw), expected);
+    }
+}
+
+// ---------- materialization_error_code helper ----------
+
+#[test]
+fn event_ast_materialization_error_code_all_known() {
+    let codes = [
+        ("parse_failed_event_stream", ParseEventMaterializationErrorCode::ParseFailedEventStream),
+        ("statement_hash_mismatch", ParseEventMaterializationErrorCode::StatementHashMismatch),
+        ("statement_count_mismatch", ParseEventMaterializationErrorCode::StatementCountMismatch),
+        ("statement_index_mismatch", ParseEventMaterializationErrorCode::StatementIndexMismatch),
+        ("statement_kind_mismatch", ParseEventMaterializationErrorCode::StatementKindMismatch),
+        ("statement_span_mismatch", ParseEventMaterializationErrorCode::StatementSpanMismatch),
+        ("source_hash_mismatch", ParseEventMaterializationErrorCode::SourceHashMismatch),
+        ("ast_hash_mismatch", ParseEventMaterializationErrorCode::AstHashMismatch),
+        ("missing_parse_started", ParseEventMaterializationErrorCode::MissingParseStarted),
+        ("missing_parse_completed", ParseEventMaterializationErrorCode::MissingParseCompleted),
+        ("invalid_event_sequence", ParseEventMaterializationErrorCode::InvalidEventSequence),
+        ("goal_mismatch", ParseEventMaterializationErrorCode::GoalMismatch),
+        ("mode_mismatch", ParseEventMaterializationErrorCode::ModeMismatch),
+        ("inconsistent_event_envelope", ParseEventMaterializationErrorCode::InconsistentEventEnvelope),
+        ("source_parse_failed", ParseEventMaterializationErrorCode::SourceParseFailed),
+        ("unsupported_contract_version", ParseEventMaterializationErrorCode::UnsupportedContractVersion),
+        ("unsupported_schema_version", ParseEventMaterializationErrorCode::UnsupportedSchemaVersion),
+    ];
+    for (raw, expected) in codes {
+        assert_eq!(materialization_error_code(raw), expected);
+    }
+}
+
+// ---------- fixture loading ----------
+
+#[test]
+fn fixture_schema_version_is_v1() {
+    let fixture = load_fixture();
+    assert_eq!(
+        fixture.schema_version,
+        "franken-engine.parser-event-ast-equivalence.v1"
+    );
+}
+
+#[test]
+fn fixture_has_both_parity_and_tamper_cases() {
+    let fixture = load_fixture();
+    assert!(fixture.cases.iter().any(|c| c.expect_hash_parity));
+    assert!(fixture.cases.iter().any(|c| c.tamper_kind != "none"));
+}
+
+#[test]
+fn fixture_case_ids_are_unique() {
+    let fixture = load_fixture();
+    let mut ids = std::collections::BTreeSet::new();
+    for case in &fixture.cases {
+        assert!(ids.insert(case.case_id.clone()), "duplicate case id");
+    }
+}
+
+// ---------- emit_structured_events ----------
+
+#[test]
+fn structured_events_count_matches_cases() {
+    let fixture = load_fixture();
+    let events = emit_structured_events(&fixture);
+    assert_eq!(events.len(), fixture.cases.len());
+}
+
+#[test]
+fn structured_events_have_trace_prefix() {
+    let fixture = load_fixture();
+    let events = emit_structured_events(&fixture);
+    for event in &events {
+        let trace_id = event["trace_id"].as_str().unwrap();
+        assert!(trace_id.starts_with("trace-parser-event-ast-equivalence-"));
+    }
+}
+
+// ---------- replay scenarios ----------
+
+#[test]
+fn replay_scenarios_have_five_entries() {
+    let fixture = load_fixture();
+    assert_eq!(fixture.replay_scenarios.len(), 5);
+}
+
+#[test]
+fn replay_scenarios_all_expect_pass() {
+    let fixture = load_fixture();
+    for scenario in &fixture.replay_scenarios {
+        assert_eq!(scenario.expected_outcome, "pass");
+    }
+}
+
+#[test]
+fn fixture_has_nonempty_replay_command() {
+    let fixture = load_fixture();
+    assert!(!fixture.replay_command.trim().is_empty());
+}
+
+#[test]
+fn fixture_cases_have_nonempty_case_ids() {
+    let fixture = load_fixture();
+    for case in &fixture.cases {
+        assert!(
+            !case.case_id.trim().is_empty(),
+            "case must have non-empty case_id"
+        );
+    }
+}
+
+#[test]
+fn fixture_required_log_keys_are_nonempty() {
+    let fixture = load_fixture();
+    assert!(!fixture.required_log_keys.is_empty());
+    for key in &fixture.required_log_keys {
+        assert!(!key.trim().is_empty());
+    }
+}

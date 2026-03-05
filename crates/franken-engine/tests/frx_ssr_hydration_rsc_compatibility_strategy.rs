@@ -6,13 +6,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const STRATEGY_SCHEMA_VERSION: &str = "frx.ssr-hydration-rsc-compatibility-strategy.v1";
 const STRATEGY_JSON: &str =
     include_str!("../../../docs/frx_ssr_hydration_rsc_compatibility_strategy_v1.json");
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct StrategyContract {
     schema_version: String,
     bead_id: String,
@@ -26,13 +26,13 @@ struct StrategyContract {
     operator_verification: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct StrategyTrack {
     id: String,
     name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct StrategyPolicy {
     failure_mode: String,
     default_fallback_route: String,
@@ -41,7 +41,7 @@ struct StrategyPolicy {
     require_explicit_rsc_routing: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct StrategyScenario {
     scenario_id: String,
     fixture_ref: String,
@@ -54,7 +54,7 @@ struct StrategyScenario {
     structured_log_template: StructuredLogTemplate,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct StructuredLogTemplate {
     scenario_id: String,
     component: String,
@@ -62,7 +62,7 @@ struct StructuredLogTemplate {
     outcome: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct KnownDivergence {
     fixture_ref: String,
     divergence_summary: String,
@@ -490,6 +490,96 @@ fn frx_07_2_readme_registers_gate_commands() {
         assert!(
             readme.contains(marker),
             "README missing FRX-07.2 marker: {marker}"
+        );
+    }
+}
+
+#[test]
+fn frx_07_2_scenario_ids_are_unique() {
+    let strategy = parse_strategy();
+    let mut seen = BTreeSet::new();
+    for scenario in &strategy.scenarios {
+        assert!(
+            seen.insert(&scenario.scenario_id),
+            "duplicate scenario_id: {}",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn frx_07_2_known_divergence_error_codes_are_unique() {
+    let strategy = parse_strategy();
+    let mut seen = BTreeSet::new();
+    for divergence in &strategy.known_divergences {
+        assert!(
+            seen.insert(&divergence.error_code),
+            "duplicate divergence error_code: {}",
+            divergence.error_code
+        );
+    }
+}
+
+#[test]
+fn frx_07_2_serde_roundtrip_preserves_strategy() {
+    let strategy = parse_strategy();
+    let serialized = serde_json::to_string(&strategy).expect("serialize");
+    let deserialized: StrategyContract =
+        serde_json::from_str(&serialized).expect("deserialize");
+    assert_eq!(strategy, deserialized);
+}
+
+#[test]
+fn frx_07_2_deterministic_double_parse() {
+    let a = parse_strategy();
+    let b = parse_strategy();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn frx_07_2_doc_file_is_nonempty() {
+    let path = repo_root().join("docs/FRX_SSR_HYDRATION_RSC_COMPATIBILITY_STRATEGY_V1.md");
+    let content = fs::read_to_string(&path).expect("read doc");
+    assert!(!content.is_empty());
+}
+
+#[test]
+fn frx_07_2_operator_verification_commands_are_all_nonempty() {
+    let strategy = parse_strategy();
+    assert!(!strategy.operator_verification.is_empty());
+    for cmd in &strategy.operator_verification {
+        assert!(!cmd.trim().is_empty(), "operator verification command must not be empty");
+    }
+}
+
+#[test]
+fn frx_07_2_strategy_requires_hydration_equivalence_and_rsc_routing() {
+    let strategy = parse_strategy();
+    assert!(strategy.strategy.require_hydration_boundary_equivalence);
+    assert!(strategy.strategy.require_explicit_rsc_routing);
+}
+
+#[test]
+fn frx_07_2_all_scenario_categories_are_nonempty() {
+    let strategy = parse_strategy();
+    for scenario in &strategy.scenarios {
+        assert!(
+            !scenario.category.trim().is_empty(),
+            "scenario {} has empty category",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn frx_07_2_fixture_refs_are_unique_across_scenarios() {
+    let strategy = parse_strategy();
+    let mut seen = BTreeSet::new();
+    for scenario in &strategy.scenarios {
+        assert!(
+            seen.insert(&scenario.fixture_ref),
+            "duplicate fixture_ref: {}",
+            scenario.fixture_ref
         );
     }
 }

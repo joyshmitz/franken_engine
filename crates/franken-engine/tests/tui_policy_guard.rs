@@ -557,3 +557,175 @@ fn repository_tui_policy_guard_passes() {
             && event.component == COMPONENT
     }));
 }
+
+// ---------- constants ----------
+
+#[test]
+fn policy_constants_are_nonempty() {
+    assert!(!POLICY_ID.is_empty());
+    assert!(!TRACE_PREFIX.is_empty());
+    assert!(!COMPONENT.is_empty());
+}
+
+#[test]
+fn forbidden_tui_deps_is_nonempty() {
+    assert!(!FORBIDDEN_TUI_DEPENDENCIES.is_empty());
+    assert!(FORBIDDEN_TUI_DEPENDENCIES.contains(&"ratatui"));
+    assert!(FORBIDDEN_TUI_DEPENDENCIES.contains(&"crossterm"));
+}
+
+// ---------- dependency_section ----------
+
+#[test]
+fn dependency_section_recognizes_standard_sections() {
+    assert!(dependency_section("dependencies"));
+    assert!(dependency_section("dev-dependencies"));
+    assert!(dependency_section("build-dependencies"));
+    assert!(dependency_section("workspace.dependencies"));
+    assert!(dependency_section("target.x86_64-unknown-linux-gnu.dependencies"));
+}
+
+#[test]
+fn dependency_section_rejects_non_dep_sections() {
+    assert!(!dependency_section("package"));
+    assert!(!dependency_section("features"));
+    assert!(!dependency_section("profile.release"));
+}
+
+// ---------- dependency_names ----------
+
+#[test]
+fn dependency_names_extracts_deps_from_toml() {
+    let toml = r#"
+[package]
+name = "test"
+
+[dependencies]
+serde = "1"
+tokio = { version = "1" }
+
+[dev-dependencies]
+insta = "1.34"
+"#;
+    let deps = dependency_names(toml);
+    assert!(deps.contains(&"serde".to_string()));
+    assert!(deps.contains(&"tokio".to_string()));
+    assert!(deps.contains(&"insta".to_string()));
+    assert!(!deps.contains(&"name".to_string()));
+}
+
+#[test]
+fn dependency_names_handles_empty_input() {
+    let deps = dependency_names("");
+    assert!(deps.is_empty());
+}
+
+// ---------- is_forbidden_tui_dependency ----------
+
+#[test]
+fn is_forbidden_tui_dependency_blocks_known() {
+    assert!(is_forbidden_tui_dependency("ratatui"));
+    assert!(is_forbidden_tui_dependency("crossterm"));
+    assert!(is_forbidden_tui_dependency("tui"));
+    assert!(is_forbidden_tui_dependency("cursive"));
+}
+
+#[test]
+fn is_forbidden_tui_dependency_allows_frankentui() {
+    assert!(!is_forbidden_tui_dependency("frankentui"));
+    assert!(!is_forbidden_tui_dependency("frankentui-core"));
+}
+
+#[test]
+fn is_forbidden_tui_dependency_allows_unrelated() {
+    assert!(!is_forbidden_tui_dependency("serde"));
+    assert!(!is_forbidden_tui_dependency("tokio"));
+}
+
+// ---------- is_blocked_local_tui_module ----------
+
+#[test]
+fn is_blocked_local_tui_module_blocks_tui_in_src() {
+    assert!(is_blocked_local_tui_module("crates/foo/src/tui_dashboard.rs"));
+    assert!(is_blocked_local_tui_module("crates/bar/src/ratatui_adapter.rs"));
+}
+
+#[test]
+fn is_blocked_local_tui_module_allows_frankentui() {
+    assert!(!is_blocked_local_tui_module("crates/frankentui/src/main.rs"));
+}
+
+#[test]
+fn is_blocked_local_tui_module_allows_non_rs() {
+    assert!(!is_blocked_local_tui_module("crates/foo/src/tui.toml"));
+}
+
+#[test]
+fn is_blocked_local_tui_module_allows_non_crates() {
+    assert!(!is_blocked_local_tui_module("src/tui_module.rs"));
+}
+
+// ---------- pattern_match ----------
+
+#[test]
+fn pattern_match_exact() {
+    assert!(pattern_match("foo/bar.rs", "foo/bar.rs"));
+    assert!(!pattern_match("foo/bar.rs", "foo/baz.rs"));
+}
+
+#[test]
+fn pattern_match_wildcard_suffix() {
+    assert!(pattern_match("crates/foo/*", "crates/foo/bar.rs"));
+    assert!(!pattern_match("crates/foo/*", "crates/bar/baz.rs"));
+}
+
+// ---------- parse_exception_doc ----------
+
+#[test]
+fn parse_exception_doc_requires_approved_status() {
+    let doc = ExceptionDocumentInput {
+        path: "docs/adr/exceptions/ADR-EXCEPTION-TUI-0001.md".to_string(),
+        content: "# Exception\nScope: dependency:ratatui\n".to_string(),
+    };
+    assert!(parse_exception_doc(&doc).is_none());
+}
+
+#[test]
+fn parse_exception_doc_ignores_non_exception_paths() {
+    let doc = ExceptionDocumentInput {
+        path: "docs/adr/something-else.md".to_string(),
+        content: "Status: Approved\nScope: dependency:ratatui\n".to_string(),
+    };
+    assert!(parse_exception_doc(&doc).is_none());
+}
+
+// ---------- PolicyGuardReport ----------
+
+#[test]
+fn policy_guard_report_as_jsonl_is_parseable() {
+    let report = evaluate_guard(&[], &[], &[]);
+    let jsonl = report.as_jsonl();
+    for line in jsonl.lines() {
+        let _: serde_json::Value =
+            serde_json::from_str(line).expect("each JSONL line should be valid JSON");
+    }
+}
+
+// ---------- evaluate_guard ----------
+
+#[test]
+fn evaluate_guard_empty_inputs_passes() {
+    let report = evaluate_guard(&[], &[], &[]);
+    assert!(report.violations.is_empty());
+    assert!(report.events.iter().any(|e| e.event == "guard_summary" && e.outcome == "pass"));
+}
+
+#[test]
+fn evaluate_guard_multiple_violations_accumulate() {
+    let manifests = vec![ManifestInput {
+        path: "Cargo.toml".to_string(),
+        content: "[dependencies]\nratatui = \"1\"\ncrossterm = \"1\"\n".to_string(),
+    }];
+    let report = evaluate_guard(&manifests, &[], &[]);
+    assert_eq!(report.violations.len(), 2);
+}

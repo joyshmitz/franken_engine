@@ -350,6 +350,23 @@ fn full_lifecycle_run_and_regression_check() {
 
 #[test]
 fn benchmark_e2e_script_emits_artifacts_to_env_dir() {
+    fn maybe_emit_artifact_bridge(path: &std::path::Path) {
+        if std::env::var_os("FRANKEN_BENCH_E2E_ARTIFACT_BRIDGE").is_none() {
+            return;
+        }
+
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            return;
+        };
+
+        println!("__BENCH_ARTIFACT_BEGIN__:{}", path.display());
+        print!("{contents}");
+        if !contents.ends_with('\n') {
+            println!();
+        }
+        println!("__BENCH_ARTIFACT_END__:{}", path.display());
+    }
+
     let Some(raw_dir) = std::env::var_os("FRANKEN_BENCH_E2E_OUTPUT_DIR") else {
         return;
     };
@@ -375,4 +392,10 @@ fn benchmark_e2e_script_emits_artifacts_to_env_dir() {
     assert!(artifacts.commands_path.exists());
     assert!(artifacts.benchmark_env_manifest_path.exists());
     assert!(artifacts.raw_results_archive_path.exists());
+
+    maybe_emit_artifact_bridge(&artifacts.run_manifest_path);
+    maybe_emit_artifact_bridge(&artifacts.events_path);
+    maybe_emit_artifact_bridge(&artifacts.commands_path);
+    maybe_emit_artifact_bridge(&artifacts.benchmark_env_manifest_path);
+    maybe_emit_artifact_bridge(&artifacts.raw_results_archive_path);
 }

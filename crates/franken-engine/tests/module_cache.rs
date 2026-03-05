@@ -1,6 +1,7 @@
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::module_cache::{
-    CacheContext, CacheErrorCode, CacheInsertRequest, ModuleCache, ModuleVersionFingerprint,
+    CacheContext, CacheError, CacheErrorCode, CacheInsertRequest, ModuleCache,
+    ModuleVersionFingerprint,
 };
 use frankenengine_engine::module_resolver::{
     AllowAllPolicy, DeterministicModuleResolver, ImportStyle, ModuleDefinition, ModuleRequest,
@@ -351,4 +352,95 @@ fn restore_trust_after_revocation_allows_new_inserts() {
         )
         .unwrap();
     assert!(cache.get("mod:trust", &v2).is_some());
+}
+
+// ---------- additional enrichment ----------
+
+#[test]
+fn cache_error_serde_roundtrip() {
+    let mut cache = ModuleCache::new();
+    let source_hash = ContentHash::compute(b"revoke-serde");
+    let v = ModuleVersionFingerprint::new(source_hash.clone(), 1, 1);
+    cache
+        .insert(
+            CacheInsertRequest::new("mod:revoke-serde", v, ContentHash::compute(b"art"), "/app/r.mjs"),
+            &cache_context(),
+        )
+        .unwrap();
+    cache.invalidate_trust_revocation("mod:revoke-serde", 2, &cache_context());
+
+    let err = cache
+        .insert(
+            CacheInsertRequest::new(
+                "mod:revoke-serde",
+                ModuleVersionFingerprint::new(source_hash, 1, 2),
+                ContentHash::compute(b"art2"),
+                "/app/r.mjs",
+            ),
+            &cache_context(),
+        )
+        .unwrap_err();
+    assert_eq!(err.code, CacheErrorCode::ModuleRevoked);
+
+    let json = serde_json::to_string(&err).expect("serialize");
+    let recovered: CacheError = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.code, CacheErrorCode::ModuleRevoked);
+}
+
+#[test]
+fn cache_error_is_std_error() {
+    let mut cache = ModuleCache::new();
+    let source_hash = ContentHash::compute(b"revoke-std");
+    let v = ModuleVersionFingerprint::new(source_hash.clone(), 1, 1);
+    cache
+        .insert(
+            CacheInsertRequest::new("mod:revoke-std", v, ContentHash::compute(b"art"), "/app/s.mjs"),
+            &cache_context(),
+        )
+        .unwrap();
+    cache.invalidate_trust_revocation("mod:revoke-std", 2, &cache_context());
+
+    let err = cache
+        .insert(
+            CacheInsertRequest::new(
+                "mod:revoke-std",
+                ModuleVersionFingerprint::new(source_hash, 1, 2),
+                ContentHash::compute(b"art2"),
+                "/app/s.mjs",
+            ),
+            &cache_context(),
+        )
+        .unwrap_err();
+    let dyn_err: &dyn std::error::Error = &err;
+    assert!(!dyn_err.to_string().is_empty());
+    assert!(dyn_err.to_string().contains("FE-MODCACHE"));
+}
+
+#[test]
+fn cache_context_serde_roundtrip() {
+    let ctx = cache_context();
+    let json = serde_json::to_string(&ctx).expect("serialize");
+    let recovered: CacheContext = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.trace_id, "trace-cache");
+}
+
+#[test]
+fn cache_insert_request_serde_roundtrip() {
+    let req = CacheInsertRequest::new(
+        "mod:serde-req",
+        ModuleVersionFingerprint::new(ContentHash::compute(b"src"), 1, 1),
+        ContentHash::compute(b"art"),
+        "/app/serde-req.mjs",
+    );
+    let json = serde_json::to_string(&req).expect("serialize");
+    let recovered: CacheInsertRequest = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.module_id, "mod:serde-req");
+}
+
+#[test]
+fn snapshot_empty_cache_has_no_entries() {
+    let cache = ModuleCache::new();
+    let snapshot = cache.snapshot();
+    assert!(snapshot.entries.is_empty());
+    assert!(snapshot.revoked_modules.is_empty());
 }

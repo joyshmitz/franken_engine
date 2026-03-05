@@ -315,3 +315,184 @@ fn regression_failure_catalog_has_stable_error_codes() {
         );
     }
 }
+
+// ---------- LCG determinism ----------
+
+#[test]
+fn lcg_next_is_deterministic_for_same_seed() {
+    let mut state_a = 42_u64;
+    let mut state_b = 42_u64;
+    for _ in 0..10 {
+        assert_eq!(lcg_next(&mut state_a), lcg_next(&mut state_b));
+    }
+}
+
+#[test]
+fn lcg_next_diverges_for_different_seeds() {
+    let mut state_a = 1_u64;
+    let mut state_b = 2_u64;
+    assert_ne!(lcg_next(&mut state_a), lcg_next(&mut state_b));
+}
+
+// ---------- generate_case ----------
+
+#[test]
+fn generate_case_is_deterministic() {
+    let case_a = generate_case(99);
+    let case_b = generate_case(99);
+    assert_eq!(case_a.source, case_b.source);
+    assert_eq!(case_a.goal, case_b.goal);
+}
+
+#[test]
+fn generate_case_different_seeds_produce_different_sources() {
+    let case_a = generate_case(0);
+    let case_b = generate_case(1);
+    assert!(
+        case_a.source != case_b.source || case_a.goal != case_b.goal,
+        "different seeds should produce different cases"
+    );
+}
+
+#[test]
+fn generate_case_covers_both_goals_across_seed_range() {
+    let mut has_script = false;
+    let mut has_module = false;
+    for seed in 0..32 {
+        match generate_case(seed).goal {
+            ParseGoal::Script => has_script = true,
+            ParseGoal::Module => has_module = true,
+        }
+    }
+    assert!(has_script, "should produce at least one script goal");
+    assert!(has_module, "should produce at least one module goal");
+}
+
+// ---------- generate_identifier ----------
+
+#[test]
+fn generate_identifier_starts_with_v() {
+    let mut state = 0_u64;
+    let ident = generate_identifier(&mut state);
+    assert!(ident.starts_with('v'));
+}
+
+// ---------- goal_label ----------
+
+#[test]
+fn goal_label_values() {
+    assert_eq!(goal_label(ParseGoal::Script), "script");
+    assert_eq!(goal_label(ParseGoal::Module), "module");
+}
+
+// ---------- failure_context ----------
+
+#[test]
+fn failure_context_is_valid_json() {
+    let ctx = failure_context("test_name", 42, ParseGoal::Script, "var x = 1;");
+    let parsed: serde_json::Value = serde_json::from_str(&ctx).expect("valid json");
+    assert_eq!(parsed["component"], COMPONENT);
+    assert_eq!(parsed["policy_id"], POLICY_ID);
+    assert_eq!(parsed["seed"], 42);
+    assert_eq!(parsed["goal"], "script");
+}
+
+#[test]
+fn generate_identifier_is_deterministic_for_same_state() {
+    let mut a = 42_u64;
+    let mut b = 42_u64;
+    assert_eq!(generate_identifier(&mut a), generate_identifier(&mut b));
+}
+
+#[test]
+fn generate_case_produces_nonempty_source() {
+    for seed in 0..16 {
+        let case = generate_case(seed);
+        assert!(!case.source.is_empty(), "seed {seed} should produce non-empty source");
+    }
+}
+
+#[test]
+fn failure_context_includes_source_field() {
+    let ctx = failure_context("test_fn", 0, ParseGoal::Module, "export default 42");
+    let parsed: serde_json::Value = serde_json::from_str(&ctx).expect("valid json");
+    assert_eq!(parsed["source"], "export default 42");
+    assert_eq!(parsed["goal"], "module");
+}
+
+// ---------- semantic_signature ----------
+
+#[test]
+fn semantic_signature_is_deterministic_for_same_tree() {
+    let parser = CanonicalEs2020Parser;
+    let tree_a = parser
+        .parse("var x = 1;", ParseGoal::Script)
+        .expect("parse");
+    let tree_b = parser
+        .parse("var x = 1;", ParseGoal::Script)
+        .expect("parse");
+    assert_eq!(semantic_signature(&tree_a), semantic_signature(&tree_b));
+}
+
+#[test]
+fn semantic_signature_matches_statement_count() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser
+        .parse("42;\n\"hello\";\n99;", ParseGoal::Script)
+        .expect("parse");
+    assert_eq!(semantic_signature(&tree).len(), tree.body.len());
+}
+
+// ---------- budget exceeded witness ----------
+
+#[test]
+fn source_too_large_produces_correct_error_code() {
+    let parser = CanonicalEs2020Parser;
+    let options = ParserOptions {
+        mode: ParserMode::ScalarReference,
+        budget: ParserBudget {
+            max_source_bytes: 1,
+            max_token_count: 65_536,
+            max_recursion_depth: 256,
+        },
+    };
+    let result = parser.parse_with_options("var x = 1;", ParseGoal::Script, &options);
+    assert!(result.is_err());
+    let error = result.unwrap_err();
+    assert_eq!(error.code, ParseErrorCode::BudgetExceeded);
+    let witness = error.witness.expect("should include witness");
+    assert_eq!(witness.budget_kind, Some(ParseBudgetKind::SourceBytes));
+}
+
+// ---------- error code diagnostics ----------
+
+#[test]
+fn parse_error_has_nonempty_stable_diagnostic_code() {
+    let parser = CanonicalEs2020Parser;
+    let error = parser
+        .parse("", ParseGoal::Script)
+        .expect_err("empty source should fail");
+    let diagnostic = error.normalized_diagnostic();
+    assert!(!diagnostic.diagnostic_code.is_empty());
+    assert!(!diagnostic.schema_version.is_empty());
+}
+
+// ---------- property: all generated cases parse or fail deterministically ----------
+
+#[test]
+fn all_generated_cases_have_deterministic_outcome() {
+    let parser = CanonicalEs2020Parser;
+    for seed in 256..320 {
+        let case = generate_case(seed);
+        let result_a = parser.parse(case.source.as_str(), case.goal);
+        let result_b = parser.parse(case.source.as_str(), case.goal);
+        assert_eq!(
+            result_a.is_ok(),
+            result_b.is_ok(),
+            "seed {seed} must have deterministic outcome"
+        );
+        if let (Ok(tree_a), Ok(tree_b)) = (result_a, result_b) {
+            assert_eq!(tree_a.canonical_hash(), tree_b.canonical_hash());
+        }
+    }
+}

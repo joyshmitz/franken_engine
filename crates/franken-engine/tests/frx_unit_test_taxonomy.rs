@@ -220,3 +220,79 @@ fn frx_20_1_operator_verification_commands_present() {
         "operator verification must include replay command"
     );
 }
+
+// ---------- UnitTestClass ----------
+
+#[test]
+fn unit_test_class_all_is_nonempty() {
+    assert!(!UnitTestClass::ALL.is_empty());
+}
+
+#[test]
+fn unit_test_class_as_str_is_nonempty() {
+    for class in UnitTestClass::ALL {
+        assert!(!class.as_str().is_empty());
+    }
+}
+
+#[test]
+fn unit_test_class_serde_roundtrip() {
+    for class in UnitTestClass::ALL {
+        let json = serde_json::to_string(&class).expect("serialize");
+        let recovered: UnitTestClass = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, class);
+    }
+}
+
+// ---------- LaneId ----------
+
+#[test]
+fn lane_id_all_is_nonempty() {
+    assert!(!LaneId::ALL.is_empty());
+}
+
+#[test]
+fn lane_id_as_str_is_nonempty() {
+    for lane in LaneId::ALL {
+        assert!(!lane.as_str().is_empty());
+    }
+}
+
+#[test]
+fn lane_id_serde_roundtrip() {
+    for lane in LaneId::ALL {
+        let json = serde_json::to_string(&lane).expect("serialize");
+        let recovered: LaneId = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, lane);
+    }
+}
+
+// ---------- REQUIRED_STRUCTURED_LOG_FIELDS ----------
+
+#[test]
+fn required_structured_log_fields_is_nonempty() {
+    assert!(!REQUIRED_STRUCTURED_LOG_FIELDS.is_empty());
+    assert!(REQUIRED_STRUCTURED_LOG_FIELDS.contains(&"trace_id"));
+    assert!(REQUIRED_STRUCTURED_LOG_FIELDS.contains(&"outcome"));
+}
+
+// ---------- default_frx20_bundle ----------
+
+#[test]
+fn default_bundle_lane_coverage_is_nonempty() {
+    let bundle = default_frx20_bundle();
+    assert!(!bundle.lane_coverage.is_empty());
+}
+
+#[test]
+fn default_bundle_fixture_registry_is_nonempty() {
+    let bundle = default_frx20_bundle();
+    assert!(!bundle.fixture_registry.is_empty());
+}
+
+#[test]
+fn default_bundle_validation_is_deterministic() {
+    let a = default_frx20_bundle();
+    let b = default_frx20_bundle();
+    assert_eq!(a.validate_for_gate(), b.validate_for_gate());
+}

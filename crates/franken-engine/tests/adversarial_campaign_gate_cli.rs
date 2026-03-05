@@ -108,3 +108,203 @@ fn suppression_gate_cli_returns_exit_two_when_gate_fails() {
 
     let _ = fs::remove_file(failing_input_path);
 }
+
+#[test]
+fn adversarial_gate_fixture_exists_and_parses() {
+    let path = fixture_path();
+    let bytes = fs::read(&path)
+        .unwrap_or_else(|err| panic!("cannot read fixture at {}: {err}", path.display()));
+    let fixture: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("fixture must be valid JSON");
+    assert!(fixture.is_object(), "fixture must be a JSON object");
+}
+
+#[test]
+fn adversarial_gate_fixture_has_required_top_level_fields() {
+    let path = fixture_path();
+    let fixture: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).expect("read fixture"))
+            .expect("parse fixture JSON");
+    let obj = fixture.as_object().expect("fixture must be object");
+    for key in [
+        "release_candidate_id",
+        "continuous_run",
+        "trend_points",
+        "samples",
+    ] {
+        assert!(
+            obj.contains_key(key),
+            "fixture missing required field: {key}"
+        );
+    }
+}
+
+#[test]
+fn adversarial_gate_unique_temp_path_produces_unique_paths() {
+    let a = unique_temp_path("test-unique-a");
+    let b = unique_temp_path("test-unique-b");
+    assert_ne!(a, b);
+    assert!(a.to_string_lossy().contains("test-unique-a"));
+    assert!(b.to_string_lossy().contains("test-unique-b"));
+}
+
+#[test]
+fn adversarial_gate_unique_temp_path_is_in_temp_dir() {
+    let path = unique_temp_path("test-temp-check");
+    let temp = std::env::temp_dir();
+    assert!(
+        path.starts_with(&temp),
+        "temp path should be under system temp dir"
+    );
+}
+
+#[test]
+fn adversarial_gate_fixture_trend_points_are_nonempty() {
+    let path = fixture_path();
+    let fixture: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).expect("read fixture"))
+            .expect("parse fixture JSON");
+    let trend_points = fixture["trend_points"]
+        .as_array()
+        .expect("trend_points must be array");
+    assert!(
+        !trend_points.is_empty(),
+        "fixture trend_points must not be empty"
+    );
+    for point in trend_points {
+        assert!(
+            point["release_candidate_id"].is_string(),
+            "trend point must have release_candidate_id"
+        );
+        assert!(
+            point["timestamp_ns"].is_number(),
+            "trend point must have timestamp_ns"
+        );
+        assert!(
+            point["samples_evaluated"].is_number(),
+            "trend point must have samples_evaluated"
+        );
+    }
+}
+
+#[test]
+fn adversarial_gate_fixture_samples_are_nonempty() {
+    let path = fixture_path();
+    let fixture: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).expect("read fixture"))
+            .expect("parse fixture JSON");
+    let samples = fixture["samples"]
+        .as_array()
+        .expect("samples must be array");
+    assert!(!samples.is_empty(), "fixture samples must not be empty");
+}
+
+#[test]
+fn adversarial_gate_fixture_release_candidate_id_is_nonempty_string() {
+    let path = fixture_path();
+    let fixture: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).expect("read fixture"))
+            .expect("parse fixture JSON");
+    let rc_id = fixture["release_candidate_id"]
+        .as_str()
+        .expect("release_candidate_id must be a string");
+    assert!(
+        !rc_id.trim().is_empty(),
+        "release_candidate_id must not be empty"
+    );
+}
+
+#[test]
+fn adversarial_gate_fixture_continuous_run_is_boolean() {
+    let path = fixture_path();
+    let fixture: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).expect("read fixture"))
+            .expect("parse fixture JSON");
+    assert!(
+        fixture["continuous_run"].is_boolean(),
+        "continuous_run must be a boolean"
+    );
+}
+
+#[test]
+fn adversarial_gate_fixture_deterministic_double_parse() {
+    let bytes = fs::read(fixture_path()).expect("read fixture");
+    let a: serde_json::Value = serde_json::from_slice(&bytes).expect("parse first");
+    let b: serde_json::Value = serde_json::from_slice(&bytes).expect("parse second");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn adversarial_gate_fixture_samples_have_expected_fields() {
+    let bytes = fs::read(fixture_path()).expect("read fixture");
+    let fixture: serde_json::Value = serde_json::from_slice(&bytes).expect("parse fixture");
+    let samples = fixture["samples"].as_array().expect("samples must be array");
+    for sample in samples {
+        assert!(sample["campaign_id"].is_string(), "sample must have campaign_id");
+        assert!(sample["attack_category"].is_string(), "sample must have attack_category");
+        assert!(sample["attempt_count"].is_number(), "sample must have attempt_count");
+    }
+}
+
+#[test]
+fn adversarial_gate_fixture_has_escalations_field() {
+    let bytes = fs::read(fixture_path()).expect("read fixture");
+    let fixture: serde_json::Value = serde_json::from_slice(&bytes).expect("parse fixture");
+    assert!(
+        fixture.get("escalations").is_some(),
+        "fixture must have escalations field"
+    );
+}
+
+#[test]
+fn adversarial_gate_fixture_all_samples_have_raw_log_ref() {
+    let bytes = fs::read(fixture_path()).expect("read fixture");
+    let fixture: serde_json::Value = serde_json::from_slice(&bytes).expect("parse fixture");
+    let samples = fixture["samples"].as_array().expect("samples array");
+    for sample in samples {
+        assert!(sample["raw_log_ref"].is_string(), "sample must have raw_log_ref");
+    }
+}
+
+#[test]
+fn adversarial_gate_fixture_all_trend_points_have_positive_timestamp() {
+    let bytes = fs::read(fixture_path()).expect("read fixture");
+    let fixture: serde_json::Value = serde_json::from_slice(&bytes).expect("parse fixture");
+    let points = fixture["trend_points"].as_array().expect("trend_points array");
+    for point in points {
+        assert!(point["timestamp_ns"].as_u64().unwrap_or(0) > 0, "timestamp must be positive");
+    }
+}
+
+#[test]
+fn adversarial_gate_fixture_is_a_json_object() {
+    let bytes = fs::read(fixture_path()).expect("read fixture");
+    let fixture: serde_json::Value = serde_json::from_slice(&bytes).expect("parse fixture");
+    assert!(fixture.is_object());
+    assert!(fixture.as_object().unwrap().len() >= 4);
+}
+
+#[test]
+fn adversarial_gate_fixture_escalations_is_array() {
+    let bytes = fs::read(fixture_path()).expect("read fixture");
+    let fixture: serde_json::Value = serde_json::from_slice(&bytes).expect("parse fixture");
+    assert!(fixture["escalations"].is_array(), "escalations must be an array");
+}
+
+#[test]
+fn adversarial_gate_fixture_samples_have_attack_category() {
+    let bytes = fs::read(fixture_path()).expect("read fixture");
+    let fixture: serde_json::Value = serde_json::from_slice(&bytes).expect("parse fixture");
+    let samples = fixture["samples"].as_array().expect("samples array");
+    for sample in samples {
+        let cat = sample["attack_category"].as_str().expect("attack_category string");
+        assert!(!cat.trim().is_empty(), "attack_category must be non-empty");
+    }
+}
+
+#[test]
+fn adversarial_gate_fixture_has_at_least_five_fields() {
+    let bytes = fs::read(fixture_path()).expect("read fixture");
+    let fixture: serde_json::Value = serde_json::from_slice(&bytes).expect("parse fixture");
+    assert!(fixture.as_object().unwrap().len() >= 5);
+}

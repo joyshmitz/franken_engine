@@ -339,3 +339,115 @@ fn collector_writes_manifest_and_evidence() {
     assert!(evidence.contains("test262_case_evaluated"));
     assert!(evidence.contains("built-ins/Array/prototype/filter/basic.js"));
 }
+
+#[test]
+fn worker_assignments_single_worker() {
+    let test_ids = vec!["a.js".to_string(), "b.js".to_string()];
+    let assignments = deterministic_worker_assignments(&test_ids, 1);
+    assert_eq!(assignments.len(), 2);
+    assert!(assignments.iter().all(|a| a.worker_index == 0));
+}
+
+#[test]
+fn worker_assignments_empty_input() {
+    let assignments = deterministic_worker_assignments(&[], 4);
+    assert!(assignments.is_empty());
+}
+
+#[test]
+fn observed_helper_populates_fields() {
+    let result = observed("test/a.js", "13.1", Test262ObservedOutcome::Pass);
+    assert_eq!(result.test_id, "test/a.js");
+    assert_eq!(result.es2020_clause, "13.1");
+    assert!(matches!(result.outcome, Test262ObservedOutcome::Pass));
+    assert_eq!(result.duration_us, 42);
+    assert!(result.error_code.is_none());
+    assert!(result.error_detail.is_none());
+}
+
+#[test]
+fn next_high_water_mark_without_previous() {
+    let profile = load_profile();
+    let pins = load_pins();
+    let waivers = load_waivers();
+
+    let run = runner("2026-02-22", false)
+        .run(
+            &pins,
+            &profile,
+            &waivers,
+            &[
+                observed("a.js", "13.1", Test262ObservedOutcome::Pass),
+                observed("b.js", "13.2", Test262ObservedOutcome::Pass),
+            ],
+            None,
+        )
+        .expect("gate run");
+
+    let hwm = next_high_water_mark(&run, None);
+    // Without a previous HWM, the initial high water mark starts at 0
+    assert_eq!(hwm.pass_count, 0);
+}
+
+#[test]
+fn all_pass_run_is_not_blocked() {
+    let profile = load_profile();
+    let pins = load_pins();
+    let waivers = load_waivers();
+
+    let run = runner("2026-02-22", false)
+        .run(
+            &pins,
+            &profile,
+            &waivers,
+            &[observed(
+                "language/expressions/optional-chaining/pass.js",
+                "13.3.1",
+                Test262ObservedOutcome::Pass,
+            )],
+            None,
+        )
+        .expect("gate run");
+    assert!(!run.blocked);
+    assert_eq!(run.summary.passed, 1);
+    assert_eq!(run.summary.failed, 0);
+    assert_eq!(run.summary.blocked_failures, 0);
+}
+
+#[test]
+fn test262_observed_outcome_serde_round_trip() {
+    for outcome in [
+        Test262ObservedOutcome::Pass,
+        Test262ObservedOutcome::Fail,
+    ] {
+        let json = serde_json::to_string(&outcome).expect("serialize");
+        let recovered: Test262ObservedOutcome = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(outcome, recovered);
+    }
+}
+
+#[test]
+fn test262_high_water_mark_serde_round_trip() {
+    let hwm = Test262HighWaterMark {
+        schema_version: "franken-engine.test262-high-water-mark.v1".to_string(),
+        profile_hash: "abc123".to_string(),
+        pass_count: 42,
+        recorded_at_utc: "2026-02-22T00:00:00Z".to_string(),
+    };
+    let json = serde_json::to_string(&hwm).expect("serialize");
+    let recovered: Test262HighWaterMark = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(hwm, recovered);
+}
+
+#[test]
+fn runner_default_config_has_nonempty_run_date() {
+    let config = Test262RunnerConfig::default();
+    assert!(!config.run_date.is_empty(), "run_date should be non-empty");
+    assert!(config.worker_count > 0, "worker_count should be positive");
+}
+
+#[test]
+fn fixture_helper_produces_correct_path() {
+    let path = fixture("test262_es2020_profile.toml");
+    assert!(path.ends_with("tests/test262_es2020_profile.toml"));
+}

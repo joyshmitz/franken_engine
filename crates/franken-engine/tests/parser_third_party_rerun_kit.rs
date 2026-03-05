@@ -254,3 +254,97 @@ fn parser_third_party_rerun_kit_fixture_manifest_and_log_key_sets_are_exact() {
     let actual_logs: BTreeSet<_> = fixture.required_log_keys.iter().cloned().collect();
     assert_eq!(actual_logs, expected_logs);
 }
+
+#[test]
+fn parser_third_party_rerun_kit_classifier_is_deterministic() {
+    for _ in 0..10 {
+        assert_eq!(
+            classify_matrix_input_status(false, false, 0),
+            "pending_upstream_matrix"
+        );
+        assert_eq!(
+            classify_matrix_input_status(true, true, 0),
+            "ready_for_external_rerun"
+        );
+    }
+}
+
+#[test]
+fn parser_third_party_rerun_kit_classifier_priority_order() {
+    // pending_upstream_matrix takes priority over incomplete and blocked
+    assert_eq!(
+        classify_matrix_input_status(false, false, 5),
+        "pending_upstream_matrix"
+    );
+    // incomplete_matrix takes priority over blocked
+    assert_eq!(
+        classify_matrix_input_status(true, false, 5),
+        "incomplete_matrix"
+    );
+}
+
+#[test]
+fn parser_third_party_rerun_kit_fixture_deterministic_double_parse() {
+    let a = load_fixture();
+    let b = load_fixture();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn parser_third_party_rerun_kit_doc_file_nonempty() {
+    let doc = load_doc();
+    assert!(!doc.is_empty());
+}
+
+#[test]
+fn parser_third_party_rerun_kit_script_file_nonempty() {
+    let script = load_script();
+    assert!(!script.is_empty());
+}
+
+#[test]
+fn parser_third_party_rerun_kit_upstream_inputs_are_nonempty_strings() {
+    let fixture = load_fixture();
+    for input in &fixture.upstream_matrix_inputs {
+        assert!(!input.trim().is_empty(), "upstream input must not be empty");
+    }
+}
+
+#[test]
+fn parser_third_party_rerun_kit_required_modes_are_unique() {
+    let fixture = load_fixture();
+    let unique: BTreeSet<_> = fixture.required_modes.iter().collect();
+    assert_eq!(unique.len(), fixture.required_modes.len(), "modes must be unique");
+}
+
+#[test]
+fn parser_third_party_rerun_kit_manifest_keys_are_unique() {
+    let fixture = load_fixture();
+    let unique: BTreeSet<_> = fixture.required_manifest_keys.iter().collect();
+    assert_eq!(unique.len(), fixture.required_manifest_keys.len(), "manifest keys must be unique");
+}
+
+#[test]
+fn parser_third_party_rerun_kit_log_keys_are_unique() {
+    let fixture = load_fixture();
+    let unique: BTreeSet<_> = fixture.required_log_keys.iter().collect();
+    assert_eq!(unique.len(), fixture.required_log_keys.len(), "log keys must be unique");
+}
+
+#[test]
+fn parser_third_party_rerun_kit_fixture_has_replay_command() {
+    let fixture = load_fixture();
+    assert!(!fixture.replay_command.trim().is_empty(), "replay command must not be empty");
+}
+
+#[test]
+fn parser_third_party_rerun_kit_fixture_has_bead_id() {
+    let fixture = load_fixture();
+    assert!(!fixture.bead_id.trim().is_empty(), "bead_id must not be empty");
+}
+
+#[test]
+fn parser_third_party_rerun_kit_fixture_has_policy_id() {
+    let fixture = load_fixture();
+    assert!(!fixture.policy_id.trim().is_empty(), "policy_id must not be empty");
+}

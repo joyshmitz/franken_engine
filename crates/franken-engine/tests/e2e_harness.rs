@@ -515,6 +515,97 @@ fn deterministic_e2e_harness_lane_script_preserves_step_logs_and_exit_classifica
 }
 
 #[test]
+fn scenario_class_serde_roundtrip() {
+    for class in ScenarioClass::ALL {
+        let json = serde_json::to_string(&class).expect("serialize");
+        let recovered: ScenarioClass = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, class);
+    }
+}
+
+#[test]
+fn scenario_class_as_str_all_nonempty() {
+    for class in ScenarioClass::ALL {
+        assert!(!class.as_str().is_empty());
+    }
+}
+
+#[test]
+fn scenario_class_all_has_six_variants() {
+    assert_eq!(ScenarioClass::ALL.len(), 6);
+}
+
+#[test]
+fn test_fixture_serde_roundtrip() {
+    let fixture = sample_fixture();
+    let json = serde_json::to_string(&fixture).expect("serialize");
+    let recovered: TestFixture = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, fixture);
+}
+
+#[test]
+fn run_result_serde_roundtrip() {
+    let runner = DeterministicRunner::default();
+    let fixture = sample_fixture();
+    let run = runner.run_fixture(&fixture).expect("run");
+
+    let json = serde_json::to_string(&run).expect("serialize");
+    let recovered: e2e_harness::RunResult = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.fixture_id, run.fixture_id);
+    assert_eq!(recovered.output_digest, run.output_digest);
+    assert_eq!(recovered.events.len(), run.events.len());
+}
+
+#[test]
+fn counterfactual_delta_identical_runs_no_divergence() {
+    let runner = DeterministicRunner::default();
+    let fixture = sample_fixture();
+    let run_a = runner.run_fixture(&fixture).expect("run a");
+    let run_b = runner.run_fixture(&fixture).expect("run b");
+
+    let delta = e2e_harness::compare_counterfactual(&run_a, &run_b);
+    assert!(!delta.digest_changed);
+    assert_eq!(delta.changed_events, 0);
+    assert_eq!(delta.diverged_at_sequence, None);
+    assert!(!delta.transcript_changed);
+}
+
+#[test]
+fn counterfactual_delta_different_seeds_detects_divergence() {
+    let runner = DeterministicRunner::default();
+    let fixture_a = non_error_fixture("baseline", 1, 3);
+    let mut fixture_b = non_error_fixture("counterfactual", 999, 3);
+    fixture_b.fixture_id = "counterfactual".to_string();
+
+    let run_a = runner.run_fixture(&fixture_a).expect("run a");
+    let run_b = runner.run_fixture(&fixture_b).expect("run b");
+
+    let delta = e2e_harness::compare_counterfactual(&run_a, &run_b);
+    assert!(delta.digest_changed);
+}
+
+#[test]
+fn replay_performance_evaluates_speedup() {
+    let runner = DeterministicRunner::default();
+    let fixture = non_error_fixture("perf-test", 42, 5);
+    let run = runner.run_fixture(&fixture).expect("run");
+
+    let perf = e2e_harness::evaluate_replay_performance(&run, 1_000);
+    assert!(perf.wall_duration_micros > 0 || perf.wall_duration_micros == 1_000);
+    assert!(perf.virtual_duration_micros > 0);
+}
+
+#[test]
+fn evidence_linkage_has_entries_per_event() {
+    let runner = DeterministicRunner::default();
+    let fixture = sample_fixture();
+    let run = runner.run_fixture(&fixture).expect("run");
+
+    let linkage = e2e_harness::build_evidence_linkage(&run.events);
+    assert_eq!(linkage.len(), run.events.len());
+}
+
+#[test]
 fn deterministic_e2e_harness_readme_documents_ci_clippy_and_step_logs() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let readme_path = root.join("README.md");

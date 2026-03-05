@@ -487,3 +487,198 @@ fn user_impact_regression_alarm_structured_logs_include_replay_commands() {
         );
     }
 }
+
+// ---------- compare_millionths ----------
+
+#[test]
+fn compare_millionths_min_below_threshold_breaches() {
+    let policy = AlarmPolicy {
+        alarm_id: "a".to_string(),
+        slo_id: "s".to_string(),
+        metric_key: "k".to_string(),
+        comparator: "min".to_string(),
+        threshold_millionths: 500_000,
+        severity: "warning".to_string(),
+        escalation_action: "notify".to_string(),
+        error_code: "ERR".to_string(),
+        replay_command: "cmd".to_string(),
+    };
+    assert!(compare_millionths(&policy, 400_000));
+    assert!(!compare_millionths(&policy, 500_000));
+    assert!(!compare_millionths(&policy, 600_000));
+}
+
+#[test]
+fn compare_millionths_max_above_threshold_breaches() {
+    let policy = AlarmPolicy {
+        alarm_id: "a".to_string(),
+        slo_id: "s".to_string(),
+        metric_key: "k".to_string(),
+        comparator: "max".to_string(),
+        threshold_millionths: 500_000,
+        severity: "warning".to_string(),
+        escalation_action: "notify".to_string(),
+        error_code: "ERR".to_string(),
+        replay_command: "cmd".to_string(),
+    };
+    assert!(compare_millionths(&policy, 600_000));
+    assert!(!compare_millionths(&policy, 500_000));
+    assert!(!compare_millionths(&policy, 400_000));
+}
+
+// ---------- evaluate_windows ----------
+
+#[test]
+fn evaluate_windows_is_deterministic() {
+    let fixture = load_fixture();
+    let left = evaluate_windows(&fixture);
+    let right = evaluate_windows(&fixture);
+    assert_eq!(left, right);
+}
+
+#[test]
+fn evaluate_windows_covers_all_metric_windows() {
+    let fixture = load_fixture();
+    let windows = evaluate_windows(&fixture);
+    assert_eq!(windows.len(), fixture.metric_windows.len());
+}
+
+// ---------- evaluate_guardrail_gate ----------
+
+#[test]
+fn guardrail_gate_outcome_matches_fixture() {
+    let fixture = load_fixture();
+    let gate = evaluate_guardrail_gate(&fixture);
+    assert_eq!(gate.outcome, fixture.expected_gate.expected_outcome);
+}
+
+// ---------- emit_structured_logs ----------
+
+#[test]
+fn structured_logs_count_is_correct() {
+    let fixture = load_fixture();
+    let events = emit_structured_logs(&fixture);
+    let alarm_event_count = fixture.metric_windows.len() * fixture.alarm_policies.len();
+    assert_eq!(events.len(), alarm_event_count + 1); // +1 for gate decision
+}
+
+#[test]
+fn structured_logs_last_event_is_gate_decision() {
+    let fixture = load_fixture();
+    let events = emit_structured_logs(&fixture);
+    let last = events.last().unwrap();
+    assert_eq!(last["event"], "gate_decision");
+}
+
+// ---------- AlarmPolicy ----------
+
+#[test]
+fn alarm_policies_have_unique_ids() {
+    let fixture = load_fixture();
+    let mut ids = BTreeSet::new();
+    for policy in &fixture.alarm_policies {
+        assert!(ids.insert(policy.alarm_id.clone()), "duplicate alarm id");
+    }
+}
+
+// ---------- MetricWindow ----------
+
+#[test]
+fn metric_windows_have_unique_ids() {
+    let fixture = load_fixture();
+    let mut ids = BTreeSet::new();
+    for window in &fixture.metric_windows {
+        assert!(ids.insert(window.window_id.clone()), "duplicate window id");
+    }
+}
+
+// ---------- ReplayScenario ----------
+
+#[test]
+fn replay_scenarios_have_unique_ids() {
+    let fixture = load_fixture();
+    let mut ids = BTreeSet::new();
+    for scenario in &fixture.replay_scenarios {
+        assert!(ids.insert(scenario.scenario_id.clone()), "duplicate replay scenario id");
+    }
+}
+
+// ---------- IncidentSimulation ----------
+
+#[test]
+fn incident_simulations_have_unique_scenario_ids() {
+    let fixture = load_fixture();
+    let mut ids = BTreeSet::new();
+    for sim in &fixture.incident_simulations {
+        assert!(ids.insert(sim.scenario_id.clone()), "duplicate simulation id");
+    }
+}
+
+// ---------- compare_millionths boundary ----------
+
+#[test]
+fn compare_millionths_at_exact_threshold_does_not_breach() {
+    let policy = AlarmPolicy {
+        alarm_id: "boundary".to_string(),
+        slo_id: "s".to_string(),
+        metric_key: "k".to_string(),
+        comparator: "min".to_string(),
+        threshold_millionths: 500_000,
+        severity: "warning".to_string(),
+        escalation_action: "notify".to_string(),
+        error_code: "ERR".to_string(),
+        replay_command: "cmd".to_string(),
+    };
+    // At exact threshold for "min" comparator, not breached (< not <=)
+    assert!(!compare_millionths(&policy, 500_000));
+
+    let max_policy = AlarmPolicy {
+        comparator: "max".to_string(),
+        ..policy
+    };
+    // At exact threshold for "max" comparator, not breached (> not >=)
+    assert!(!compare_millionths(&max_policy, 500_000));
+}
+
+// ---------- all alarm error_codes nonempty ----------
+
+#[test]
+fn all_alarm_policies_have_nonempty_error_codes() {
+    let fixture = load_fixture();
+    for policy in &fixture.alarm_policies {
+        assert!(
+            !policy.error_code.trim().is_empty(),
+            "alarm {} has empty error_code",
+            policy.alarm_id
+        );
+    }
+}
+
+// ---------- all replay scenarios have nonempty commands ----------
+
+#[test]
+fn all_replay_scenarios_have_nonempty_replay_commands() {
+    let fixture = load_fixture();
+    for scenario in &fixture.replay_scenarios {
+        assert!(
+            !scenario.replay_command.trim().is_empty(),
+            "replay scenario {} has empty replay_command",
+            scenario.scenario_id
+        );
+    }
+}
+
+// ---------- structured log component field ----------
+
+#[test]
+fn structured_log_events_have_consistent_component() {
+    let fixture = load_fixture();
+    let events = emit_structured_logs(&fixture);
+    for event in &events {
+        assert_eq!(
+            event["component"].as_str(),
+            Some("parser_user_impact_regression_alarm_pipeline"),
+            "all events must have the pipeline component"
+        );
+    }
+}

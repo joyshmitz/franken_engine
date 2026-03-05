@@ -6,12 +6,12 @@ use std::{
     path::PathBuf,
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const GATEBOOK_SCHEMA_VERSION: &str = "frx.release-operations-gatebook.v1";
 const GATEBOOK_JSON: &str = include_str!("../../../docs/frx_release_operations_gatebook_v1.json");
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ReleaseOperationsGatebookContract {
     schema_version: String,
     bead_id: String,
@@ -29,13 +29,13 @@ struct ReleaseOperationsGatebookContract {
     operator_verification: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Track {
     id: String,
     name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CutLineConsumption {
     source_contract: String,
     required_cut_lines: Vec<String>,
@@ -44,7 +44,7 @@ struct CutLineConsumption {
     fail_closed_on_missing_stage_decision: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ReleasePacketChannel {
     channel_id: String,
     source_bead: String,
@@ -54,7 +54,7 @@ struct ReleasePacketChannel {
     failure_code: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct StageChecklist {
     stage: String,
     min_cut_line: String,
@@ -63,32 +63,32 @@ struct StageChecklist {
     publication_mode: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CommunicationDiscipline {
     incident_response: IncidentResponse,
     rollback_communications: RollbackCommunications,
     publication_communications: PublicationCommunications,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct IncidentResponse {
     required_fields: Vec<String>,
     require_escalation_acknowledgement: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct RollbackCommunications {
     required_fields: Vec<String>,
     require_operator_acknowledgement: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PublicationCommunications {
     required_fields: Vec<String>,
     require_signed_statement: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ClaimPublicationRecord {
     required_fields: Vec<String>,
     require_reproducibility_bundle_links: bool,
@@ -96,7 +96,7 @@ struct ClaimPublicationRecord {
     block_on_incomplete_record: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Prerequisite {
     bead_id: String,
     reason: String,
@@ -517,4 +517,120 @@ fn frx_09_2_prerequisites_and_operator_verification_are_declared() {
             .iter()
             .any(|entry| entry == "jq empty docs/frx_release_operations_gatebook_v1.json")
     );
+}
+
+#[test]
+fn frx_09_2_serde_roundtrip_preserves_contract() {
+    let contract = parse_contract();
+    let serialized = serde_json::to_string(&contract).expect("serialize");
+    let deserialized: ReleaseOperationsGatebookContract =
+        serde_json::from_str(&serialized).expect("deserialize");
+    assert_eq!(contract, deserialized);
+}
+
+#[test]
+fn frx_09_2_deterministic_double_parse() {
+    let a = parse_contract();
+    let b = parse_contract();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn frx_09_2_fail_closed_rules_are_nonempty() {
+    let contract = parse_contract();
+    assert!(!contract.fail_closed_rules.is_empty());
+    for rule in &contract.fail_closed_rules {
+        assert!(!rule.trim().is_empty(), "fail-closed rule must not be empty");
+    }
+}
+
+#[test]
+fn frx_09_2_channel_failure_codes_are_consistent() {
+    let contract = parse_contract();
+    for channel in &contract.release_packet_channels {
+        assert!(
+            channel.failure_code.starts_with("FE-FRX-"),
+            "failure code must start with FE-FRX-: {}",
+            channel.failure_code
+        );
+    }
+}
+
+#[test]
+fn frx_09_2_doc_file_exists_and_is_nonempty() {
+    let path = repo_root().join("docs/FRX_RELEASE_OPERATIONS_GATEBOOK_V1.md");
+    let content = fs::read_to_string(&path).expect("read doc");
+    assert!(!content.is_empty());
+}
+
+#[test]
+fn frx_09_2_prerequisite_beads_are_unique() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for p in &contract.prerequisites {
+        assert!(
+            seen.insert(&p.bead_id),
+            "duplicate prerequisite bead_id: {}",
+            p.bead_id
+        );
+    }
+}
+
+#[test]
+fn frx_09_2_release_packet_channel_ids_are_unique() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for channel in &contract.release_packet_channels {
+        assert!(
+            seen.insert(&channel.channel_id),
+            "duplicate channel_id: {}",
+            channel.channel_id
+        );
+    }
+}
+
+#[test]
+fn frx_09_2_stage_checklist_stages_are_unique() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for checklist in &contract.stage_checklists {
+        assert!(
+            seen.insert(&checklist.stage),
+            "duplicate stage: {}",
+            checklist.stage
+        );
+    }
+}
+
+#[test]
+fn frx_09_2_structured_log_fields_are_nonempty_and_unique() {
+    let contract = parse_contract();
+    assert!(!contract.required_structured_log_fields.is_empty());
+    let mut seen = BTreeSet::new();
+    for field in &contract.required_structured_log_fields {
+        assert!(!field.trim().is_empty(), "log field must not be empty");
+        assert!(
+            seen.insert(field),
+            "duplicate structured log field: {}",
+            field
+        );
+    }
+}
+
+#[test]
+fn frx_09_2_contract_has_nonempty_bead_id() {
+    let contract = parse_contract();
+    assert!(!contract.bead_id.trim().is_empty());
+}
+
+#[test]
+fn frx_09_2_contract_generated_at_utc_ends_with_z() {
+    let contract = parse_contract();
+    assert!(contract.generated_at_utc.ends_with('Z'));
+}
+
+#[test]
+fn frx_09_2_contract_has_nonempty_schema_version() {
+    let contract = parse_contract();
+    assert!(!contract.schema_version.trim().is_empty());
 }

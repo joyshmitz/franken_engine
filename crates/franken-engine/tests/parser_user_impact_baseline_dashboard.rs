@@ -457,3 +457,198 @@ fn user_impact_baseline_scores_respect_regression_budget() {
         );
     }
 }
+
+// ---------- parse_goal helper ----------
+
+#[test]
+fn parse_goal_maps_script() {
+    assert_eq!(parse_goal("script"), ParseGoal::Script);
+}
+
+#[test]
+fn parse_goal_maps_module() {
+    assert_eq!(parse_goal("module"), ParseGoal::Module);
+}
+
+#[test]
+#[should_panic(expected = "unknown parse goal")]
+fn parse_goal_panics_on_unknown() {
+    parse_goal("expression");
+}
+
+// ---------- parse_error_code helper ----------
+
+#[test]
+fn parse_error_code_maps_all_known_codes() {
+    let pairs = [
+        ("empty_source", ParseErrorCode::EmptySource),
+        ("invalid_goal", ParseErrorCode::InvalidGoal),
+        ("unsupported_syntax", ParseErrorCode::UnsupportedSyntax),
+        ("io_read_failed", ParseErrorCode::IoReadFailed),
+        ("invalid_utf8", ParseErrorCode::InvalidUtf8),
+        ("source_too_large", ParseErrorCode::SourceTooLarge),
+        ("budget_exceeded", ParseErrorCode::BudgetExceeded),
+    ];
+    for (raw, expected) in pairs {
+        assert_eq!(parse_error_code(raw), expected);
+    }
+}
+
+#[test]
+#[should_panic(expected = "unknown parse error code")]
+fn parse_error_code_panics_on_unknown() {
+    parse_error_code("not_a_code");
+}
+
+// ---------- parse_budget_kind helper ----------
+
+#[test]
+fn parse_budget_kind_maps_all_known_kinds() {
+    let pairs = [
+        ("source_bytes", ParseBudgetKind::SourceBytes),
+        ("token_count", ParseBudgetKind::TokenCount),
+        ("recursion_depth", ParseBudgetKind::RecursionDepth),
+    ];
+    for (raw, expected) in pairs {
+        assert_eq!(parse_budget_kind(raw), expected);
+    }
+}
+
+#[test]
+#[should_panic(expected = "unknown budget kind")]
+fn parse_budget_kind_panics_on_unknown() {
+    parse_budget_kind("memory");
+}
+
+// ---------- MetricDefinition ----------
+
+#[test]
+fn metric_definitions_are_unique_and_valid() {
+    let fixture = load_fixture();
+    let mut ids = BTreeSet::new();
+    for metric in &fixture.metric_definitions {
+        assert!(ids.insert(metric.metric_id.clone()), "duplicate metric id");
+        assert!(!metric.description.trim().is_empty());
+        assert_eq!(metric.unit, "score_millionths");
+        assert_eq!(metric.direction, "higher_is_better");
+        assert!(metric.weight_millionths > 0);
+    }
+}
+
+// ---------- DiagnosticSample ----------
+
+#[test]
+fn diagnostic_samples_have_unique_ids_and_valid_goals() {
+    let fixture = load_fixture();
+    let mut ids = BTreeSet::new();
+    for sample in &fixture.diagnostic_samples {
+        assert!(ids.insert(sample.sample_id.clone()), "duplicate sample id");
+        assert!(matches!(sample.goal.as_str(), "script" | "module"));
+        assert!(!sample.source.is_empty());
+        assert!(!sample.expected_error_code.is_empty());
+        assert!(!sample.expected_diagnostic_code.is_empty());
+    }
+}
+
+// ---------- IntegrationSample ----------
+
+#[test]
+fn integration_samples_have_unique_ids() {
+    let fixture = load_fixture();
+    let mut ids = BTreeSet::new();
+    for sample in &fixture.integration_samples {
+        assert!(ids.insert(sample.sample_id.clone()), "duplicate integration sample id");
+        assert!(matches!(sample.goal.as_str(), "script" | "module"));
+    }
+}
+
+// ---------- BaselineScenario ----------
+
+#[test]
+fn baseline_scenarios_have_replay_commands() {
+    let fixture = load_fixture();
+    for scenario in &fixture.baseline_scenarios {
+        assert!(!scenario.scenario_id.is_empty());
+        assert!(!scenario.replay_command.trim().is_empty());
+        assert!(
+            scenario.replay_command.contains("parser_user_impact_baseline_dashboard"),
+            "replay command should reference test name"
+        );
+    }
+}
+
+// ---------- weighted_composite_score ----------
+
+#[test]
+fn weighted_composite_score_of_uniform_million_is_million() {
+    let dimensions = vec![
+        MetricDefinition {
+            metric_id: "a".to_string(),
+            description: "metric a".to_string(),
+            unit: "score_millionths".to_string(),
+            direction: "higher_is_better".to_string(),
+            weight_millionths: 500_000,
+        },
+        MetricDefinition {
+            metric_id: "b".to_string(),
+            description: "metric b".to_string(),
+            unit: "score_millionths".to_string(),
+            direction: "higher_is_better".to_string(),
+            weight_millionths: 500_000,
+        },
+    ];
+    let mut scores = BTreeMap::new();
+    scores.insert("a".to_string(), 1_000_000_u32);
+    scores.insert("b".to_string(), 1_000_000_u32);
+    assert_eq!(weighted_composite_score(&scores, &dimensions), 1_000_000);
+}
+
+#[test]
+fn weighted_composite_score_zero_scores_yields_zero() {
+    let dimensions = vec![MetricDefinition {
+        metric_id: "x".to_string(),
+        description: "metric x".to_string(),
+        unit: "score_millionths".to_string(),
+        direction: "higher_is_better".to_string(),
+        weight_millionths: 1_000_000,
+    }];
+    let mut scores = BTreeMap::new();
+    scores.insert("x".to_string(), 0_u32);
+    assert_eq!(weighted_composite_score(&scores, &dimensions), 0);
+}
+
+// ---------- DashboardSnapshot ----------
+
+#[test]
+fn dashboard_snapshot_has_three_metric_scores() {
+    let fixture = load_fixture();
+    let snapshot = evaluate_snapshot(&fixture);
+    assert!(snapshot.metric_scores_millionths.contains_key("diagnostic_quality"));
+    assert!(snapshot.metric_scores_millionths.contains_key("recovery_usefulness"));
+    assert!(snapshot.metric_scores_millionths.contains_key("integration_friction"));
+}
+
+#[test]
+fn dashboard_composite_is_within_bounds() {
+    let fixture = load_fixture();
+    let snapshot = evaluate_snapshot(&fixture);
+    assert!(snapshot.composite_score_millionths <= 1_000_000);
+}
+
+// ---------- evaluate_diagnostic_quality ----------
+
+#[test]
+fn diagnostic_quality_score_is_perfect_million() {
+    let fixture = load_fixture();
+    let score = evaluate_diagnostic_quality(&fixture);
+    assert_eq!(score, 1_000_000, "all diagnostic samples should match exactly");
+}
+
+// ---------- evaluate_integration_friction ----------
+
+#[test]
+fn integration_friction_score_is_perfect_million() {
+    let fixture = load_fixture();
+    let score = evaluate_integration_friction(&fixture);
+    assert_eq!(score, 1_000_000, "all integration samples should match exactly");
+}

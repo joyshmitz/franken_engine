@@ -530,3 +530,172 @@ fn frx_20_3_scenario_matrix_execution_is_deterministic_and_linked() {
         assert!(summary_markdown.contains(&scenario.scenario_id));
     }
 }
+
+// ---------- parse_scenario_class helper ----------
+
+#[test]
+fn parse_scenario_class_maps_all_known_classes() {
+    let pairs = [
+        ("baseline", ScenarioClass::Baseline),
+        ("differential", ScenarioClass::Differential),
+        ("chaos", ScenarioClass::Chaos),
+        ("stress", ScenarioClass::Stress),
+        ("fault_injection", ScenarioClass::FaultInjection),
+        ("cross_arch", ScenarioClass::CrossArch),
+    ];
+    for (raw, expected) in pairs {
+        assert_eq!(parse_scenario_class(raw), expected);
+    }
+}
+
+#[test]
+#[should_panic(expected = "unknown scenario class")]
+fn parse_scenario_class_panics_on_unknown() {
+    parse_scenario_class("performance");
+}
+
+// ---------- ScenarioClass ----------
+
+#[test]
+fn scenario_class_serde_roundtrip() {
+    for class in ScenarioClass::ALL {
+        let json = serde_json::to_string(&class).expect("serialize");
+        let recovered: ScenarioClass = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, class);
+    }
+}
+
+#[test]
+fn scenario_class_as_str_is_nonempty() {
+    for class in ScenarioClass::ALL {
+        assert!(!class.as_str().is_empty());
+    }
+}
+
+// ---------- MatrixContract ----------
+
+#[test]
+fn contract_schema_version_is_stable() {
+    let contract = parse_contract();
+    assert_eq!(contract.schema_version, CONTRACT_SCHEMA_VERSION);
+}
+
+#[test]
+fn contract_has_at_least_eight_scenarios() {
+    let contract = parse_contract();
+    assert!(contract.scenario_catalog.len() >= 8);
+}
+
+#[test]
+fn contract_scenario_ids_are_unique() {
+    let contract = parse_contract();
+    let mut ids = BTreeSet::new();
+    for scenario in &contract.scenario_catalog {
+        assert!(
+            ids.insert(scenario.scenario_id.as_str()),
+            "duplicate scenario id: {}",
+            scenario.scenario_id
+        );
+    }
+}
+
+// ---------- scenario_fixture helper ----------
+
+#[test]
+fn scenario_fixture_sets_correct_fixture_id() {
+    let contract = parse_contract();
+    let spec = &contract.scenario_catalog[0];
+    let fixture = scenario_fixture(spec);
+    assert!(fixture.fixture_id.starts_with("fixture-"));
+    assert!(fixture.fixture_id.contains(&spec.scenario_id));
+}
+
+#[test]
+fn scenario_fixture_has_two_steps() {
+    let contract = parse_contract();
+    let spec = &contract.scenario_catalog[0];
+    let fixture = scenario_fixture(spec);
+    assert_eq!(fixture.steps.len(), 2);
+    assert_eq!(fixture.steps[0].component, "scheduler");
+    assert_eq!(fixture.steps[1].component, "guardplane");
+}
+
+#[test]
+fn scenario_fixture_seed_matches_spec() {
+    let contract = parse_contract();
+    for spec in &contract.scenario_catalog {
+        let fixture = scenario_fixture(spec);
+        assert_eq!(fixture.seed, spec.replay_seed);
+    }
+}
+
+// ---------- chaos profiles ----------
+
+#[test]
+fn chaos_profiles_have_unique_ids() {
+    let contract = parse_contract();
+    let mut ids = BTreeSet::new();
+    for profile in &contract.chaos_profiles {
+        assert!(
+            ids.insert(profile.profile_id.as_str()),
+            "duplicate chaos profile id: {}",
+            profile.profile_id
+        );
+    }
+}
+
+#[test]
+fn chaos_profiles_have_seed_offsets() {
+    let contract = parse_contract();
+    for profile in &contract.chaos_profiles {
+        assert!(profile.seed_offset > 0);
+    }
+}
+
+// ---------- differential contract ----------
+
+#[test]
+fn differential_contract_drift_thresholds_are_zero() {
+    let contract = parse_contract();
+    let thresholds = &contract.differential_contract.drift_thresholds_millionths;
+    assert_eq!(thresholds.output_digest_mismatch, 0);
+    assert_eq!(thresholds.event_count_delta, 0);
+    assert_eq!(thresholds.error_code_delta, 0);
+    assert_eq!(thresholds.decision_path_delta, 0);
+}
+
+// ---------- DeterministicRunner ----------
+
+#[test]
+fn deterministic_runner_produces_stable_output() {
+    let contract = parse_contract();
+    let spec = &contract.scenario_catalog[0];
+    let fixture = scenario_fixture(spec);
+    let runner = DeterministicRunner::default();
+    let first = runner.run_fixture(&fixture).expect("first run");
+    let second = runner.run_fixture(&fixture).expect("second run");
+    assert_eq!(first.output_digest, second.output_digest);
+    assert_eq!(first.events.len(), second.events.len());
+}
+
+// ---------- ArtifactCollector ----------
+
+#[test]
+fn artifact_collector_creates_output_directory() {
+    let root = test_temp_dir("artifact-collector-test");
+    let collector = ArtifactCollector::new(root.join("artifacts")).expect("collector");
+    assert!(collector.root().exists());
+}
+
+// ---------- operator verification ----------
+
+#[test]
+fn operator_verification_includes_ci_command() {
+    let contract = parse_contract();
+    assert!(
+        contract
+            .operator_verification
+            .iter()
+            .any(|entry| entry.contains("run_frx_end_to_end_scenario_matrix_suite.sh ci")),
+    );
+}

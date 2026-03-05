@@ -6,13 +6,13 @@ use std::{
     path::PathBuf,
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const MATRIX_SCHEMA_VERSION: &str = "rgc.executable-compatibility-target-matrix.v1";
 const MATRIX_JSON: &str =
     include_str!("../../../docs/rgc_executable_compatibility_target_matrix_v1.json");
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CompatibilityMatrix {
     schema_version: String,
     bead_id: String,
@@ -28,13 +28,13 @@ struct CompatibilityMatrix {
     operator_verification: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MatrixTrack {
     id: String,
     name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MatrixScope {
     project_epic: String,
     snapshot_source: String,
@@ -42,7 +42,7 @@ struct MatrixScope {
     open_bead_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MilestoneTarget {
     milestone: String,
     description: String,
@@ -50,7 +50,7 @@ struct MilestoneTarget {
     stop_go_rule: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CoverageRow {
     row_id: String,
     bead_selectors: Vec<String>,
@@ -64,7 +64,7 @@ struct CoverageRow {
     pass_fail_interpretation: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct WaiverGovernance {
     waiver_required_fields: Vec<String>,
     max_waiver_age_hours: u64,
@@ -403,4 +403,79 @@ fn rgc_011_operator_verification_commands_are_present() {
         )),
         "operator verification must include matrix contract test"
     );
+}
+
+#[test]
+fn selector_matches_exact_bead_id() {
+    assert!(selector_matches("bd-1lsy.2.1", "bd-1lsy.2.1"));
+    assert!(!selector_matches("bd-1lsy.2.1", "bd-1lsy.2.2"));
+}
+
+#[test]
+fn selector_matches_wildcard_prefix() {
+    assert!(selector_matches("bd-1lsy.*", "bd-1lsy.2.1"));
+    assert!(selector_matches("bd-1lsy.*", "bd-1lsy"));
+    assert!(!selector_matches("bd-1lsy.*", "bd-2abc"));
+}
+
+#[test]
+fn selector_matches_no_false_positives() {
+    assert!(!selector_matches("bd-1lsy", "bd-1lsy.2"));
+    assert!(!selector_matches("bd-abc.*", "bd-xyz.1"));
+}
+
+#[test]
+fn matched_row_ids_returns_empty_for_unknown_bead() {
+    let matrix = parse_matrix();
+    let rows = matched_row_ids(&matrix, "bd-nonexistent-bead");
+    assert!(rows.is_empty());
+}
+
+#[test]
+fn rgc_011_row_ids_are_unique() {
+    let matrix = parse_matrix();
+    let mut seen = BTreeSet::new();
+    for row in &matrix.coverage_rows {
+        assert!(
+            seen.insert(&row.row_id),
+            "duplicate row_id: {}",
+            row.row_id
+        );
+    }
+}
+
+#[test]
+fn rgc_011_serde_roundtrip_preserves_matrix() {
+    let matrix = parse_matrix();
+    let serialized = serde_json::to_string(&matrix).expect("serialize");
+    let deserialized: CompatibilityMatrix =
+        serde_json::from_str(&serialized).expect("deserialize");
+    assert_eq!(matrix, deserialized);
+}
+
+#[test]
+fn rgc_011_deterministic_double_parse() {
+    let a = parse_matrix();
+    let b = parse_matrix();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn rgc_011_doc_file_is_nonempty() {
+    let path = repo_root().join("docs/RGC_EXECUTABLE_COMPATIBILITY_TARGET_MATRIX_V1.md");
+    let content = fs::read_to_string(&path).expect("read doc");
+    assert!(!content.is_empty());
+}
+
+#[test]
+fn rgc_011_milestone_ids_are_unique() {
+    let matrix = parse_matrix();
+    let mut seen = BTreeSet::new();
+    for target in &matrix.milestone_targets {
+        assert!(
+            seen.insert(&target.milestone),
+            "duplicate milestone: {}",
+            target.milestone
+        );
+    }
 }

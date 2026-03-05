@@ -53,3 +53,132 @@ fn release_checklist_requires_traceable_reimplement_decisions() {
         );
     }
 }
+
+// ---------- repo_root ----------
+
+#[test]
+fn repo_root_exists() {
+    assert!(repo_root().exists());
+}
+
+// ---------- doc content ----------
+
+#[test]
+fn pr_template_is_nonempty() {
+    let path = repo_root().join(".github/PULL_REQUEST_TEMPLATE.md");
+    let content = fs::read_to_string(&path).expect("read PR template");
+    assert!(!content.is_empty());
+}
+
+#[test]
+fn release_checklist_is_nonempty() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    let content = fs::read_to_string(&path).expect("read release checklist");
+    assert!(!content.is_empty());
+}
+
+#[test]
+fn pr_template_references_adr_documents() {
+    let path = repo_root().join(".github/PULL_REQUEST_TEMPLATE.md");
+    let content = fs::read_to_string(&path).expect("read PR template");
+    assert!(content.contains("ADR-0002"));
+    assert!(content.contains("ADR-0003"));
+    assert!(content.contains("ADR-0004"));
+}
+
+#[test]
+fn release_checklist_references_adr_documents() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    let content = fs::read_to_string(&path).expect("read release checklist");
+    assert!(content.contains("ADR-0002"));
+    assert!(content.contains("ADR-0003"));
+    assert!(content.contains("ADR-0004"));
+}
+
+#[test]
+fn pr_template_mentions_exception_and_justification() {
+    let path = repo_root().join(".github/PULL_REQUEST_TEMPLATE.md");
+    let content = fs::read_to_string(&path).expect("read PR template");
+    assert!(content.contains("Exception"), "PR template must mention Exception");
+    assert!(content.contains("Justification"), "PR template must mention Justification");
+}
+
+#[test]
+fn release_checklist_has_reuse_vs_reimplement_heading() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    let content = fs::read_to_string(&path).expect("read release checklist");
+    assert!(content.contains("## Reuse Vs Reimplement Decisions"));
+}
+
+#[test]
+fn release_checklist_mentions_gate_failure_policy() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    let content = fs::read_to_string(&path).expect("read release checklist");
+    assert!(
+        content.contains("Release gate fails"),
+        "release checklist must describe gate failure policy"
+    );
+}
+
+#[test]
+fn pr_template_mentions_tui_sqlite_service_infrastructure() {
+    let path = repo_root().join(".github/PULL_REQUEST_TEMPLATE.md");
+    let content = fs::read_to_string(&path).expect("read PR template");
+    assert!(content.contains("TUI/SQLite/service infrastructure"));
+}
+
+#[test]
+fn release_checklist_mentions_decision_reuse_reimplement() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    let content = fs::read_to_string(&path).expect("read release checklist");
+    assert!(content.contains("Decision (reuse/reimplement)"));
+}
+
+#[test]
+fn pr_template_mentions_justification_link() {
+    let path = repo_root().join(".github/PULL_REQUEST_TEMPLATE.md");
+    let content = fs::read_to_string(&path).expect("read PR template");
+    assert!(content.contains("Justification link"));
+}
+
+#[test]
+fn release_checklist_mentions_exception_artifact_link() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    let content = fs::read_to_string(&path).expect("read release checklist");
+    assert!(content.contains("Exception artifact link"));
+}
+
+#[test]
+fn pr_template_mentions_decision_reuse_reimplement() {
+    let path = repo_root().join(".github/PULL_REQUEST_TEMPLATE.md");
+    let content = fs::read_to_string(&path).expect("read PR template");
+    assert!(content.contains("Decision (reuse/reimplement)"));
+}
+
+#[test]
+fn release_checklist_mentions_justification_link() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    let content = fs::read_to_string(&path).expect("read release checklist");
+    assert!(content.contains("Justification link"));
+}
+
+#[test]
+fn release_checklist_has_sign_off_section() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    let content = fs::read_to_string(&path).expect("read release checklist");
+    assert!(content.contains("## Sign-Off"));
+}
+
+#[test]
+fn release_checklist_has_core_validation_gate() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    let content = fs::read_to_string(&path).expect("read release checklist");
+    assert!(content.contains("## Core Validation Gate"));
+}
+
+#[test]
+fn release_checklist_has_machine_readable_gate() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    let content = fs::read_to_string(&path).expect("read release checklist");
+    assert!(content.contains("## Machine-Readable Gate"));
+}

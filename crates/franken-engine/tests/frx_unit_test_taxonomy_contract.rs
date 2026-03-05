@@ -508,3 +508,144 @@ fn frx_20_1_fixture_registry_contract_can_satisfy_seed_and_coverage_requirements
     assert!(registry.validate_all().is_empty());
     assert!(registry.coverage_gaps().is_empty());
 }
+
+// ---------- parse_test_class ----------
+
+#[test]
+fn parse_test_class_all_variants() {
+    assert_eq!(parse_test_class("core"), TestClass::Core);
+    assert_eq!(parse_test_class("edge"), TestClass::Edge);
+    assert_eq!(parse_test_class("adversarial"), TestClass::Adversarial);
+    assert_eq!(parse_test_class("regression"), TestClass::Regression);
+    assert_eq!(parse_test_class("fault_injection"), TestClass::FaultInjection);
+}
+
+#[test]
+#[should_panic(expected = "unknown test class")]
+fn parse_test_class_panics_on_unknown() {
+    parse_test_class("invalid");
+}
+
+// ---------- parse_surface ----------
+
+#[test]
+fn parse_surface_all_variants() {
+    assert_eq!(parse_surface("compiler"), TestSurface::Compiler);
+    assert_eq!(parse_surface("runtime"), TestSurface::Runtime);
+    assert_eq!(parse_surface("router"), TestSurface::Router);
+    assert_eq!(parse_surface("governance"), TestSurface::Governance);
+    assert_eq!(parse_surface("parser"), TestSurface::Parser);
+    assert_eq!(parse_surface("scheduler"), TestSurface::Scheduler);
+    assert_eq!(parse_surface("evidence"), TestSurface::Evidence);
+    assert_eq!(parse_surface("security"), TestSurface::Security);
+}
+
+#[test]
+#[should_panic(expected = "unknown test surface")]
+fn parse_surface_panics_on_unknown() {
+    parse_surface("nonexistent");
+}
+
+// ---------- TestClass ----------
+
+#[test]
+fn test_class_all_has_correct_count() {
+    assert_eq!(TestClass::ALL.len(), 5);
+}
+
+#[test]
+fn test_class_serde_roundtrip() {
+    for class in TestClass::ALL {
+        let json = serde_json::to_string(class).expect("serialize");
+        let recovered: TestClass = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, *class);
+    }
+}
+
+#[test]
+fn test_class_as_str_is_nonempty() {
+    for class in TestClass::ALL {
+        assert!(!class.as_str().is_empty());
+    }
+}
+
+// ---------- TestSurface ----------
+
+#[test]
+fn test_surface_all_has_correct_count() {
+    assert_eq!(TestSurface::ALL.len(), 8);
+}
+
+#[test]
+fn test_surface_serde_roundtrip() {
+    for surface in TestSurface::ALL {
+        let json = serde_json::to_string(surface).expect("serialize");
+        let recovered: TestSurface = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, *surface);
+    }
+}
+
+#[test]
+fn test_surface_as_str_is_nonempty() {
+    for surface in TestSurface::ALL {
+        assert!(!surface.as_str().is_empty());
+    }
+}
+
+#[test]
+fn test_surface_lane_charter_ref_is_nonempty() {
+    for surface in TestSurface::ALL {
+        assert!(!surface.lane_charter_ref().is_empty());
+    }
+}
+
+// ---------- DeterminismContract ----------
+
+#[test]
+fn determinism_contract_for_all_classes() {
+    for class in TestClass::ALL {
+        let dc = DeterminismContract::for_class(*class);
+        // At minimum, the contract should be well-defined (no panic)
+        let _ = dc.seed_required;
+        let _ = dc.virtual_clock_required;
+        let _ = dc.deterministic_rng_required;
+    }
+}
+
+// ---------- FixtureEntry ----------
+
+#[test]
+fn fixture_entry_serde_roundtrip() {
+    let entry = FixtureEntry {
+        fixture_id: "test-fixture".to_string(),
+        description: "test description".to_string(),
+        test_class: TestClass::Core,
+        surfaces: BTreeSet::from([TestSurface::Parser]),
+        provenance: TestClass::Core.min_provenance_level(),
+        seed: Some(42),
+        content_hash: "sha256:abc".to_string(),
+        format_version: "v1".to_string(),
+        origin_ref: "bd-test".to_string(),
+        tags: BTreeSet::from(["core".to_string()]),
+    };
+    let json = serde_json::to_string(&entry).expect("serialize");
+    let recovered: FixtureEntry = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.fixture_id, "test-fixture");
+    assert_eq!(recovered.test_class, TestClass::Core);
+}
+
+// ---------- FixtureRegistry ----------
+
+#[test]
+fn fixture_registry_new_is_empty() {
+    let registry = FixtureRegistry::new();
+    assert!(registry.validate_all().is_empty());
+}
+
+// ---------- schema version constants ----------
+
+#[test]
+fn schema_version_constants_are_nonempty() {
+    assert!(!TEST_TAXONOMY_SCHEMA_VERSION.is_empty());
+    assert!(!FIXTURE_REGISTRY_SCHEMA_VERSION.is_empty());
+}

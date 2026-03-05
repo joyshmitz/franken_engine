@@ -291,3 +291,205 @@ fn monotonicity_across_malicious_gradient() {
         prev_severity = severity;
     }
 }
+
+// ---------- sample_attacker_cost_model ----------
+
+#[test]
+fn sample_attacker_cost_model_has_strategy_adjustments() {
+    let model = sample_attacker_cost_model();
+    assert!(model.strategy_adjustments.contains_key("supply_chain"));
+    assert_eq!(model.discovery_cost, 1_000_000);
+    assert_eq!(model.expected_gain, 20_000_000);
+    assert_eq!(model.version, 1);
+}
+
+// ---------- malicious_evidence ----------
+
+#[test]
+fn malicious_evidence_has_high_hostcall_rate() {
+    let ev = malicious_evidence("ext-test");
+    assert_eq!(ev.extension_id, "ext-test");
+    assert!(ev.hostcall_rate_millionths > 100_000_000);
+    assert!(ev.timing_anomaly_millionths > 500_000);
+    assert_eq!(ev.epoch, SecurityEpoch::GENESIS);
+}
+
+// ---------- benign_evidence ----------
+
+#[test]
+fn benign_evidence_has_low_hostcall_rate() {
+    let ev = benign_evidence("ext-good");
+    assert_eq!(ev.extension_id, "ext-good");
+    assert!(ev.hostcall_rate_millionths < 100_000_000);
+    assert_eq!(ev.denial_rate_millionths, 0);
+    assert_eq!(ev.distinct_capabilities, 2);
+}
+
+// ---------- scoring_input ----------
+
+#[test]
+fn scoring_input_sets_trace_id_from_decision_id() {
+    let input = scoring_input("ext-a", "dec-123", Posterior::default_prior());
+    assert_eq!(input.trace_id, "trace-dec-123");
+    assert_eq!(input.decision_id, "dec-123");
+    assert_eq!(input.extension_id, "ext-a");
+    assert_eq!(input.policy_id, "policy-runtime-score-v1");
+}
+
+#[test]
+fn scoring_input_includes_roi_history() {
+    let input = scoring_input("ext-b", "dec-456", Posterior::default_prior());
+    assert_eq!(input.extension_roi_history_millionths.len(), 3);
+    assert_eq!(input.fleet_roi_baseline_millionths.len(), 2);
+    assert!(input.blocked_actions.is_empty());
+}
+
+// ---------- ContainmentAction ----------
+
+#[test]
+fn containment_action_all_has_correct_count() {
+    assert_eq!(ContainmentAction::ALL.len(), 6);
+}
+
+#[test]
+fn containment_action_severity_is_monotonic() {
+    let mut prev = 0u32;
+    for action in ContainmentAction::ALL {
+        let sev = action.severity();
+        assert!(
+            sev >= prev,
+            "severity for {} ({}) < previous ({})",
+            action, sev, prev
+        );
+        prev = sev;
+    }
+}
+
+#[test]
+fn containment_action_serde_roundtrip() {
+    for action in ContainmentAction::ALL {
+        let json = serde_json::to_string(&action).expect("serialize");
+        let recovered: ContainmentAction = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, action);
+    }
+}
+
+#[test]
+fn containment_action_display_is_nonempty() {
+    for action in ContainmentAction::ALL {
+        let s = format!("{action}");
+        assert!(!s.is_empty());
+    }
+}
+
+// ---------- Posterior ----------
+
+#[test]
+fn posterior_default_prior_is_valid() {
+    let p = Posterior::default_prior();
+    assert!(p.is_valid());
+}
+
+#[test]
+fn posterior_uniform_is_valid() {
+    let p = Posterior::uniform();
+    assert!(p.is_valid());
+}
+
+#[test]
+fn posterior_serde_roundtrip() {
+    let p = Posterior::from_millionths(600_000, 100_000, 200_000, 100_000);
+    let json = serde_json::to_string(&p).expect("serialize");
+    let recovered: Posterior = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, p);
+    assert!(recovered.is_valid());
+}
+
+// ---------- BayesianPosteriorUpdater ----------
+
+#[test]
+fn bayesian_updater_tracks_update_count() {
+    let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-count");
+    assert_eq!(updater.update_count(), 0);
+    updater.update(&benign_evidence("ext-count"));
+    assert_eq!(updater.update_count(), 1);
+    updater.update(&benign_evidence("ext-count"));
+    assert_eq!(updater.update_count(), 2);
+}
+
+#[test]
+fn bayesian_updater_extension_id_matches() {
+    let updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-id-check");
+    assert_eq!(updater.extension_id(), "ext-id-check");
+}
+
+#[test]
+fn bayesian_updater_serde_roundtrip() {
+    let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), "ext-serde");
+    updater.update(&malicious_evidence("ext-serde"));
+    let json = serde_json::to_string(&updater).expect("serialize");
+    let recovered: BayesianPosteriorUpdater =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.extension_id(), "ext-serde");
+    assert_eq!(recovered.update_count(), 1);
+}
+
+// ---------- Evidence ----------
+
+#[test]
+fn evidence_serde_roundtrip() {
+    let ev = malicious_evidence("ext-ev-serde");
+    let json = serde_json::to_string(&ev).expect("serialize");
+    let recovered: Evidence = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.extension_id, "ext-ev-serde");
+    assert_eq!(recovered.hostcall_rate_millionths, ev.hostcall_rate_millionths);
+}
+
+// ---------- AttackerCostModel ----------
+
+#[test]
+fn attacker_cost_model_serde_roundtrip() {
+    let model = sample_attacker_cost_model();
+    let json = serde_json::to_string(&model).expect("serialize");
+    let recovered: AttackerCostModel = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.discovery_cost, model.discovery_cost);
+    assert_eq!(recovered.expected_gain, model.expected_gain);
+    assert!(recovered.strategy_adjustments.contains_key("supply_chain"));
+}
+
+// ---------- ExpectedLossSelector ----------
+
+#[test]
+fn expected_loss_selector_tracks_decisions_made() {
+    let mut selector = ExpectedLossSelector::balanced();
+    assert_eq!(selector.decisions_made(), 0);
+    let _ = selector.score_runtime_decision(&scoring_input(
+        "ext-count",
+        "dec-count",
+        Posterior::default_prior(),
+    ));
+    assert_eq!(selector.decisions_made(), 1);
+}
+
+// ---------- RuntimeDecisionScoringError ----------
+
+#[test]
+fn runtime_decision_scoring_error_serde_roundtrip() {
+    let err = RuntimeDecisionScoringError::ZeroAttackerCost;
+    let json = serde_json::to_string(&err).expect("serialize");
+    let recovered: RuntimeDecisionScoringError =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, err);
+}
+
+// ---------- RuntimeDecisionScoringInput ----------
+
+#[test]
+fn runtime_decision_scoring_input_serde_roundtrip() {
+    let input = scoring_input("ext-serde", "dec-serde", Posterior::default_prior());
+    let json = serde_json::to_string(&input).expect("serialize");
+    let recovered: RuntimeDecisionScoringInput =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.extension_id, "ext-serde");
+    assert_eq!(recovered.trace_id, "trace-dec-serde");
+}

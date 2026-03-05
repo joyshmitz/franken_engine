@@ -492,3 +492,169 @@ fn adversarial_promotion_detects_diagnostic_drift() {
             .contains("diagnostic code drift or contract compatibility failure")
     );
 }
+
+// ---------- helper functions ----------
+
+#[test]
+fn parse_goal_maps_correctly() {
+    assert_eq!(parse_goal("script"), ParseGoal::Script);
+    assert_eq!(parse_goal("module"), ParseGoal::Module);
+}
+
+#[test]
+fn parse_error_code_maps_all_known_codes() {
+    for code in ParseErrorCode::ALL {
+        let roundtrip = parse_error_code(code.as_str());
+        assert_eq!(roundtrip, code);
+    }
+}
+
+#[test]
+fn hash_bytes_starts_with_sha256_prefix() {
+    let h = hash_bytes(b"test data");
+    assert!(h.starts_with("sha256:"));
+    assert_eq!(h.len(), 7 + 64); // "sha256:" + 64 hex chars
+}
+
+#[test]
+fn hash_bytes_is_deterministic() {
+    assert_eq!(hash_bytes(b"hello"), hash_bytes(b"hello"));
+}
+
+#[test]
+fn hash_bytes_differs_for_different_inputs() {
+    assert_ne!(hash_bytes(b"hello"), hash_bytes(b"world"));
+}
+
+#[test]
+fn trace_id_for_contains_corpus_and_fixture() {
+    let id = trace_id_for("normative", "fixture-001");
+    assert!(id.contains("normative"));
+    assert!(id.contains("fixture-001"));
+    assert!(id.starts_with("trace-"));
+}
+
+#[test]
+fn decision_id_for_contains_corpus_and_fixture() {
+    let id = decision_id_for("adversarial", "fixture-002");
+    assert!(id.contains("adversarial"));
+    assert!(id.contains("fixture-002"));
+    assert!(id.starts_with("decision-"));
+}
+
+#[test]
+fn stable_replay_command_contains_corpus_and_fixture() {
+    let cmd = stable_replay_command("normative", "fixture-001");
+    assert!(cmd.contains("PARSER_REDUCER_CORPUS=normative"));
+    assert!(cmd.contains("PARSER_REDUCER_FIXTURE=fixture-001"));
+}
+
+// ---------- promotion policy loading ----------
+
+#[test]
+fn promotion_policy_has_two_rules() {
+    let policy = load_promotion_policy();
+    assert_eq!(policy.promotion_rules.len(), 2);
+    assert!(policy.promotion_rules.iter().any(|r| r.corpus == "normative"));
+    assert!(policy.promotion_rules.iter().any(|r| r.corpus == "adversarial"));
+}
+
+#[test]
+fn promotion_policy_schema_version_is_v1() {
+    let policy = load_promotion_policy();
+    assert_eq!(
+        policy.schema_version,
+        "franken-engine.parser-reducer-promotion.policy.v1"
+    );
+}
+
+#[test]
+fn promotion_policy_provenance_uses_sha256() {
+    let policy = load_promotion_policy();
+    assert_eq!(policy.provenance_hash_algorithm, "sha256");
+}
+
+// ---------- catalog loading ----------
+
+#[test]
+fn normative_catalog_has_fixtures() {
+    let catalog = load_normative_catalog();
+    assert!(!catalog.fixtures.is_empty());
+}
+
+#[test]
+fn adversarial_catalog_has_fixtures() {
+    let catalog = load_adversarial_catalog();
+    assert!(!catalog.fixtures.is_empty());
+}
+
+// ---------- receipt_hash ----------
+
+#[test]
+fn receipt_hash_is_deterministic() {
+    let policy = load_promotion_policy();
+    let normative = load_normative_catalog();
+    let parser = CanonicalEs2020Parser;
+    let fixture = normative.fixtures.first().expect("fixture");
+    let receipt = evaluate_normative(&policy, fixture, &parser);
+    assert_eq!(receipt_hash(&receipt), receipt_hash(&receipt));
+}
+
+// ---------- rule_for ----------
+
+#[test]
+fn rule_for_finds_normative_rule() {
+    let policy = load_promotion_policy();
+    let rule = rule_for(&policy, "normative");
+    assert!(rule.requires_expected_hash);
+}
+
+#[test]
+fn rule_for_finds_adversarial_rule() {
+    let policy = load_promotion_policy();
+    let rule = rule_for(&policy, "adversarial");
+    assert!(rule.requires_expected_diagnostic_code);
+}
+
+// ---------- outcome_allowed ----------
+
+#[test]
+fn outcome_allowed_accepts_promote() {
+    let policy = load_promotion_policy();
+    assert!(outcome_allowed(&policy, "promote"));
+}
+
+#[test]
+fn outcome_allowed_rejects_unknown() {
+    let policy = load_promotion_policy();
+    assert!(!outcome_allowed(&policy, "unknown_outcome"));
+}
+
+// ---------- PromotionReceipt ----------
+
+#[test]
+fn normative_receipt_has_expected_fields() {
+    let policy = load_promotion_policy();
+    let normative = load_normative_catalog();
+    let parser = CanonicalEs2020Parser;
+    let fixture = normative.fixtures.first().expect("fixture");
+    let receipt = evaluate_normative(&policy, fixture, &parser);
+    assert_eq!(receipt.corpus, "normative");
+    assert_eq!(receipt.promotion_outcome, "promote");
+    assert!(receipt.provenance_hash.starts_with("sha256:"));
+    assert!(receipt.source_hash.starts_with("sha256:"));
+    assert!(!receipt.replay_command.is_empty());
+}
+
+#[test]
+fn adversarial_receipt_has_expected_fields() {
+    let policy = load_promotion_policy();
+    let adversarial = load_adversarial_catalog();
+    let parser = CanonicalEs2020Parser;
+    let fixture = adversarial.fixtures.first().expect("fixture");
+    let receipt = evaluate_adversarial(&policy, fixture, &parser);
+    assert_eq!(receipt.corpus, "adversarial");
+    assert!(receipt.observed_parse_error.is_some());
+    assert!(receipt.observed_diagnostic_code.is_some());
+    assert!(receipt.observed_hash.is_none());
+}

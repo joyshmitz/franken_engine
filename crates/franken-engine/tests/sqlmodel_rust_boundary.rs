@@ -48,3 +48,141 @@ fn inventory_tracks_model_layer_choice_for_each_store() {
         );
     }
 }
+
+#[test]
+fn sqlmodel_adr_file_exists_and_is_nonempty() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(!content.is_empty());
+}
+
+#[test]
+fn sqlmodel_inventory_file_exists_and_is_nonempty() {
+    let path = repo_root().join("docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    assert!(!content.is_empty());
+}
+
+#[test]
+fn sqlmodel_boundary_references_typed_and_raw_layers() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("sqlmodel_rust"));
+    assert!(content.contains("frankensqlite"));
+}
+
+#[test]
+fn sqlmodel_boundary_references_persistence_boundary() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("Persistence Boundary"));
+}
+
+#[test]
+fn sqlmodel_inventory_references_store_categories() {
+    let path = repo_root().join("docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    assert!(content.contains("replay index"));
+    assert!(content.contains("evidence index"));
+    assert!(content.contains("benchmark ledger"));
+}
+
+#[test]
+fn sqlmodel_adr_mentions_typed_model_and_raw_criteria() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("Use `sqlmodel_rust`"));
+    assert!(content.contains("Use raw `/dp/frankensqlite`"));
+}
+
+#[test]
+fn sqlmodel_inventory_mentions_rationale() {
+    let path = repo_root().join("docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    let lower = content.to_ascii_lowercase();
+    assert!(
+        lower.contains("rationale"),
+        "inventory must mention rationale for model layer choices"
+    );
+}
+
+#[test]
+fn sqlmodel_adr_mentions_companion_decision() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("Companion Decision"));
+}
+
+#[test]
+fn sqlmodel_adr_mentions_multi_table_relationships() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("multi-table relationships"));
+}
+
+#[test]
+fn sqlmodel_adr_mentions_compile_time_alignment() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("compile-time model/schema alignment"));
+}
+
+#[test]
+fn sqlmodel_inventory_lists_all_eight_stores() {
+    let path = repo_root().join("docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    for store in [
+        "replay index",
+        "evidence index",
+        "benchmark ledger",
+        "policy artifact cache",
+        "PLAS witness store",
+        "replacement lineage log",
+        "IFC provenance index",
+        "specialization index",
+    ] {
+        assert!(content.contains(store), "inventory missing store: {store}");
+    }
+}
+
+#[test]
+fn sqlmodel_adr_defines_decision_section() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("## Decision"));
+}
+
+#[test]
+fn sqlmodel_adr_defines_scope_section() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("## Scope"));
+}
+
+#[test]
+fn sqlmodel_inventory_mentions_migration_strategy() {
+    let path = repo_root().join("docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    assert!(content.contains("Migration strategy"));
+}
+
+#[test]
+fn sqlmodel_adr_has_rationale_section() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("## Rationale"));
+}
+
+#[test]
+fn sqlmodel_adr_has_exception_process_section() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("## Exception Process"));
+}
+
+#[test]
+fn sqlmodel_adr_has_consequences_section() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("## Consequences"));
+}

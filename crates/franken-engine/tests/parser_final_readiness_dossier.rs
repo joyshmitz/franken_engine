@@ -661,3 +661,128 @@ fn parser_final_readiness_structured_event_has_required_keys() {
         "risk register hash must be deterministic fnv1a64 fingerprint"
     );
 }
+
+// ---------- load_fixture helper ----------
+
+#[test]
+fn load_fixture_returns_valid_fixture() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.is_empty());
+    assert!(!fixture.dossier_id.is_empty());
+    assert!(!fixture.evidence_artifacts.is_empty());
+}
+
+// ---------- load_doc helper ----------
+
+#[test]
+fn load_doc_returns_nonempty_string() {
+    let doc = load_doc();
+    assert!(!doc.is_empty());
+    assert!(doc.contains("Readiness"));
+}
+
+// ---------- fnv1a64 ----------
+
+#[test]
+fn fnv1a64_is_deterministic() {
+    let a = fnv1a64(b"hello world");
+    let b = fnv1a64(b"hello world");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn fnv1a64_differs_for_different_inputs() {
+    assert_ne!(fnv1a64(b"a"), fnv1a64(b"b"));
+}
+
+// ---------- comparison_matches ----------
+
+#[test]
+fn comparison_matches_valid_operators() {
+    assert!(comparison_matches(">"));
+    assert!(comparison_matches(">="));
+    assert!(comparison_matches("<"));
+    assert!(comparison_matches("<="));
+}
+
+#[test]
+fn comparison_matches_rejects_invalid() {
+    assert!(!comparison_matches("=="));
+    assert!(!comparison_matches("!="));
+    assert!(!comparison_matches(""));
+}
+
+// ---------- EvidenceStatus ----------
+
+#[test]
+fn evidence_status_parse_all_variants() {
+    assert_eq!(EvidenceStatus::parse("pass"), EvidenceStatus::Pass);
+    assert_eq!(EvidenceStatus::parse("in_progress"), EvidenceStatus::InProgress);
+    assert_eq!(EvidenceStatus::parse("fail"), EvidenceStatus::Fail);
+    assert_eq!(EvidenceStatus::parse("missing"), EvidenceStatus::Missing);
+}
+
+#[test]
+#[should_panic(expected = "unknown evidence status")]
+fn evidence_status_parse_panics_on_unknown() {
+    EvidenceStatus::parse("invalid");
+}
+
+// ---------- Severity ----------
+
+#[test]
+fn severity_weight_is_ordered() {
+    assert!(Severity::Critical.weight() > Severity::High.weight());
+    assert!(Severity::High.weight() > Severity::Medium.weight());
+    assert!(Severity::Medium.weight() > Severity::Low.weight());
+}
+
+#[test]
+fn severity_parse_all_variants() {
+    assert_eq!(Severity::parse("critical"), Severity::Critical);
+    assert_eq!(Severity::parse("high"), Severity::High);
+    assert_eq!(Severity::parse("medium"), Severity::Medium);
+    assert_eq!(Severity::parse("low"), Severity::Low);
+}
+
+// ---------- VerificationOutcome ----------
+
+#[test]
+fn verification_outcome_parse_all_variants() {
+    assert_eq!(VerificationOutcome::parse("pass"), VerificationOutcome::Pass);
+    assert_eq!(VerificationOutcome::parse("hold"), VerificationOutcome::Hold);
+    assert_eq!(VerificationOutcome::parse("fail"), VerificationOutcome::Fail);
+}
+
+// ---------- compute_risk_register_hash ----------
+
+#[test]
+fn risk_register_hash_is_deterministic() {
+    let fixture = load_fixture();
+    let a = compute_risk_register_hash(&fixture.residual_risks);
+    let b = compute_risk_register_hash(&fixture.residual_risks);
+    assert_eq!(a, b);
+    assert!(a.starts_with("fnv1a64:"));
+}
+
+// ---------- evaluate_dossier ----------
+
+#[test]
+fn evaluate_dossier_is_deterministic() {
+    let fixture = load_fixture();
+    let a = evaluate_dossier(&fixture);
+    let b = evaluate_dossier(&fixture);
+    assert_eq!(a, b);
+}
+
+// ---------- emit_structured_event ----------
+
+#[test]
+fn emit_structured_event_has_correct_component() {
+    let fixture = load_fixture();
+    let evaluation = evaluate_dossier(&fixture);
+    let event = emit_structured_event(&fixture, &evaluation);
+    assert_eq!(event.component, "parser_final_readiness_dossier_gate");
+    assert_eq!(event.event, "final_readiness_dossier_evaluated");
+    assert_eq!(event.dossier_id, fixture.dossier_id);
+}

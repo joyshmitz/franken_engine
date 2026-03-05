@@ -371,3 +371,79 @@ fn obligation_event_serde_round_trip() {
     let json = serde_json::to_string(&events[0]).expect("serialize");
     assert!(!json.is_empty());
 }
+
+#[test]
+fn double_begin_same_operation_id_fails() {
+    let mut cell = ExecutionCell::new("ext-dup", CellKind::Extension, "trace-dup");
+    let mut tracker = ObligationTracker::default();
+    tracker
+        .begin_operation(
+            &mut cell,
+            "op-dup",
+            TwoPhaseCategory::ResourceAlloc,
+            "first begin",
+        )
+        .expect("first begin should succeed");
+    let err = tracker.begin_operation(
+        &mut cell,
+        "op-dup",
+        TwoPhaseCategory::ResourceAlloc,
+        "duplicate begin",
+    );
+    assert!(err.is_err(), "duplicate begin must fail");
+}
+
+#[test]
+fn commit_unknown_operation_id_fails() {
+    let mut cell = ExecutionCell::new("ext-unknown", CellKind::Extension, "trace-unknown");
+    let mut tracker = ObligationTracker::default();
+    let err = tracker.commit_operation(&mut cell, "nonexistent-op");
+    assert!(err.is_err(), "commit unknown operation must fail");
+}
+
+#[test]
+fn category_stats_empty_tracker() {
+    let tracker = ObligationTracker::default();
+    let stats = tracker.category_stats();
+    for (_category, stat) in stats {
+        assert_eq!(stat.started, 0);
+        assert_eq!(stat.committed, 0);
+        assert_eq!(stat.aborted, 0);
+    }
+}
+
+#[test]
+fn abort_unknown_operation_id_fails() {
+    let mut cell = ExecutionCell::new("ext-abort-unk", CellKind::Extension, "trace-abort-unk");
+    let mut tracker = ObligationTracker::default();
+    let err = tracker.abort_operation(&mut cell, "nonexistent-op");
+    assert!(err.is_err(), "abort unknown operation must fail");
+}
+
+#[test]
+fn get_operation_returns_none_for_unknown_id() {
+    let tracker = ObligationTracker::default();
+    assert!(
+        tracker.get_operation("does-not-exist").is_none(),
+        "unknown operation id must return None"
+    );
+}
+
+#[test]
+fn lab_tracker_with_no_leaks_does_not_fail_run() {
+    let mut cell = ExecutionCell::new("ext-lab-clean", CellKind::Extension, "trace-lab-clean");
+    let mut tracker = ObligationTracker::lab();
+    tracker
+        .begin_operation(
+            &mut cell,
+            "clean-op",
+            TwoPhaseCategory::ResourceAlloc,
+            "allocate and commit cleanly",
+        )
+        .expect("begin");
+    tracker
+        .commit_operation(&mut cell, "clean-op")
+        .expect("commit");
+    assert!(!tracker.has_leaks());
+    assert!(!tracker.should_fail_run());
+}

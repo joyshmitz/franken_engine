@@ -303,6 +303,443 @@ fn frankenctl_verify_compile_artifact_failure_includes_trace_and_remediation() {
     let _ = fs::remove_file(artifact_path);
 }
 
+// ── Version and help tests ────────────────────────────────────────────
+
+#[test]
+fn frankenctl_version_exits_successfully() {
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .arg("version")
+        .output()
+        .expect("version command should execute");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    assert!(!stdout.trim().is_empty(), "version should output something");
+}
+
+#[test]
+fn frankenctl_dash_h_shows_help() {
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .arg("-h")
+        .output()
+        .expect("-h should execute");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    assert!(stdout.contains("frankenctl"));
+}
+
+#[test]
+fn frankenctl_unknown_command_fails() {
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .arg("nonexistent-command")
+        .output()
+        .expect("unknown command should execute");
+    assert!(!output.status.success());
+}
+
+#[test]
+fn frankenctl_no_args_shows_help() {
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .output()
+        .expect("no-arg invocation should execute");
+    // Should either show help or fail gracefully
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(
+        stdout.contains("frankenctl") || stderr.contains("frankenctl"),
+        "should mention frankenctl in output"
+    );
+}
+
+// ── Compile tests ─────────────────────────────────────────────────────
+
+#[test]
+fn frankenctl_compile_module_goal() {
+    let source_path = temp_path("frankenctl_compile_module", "js");
+    let artifact_path = temp_path("frankenctl_compile_module_artifact", "json");
+    write_source(&source_path, "const x = 42;\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "compile",
+            "--input",
+            source_path.to_str().unwrap(),
+            "--out",
+            artifact_path.to_str().unwrap(),
+            "--goal",
+            "module",
+            "--trace-id",
+            "trace-module-compile",
+            "--decision-id",
+            "decision-module-compile",
+            "--policy-id",
+            "policy-module-compile",
+        ])
+        .output()
+        .expect("compile module should execute");
+
+    assert!(
+        output.status.success(),
+        "compile module failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = parse_stdout_json(&output);
+    assert_eq!(json["parse_goal"].as_str(), Some("module"));
+    assert_eq!(
+        json["schema_version"].as_str(),
+        Some("franken-engine.frankenctl.v1")
+    );
+
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_file(artifact_path);
+}
+
+#[test]
+fn frankenctl_compile_missing_input_fails() {
+    let artifact_path = temp_path("frankenctl_compile_no_input", "json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args(["compile", "--out", artifact_path.to_str().unwrap()])
+        .output()
+        .expect("compile with missing input should execute");
+
+    assert!(!output.status.success());
+
+    let _ = fs::remove_file(artifact_path);
+}
+
+#[test]
+fn frankenctl_compile_nonexistent_source_fails() {
+    let artifact_path = temp_path("frankenctl_compile_nosource", "json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "compile",
+            "--input",
+            "/tmp/nonexistent_source_file_12345.js",
+            "--out",
+            artifact_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("compile with nonexistent source should execute");
+
+    assert!(!output.status.success());
+
+    let _ = fs::remove_file(artifact_path);
+}
+
+#[test]
+fn frankenctl_compile_default_trace_ids() {
+    let source_path = temp_path("frankenctl_compile_defaults", "js");
+    let artifact_path = temp_path("frankenctl_compile_defaults_art", "json");
+    write_source(&source_path, "var x = 1;\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "compile",
+            "--input",
+            source_path.to_str().unwrap(),
+            "--out",
+            artifact_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("compile with defaults should execute");
+
+    assert!(
+        output.status.success(),
+        "compile defaults failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = parse_stdout_json(&output);
+    assert_eq!(json["parse_goal"].as_str(), Some("script"));
+    assert!(json["hashes"]["parse_event_ir"].as_str().is_some());
+    assert!(json["hashes"]["ir0"].as_str().is_some());
+
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_file(artifact_path);
+}
+
+// ── Run tests ─────────────────────────────────────────────────────────
+
+#[test]
+fn frankenctl_run_without_out_still_prints_json() {
+    let source_path = temp_path("frankenctl_run_noout", "js");
+    write_source(&source_path, "let z = 7;\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "run",
+            "--input",
+            source_path.to_str().unwrap(),
+            "--extension-id",
+            "ext-noout",
+        ])
+        .output()
+        .expect("run without --out should execute");
+
+    assert!(
+        output.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = parse_stdout_json(&output);
+    assert_eq!(
+        json["schema_version"].as_str(),
+        Some("franken-engine.frankenctl.v1")
+    );
+    assert_eq!(json["extension_id"].as_str(), Some("ext-noout"));
+    assert!(json["trace_id"].as_str().is_some());
+
+    let _ = fs::remove_file(source_path);
+}
+
+#[test]
+fn frankenctl_run_missing_extension_id_fails() {
+    let source_path = temp_path("frankenctl_run_no_extid", "js");
+    write_source(&source_path, "let a = 1;\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args(["run", "--input", source_path.to_str().unwrap()])
+        .output()
+        .expect("run without extension-id should execute");
+
+    assert!(!output.status.success());
+
+    let _ = fs::remove_file(source_path);
+}
+
+// ── Verify tests ──────────────────────────────────────────────────────
+
+#[test]
+fn frankenctl_verify_missing_subcommand_fails() {
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .arg("verify")
+        .output()
+        .expect("verify without subcommand should execute");
+
+    assert!(!output.status.success());
+}
+
+#[test]
+fn frankenctl_verify_compile_artifact_nonexistent_file_fails() {
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "verify",
+            "compile-artifact",
+            "--input",
+            "/tmp/nonexistent_artifact_99999.json",
+        ])
+        .output()
+        .expect("verify nonexistent file should execute");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(stderr.contains("[frankenctl"));
+}
+
+// ── Replay tests ──────────────────────────────────────────────────────
+
+#[test]
+fn frankenctl_replay_best_effort_mode() {
+    let trace_path = temp_path("frankenctl_replay_besteffort", "json");
+    let report_path = temp_path("frankenctl_replay_besteffort_report", "json");
+
+    let mut trace = NondeterminismTrace::new("session-best-effort");
+    trace.capture(
+        NondeterminismSource::LaneSelectionRandom,
+        vec![42],
+        1,
+        "integration-test",
+    );
+    trace.finalise(2);
+    fs::write(&trace_path, serde_json::to_vec_pretty(&trace).unwrap()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "replay",
+            "run",
+            "--trace",
+            trace_path.to_str().unwrap(),
+            "--mode",
+            "best-effort",
+            "--out",
+            report_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("replay best-effort should execute");
+
+    assert!(
+        output.status.success(),
+        "replay best-effort failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = parse_stdout_json(&output);
+    assert_eq!(json["mode"].as_str(), Some("best-effort"));
+    assert_eq!(json["event_count"].as_u64(), Some(1));
+
+    let _ = fs::remove_file(trace_path);
+    let _ = fs::remove_file(report_path);
+}
+
+#[test]
+fn frankenctl_replay_validate_mode() {
+    let trace_path = temp_path("frankenctl_replay_validate", "json");
+
+    let mut trace = NondeterminismTrace::new("session-validate");
+    trace.capture(
+        NondeterminismSource::TimerRead,
+        vec![10, 20],
+        1,
+        "integration-test",
+    );
+    trace.finalise(2);
+    fs::write(&trace_path, serde_json::to_vec_pretty(&trace).unwrap()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "replay",
+            "run",
+            "--trace",
+            trace_path.to_str().unwrap(),
+            "--mode",
+            "validate",
+        ])
+        .output()
+        .expect("replay validate should execute");
+
+    assert!(
+        output.status.success(),
+        "replay validate failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = parse_stdout_json(&output);
+    assert_eq!(json["mode"].as_str(), Some("validate"));
+
+    let _ = fs::remove_file(trace_path);
+}
+
+#[test]
+fn frankenctl_replay_nonexistent_trace_fails() {
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "replay",
+            "run",
+            "--trace",
+            "/tmp/nonexistent_trace_99999.json",
+        ])
+        .output()
+        .expect("replay nonexistent trace should execute");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(stderr.contains("[frankenctl"));
+}
+
+#[test]
+fn frankenctl_replay_missing_trace_arg_fails() {
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args(["replay", "run"])
+        .output()
+        .expect("replay without trace should execute");
+
+    assert!(!output.status.success());
+}
+
+// ── Error output contract tests ───────────────────────────────────────
+
+#[test]
+fn frankenctl_error_output_includes_trace_id_and_remediation() {
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "compile",
+            "--input",
+            "/tmp/nonexistent_source_for_error_test.js",
+            "--out",
+            "/tmp/out.json",
+        ])
+        .output()
+        .expect("compile error should execute");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(
+        stderr.contains("[frankenctl trace_id="),
+        "error should include trace_id prefix: {stderr}"
+    );
+    assert!(
+        stderr.contains("command=compile"),
+        "error should include command label: {stderr}"
+    );
+    assert!(
+        stderr.contains("remediation:"),
+        "error should include remediation guidance: {stderr}"
+    );
+}
+
+// ── Schema version contract tests ─────────────────────────────────────
+
+#[test]
+fn frankenctl_compile_output_schema_version_is_v1() {
+    let source_path = temp_path("frankenctl_schema_check", "js");
+    let artifact_path = temp_path("frankenctl_schema_check_art", "json");
+    write_source(&source_path, "var q = true;\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "compile",
+            "--input",
+            source_path.to_str().unwrap(),
+            "--out",
+            artifact_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("compile should execute");
+
+    if output.status.success() {
+        let json = parse_stdout_json(&output);
+        assert_eq!(
+            json["schema_version"].as_str(),
+            Some("franken-engine.frankenctl.v1")
+        );
+
+        let art: serde_json::Value =
+            serde_json::from_slice(&fs::read(&artifact_path).expect("artifact should exist"))
+                .expect("artifact should parse");
+        assert_eq!(
+            art["schema_version"].as_str(),
+            Some("franken-engine.frankenctl.compile-artifact.v1")
+        );
+    }
+
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_file(artifact_path);
+}
+
+#[test]
+fn frankenctl_run_output_has_execution_fields() {
+    let source_path = temp_path("frankenctl_run_fields", "js");
+    write_source(&source_path, "let b = 2 * 3;\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "run",
+            "--input",
+            source_path.to_str().unwrap(),
+            "--extension-id",
+            "ext-fields",
+        ])
+        .output()
+        .expect("run should execute");
+
+    assert!(output.status.success());
+    let json = parse_stdout_json(&output);
+    assert!(json["lane"].as_str().is_some());
+    assert!(json["containment_action"].as_str().is_some());
+    assert!(json["instructions_executed"].as_u64().is_some());
+    assert!(json["evidence_entries"].as_u64().is_some());
+
+    let _ = fs::remove_file(source_path);
+}
+
 #[test]
 fn frankenctl_benchmark_score_and_verify_bundle_round_trip() {
     let score_input_path = temp_path("frankenctl_benchmark_score_input", "json");

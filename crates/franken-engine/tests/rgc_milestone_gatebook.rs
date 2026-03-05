@@ -2,12 +2,12 @@
 
 use std::{collections::BTreeSet, fs, path::PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const GATEBOOK_SCHEMA_VERSION: &str = "rgc.milestone-gatebook.v1";
 const GATEBOOK_JSON: &str = include_str!("../../../docs/rgc_milestone_gatebook_v1.json");
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MilestoneGatebook {
     schema_version: String,
     bead_id: String,
@@ -20,13 +20,13 @@ struct MilestoneGatebook {
     operator_verification: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct GateTrack {
     id: String,
     name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct AutomationContract {
     ci_contract_version: String,
     required_structured_log_fields: Vec<String>,
@@ -36,7 +36,7 @@ struct AutomationContract {
     report_only_transition_rules: Vec<TransitionRule>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct TransitionRule {
     milestone: String,
     report_only_until_utc: String,
@@ -44,7 +44,7 @@ struct TransitionRule {
     transition_predicate: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct BlockerClass {
     class_id: String,
     severity: String,
@@ -52,7 +52,7 @@ struct BlockerClass {
     required_evidence: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct MilestoneGate {
     milestone: String,
     objective: String,
@@ -64,7 +64,7 @@ struct MilestoneGate {
     ci_gate: CiGate,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PassPredicate {
     predicate_id: String,
     description: String,
@@ -76,7 +76,7 @@ struct PassPredicate {
     evaluation_command: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct RollbackTrigger {
     trigger_id: String,
     condition_expression: String,
@@ -84,14 +84,14 @@ struct RollbackTrigger {
     rollback_action: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct DecisionAuthority {
     primary_role: String,
     secondary_role: String,
     escalation_roles: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct CiGate {
     workflow_id: String,
     command: String,
@@ -342,4 +342,115 @@ fn rgc_012_operator_verification_commands_are_present() {
     assert!(joined.contains("jq empty docs/rgc_milestone_gatebook_v1.json"));
     assert!(joined.contains("cargo test -p frankenengine-engine --test rgc_milestone_gatebook"));
     assert!(joined.contains("run_phase_a_exit_gate.sh check"));
+}
+
+#[test]
+fn rgc_012_serde_roundtrip_preserves_gatebook() {
+    let gatebook = parse_gatebook();
+    let serialized = serde_json::to_string(&gatebook).expect("serialize");
+    let deserialized: MilestoneGatebook =
+        serde_json::from_str(&serialized).expect("deserialize");
+    assert_eq!(gatebook, deserialized);
+}
+
+#[test]
+fn rgc_012_deterministic_double_parse() {
+    let a = parse_gatebook();
+    let b = parse_gatebook();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn rgc_012_blocker_class_ids_are_unique() {
+    let gatebook = parse_gatebook();
+    let mut seen = BTreeSet::new();
+    for class in &gatebook.blocker_classes {
+        assert!(
+            seen.insert(&class.class_id),
+            "duplicate class_id: {}",
+            class.class_id
+        );
+    }
+}
+
+#[test]
+fn rgc_012_milestone_predicate_ids_are_unique_within_milestone() {
+    let gatebook = parse_gatebook();
+    for milestone in &gatebook.milestones {
+        let mut seen = BTreeSet::new();
+        for pred in &milestone.pass_predicates {
+            assert!(
+                seen.insert(&pred.predicate_id),
+                "duplicate predicate_id {} in {}",
+                pred.predicate_id,
+                milestone.milestone
+            );
+        }
+    }
+}
+
+#[test]
+fn rgc_012_doc_file_is_nonempty() {
+    let path = repo_root().join("docs/RGC_MILESTONE_GATEBOOK_V1.md");
+    let content = fs::read_to_string(&path).expect("read doc");
+    assert!(!content.is_empty());
+}
+
+#[test]
+fn rgc_012_rollback_trigger_ids_are_unique_per_milestone() {
+    let gatebook = parse_gatebook();
+    for milestone in &gatebook.milestones {
+        let mut seen = BTreeSet::new();
+        for trigger in &milestone.rollback_triggers {
+            assert!(
+                seen.insert(&trigger.trigger_id),
+                "duplicate trigger_id {} in {}",
+                trigger.trigger_id,
+                milestone.milestone
+            );
+        }
+    }
+}
+
+#[test]
+fn rgc_012_ci_gate_workflow_ids_are_unique() {
+    let gatebook = parse_gatebook();
+    let mut seen = BTreeSet::new();
+    for milestone in &gatebook.milestones {
+        assert!(
+            seen.insert(&milestone.ci_gate.workflow_id),
+            "duplicate ci_gate workflow_id: {}",
+            milestone.ci_gate.workflow_id
+        );
+    }
+}
+
+#[test]
+fn rgc_012_automation_decision_event_fields_are_nonempty() {
+    let gatebook = parse_gatebook();
+    assert!(!gatebook.automation.decision_event_required_fields.is_empty());
+    for field in &gatebook.automation.decision_event_required_fields {
+        assert!(!field.trim().is_empty(), "decision event field must not be empty");
+    }
+}
+
+#[test]
+fn rgc_012_gatebook_has_bead_id() {
+    let gatebook = parse_gatebook();
+    assert!(!gatebook.bead_id.trim().is_empty());
+}
+
+#[test]
+fn rgc_012_gatebook_generated_at_utc_ends_with_z() {
+    let gatebook = parse_gatebook();
+    assert!(gatebook.generated_at_utc.ends_with('Z'));
+}
+
+#[test]
+fn rgc_012_operator_verification_commands_are_all_nonempty() {
+    let gatebook = parse_gatebook();
+    assert!(!gatebook.operator_verification.is_empty());
+    for cmd in &gatebook.operator_verification {
+        assert!(!cmd.trim().is_empty(), "operator verification command must not be empty");
+    }
 }

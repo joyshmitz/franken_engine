@@ -153,3 +153,264 @@ fn b_tier_can_activate_without_reuse_scan() {
 
     assert_eq!(record.validate_for_activation(), Ok(()));
 }
+
+// ---------- valid_record helper ----------
+
+#[test]
+fn valid_record_produces_valid_s_tier() {
+    let record = valid_record(PrimitiveTier::S);
+    assert_eq!(record.tier, PrimitiveTier::S);
+    assert!(record.verification.is_some());
+    assert!(record.fallback.is_some());
+    assert!(record.reuse_scan.is_some());
+    assert_eq!(record.validate_for_activation(), Ok(()));
+}
+
+// ---------- PrimitiveTier ----------
+
+#[test]
+fn primitive_tier_requires_reuse_scan_for_s_and_a() {
+    assert!(PrimitiveTier::S.requires_reuse_scan());
+    assert!(PrimitiveTier::A.requires_reuse_scan());
+    assert!(!PrimitiveTier::B.requires_reuse_scan());
+    assert!(!PrimitiveTier::C.requires_reuse_scan());
+}
+
+#[test]
+fn primitive_tier_serde_roundtrip() {
+    for tier in [PrimitiveTier::S, PrimitiveTier::A, PrimitiveTier::B, PrimitiveTier::C] {
+        let json = serde_json::to_string(&tier).expect("serialize");
+        let recovered: PrimitiveTier = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, tier);
+    }
+}
+
+// ---------- ReuseDecision ----------
+
+#[test]
+fn reuse_decision_serde_roundtrip() {
+    for decision in [
+        ReuseDecision::AdoptExistingCrate,
+        ReuseDecision::BuildNew,
+        ReuseDecision::NotApplicable,
+    ] {
+        let json = serde_json::to_string(&decision).expect("serialize");
+        let recovered: ReuseDecision = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, decision);
+    }
+}
+
+// ---------- PrimitiveAdoptionRecord ----------
+
+#[test]
+fn primitive_adoption_record_serde_roundtrip() {
+    let record = valid_record(PrimitiveTier::S);
+    let json = serde_json::to_string(&record).expect("serialize");
+    let recovered: PrimitiveAdoptionRecord = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, record);
+}
+
+#[test]
+fn a_tier_requires_reuse_scan_for_activation() {
+    let mut record = valid_record(PrimitiveTier::A);
+    record.reuse_scan = None;
+
+    let err = record.validate_for_activation().unwrap_err();
+    assert_eq!(err, PrimitiveAdoptionValidationError::MissingReuseScanOutcome);
+}
+
+#[test]
+fn c_tier_can_activate_without_reuse_scan() {
+    let mut record = valid_record(PrimitiveTier::C);
+    record.reuse_scan = None;
+
+    assert_eq!(record.validate_for_activation(), Ok(()));
+}
+
+#[test]
+fn empty_primitive_id_blocks_activation() {
+    let mut record = valid_record(PrimitiveTier::B);
+    record.primitive_id = String::new();
+
+    let err = record.validate_for_activation().unwrap_err();
+    assert_eq!(
+        err,
+        PrimitiveAdoptionValidationError::InvalidMetadataField {
+            field: "primitive_id".to_string()
+        }
+    );
+}
+
+#[test]
+fn empty_rationale_blocks_activation() {
+    let mut record = valid_record(PrimitiveTier::B);
+    record.adopt_vs_build_rationale = String::new();
+
+    let err = record.validate_for_activation().unwrap_err();
+    assert_eq!(
+        err,
+        PrimitiveAdoptionValidationError::InvalidMetadataField {
+            field: "adopt_vs_build_rationale".to_string()
+        }
+    );
+}
+
+#[test]
+fn score_relevance_out_of_range_blocks_activation() {
+    let mut record = valid_record(PrimitiveTier::B);
+    record.score.relevance_millionths = 1_000_001;
+
+    let err = record.validate_for_activation().unwrap_err();
+    assert_eq!(
+        err,
+        PrimitiveAdoptionValidationError::InvalidScoreRange {
+            field: "relevance_millionths".to_string()
+        }
+    );
+}
+
+#[test]
+fn score_risk_out_of_range_blocks_activation() {
+    let mut record = valid_record(PrimitiveTier::B);
+    record.score.risk_millionths = 1_000_001;
+
+    let err = record.validate_for_activation().unwrap_err();
+    assert_eq!(
+        err,
+        PrimitiveAdoptionValidationError::InvalidScoreRange {
+            field: "risk_millionths".to_string()
+        }
+    );
+}
+
+// ---------- EvRelevanceRiskScore ----------
+
+#[test]
+fn ev_relevance_risk_score_serde_roundtrip() {
+    let score = EvRelevanceRiskScore {
+        ev_millionths: -500_000,
+        relevance_millionths: 750_000,
+        risk_millionths: 300_000,
+    };
+    let json = serde_json::to_string(&score).expect("serialize");
+    let recovered: EvRelevanceRiskScore = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, score);
+}
+
+// ---------- VerificationChecklist ----------
+
+#[test]
+fn verification_checklist_serde_roundtrip() {
+    let checklist = VerificationChecklist {
+        checklist_version: "v2".to_string(),
+        primary_paper_verified: true,
+        independent_replication_completed: false,
+        verification_notes: "notes".to_string(),
+    };
+    let json = serde_json::to_string(&checklist).expect("serialize");
+    let recovered: VerificationChecklist = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, checklist);
+}
+
+// ---------- FallbackBudget ----------
+
+#[test]
+fn fallback_budget_serde_roundtrip() {
+    let budget = FallbackBudget {
+        trigger: "oom".to_string(),
+        deterministic_mode: "crash_recovery".to_string(),
+        max_retry_count: 3,
+        time_budget_ms: 100,
+        memory_budget_mb: 256,
+    };
+    let json = serde_json::to_string(&budget).expect("serialize");
+    let recovered: FallbackBudget = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, budget);
+}
+
+// ---------- ReuseScan ----------
+
+#[test]
+fn reuse_scan_serde_roundtrip() {
+    let scan = ReuseScan {
+        catalog_version: "v3".to_string(),
+        decision: ReuseDecision::BuildNew,
+        candidate_crates: vec!["tokio".to_string()],
+        rationale: "custom requirements".to_string(),
+    };
+    let json = serde_json::to_string(&scan).expect("serialize");
+    let recovered: ReuseScan = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, scan);
+}
+
+// ---------- PrimitiveAdoptionValidationError ----------
+
+#[test]
+fn validation_error_codes_are_unique() {
+    let errors = [
+        PrimitiveAdoptionValidationError::MissingVerificationMetadata,
+        PrimitiveAdoptionValidationError::MissingFallbackMetadata,
+        PrimitiveAdoptionValidationError::MissingReuseScanOutcome,
+        PrimitiveAdoptionValidationError::InvalidScoreRange {
+            field: "x".to_string(),
+        },
+        PrimitiveAdoptionValidationError::InvalidMetadataField {
+            field: "y".to_string(),
+        },
+    ];
+    let codes: std::collections::BTreeSet<&str> =
+        errors.iter().map(|e| e.error_code()).collect();
+    assert_eq!(codes.len(), errors.len());
+}
+
+#[test]
+fn validation_error_codes_have_fe_prefix() {
+    let errors = [
+        PrimitiveAdoptionValidationError::MissingVerificationMetadata,
+        PrimitiveAdoptionValidationError::MissingFallbackMetadata,
+        PrimitiveAdoptionValidationError::MissingReuseScanOutcome,
+        PrimitiveAdoptionValidationError::InvalidScoreRange {
+            field: "x".to_string(),
+        },
+        PrimitiveAdoptionValidationError::InvalidMetadataField {
+            field: "y".to_string(),
+        },
+    ];
+    for err in &errors {
+        assert!(
+            err.error_code().starts_with("FE-"),
+            "error code {} must start with FE-",
+            err.error_code()
+        );
+    }
+}
+
+#[test]
+fn validation_error_serde_roundtrip() {
+    for err in [
+        PrimitiveAdoptionValidationError::MissingVerificationMetadata,
+        PrimitiveAdoptionValidationError::MissingFallbackMetadata,
+        PrimitiveAdoptionValidationError::MissingReuseScanOutcome,
+        PrimitiveAdoptionValidationError::InvalidScoreRange {
+            field: "relevance_millionths".to_string(),
+        },
+        PrimitiveAdoptionValidationError::InvalidMetadataField {
+            field: "primitive_id".to_string(),
+        },
+    ] {
+        let json = serde_json::to_string(&err).expect("serialize");
+        let recovered: PrimitiveAdoptionValidationError =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, err);
+    }
+}
+
+// ---------- validation determinism ----------
+
+#[test]
+fn validation_is_deterministic() {
+    let record = valid_record(PrimitiveTier::S);
+    let a = record.validate_for_activation();
+    let b = record.validate_for_activation();
+    assert_eq!(a, b);
+}

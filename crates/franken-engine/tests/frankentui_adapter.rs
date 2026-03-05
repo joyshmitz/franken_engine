@@ -2,33 +2,28 @@ use std::collections::BTreeMap;
 
 use frankenengine_engine::frankentui_adapter::{
     ActionCandidateView, ActiveSpecializationRowView, AdapterEnvelope, AdapterStream,
-    BenchmarkTrendPointView, BlockedFlowView, CancellationEventView,
-    CancellationKind, CapabilityDeltaDashboardFilter,
-    CapabilityDeltaDashboardView, CapabilityDeltaPartial,
-    CapabilityDeltaReplayJoinPartial,
-    ConfinementProofView, ConfinementStatus,
+    BenchmarkTrendPointView, BlockedFlowView, CancellationEventView, CancellationKind,
+    CapabilityDeltaDashboardFilter, CapabilityDeltaDashboardView, CapabilityDeltaPartial,
+    CapabilityDeltaReplayJoinPartial, ConfinementProofView, ConfinementStatus,
     ControlDashboardPartial, ControlDashboardView, ControlPlaneDashboardFilter,
     ControlPlaneInvariantsDashboardView, ControlPlaneInvariantsPartial, CoverageTrendPoint,
     CurrentCapabilityDeltaRowView, DashboardAlertMetric, DashboardAlertRule, DashboardMetricView,
     DashboardRefreshPolicy, DashboardSeverity, DecisionOutcomeKind, DecisionOutcomesPanelView,
     DeclassificationDecisionView, DeclassificationOutcome, DriverView, EvidenceStreamEntryView,
-    FlowDecisionDashboardFilter, FlowDecisionDashboardView, FlowDecisionPartial,
-    FlowProofCoverageView, FlowSensitivityLevel, FrankentuiViewPayload, GrantExpiryStatus,
-    IncidentReplayView, LabelMapEdgeView, LabelMapNodeView, LabelMapView,
-    ObligationState, ObligationStatusPanelView, ObligationStatusRowView,
-    OverrideReviewStatus, PolicyExplanationCardView,
-    PolicyExplanationPartial, ProofInventoryKind, ProofInventoryRowView,
-    ProofSpecializationDashboardFilter,
-    ProofSpecializationInvalidationReason, ProofSpecializationLineageDashboardView,
-    ProofSpecializationLineagePartial, ProofValidityStatus,
-    RecoveryStatus, RegionLifecyclePanelView, RegionLifecycleRowView,
-    ReplacementDashboardFilter, ReplacementOpportunityInput,
-    ReplacementProgressDashboardView, ReplacementProgressPartial, ReplacementRiskLevel,
-    ReplayEventView, ReplayHealthPanelView, ReplayHealthStatus, ReplayStatus, RollbackEventView,
-    RollbackStatus, SafeModeActivationView, SchemaCompatibilityStatus, SchemaVersionPanelView,
-    SlotStatusOverviewRow, SpecializationFallbackEventView, SpecializationFallbackReason,
-    SpecializationInvalidationRowView, ThresholdComparator,
-    UpdateKind, FRANKENTUI_ADAPTER_SCHEMA_VERSION,
+    FRANKENTUI_ADAPTER_SCHEMA_VERSION, FlowDecisionDashboardFilter, FlowDecisionDashboardView,
+    FlowDecisionPartial, FlowProofCoverageView, FlowSensitivityLevel, FrankentuiViewPayload,
+    GrantExpiryStatus, IncidentReplayView, LabelMapEdgeView, LabelMapNodeView, LabelMapView,
+    ObligationState, ObligationStatusPanelView, ObligationStatusRowView, OverrideReviewStatus,
+    PolicyExplanationCardView, PolicyExplanationPartial, ProofInventoryKind, ProofInventoryRowView,
+    ProofSpecializationDashboardFilter, ProofSpecializationInvalidationReason,
+    ProofSpecializationLineageDashboardView, ProofSpecializationLineagePartial,
+    ProofValidityStatus, RecoveryStatus, RegionLifecyclePanelView, RegionLifecycleRowView,
+    ReplacementDashboardFilter, ReplacementOpportunityInput, ReplacementProgressDashboardView,
+    ReplacementProgressPartial, ReplacementRiskLevel, ReplayEventView, ReplayHealthPanelView,
+    ReplayHealthStatus, ReplayStatus, RollbackEventView, RollbackStatus, SafeModeActivationView,
+    SchemaCompatibilityStatus, SchemaVersionPanelView, SlotStatusOverviewRow,
+    SpecializationFallbackEventView, SpecializationFallbackReason,
+    SpecializationInvalidationRowView, ThresholdComparator, UpdateKind,
     build_native_coverage_meter, build_specialization_performance_impact,
     rank_replacement_opportunities,
 };
@@ -725,7 +720,11 @@ fn adapter_stream_serde_roundtrip_all_variants() {
 
 #[test]
 fn update_kind_serde_roundtrip_all_variants() {
-    for variant in [UpdateKind::Snapshot, UpdateKind::Delta, UpdateKind::Heartbeat] {
+    for variant in [
+        UpdateKind::Snapshot,
+        UpdateKind::Delta,
+        UpdateKind::Heartbeat,
+    ] {
         let json = serde_json::to_string(&variant).unwrap();
         let back: UpdateKind = serde_json::from_str(&json).unwrap();
         assert_eq!(variant, back);
@@ -816,7 +815,10 @@ fn flow_sensitivity_level_serde_roundtrip_all_variants() {
 
 #[test]
 fn declassification_outcome_serde_roundtrip_all_variants() {
-    for variant in [DeclassificationOutcome::Approved, DeclassificationOutcome::Denied] {
+    for variant in [
+        DeclassificationOutcome::Approved,
+        DeclassificationOutcome::Denied,
+    ] {
         let json = serde_json::to_string(&variant).unwrap();
         let back: DeclassificationOutcome = serde_json::from_str(&json).unwrap();
         assert_eq!(variant, back);
@@ -932,7 +934,11 @@ fn dashboard_alert_metric_serde_roundtrip_unique_json_names() {
         assert_eq!(variant, back);
         names.insert(json);
     }
-    assert_eq!(names.len(), 5, "all metric variants must have unique JSON names");
+    assert_eq!(
+        names.len(),
+        5,
+        "all metric variants must have unique JSON names"
+    );
 }
 
 #[test]
@@ -950,7 +956,11 @@ fn threshold_comparator_serde_roundtrip_unique_json_names() {
         assert_eq!(variant, back);
         names.insert(json);
     }
-    assert_eq!(names.len(), 5, "all comparator variants must have unique JSON names");
+    assert_eq!(
+        names.len(),
+        5,
+        "all comparator variants must have unique JSON names"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1043,67 +1053,65 @@ fn control_plane_invariants_empty_partial_defaults_all_panels() {
 
 #[test]
 fn control_plane_invariants_refresh_sla_breach_detected() {
-    let view =
-        ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
-            cluster: "prod".to_string(),
-            zone: "us-east-1".to_string(),
-            runtime_mode: "secure".to_string(),
-            generated_at_unix_ms: Some(1_700_000_100_000),
-            refresh_policy: Some(DashboardRefreshPolicy {
-                evidence_stream_refresh_secs: 5,
-                aggregate_refresh_secs: 60,
-            }),
-            evidence_stream_last_updated_unix_ms: Some(1_700_000_093_000),
-            aggregates_last_updated_unix_ms: Some(1_700_000_030_000),
-            ..Default::default()
-        });
+    let view = ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+        cluster: "prod".to_string(),
+        zone: "us-east-1".to_string(),
+        runtime_mode: "secure".to_string(),
+        generated_at_unix_ms: Some(1_700_000_100_000),
+        refresh_policy: Some(DashboardRefreshPolicy {
+            evidence_stream_refresh_secs: 5,
+            aggregate_refresh_secs: 60,
+        }),
+        evidence_stream_last_updated_unix_ms: Some(1_700_000_093_000),
+        aggregates_last_updated_unix_ms: Some(1_700_000_030_000),
+        ..Default::default()
+    });
     assert!(!view.meets_refresh_sla());
 }
 
 #[test]
 fn control_plane_invariants_filtered_narrows_by_extension() {
-    let view =
-        ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
-            cluster: "prod".to_string(),
-            zone: "us-east-1".to_string(),
-            runtime_mode: "secure".to_string(),
-            generated_at_unix_ms: Some(1_700_000_000_600),
-            evidence_stream: vec![
-                EvidenceStreamEntryView {
-                    trace_id: "t1".to_string(),
-                    decision_id: "d1".to_string(),
-                    policy_id: "p1".to_string(),
-                    action_type: "allow".to_string(),
-                    decision_outcome: DecisionOutcomeKind::Allow,
-                    expected_loss_millionths: 100_000,
-                    extension_id: "ext-a".to_string(),
-                    region_id: "region-1".to_string(),
-                    severity: DashboardSeverity::Info,
-                    component: "guardplane".to_string(),
-                    event: "evaluated".to_string(),
-                    outcome: "allow".to_string(),
-                    error_code: None,
-                    timestamp_unix_ms: 1_700_000_000_550,
-                },
-                EvidenceStreamEntryView {
-                    trace_id: "t2".to_string(),
-                    decision_id: "d2".to_string(),
-                    policy_id: "p2".to_string(),
-                    action_type: "deny".to_string(),
-                    decision_outcome: DecisionOutcomeKind::Deny,
-                    expected_loss_millionths: 500_000,
-                    extension_id: "ext-b".to_string(),
-                    region_id: "region-2".to_string(),
-                    severity: DashboardSeverity::Critical,
-                    component: "guardplane".to_string(),
-                    event: "blocked".to_string(),
-                    outcome: "deny".to_string(),
-                    error_code: Some("FE-001".to_string()),
-                    timestamp_unix_ms: 1_700_000_000_560,
-                },
-            ],
-            ..Default::default()
-        });
+    let view = ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+        cluster: "prod".to_string(),
+        zone: "us-east-1".to_string(),
+        runtime_mode: "secure".to_string(),
+        generated_at_unix_ms: Some(1_700_000_000_600),
+        evidence_stream: vec![
+            EvidenceStreamEntryView {
+                trace_id: "t1".to_string(),
+                decision_id: "d1".to_string(),
+                policy_id: "p1".to_string(),
+                action_type: "allow".to_string(),
+                decision_outcome: DecisionOutcomeKind::Allow,
+                expected_loss_millionths: 100_000,
+                extension_id: "ext-a".to_string(),
+                region_id: "region-1".to_string(),
+                severity: DashboardSeverity::Info,
+                component: "guardplane".to_string(),
+                event: "evaluated".to_string(),
+                outcome: "allow".to_string(),
+                error_code: None,
+                timestamp_unix_ms: 1_700_000_000_550,
+            },
+            EvidenceStreamEntryView {
+                trace_id: "t2".to_string(),
+                decision_id: "d2".to_string(),
+                policy_id: "p2".to_string(),
+                action_type: "deny".to_string(),
+                decision_outcome: DecisionOutcomeKind::Deny,
+                expected_loss_millionths: 500_000,
+                extension_id: "ext-b".to_string(),
+                region_id: "region-2".to_string(),
+                severity: DashboardSeverity::Critical,
+                component: "guardplane".to_string(),
+                event: "blocked".to_string(),
+                outcome: "deny".to_string(),
+                error_code: Some("FE-001".to_string()),
+                timestamp_unix_ms: 1_700_000_000_560,
+            },
+        ],
+        ..Default::default()
+    });
 
     let filtered = view.filtered(&ControlPlaneDashboardFilter {
         extension_id: Some("ext-a".to_string()),
@@ -1115,32 +1123,31 @@ fn control_plane_invariants_filtered_narrows_by_extension() {
 
 #[test]
 fn control_plane_invariants_triggered_alerts_fire_on_failure() {
-    let view =
-        ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
-            cluster: "prod".to_string(),
-            zone: "us-east-1".to_string(),
-            runtime_mode: "secure".to_string(),
-            generated_at_unix_ms: Some(1_700_000_120_000),
-            obligation_rows: vec![ObligationStatusRowView {
-                obligation_id: "obl-fail".to_string(),
-                extension_id: "ext-a".to_string(),
-                region_id: "region-a".to_string(),
-                state: ObligationState::Failed,
-                severity: DashboardSeverity::Critical,
-                due_at_unix_ms: 1_700_000_121_000,
-                updated_at_unix_ms: 1_700_000_120_100,
-                detail: "timeout".to_string(),
-            }],
-            alert_rules: vec![DashboardAlertRule {
-                rule_id: "alert-failure-rate".to_string(),
-                description: "obligation failure rate > 0".to_string(),
-                metric: DashboardAlertMetric::ObligationFailureRateMillionths,
-                comparator: ThresholdComparator::GreaterThan,
-                threshold: 0,
-                severity: DashboardSeverity::Critical,
-            }],
-            ..Default::default()
-        });
+    let view = ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+        cluster: "prod".to_string(),
+        zone: "us-east-1".to_string(),
+        runtime_mode: "secure".to_string(),
+        generated_at_unix_ms: Some(1_700_000_120_000),
+        obligation_rows: vec![ObligationStatusRowView {
+            obligation_id: "obl-fail".to_string(),
+            extension_id: "ext-a".to_string(),
+            region_id: "region-a".to_string(),
+            state: ObligationState::Failed,
+            severity: DashboardSeverity::Critical,
+            due_at_unix_ms: 1_700_000_121_000,
+            updated_at_unix_ms: 1_700_000_120_100,
+            detail: "timeout".to_string(),
+        }],
+        alert_rules: vec![DashboardAlertRule {
+            rule_id: "alert-failure-rate".to_string(),
+            description: "obligation failure rate > 0".to_string(),
+            metric: DashboardAlertMetric::ObligationFailureRateMillionths,
+            comparator: ThresholdComparator::GreaterThan,
+            threshold: 0,
+            severity: DashboardSeverity::Critical,
+        }],
+        ..Default::default()
+    });
 
     let alerts = view.triggered_alerts();
     assert_eq!(alerts.len(), 1);
@@ -1340,8 +1347,8 @@ fn replacement_progress_filtered_by_risk_level() {
 
 #[test]
 fn proof_specialization_filtered_by_target_id() {
-    let view = ProofSpecializationLineageDashboardView::from_partial(
-        ProofSpecializationLineagePartial {
+    let view =
+        ProofSpecializationLineageDashboardView::from_partial(ProofSpecializationLineagePartial {
             cluster: "prod".to_string(),
             zone: "us-east-1".to_string(),
             security_epoch: Some(31),
@@ -1373,8 +1380,7 @@ fn proof_specialization_filtered_by_target_id() {
                 },
             ],
             ..Default::default()
-        },
-    );
+        });
 
     let filtered = view.filtered(&ProofSpecializationDashboardFilter {
         target_id: Some("ext-a".to_string()),
@@ -1592,14 +1598,13 @@ fn adapter_envelope_json_field_names_stable() {
 
 #[test]
 fn control_plane_invariants_json_field_names_stable() {
-    let view =
-        ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
-            cluster: "prod".to_string(),
-            zone: "z1".to_string(),
-            runtime_mode: "secure".to_string(),
-            generated_at_unix_ms: Some(1000),
-            ..Default::default()
-        });
+    let view = ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+        cluster: "prod".to_string(),
+        zone: "z1".to_string(),
+        runtime_mode: "secure".to_string(),
+        generated_at_unix_ms: Some(1000),
+        ..Default::default()
+    });
     let json = serde_json::to_string(&view).unwrap();
     for field in [
         "\"cluster\"",
@@ -1756,14 +1761,13 @@ fn flow_decision_dashboard_clone_independence() {
 
 #[test]
 fn control_plane_invariants_serde_roundtrip() {
-    let view =
-        ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
-            cluster: "prod".to_string(),
-            zone: "us-east-1".to_string(),
-            runtime_mode: "secure".to_string(),
-            generated_at_unix_ms: Some(1_700_000_000_100),
-            ..Default::default()
-        });
+    let view = ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+        cluster: "prod".to_string(),
+        zone: "us-east-1".to_string(),
+        runtime_mode: "secure".to_string(),
+        generated_at_unix_ms: Some(1_700_000_000_100),
+        ..Default::default()
+    });
     let json = serde_json::to_string(&view).unwrap();
     let back: ControlPlaneInvariantsDashboardView = serde_json::from_str(&json).unwrap();
     assert_eq!(view, back);
@@ -1813,15 +1817,14 @@ fn replacement_progress_dashboard_serde_roundtrip() {
 
 #[test]
 fn proof_specialization_lineage_dashboard_serde_roundtrip() {
-    let view = ProofSpecializationLineageDashboardView::from_partial(
-        ProofSpecializationLineagePartial {
+    let view =
+        ProofSpecializationLineageDashboardView::from_partial(ProofSpecializationLineagePartial {
             cluster: "prod".to_string(),
             zone: "us-east-1".to_string(),
             security_epoch: Some(31),
             generated_at_unix_ms: Some(2000),
             ..Default::default()
-        },
-    );
+        });
     let json = serde_json::to_string(&view).unwrap();
     let back: ProofSpecializationLineageDashboardView = serde_json::from_str(&json).unwrap();
     assert_eq!(view, back);
@@ -1836,14 +1839,12 @@ fn all_payload_variants_envelope_round_trip() {
     let payloads: Vec<(AdapterStream, FrankentuiViewPayload)> = vec![
         (
             AdapterStream::IncidentReplay,
-            FrankentuiViewPayload::IncidentReplay(IncidentReplayView::snapshot(
-                "t", "s", vec![],
-            )),
+            FrankentuiViewPayload::IncidentReplay(IncidentReplayView::snapshot("t", "s", vec![])),
         ),
         (
             AdapterStream::PolicyExplanation,
-            FrankentuiViewPayload::PolicyExplanation(
-                PolicyExplanationCardView::from_partial(PolicyExplanationPartial {
+            FrankentuiViewPayload::PolicyExplanation(PolicyExplanationCardView::from_partial(
+                PolicyExplanationPartial {
                     decision_id: "d".to_string(),
                     policy_id: "p".to_string(),
                     selected_action: "allow".to_string(),
@@ -1851,8 +1852,8 @@ fn all_payload_variants_envelope_round_trip() {
                     expected_loss_millionths: Some(100_000),
                     action_candidates: vec![],
                     key_drivers: vec![],
-                }),
-            ),
+                },
+            )),
         ),
         (
             AdapterStream::ControlDashboard,
@@ -1870,13 +1871,13 @@ fn all_payload_variants_envelope_round_trip() {
         ),
         (
             AdapterStream::FlowDecisionDashboard,
-            FrankentuiViewPayload::FlowDecisionDashboard(
-                FlowDecisionDashboardView::from_partial(FlowDecisionPartial {
+            FrankentuiViewPayload::FlowDecisionDashboard(FlowDecisionDashboardView::from_partial(
+                FlowDecisionPartial {
                     cluster: "c".to_string(),
                     zone: "z".to_string(),
                     ..Default::default()
-                }),
-            ),
+                },
+            )),
         ),
         (
             AdapterStream::CapabilityDeltaDashboard,
@@ -1966,7 +1967,10 @@ fn proof_validity_status_default_is_valid() {
 
 #[test]
 fn override_review_status_default_is_pending() {
-    assert_eq!(OverrideReviewStatus::default(), OverrideReviewStatus::Pending);
+    assert_eq!(
+        OverrideReviewStatus::default(),
+        OverrideReviewStatus::Pending
+    );
 }
 
 #[test]

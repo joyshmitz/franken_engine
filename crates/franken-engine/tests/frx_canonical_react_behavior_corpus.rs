@@ -429,3 +429,156 @@ fn frx_02_1_traces_are_versioned_and_replay_deterministic() {
         }
     }
 }
+
+// ---------- helper functions ----------
+
+#[test]
+fn list_json_files_returns_sorted_results() {
+    let files = list_json_files(&fixtures_dir(), ".fixture.json");
+    let names: Vec<&str> = files
+        .iter()
+        .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+        .collect();
+    let mut sorted = names.clone();
+    sorted.sort();
+    assert_eq!(names, sorted);
+}
+
+#[test]
+fn list_json_files_filters_by_suffix() {
+    let files = list_json_files(&fixtures_dir(), ".fixture.json");
+    for file in &files {
+        let name = file.file_name().and_then(|n| n.to_str()).unwrap();
+        assert!(name.ends_with(".fixture.json"));
+    }
+}
+
+#[test]
+fn fixtures_dir_exists() {
+    assert!(fixtures_dir().exists());
+}
+
+#[test]
+fn traces_dir_exists() {
+    assert!(traces_dir().exists());
+}
+
+// ---------- CorpusContract ----------
+
+#[test]
+fn contract_schema_version_is_stable() {
+    let path = repo_root().join("docs/frx_canonical_react_behavior_corpus_v1.json");
+    let contract: CorpusContract = load_json(&path);
+    assert_eq!(
+        contract.schema_version,
+        "frx.canonical-react-behavior-corpus.contract.v1"
+    );
+}
+
+#[test]
+fn contract_fixture_count_minimum_is_at_least_10() {
+    let path = repo_root().join("docs/frx_canonical_react_behavior_corpus_v1.json");
+    let contract: CorpusContract = load_json(&path);
+    assert!(contract.corpus.minimum_fixture_count >= 10);
+}
+
+// ---------- fixture/trace counts ----------
+
+#[test]
+fn fixture_count_matches_trace_count() {
+    let fixtures = list_json_files(&fixtures_dir(), ".fixture.json");
+    let traces = list_json_files(&traces_dir(), ".trace.json");
+    assert_eq!(fixtures.len(), traces.len());
+}
+
+#[test]
+fn fixture_count_meets_minimum() {
+    let path = repo_root().join("docs/frx_canonical_react_behavior_corpus_v1.json");
+    let contract: CorpusContract = load_json(&path);
+    let fixtures = list_json_files(&fixtures_dir(), ".fixture.json");
+    assert!(fixtures.len() >= contract.corpus.minimum_fixture_count);
+}
+
+// ---------- FixtureSpec ----------
+
+#[test]
+fn fixture_schema_version_matches_contract() {
+    let path = repo_root().join("docs/frx_canonical_react_behavior_corpus_v1.json");
+    let contract: CorpusContract = load_json(&path);
+    let files = list_json_files(&fixtures_dir(), ".fixture.json");
+    let fixture: FixtureSpec = load_json(&files[0]);
+    assert_eq!(
+        fixture.schema_version,
+        contract.determinism_contract.fixture_schema_version
+    );
+}
+
+// ---------- ObservableTrace ----------
+
+#[test]
+fn trace_schema_version_matches_contract() {
+    let path = repo_root().join("docs/frx_canonical_react_behavior_corpus_v1.json");
+    let contract: CorpusContract = load_json(&path);
+    let files = list_json_files(&traces_dir(), ".trace.json");
+    let trace: ObservableTrace = load_json(&files[0]);
+    assert_eq!(
+        trace.schema_version,
+        contract.determinism_contract.trace_schema_version
+    );
+}
+
+// ---------- trace_ids unique across all traces ----------
+
+#[test]
+fn all_trace_ids_are_unique_across_corpus() {
+    let files = list_json_files(&traces_dir(), ".trace.json");
+    let mut seen = BTreeSet::new();
+    for path in files {
+        let trace: ObservableTrace = load_json(&path);
+        assert!(
+            seen.insert(trace.trace_id.clone()),
+            "duplicate trace_id: {}",
+            trace.trace_id
+        );
+    }
+}
+
+// ---------- all fixtures have unique fixture_refs ----------
+
+#[test]
+fn all_fixture_refs_are_unique() {
+    let files = list_json_files(&fixtures_dir(), ".fixture.json");
+    let mut seen = BTreeSet::new();
+    for path in files {
+        let fixture: FixtureSpec = load_json(&path);
+        assert!(
+            seen.insert(fixture.fixture_ref.clone()),
+            "duplicate fixture_ref: {}",
+            fixture.fixture_ref
+        );
+    }
+}
+
+// ---------- all traces have pass or fail outcome ----------
+
+#[test]
+fn all_trace_outcomes_are_recognized_values() {
+    let files = list_json_files(&traces_dir(), ".trace.json");
+    for path in files {
+        let trace: ObservableTrace = load_json(&path);
+        assert!(
+            matches!(trace.outcome.as_str(), "pass" | "fail" | "fallback"),
+            "unexpected trace outcome: {}",
+            trace.outcome
+        );
+    }
+}
+
+// ---------- doc file is nonempty ----------
+
+#[test]
+fn frx_02_1_doc_is_nonempty() {
+    let path = repo_root().join("docs/FRX_CANONICAL_REACT_BEHAVIOR_CORPUS_V1.md");
+    let content = fs::read_to_string(&path).expect("read doc");
+    assert!(!content.is_empty());
+}

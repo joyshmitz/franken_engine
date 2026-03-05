@@ -10,6 +10,7 @@ use frankenengine_engine::replacement_lineage_log::{
     DemotionReceiptInput, EvidenceCategory, EvidencePointerInput, LineageLogConfig,
     LineageLogError, LineageQuery, ReplacementKind, ReplacementLineageEvidenceIndex,
     ReplacementLineageLog, ReplayJoinQuery, SlotLineageQuery, verify_consistency_proof,
+    verify_inclusion_proof,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::self_replacement::{
@@ -809,4 +810,219 @@ fn e2e_delegate_to_native_promotion_then_rollback_updates_lineage_and_logs() {
         assert_eq!(event.outcome, "ok");
         assert_eq!(event.error_code, None);
     }
+}
+
+// ---------- slot_id helper ----------
+
+#[test]
+fn slot_id_helper_returns_valid_id() {
+    let sid = slot_id("test-slot");
+    assert_eq!(sid.as_str(), "test-slot");
+}
+
+// ---------- receipt helper ----------
+
+#[test]
+fn receipt_helper_sets_fields() {
+    let r = receipt("slot-helper", "old-digest", "new-digest", 500);
+    assert_eq!(r.old_cell_digest, "old-digest");
+    assert_eq!(r.new_cell_digest, "new-digest");
+    assert_eq!(r.timestamp_ns, 500);
+    assert_eq!(r.epoch, SecurityEpoch::from_raw(11));
+    assert_eq!(r.zone, "lineage-itest-zone");
+}
+
+// ---------- ReplacementKind ----------
+
+#[test]
+fn replacement_kind_serde_roundtrip() {
+    for kind in [
+        ReplacementKind::DelegateToNative,
+        ReplacementKind::Demotion,
+        ReplacementKind::RePromotion,
+        ReplacementKind::Rollback,
+    ] {
+        let json = serde_json::to_string(&kind).expect("serialize");
+        let recovered: ReplacementKind = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, kind);
+    }
+}
+
+// ---------- ReplacementLineageLog ----------
+
+#[test]
+fn empty_log_is_empty() {
+    let log = ReplacementLineageLog::new(LineageLogConfig::default());
+    assert!(log.is_empty());
+    assert_eq!(log.len(), 0);
+    assert!(log.entries().is_empty());
+    assert!(log.slot_ids().is_empty());
+}
+
+#[test]
+fn log_len_increases_on_append() {
+    let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
+    let r = receipt("slot-len", "old-0", "new-0", 100);
+    log.append(r, ReplacementKind::DelegateToNative, 100)
+        .expect("append");
+    assert_eq!(log.len(), 1);
+    assert!(!log.is_empty());
+}
+
+#[test]
+fn log_slot_ids_tracks_distinct_slots() {
+    let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
+    log.append(
+        receipt("slot-x", "old-0", "new-0", 100),
+        ReplacementKind::DelegateToNative,
+        100,
+    )
+    .expect("append");
+    log.append(
+        receipt("slot-y", "old-1", "new-1", 200),
+        ReplacementKind::DelegateToNative,
+        200,
+    )
+    .expect("append");
+    let ids = log.slot_ids();
+    assert_eq!(ids.len(), 2);
+}
+
+#[test]
+fn log_entries_returns_all_appended() {
+    let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
+    for i in 0..3 {
+        let r = receipt("slot-entries", &format!("old-{i}"), &format!("new-{i}"), i * 100);
+        log.append(r, ReplacementKind::DelegateToNative, i * 100)
+            .expect("append");
+    }
+    assert_eq!(log.entries().len(), 3);
+}
+
+#[test]
+fn log_merkle_root_changes_on_append() {
+    let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
+    let r1 = receipt("slot-root", "old-0", "new-0", 100);
+    log.append(r1, ReplacementKind::DelegateToNative, 100)
+        .expect("append");
+    let root_1 = log.merkle_root();
+
+    let r2 = receipt("slot-root", "new-0", "new-1", 200);
+    log.append(r2, ReplacementKind::RePromotion, 200)
+        .expect("append");
+    let root_2 = log.merkle_root();
+
+    assert_ne!(root_1, root_2);
+}
+
+#[test]
+fn log_checkpoints_tracks_created_checkpoints() {
+    let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
+    let r = receipt("slot-cp", "old-0", "new-0", 100);
+    log.append(r, ReplacementKind::DelegateToNative, 100)
+        .expect("append");
+    assert!(log.checkpoints().is_empty());
+
+    log.create_checkpoint(200, SecurityEpoch::from_raw(11))
+        .expect("checkpoint");
+    assert_eq!(log.checkpoints().len(), 1);
+    assert_eq!(log.checkpoints()[0].epoch, SecurityEpoch::from_raw(11));
+}
+
+#[test]
+fn log_events_records_appends_and_checkpoints() {
+    let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
+    let r = receipt("slot-ev", "old-0", "new-0", 100);
+    log.append(r, ReplacementKind::DelegateToNative, 100)
+        .expect("append");
+    log.create_checkpoint(200, SecurityEpoch::from_raw(11))
+        .expect("checkpoint");
+    assert!(log.events().len() >= 2);
+}
+
+// ---------- inclusion_proof ----------
+
+#[test]
+fn log_inclusion_proof_verifies_for_appended_entry() {
+    let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
+    for i in 0..4 {
+        let r = receipt("slot-ip", &format!("old-{i}"), &format!("new-{i}"), (i + 1) * 100);
+        log.append(r, ReplacementKind::DelegateToNative, (i + 1) * 100)
+            .expect("append");
+    }
+
+    let proof = log.inclusion_proof(0).expect("inclusion proof for entry 0");
+    assert!(verify_inclusion_proof(&proof));
+}
+
+#[test]
+fn log_inclusion_proof_detects_tamper() {
+    let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
+    for i in 0..4 {
+        let r = receipt("slot-ip2", &format!("old-{i}"), &format!("new-{i}"), (i + 1) * 100);
+        log.append(r, ReplacementKind::DelegateToNative, (i + 1) * 100)
+            .expect("append");
+    }
+
+    let mut proof = log.inclusion_proof(1).expect("inclusion proof for entry 1");
+    proof.entry_hash = frankenengine_engine::hash_tiers::ContentHash::compute(b"tampered");
+    assert!(!verify_inclusion_proof(&proof));
+}
+
+// ---------- LineageLogConfig ----------
+
+#[test]
+fn lineage_log_config_default_serde_roundtrip() {
+    let config = LineageLogConfig::default();
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: LineageLogConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(
+        serde_json::to_string(&recovered).expect("re-serialize"),
+        json
+    );
+}
+
+// ---------- EvidenceCategory ----------
+
+#[test]
+fn evidence_category_serde_roundtrip() {
+    for category in [
+        EvidenceCategory::GateResult,
+        EvidenceCategory::SentinelRiskScore,
+        EvidenceCategory::DifferentialExecutionLog,
+        EvidenceCategory::Additional,
+    ] {
+        let json = serde_json::to_string(&category).expect("serialize");
+        let recovered: EvidenceCategory = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, category);
+    }
+}
+
+// ---------- LineageLogError ----------
+
+#[test]
+fn lineage_log_error_invalid_checkpoint_order_display() {
+    let err = LineageLogError::InvalidCheckpointOrder { older: 5, newer: 3 };
+    let msg = format!("{err}");
+    assert!(!msg.is_empty());
+}
+
+// ---------- LineageQuery ----------
+
+#[test]
+fn lineage_query_default_matches_all() {
+    let query = LineageQuery {
+        slot_id: None,
+        kinds: None,
+        min_timestamp_ns: None,
+        max_timestamp_ns: None,
+    };
+    let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
+    log.append(
+        receipt("slot-q", "old", "new", 100),
+        ReplacementKind::DelegateToNative,
+        100,
+    )
+    .expect("append");
+    assert_eq!(log.query(&query).len(), 1);
 }

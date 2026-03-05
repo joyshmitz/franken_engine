@@ -420,3 +420,124 @@ fn publication_event_serde_roundtrip() {
     let recovered: BenchmarkPublicationEvent = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(event, recovered);
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment batch 8: enum serde, speedup(), constants,
+// context/coverage serde, error Display coverage
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn baseline_engine_as_str_values() {
+    assert_eq!(BaselineEngine::Node.as_str(), "node");
+    assert_eq!(BaselineEngine::Bun.as_str(), "bun");
+}
+
+#[test]
+fn baseline_engine_serde_round_trip() {
+    for engine in [BaselineEngine::Node, BaselineEngine::Bun] {
+        let json = serde_json::to_string(&engine).expect("serialize");
+        let recovered: BaselineEngine = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(engine, recovered);
+    }
+}
+
+#[test]
+fn benchmark_case_speedup_computes_ratio() {
+    let c = BenchmarkCase {
+        workload_id: "speedup-test".to_string(),
+        throughput_franken_tps: 300.0,
+        throughput_baseline_tps: 100.0,
+        weight: None,
+        behavior_equivalent: true,
+        latency_envelope_ok: true,
+        error_envelope_ok: true,
+    };
+    assert!((c.speedup() - 3.0).abs() < 1e-12);
+}
+
+#[test]
+fn benchmark_publication_component_constant_is_stable() {
+    use frankenengine_engine::benchmark_denominator::BENCHMARK_PUBLICATION_COMPONENT;
+    assert_eq!(BENCHMARK_PUBLICATION_COMPONENT, "benchmark_denominator");
+}
+
+#[test]
+fn score_threshold_constant_is_three() {
+    assert!((SCORE_THRESHOLD - 3.0).abs() < 1e-12);
+}
+
+#[test]
+fn publication_context_serde_round_trip() {
+    let ctx = context();
+    let json = serde_json::to_string(&ctx).expect("serialize");
+    let recovered: PublicationContext = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(ctx, recovered);
+}
+
+#[test]
+fn native_coverage_point_serde_round_trip() {
+    let point = NativeCoveragePoint {
+        recorded_at_utc: "2026-03-04T12:00:00Z".to_string(),
+        native_slots: 90,
+        total_slots: 100,
+    };
+    let json = serde_json::to_string(&point).expect("serialize");
+    let recovered: NativeCoveragePoint = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(point, recovered);
+}
+
+#[test]
+fn publication_gate_input_serde_round_trip() {
+    let input = PublicationGateInput {
+        node_cases: vec![case("n1", 3.5, None)],
+        bun_cases: vec![case("b1", 3.5, None)],
+        native_coverage_progression: coverage(),
+        replacement_lineage_ids: vec!["lineage-1".to_string()],
+    };
+    let json = serde_json::to_string(&input).expect("serialize");
+    let recovered: PublicationGateInput = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(input.node_cases.len(), recovered.node_cases.len());
+    assert_eq!(input.replacement_lineage_ids, recovered.replacement_lineage_ids);
+}
+
+#[test]
+fn benchmark_error_display_all_unique() {
+    let errors: Vec<String> = vec![
+        BenchmarkDenominatorError::EmptyCaseSet { baseline: "node".to_string() },
+        BenchmarkDenominatorError::MissingCoverageProgression,
+        BenchmarkDenominatorError::MissingReplacementLineage,
+        BenchmarkDenominatorError::InvalidWeightSum { baseline: "node".to_string(), sum: 1.5 },
+        BenchmarkDenominatorError::EmptyWorkloadId { baseline: "node".to_string() },
+        BenchmarkDenominatorError::DuplicateWorkloadId { baseline: "node".to_string(), workload_id: "w".to_string() },
+        BenchmarkDenominatorError::InvalidThroughput { workload_id: "w".to_string(), field: "throughput_franken_tps".to_string() },
+    ]
+    .into_iter()
+    .map(|e| e.to_string())
+    .collect();
+
+    // Each variant should produce a unique Display message
+    let unique: std::collections::BTreeSet<_> = errors.iter().collect();
+    assert_eq!(unique.len(), errors.len());
+}
+
+#[test]
+fn benchmark_error_is_std_error() {
+    let err: Box<dyn std::error::Error> = Box::new(BenchmarkDenominatorError::MissingCoverageProgression);
+    assert!(!err.to_string().is_empty());
+}
+
+#[test]
+fn weighted_geometric_mean_negative_throughput_rejected() {
+    let bad = BenchmarkCase {
+        workload_id: "neg-throughput".to_string(),
+        throughput_franken_tps: -100.0,
+        throughput_baseline_tps: 100.0,
+        weight: None,
+        behavior_equivalent: true,
+        latency_envelope_ok: true,
+        error_envelope_ok: true,
+    };
+    let err = weighted_geometric_mean(&[bad], BaselineEngine::Node)
+        .expect_err("negative throughput should fail");
+    assert!(matches!(err, BenchmarkDenominatorError::InvalidThroughput { .. }));
+}

@@ -318,3 +318,68 @@ fn scorecard_snapshot_from_scorecard() {
     assert_eq!(snap.confidence_millionths, sc.confidence_millionths);
     assert_eq!(snap.risk_of_harm_millionths, sc.risk_of_harm_millionths);
 }
+
+#[test]
+fn governance_actor_serde_roundtrip() {
+    for actor in [
+        GovernanceActor::Human("operator-1".to_string()),
+        GovernanceActor::System("portfolio-governor".to_string()),
+    ] {
+        let json = serde_json::to_string(&actor).expect("serialize");
+        let recovered: GovernanceActor = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(actor.actor_id(), recovered.actor_id());
+        assert_eq!(actor.is_human(), recovered.is_human());
+    }
+}
+
+#[test]
+fn governance_ledger_query_all_returns_default_none_fields() {
+    let query = GovernanceLedgerQuery::all();
+    assert!(query.moonshot_id.is_none());
+    assert!(query.decision_types.is_none());
+    assert!(query.actor_id.is_none());
+    assert!(query.start_time_ns.is_none());
+    assert!(query.end_time_ns.is_none());
+    assert!(query.override_only.is_none());
+}
+
+#[test]
+fn sample_scorecard_has_valid_field_ranges() {
+    let sc = sample_scorecard();
+    assert!(sc.ev_millionths <= 1_000_000);
+    assert!(sc.confidence_millionths <= 1_000_000);
+    assert!(sc.risk_of_harm_millionths <= 1_000_000);
+    assert!(!sc.moonshot_id.is_empty());
+}
+
+#[test]
+fn governance_decision_type_serde_extended_variants() {
+    for dt in [
+        GovernanceDecisionType::Pause,
+        GovernanceDecisionType::Resume,
+        GovernanceDecisionType::Override,
+    ] {
+        let json = serde_json::to_string(&dt).expect("serialize");
+        let recovered: GovernanceDecisionType = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(dt, recovered);
+    }
+}
+
+#[test]
+fn governance_actor_serde_round_trip() {
+    let actor = GovernanceActor::System("sys-001".to_string());
+    let json = serde_json::to_string(&actor).expect("serialize");
+    let recovered: GovernanceActor = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(actor, recovered);
+}
+
+#[test]
+fn governance_decision_type_display_is_non_empty() {
+    for dt in [
+        GovernanceDecisionType::Promote,
+        GovernanceDecisionType::Hold,
+        GovernanceDecisionType::Kill,
+    ] {
+        assert!(!dt.to_string().is_empty());
+    }
+}

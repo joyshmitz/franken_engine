@@ -229,3 +229,143 @@ fn benchmark_cases_are_parseable_and_reference_known_tiers() {
             .unwrap_or_else(|error| panic!("case `{}` failed parse: {error}", case.case_id));
     }
 }
+
+// ---------- parse_goal helper ----------
+
+#[test]
+fn parse_goal_maps_script() {
+    assert_eq!(parse_goal("script"), ParseGoal::Script);
+}
+
+#[test]
+fn parse_goal_maps_module() {
+    assert_eq!(parse_goal("module"), ParseGoal::Module);
+}
+
+#[test]
+#[should_panic(expected = "unknown goal")]
+fn parse_goal_panics_on_unknown() {
+    parse_goal("invalid");
+}
+
+// ---------- load_fixture helper ----------
+
+#[test]
+fn load_fixture_returns_valid_fixture() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.is_empty());
+    assert!(!fixture.benchmark_cases.is_empty());
+    assert!(!fixture.corpus_tiers.is_empty());
+}
+
+// ---------- load_doc helper ----------
+
+#[test]
+fn load_doc_returns_nonempty_string() {
+    let doc = load_doc();
+    assert!(!doc.is_empty());
+    assert!(doc.contains("Benchmark"));
+}
+
+// ---------- MeasurementWindow ----------
+
+#[test]
+fn measurement_window_from_fixture_is_well_formed() {
+    let fixture = load_fixture();
+    let w = &fixture.measurement_window;
+    assert!(w.warmup_iterations > 0);
+    assert!(w.measurement_iterations >= w.warmup_iterations);
+    assert!(w.replicates > 0);
+    assert!(w.max_relative_stdev_millionths > 0);
+}
+
+// ---------- CorpusTier ----------
+
+#[test]
+fn corpus_tiers_have_unique_ids() {
+    let fixture = load_fixture();
+    let ids: BTreeSet<_> = fixture.corpus_tiers.iter().map(|t| t.tier_id.as_str()).collect();
+    assert_eq!(ids.len(), fixture.corpus_tiers.len());
+}
+
+#[test]
+fn corpus_tiers_are_all_release_required() {
+    let fixture = load_fixture();
+    for tier in &fixture.corpus_tiers {
+        assert!(tier.release_required, "tier {} not release-required", tier.tier_id);
+    }
+}
+
+// ---------- BenchmarkCase ----------
+
+#[test]
+fn benchmark_cases_have_unique_ids() {
+    let fixture = load_fixture();
+    let ids: BTreeSet<_> = fixture.benchmark_cases.iter().map(|c| c.case_id.as_str()).collect();
+    assert_eq!(ids.len(), fixture.benchmark_cases.len());
+}
+
+#[test]
+fn benchmark_cases_reference_valid_tiers() {
+    let fixture = load_fixture();
+    let tier_ids: BTreeSet<_> = fixture.corpus_tiers.iter().map(|t| t.tier_id.as_str()).collect();
+    for case in &fixture.benchmark_cases {
+        assert!(
+            tier_ids.contains(case.tier_id.as_str()),
+            "case {} references unknown tier {}",
+            case.case_id, case.tier_id
+        );
+    }
+}
+
+#[test]
+fn benchmark_cases_have_nonempty_sources() {
+    let fixture = load_fixture();
+    for case in &fixture.benchmark_cases {
+        assert!(
+            !case.source.trim().is_empty(),
+            "case {} has empty source",
+            case.case_id
+        );
+    }
+}
+
+// ---------- ParserMode ----------
+
+#[test]
+fn parser_mode_scalar_reference_as_str() {
+    assert!(!ParserMode::ScalarReference.as_str().is_empty());
+}
+
+// ---------- ParserOptions ----------
+
+#[test]
+fn parser_options_default_is_well_formed() {
+    let options = ParserOptions::default();
+    let parser = CanonicalEs2020Parser;
+    let tree = parser
+        .parse_with_options("42", ParseGoal::Script, &options)
+        .expect("parse with default options");
+    assert_eq!(tree.body.len(), 1);
+}
+
+// ---------- runner_commands ----------
+
+#[test]
+fn runner_commands_have_four_modes() {
+    let fixture = load_fixture();
+    assert_eq!(fixture.runner_commands.len(), 4);
+    assert!(fixture.runner_commands.contains_key("check"));
+    assert!(fixture.runner_commands.contains_key("test"));
+    assert!(fixture.runner_commands.contains_key("clippy"));
+    assert!(fixture.runner_commands.contains_key("ci"));
+}
+
+// ---------- structured_event_keys ----------
+
+#[test]
+fn structured_event_keys_include_trace_id() {
+    let fixture = load_fixture();
+    assert!(fixture.structured_event_keys.contains(&"trace_id".to_string()));
+    assert!(fixture.structured_event_keys.contains(&"outcome".to_string()));
+}

@@ -228,3 +228,145 @@ fn report_id_is_deterministic_for_identical_inputs() {
         decision_b.attribution_reports
     );
 }
+
+// ---------- workload helper ----------
+
+#[test]
+fn workload_helper_sets_fields() {
+    let w = workload("wl-a", "digest-a", 1000, 100, 200, 300, 400, 500);
+    assert_eq!(w.workload_id, "wl-a");
+    assert_eq!(w.output_digest, "digest-a");
+    assert_eq!(w.throughput_ops_per_sec, 1000);
+    assert_eq!(w.latency_p50_ns, 100);
+    assert_eq!(w.latency_p95_ns, 200);
+    assert_eq!(w.latency_p99_ns, 300);
+    assert_eq!(w.memory_peak_bytes, 400);
+    assert_eq!(w.allocation_count, 500);
+}
+
+// ---------- attribution helper ----------
+
+#[test]
+fn attribution_helper_sets_fields() {
+    let a = attribution("proof-1", "spec-1", 1200, 1000, 2500, 3000);
+    assert_eq!(a.proof_id, "proof-1");
+    assert_eq!(a.specialization_id, "spec-1");
+    assert_eq!(a.optimization_class, "ifc_check_elision");
+    assert_eq!(a.constrained_throughput_ops_per_sec, 1200);
+    assert_eq!(a.without_proof_throughput_ops_per_sec, 1000);
+    assert!(!a.revoked);
+}
+
+// ---------- baseline_request ----------
+
+#[test]
+fn baseline_request_has_correct_ids() {
+    let req = baseline_request();
+    assert_eq!(req.trace_id, "trace-cabl-test");
+    assert_eq!(req.decision_id, "decision-cabl-test");
+    assert_eq!(req.policy_id, "policy-cabl-v1");
+}
+
+#[test]
+fn baseline_request_has_two_workloads_per_lane() {
+    let req = baseline_request();
+    assert_eq!(req.constrained_lane.len(), 2);
+    assert_eq!(req.ambient_lane.len(), 2);
+}
+
+// ---------- LaneWorkloadMetrics ----------
+
+#[test]
+fn lane_workload_metrics_serde_roundtrip() {
+    let w = workload("wl-serde", "digest-serde", 100, 200, 300, 400, 500, 600);
+    let json = serde_json::to_string(&w).expect("serialize");
+    let recovered: LaneWorkloadMetrics = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.workload_id, "wl-serde");
+}
+
+// ---------- ProofAttributionSample ----------
+
+#[test]
+fn proof_attribution_sample_serde_roundtrip() {
+    let a = attribution("proof-serde", "spec-serde", 1000, 800, 2000, 3000);
+    let json = serde_json::to_string(&a).expect("serialize");
+    let recovered: ProofAttributionSample = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.proof_id, "proof-serde");
+    assert_eq!(recovered.validity_epoch, Some(10));
+}
+
+// ---------- ConstrainedAmbientBenchmarkRequest ----------
+
+#[test]
+fn request_serde_roundtrip() {
+    let req = baseline_request();
+    let json = serde_json::to_string(&req).expect("serialize");
+    let recovered: ConstrainedAmbientBenchmarkRequest =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.trace_id, "trace-cabl-test");
+    assert_eq!(recovered.constrained_lane.len(), 2);
+}
+
+// ---------- decision events ----------
+
+#[test]
+fn decision_events_have_correct_component() {
+    let decision = run_constrained_ambient_benchmark_lane(&baseline_request());
+    for event in &decision.events {
+        assert_eq!(event.component, "constrained_ambient_benchmark_lane");
+    }
+}
+
+// ---------- empty request metadata ----------
+
+#[test]
+fn fails_on_empty_decision_id() {
+    let mut req = baseline_request();
+    req.decision_id.clear();
+    let decision = run_constrained_ambient_benchmark_lane(&req);
+    assert_eq!(decision.outcome, "fail");
+    assert!(decision.blocked);
+}
+
+#[test]
+fn fails_on_empty_policy_id() {
+    let mut req = baseline_request();
+    req.policy_id.clear();
+    let decision = run_constrained_ambient_benchmark_lane(&req);
+    assert_eq!(decision.outcome, "fail");
+    assert!(decision.blocked);
+}
+
+// ---------- workload_ids match across lanes ----------
+
+#[test]
+fn baseline_request_workload_ids_match_across_lanes() {
+    let req = baseline_request();
+    let constrained_ids: std::collections::BTreeSet<&str> = req
+        .constrained_lane
+        .iter()
+        .map(|w| w.workload_id.as_str())
+        .collect();
+    let ambient_ids: std::collections::BTreeSet<&str> = req
+        .ambient_lane
+        .iter()
+        .map(|w| w.workload_id.as_str())
+        .collect();
+    assert_eq!(constrained_ids, ambient_ids);
+}
+
+// ---------- report has non-empty report_id ----------
+
+#[test]
+fn decision_report_id_is_nonempty() {
+    let decision = run_constrained_ambient_benchmark_lane(&baseline_request());
+    assert!(!decision.report_id.is_empty());
+}
+
+// ---------- allows_publication matches blocked ----------
+
+#[test]
+fn allows_publication_is_inverse_of_blocked() {
+    let decision = run_constrained_ambient_benchmark_lane(&baseline_request());
+    assert_eq!(decision.allows_publication(), !decision.blocked);
+}

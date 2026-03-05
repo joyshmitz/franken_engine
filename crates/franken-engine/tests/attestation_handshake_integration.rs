@@ -845,9 +845,7 @@ fn reattestation_trigger_debug_distinct() {
         ReattestationTrigger::TrustRootUpdate,
         ReattestationTrigger::Manual,
     ];
-    let debug_strs: std::collections::BTreeSet<_> = triggers
-        .iter()
-        .map(|t| format!("{t:?}"))
-        .collect();
+    let debug_strs: std::collections::BTreeSet<_> =
+        triggers.iter().map(|t| format!("{t:?}")).collect();
     assert_eq!(debug_strs.len(), 5);
 }

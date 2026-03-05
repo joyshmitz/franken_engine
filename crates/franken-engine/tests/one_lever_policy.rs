@@ -203,6 +203,103 @@ fn structured_events_have_required_stable_fields() {
 }
 
 #[test]
+fn lever_category_serde_roundtrip() {
+    let categories = [
+        LeverCategory::Execution,
+        LeverCategory::Memory,
+        LeverCategory::Security,
+        LeverCategory::Benchmark,
+        LeverCategory::Config,
+    ];
+    for cat in &categories {
+        let json = serde_json::to_string(cat).expect("serialize");
+        let recovered: LeverCategory = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(&recovered, cat);
+    }
+}
+
+#[test]
+fn lever_category_display_matches_as_str() {
+    let categories = [
+        LeverCategory::Execution,
+        LeverCategory::Memory,
+        LeverCategory::Security,
+        LeverCategory::Benchmark,
+        LeverCategory::Config,
+    ];
+    for cat in &categories {
+        assert_eq!(cat.to_string(), cat.as_str());
+    }
+}
+
+#[test]
+fn evidence_refs_default_all_none() {
+    let evidence = OneLeverEvidenceRefs::default();
+    assert!(evidence.baseline_benchmark_run_id.is_none());
+    assert!(evidence.opportunity_score_millionths.is_none());
+}
+
+#[test]
+fn evidence_refs_serde_roundtrip() {
+    let evidence = complete_evidence(3_000_000);
+    let json = serde_json::to_string(&evidence).expect("serialize");
+    let recovered: OneLeverEvidenceRefs = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.opportunity_score_millionths, Some(3_000_000));
+    assert_eq!(recovered.baseline_benchmark_run_id, evidence.baseline_benchmark_run_id);
+}
+
+#[test]
+fn policy_request_serde_roundtrip() {
+    let request = base_request();
+    let json = serde_json::to_string(&request).expect("serialize");
+    let recovered: OneLeverPolicyRequest = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.trace_id, request.trace_id);
+    assert_eq!(recovered.commit_sha, request.commit_sha);
+}
+
+#[test]
+fn policy_decision_serde_roundtrip() {
+    let request = base_request();
+    let decision = evaluate_one_lever_policy(&request);
+    let json = serde_json::to_string(&decision).expect("serialize");
+    let recovered: frankenengine_engine::one_lever_policy::OneLeverPolicyDecision =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.outcome, decision.outcome);
+    assert_eq!(recovered.schema_version, decision.schema_version);
+}
+
+#[test]
+fn decision_schema_version_is_v1() {
+    let request = base_request();
+    let decision = evaluate_one_lever_policy(&request);
+    assert_eq!(
+        decision.schema_version,
+        frankenengine_engine::one_lever_policy::ONE_LEVER_POLICY_SCHEMA_VERSION
+    );
+}
+
+#[test]
+fn single_lever_with_complete_evidence_is_allowed() {
+    let request = base_request();
+    let decision = evaluate_one_lever_policy(&request);
+    assert_eq!(decision.outcome, "allow");
+    assert!(decision.allows_change());
+    assert!(!decision.blocked);
+    assert!(!decision.is_multi_lever);
+    assert!(decision.error_code.is_none());
+}
+
+#[test]
+fn missing_opportunity_score_is_denied() {
+    let mut request = base_request();
+    request.evidence.opportunity_score_millionths = None;
+
+    let decision = evaluate_one_lever_policy(&request);
+    assert_eq!(decision.outcome, "deny");
+    assert!(decision.blocked);
+}
+
+#[test]
 fn version_matrix_workflow_runs_one_lever_policy_gate() {
     let workflow_path = repo_root().join(".github/workflows/version_matrix_conformance.yml");
     let workflow = std::fs::read_to_string(&workflow_path)
