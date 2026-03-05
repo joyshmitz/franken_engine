@@ -445,3 +445,29 @@ fn track_e_charter_doc_contains_interface_contracts_and_escalation() {
     assert!(doc.contains("Interface Contracts"));
     assert!(doc.contains("Escalation"));
 }
+
+#[test]
+fn track_e_charter_doc_file_exists() {
+    let path =
+        repo_root().join("docs/FRX_TRACK_E_VERIFICATION_FUZZ_FORMAL_COVERAGE_SPRINT_V1.md");
+    assert!(path.exists(), "track E charter doc must exist");
+}
+
+#[test]
+fn track_e_contract_json_file_exists() {
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    assert!(path.exists(), "track E contract JSON must exist");
+}
+
+#[test]
+fn track_e_charter_word_count_exceeds_minimum() {
+    let path =
+        repo_root().join("docs/FRX_TRACK_E_VERIFICATION_FUZZ_FORMAL_COVERAGE_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    let word_count = doc.split_whitespace().count();
+    assert!(
+        word_count >= 100,
+        "charter doc should have >= 100 words, got {word_count}"
+    );
+}

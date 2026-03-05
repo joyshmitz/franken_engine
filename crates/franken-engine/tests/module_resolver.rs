@@ -522,3 +522,21 @@ fn duplicate_workspace_registration_overwrites() {
     // Should resolve successfully (last registration wins)
     assert_eq!(outcome.module.canonical_specifier, "/app/lib.mjs");
 }
+
+#[test]
+fn deterministic_module_resolver_debug_is_nonempty() {
+    let resolver = DeterministicModuleResolver::new("/app");
+    assert!(!format!("{resolver:?}").is_empty());
+}
+
+#[test]
+fn module_syntax_debug_is_nonempty() {
+    let syntax = ModuleSyntax::EsModule;
+    assert!(!format!("{syntax:?}").is_empty());
+}
+
+#[test]
+fn import_style_debug_is_nonempty() {
+    let style = ImportStyle::Import;
+    assert!(!format!("{style:?}").is_empty());
+}

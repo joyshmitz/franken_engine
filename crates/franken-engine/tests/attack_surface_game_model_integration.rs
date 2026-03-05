@@ -526,3 +526,21 @@ fn full_lifecycle_build_analyze_report() {
     assert_eq!(report.epoch, epoch());
     assert_eq!(report.schema_version, SCHEMA_VERSION);
 }
+
+#[test]
+fn loss_dimension_debug_is_nonempty() {
+    let dim = LossDimension::PerformanceCost;
+    assert!(!format!("{dim:?}").is_empty());
+}
+
+#[test]
+fn subsystem_debug_is_nonempty() {
+    let s = Subsystem::Compiler;
+    assert!(!format!("{s:?}").is_empty());
+}
+
+#[test]
+fn player_debug_is_nonempty() {
+    let p = Player::Attacker;
+    assert!(!format!("{p:?}").is_empty());
+}

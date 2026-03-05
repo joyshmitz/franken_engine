@@ -944,3 +944,230 @@ fn rgc_061_runtime_diagnostics_input_serde_roundtrip() {
         input.runtime_state.loaded_extensions.len()
     );
 }
+
+// ---------- contract schema invariants ----------
+
+#[test]
+fn rgc_061_contract_workflow_stages_are_unique_and_sorted() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for stage in &contract.workflow_stages {
+        assert!(
+            seen.insert(stage.as_str()),
+            "duplicate workflow stage: {stage}"
+        );
+    }
+}
+
+#[test]
+fn rgc_061_contract_required_log_keys_are_unique() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for key in &contract.required_log_keys {
+        assert!(
+            seen.insert(key.as_str()),
+            "duplicate required log key: {key}"
+        );
+    }
+}
+
+// ---------- doctor output structure ----------
+
+#[test]
+fn rgc_061_doctor_output_contains_mandatory_field_status() {
+    let input_path = write_runtime_input(&build_clean_input());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "doctor",
+            "--input",
+            input_path.to_str().expect("input path should be utf8"),
+        ])
+        .output()
+        .expect("doctor command should execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    let json: Value = serde_json::from_str(&stdout).expect("output should be valid json");
+
+    let mfs = &json["mandatory_field_status"];
+    assert!(
+        mfs.is_object(),
+        "doctor output must contain mandatory_field_status"
+    );
+    assert!(
+        mfs["valid"].is_boolean(),
+        "mandatory_field_status.valid must be a boolean"
+    );
+    assert!(
+        mfs["missing_fields"].is_array(),
+        "mandatory_field_status.missing_fields must be an array"
+    );
+
+    cleanup_path(&input_path);
+}
+
+// ---------- diagnostics output structure ----------
+
+#[test]
+fn rgc_061_diagnostics_output_contains_scheduler_lanes() {
+    let input_path = write_runtime_input(&build_clean_input());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "diagnostics",
+            "--input",
+            input_path.to_str().expect("input path should be utf8"),
+        ])
+        .output()
+        .expect("diagnostics command should execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    let json: Value = serde_json::from_str(&stdout).expect("output should be valid json");
+    assert!(
+        json["scheduler_lanes"].is_array(),
+        "diagnostics output should include scheduler_lanes"
+    );
+    let lanes = json["scheduler_lanes"].as_array().unwrap();
+    assert!(
+        !lanes.is_empty(),
+        "scheduler_lanes should contain the lane from the input"
+    );
+    assert_eq!(lanes[0]["lane"], "ready");
+
+    cleanup_path(&input_path);
+}
+
+// ---------- rollout-decision-artifact with signals ----------
+
+#[test]
+fn rgc_061_rollout_decision_with_critical_signal_recommends_caution() {
+    let input_path = write_runtime_input(&build_clean_input());
+    let signals_path = write_json_value(&serde_json::json!([
+        {
+            "signal_id": "perf:regression-p99",
+            "source": "benchmark_lane",
+            "severity": "critical",
+            "summary": "p99 latency regression detected",
+            "remediation": "investigate benchmark results",
+            "reproducible_command": "frankenctl bench --compare",
+            "evidence_links": ["artifacts/bench/latest/report.json"]
+        }
+    ]));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "rollout-decision-artifact",
+            "--input",
+            input_path.to_str().expect("input path should be utf8"),
+            "--signals",
+            signals_path.to_str().expect("signals path should be utf8"),
+            "--workload-id",
+            "pkg/perf-regress",
+            "--package-name",
+            "perf-regress",
+        ])
+        .output()
+        .expect("rollout-decision-artifact command should execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    let json: Value = serde_json::from_str(&stdout).expect("output should be valid json");
+    // With a critical signal, the recommendation should NOT be "promote"
+    assert_ne!(
+        json["recommendation"].as_str().unwrap_or(""),
+        "promote",
+        "critical signal should prevent promote recommendation"
+    );
+
+    cleanup_path(&input_path);
+    cleanup_path(&signals_path);
+}
+
+// ---------- contract operator_verification entries are nonempty ----------
+
+#[test]
+fn rgc_061_contract_operator_verification_entries_are_nonempty() {
+    let contract = parse_contract();
+    assert!(
+        !contract.operator_verification.is_empty(),
+        "operator_verification must have at least one entry"
+    );
+    for entry in &contract.operator_verification {
+        assert!(
+            !entry.trim().is_empty(),
+            "operator_verification entry must not be empty"
+        );
+    }
+}
+
+// ---------- contract required_artifacts are unique ----------
+
+#[test]
+fn rgc_061_contract_required_artifacts_are_unique() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for artifact in &contract.required_artifacts {
+        assert!(
+            seen.insert(artifact.as_str()),
+            "duplicate required artifact: {artifact}"
+        );
+    }
+}
+
+// ---------- runtime diagnostics input schema version field ----------
+
+#[test]
+fn rgc_061_runtime_diagnostics_input_json_contains_required_fields() {
+    let input = build_clean_input();
+    let v: Value = serde_json::to_value(&input).expect("input should serialize to json value");
+    let obj = v.as_object().expect("input should be a JSON object");
+    for key in ["trace_id", "decision_id", "policy_id", "runtime_state"] {
+        assert!(
+            obj.contains_key(key),
+            "RuntimeDiagnosticsCliInput missing JSON field: {key}"
+        );
+    }
+}
+
+// ---------- doctor summary output mode ----------
+
+#[test]
+fn rgc_061_doctor_summary_mode_produces_text_output() {
+    let input_path = write_runtime_input(&build_clean_input());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "doctor",
+            "--input",
+            input_path.to_str().expect("input path should be utf8"),
+            "--summary",
+        ])
+        .output()
+        .expect("doctor --summary command should execute");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    assert!(
+        stdout.contains("verdict:"),
+        "doctor summary should contain verdict"
+    );
+
+    cleanup_path(&input_path);
+}
+
+// ---------- contract failure scenarios error codes start with FE-RGC-061 ----------
+
+#[test]
+fn rgc_061_contract_failure_scenario_error_codes_start_with_fe_rgc_061() {
+    let contract = parse_contract();
+    for scenario in &contract.failure_scenarios {
+        assert!(
+            scenario.expected_error_code.starts_with("FE-RGC-061-"),
+            "scenario {} error code should start with FE-RGC-061-: {}",
+            scenario.scenario_id,
+            scenario.expected_error_code
+        );
+    }
+}

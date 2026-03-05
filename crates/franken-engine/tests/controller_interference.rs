@@ -995,3 +995,23 @@ fn subscription_without_matching_write_gets_initial_value() {
     let updates = evaluation.subscription_streams.get("subscriber");
     assert!(updates.is_some());
 }
+
+#[test]
+fn interference_config_debug_is_nonempty() {
+    let config = InterferenceConfig::default();
+    assert!(!format!("{config:?}").is_empty());
+}
+
+#[test]
+fn controller_registration_serde_is_deterministic() {
+    let reg = registration("ctrl-det", &["m1"], &["m1"], 1_000_000, 500_000, "test");
+    let a = serde_json::to_string(&reg).expect("first");
+    let b = serde_json::to_string(&reg).expect("second");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn conflict_resolution_mode_debug_is_nonempty() {
+    let mode = ConflictResolutionMode::Reject;
+    assert!(!format!("{mode:?}").is_empty());
+}

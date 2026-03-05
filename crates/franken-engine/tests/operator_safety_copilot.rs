@@ -670,3 +670,97 @@ fn timeline_drilldown_pointers_default_is_all_none() {
     assert!(ptrs.replay_pointer.is_none());
     assert!(ptrs.counterfactual_pointer.is_none());
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: edge cases, admin flow, serde depth, error paths
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn administrator_can_select_and_confirm_recommendation() {
+    let input = sample_input();
+    let surface = build_operator_safety_copilot_surface(&input).expect("surface");
+    let admin = operator("admin-1", OperatorRole::Administrator);
+
+    let review = select_recommendation_for_review(&surface, &admin, 1, 5_000).expect("review");
+    assert_eq!(review.selected_recommendation.action_type, "terminate");
+
+    let confirmed =
+        confirm_selected_recommendation(&review, &admin, "admin-token-1", 6_000).expect("confirm");
+    assert_eq!(confirmed.audit_event.event, "copilot_action_confirmed");
+    assert_eq!(confirmed.audit_event.outcome, "executed");
+}
+
+#[test]
+fn selecting_out_of_range_rank_returns_error() {
+    let input = sample_input();
+    let surface = build_operator_safety_copilot_surface(&input).expect("surface");
+    let op = operator("op-range", OperatorRole::Operator);
+
+    // There are 3 recommendations (ranks 1, 2, 3). Rank 99 should fail.
+    let err_high = select_recommendation_for_review(&surface, &op, 99, 1_000);
+    assert!(err_high.is_err(), "rank 99 should be out of range");
+
+    // Valid ranks 1..=3 all succeed
+    for rank in 1..=3 {
+        let review = select_recommendation_for_review(&surface, &op, rank, 2_000);
+        assert!(review.is_ok(), "rank {rank} should be valid");
+    }
+}
+
+#[test]
+fn copilot_error_serde_round_trip_all_variants() {
+    let errors = vec![
+        CopilotError::InvalidConfidenceBand {
+            metric: "m-serde".to_string(),
+        },
+        CopilotError::MissingSnapshotForRollback {
+            action_type: "sandbox".to_string(),
+            target_extension: "ext-serde".to_string(),
+        },
+        CopilotError::InvalidDecisionBoundaryHint {
+            metric: "m-hint".to_string(),
+        },
+        CopilotError::UnauthorizedRole {
+            role: OperatorRole::Viewer,
+            action: "confirm".to_string(),
+        },
+        CopilotError::OperatorMismatch {
+            selected_by: "op-a".to_string(),
+            confirmed_by: "op-b".to_string(),
+        },
+        CopilotError::MissingConfirmationToken,
+    ];
+    for err in &errors {
+        let json = serde_json::to_string(err).expect("serialize");
+        let recovered: CopilotError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(*err, recovered);
+    }
+}
+
+#[test]
+fn incident_severity_serde_round_trip() {
+    for sev in [
+        IncidentSeverity::Low,
+        IncidentSeverity::Medium,
+        IncidentSeverity::High,
+        IncidentSeverity::Critical,
+    ] {
+        let json = serde_json::to_string(&sev).expect("serialize");
+        let recovered: IncidentSeverity = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(sev, recovered);
+    }
+}
+
+#[test]
+fn extension_trust_level_serde_round_trip() {
+    for level in [
+        ExtensionTrustLevel::High,
+        ExtensionTrustLevel::Guarded,
+        ExtensionTrustLevel::Watch,
+        ExtensionTrustLevel::Quarantined,
+    ] {
+        let json = serde_json::to_string(&level).expect("serialize");
+        let recovered: ExtensionTrustLevel = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(level, recovered);
+    }
+}

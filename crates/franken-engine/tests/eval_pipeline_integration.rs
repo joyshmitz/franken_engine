@@ -144,6 +144,29 @@ fn parse_failure_display_includes_location_correlation_and_stack_trace() {
     assert!(display.contains("stack=parse@"));
 }
 
+#[test]
+fn module_parse_failure_display_includes_location_correlation_and_stack_trace() {
+    let mut router = HybridRouter::default();
+    let err = router
+        .eval("import")
+        .expect_err("expected module parse failure");
+    let display = format!("{err}");
+
+    let location = err
+        .location
+        .as_ref()
+        .expect("module parse failure should carry source location");
+    let location_text = format!("{location}");
+
+    assert_eq!(err.code, EvalErrorCode::ParseFailure);
+    assert!(display.contains("eval.parse.failure"));
+    assert!(display.contains(&location_text));
+    assert!(display.contains("trace_id=eval-"));
+    assert!(display.contains("decision_id=eval-decision-"));
+    assert!(display.contains("policy_id=eval-policy-"));
+    assert!(display.contains("stack=parse@"));
+}
+
 // =========================================================================
 // Section 2: Error handling — invalid/empty inputs
 // =========================================================================
@@ -219,6 +242,37 @@ fn boundary_propagation_copies_location_into_boundary_stack_frame() {
     );
     assert_eq!(
         propagated.stack_frames[1].location.as_ref(),
+        Some(&location)
+    );
+}
+
+#[test]
+fn async_and_hostcall_boundary_chain_preserves_parse_location() {
+    let mut quickjs = QuickJsInspiredNativeEngine;
+    let err = quickjs.eval("let").expect_err("expected parse failure");
+    let location = err.location.clone().expect("expected parse location");
+
+    let after_async = propagate_error_across_boundary(err, ExceptionBoundary::AsyncJob);
+    let after_hostcall = propagate_error_across_boundary(after_async, ExceptionBoundary::Hostcall);
+
+    assert_eq!(after_hostcall.stack_frames.len(), 3);
+    assert_eq!(after_hostcall.stack_frames[0].stage, "parse");
+    assert_eq!(after_hostcall.stack_frames[1].stage, "boundary_transition");
+    assert_eq!(
+        after_hostcall.stack_frames[1].boundary.as_deref(),
+        Some("async_job")
+    );
+    assert_eq!(after_hostcall.stack_frames[2].stage, "boundary_transition");
+    assert_eq!(
+        after_hostcall.stack_frames[2].boundary.as_deref(),
+        Some("hostcall")
+    );
+    assert_eq!(
+        after_hostcall.stack_frames[1].location.as_ref(),
+        Some(&location)
+    );
+    assert_eq!(
+        after_hostcall.stack_frames[2].location.as_ref(),
         Some(&location)
     );
 }
@@ -593,5 +647,92 @@ fn mixed_literal_types_execute_successfully() {
     let result = router
         .execute(&output.ir3, "trace-mix", Some(LaneChoice::V8))
         .expect("execution");
+    assert!(result.result.instructions_executed > 0);
+}
+
+#[test]
+fn hybrid_router_debug_is_nonempty() {
+    let router = HybridRouter::default();
+    assert!(!format!("{router:?}").is_empty());
+}
+
+#[test]
+fn eval_error_code_debug_is_nonempty() {
+    let code = EvalErrorCode::ParseFailure;
+    assert!(!format!("{code:?}").is_empty());
+}
+
+#[test]
+fn lane_choice_debug_is_nonempty() {
+    let choice = LaneChoice::V8;
+    assert!(!format!("{choice:?}").is_empty());
+}
+
+// =========================================================================
+// Section 10: Serde and Display for key types
+// =========================================================================
+
+#[test]
+fn engine_kind_serde_roundtrip() {
+    let kinds = [
+        EngineKind::QuickJsInspiredNative,
+        EngineKind::V8InspiredNative,
+    ];
+    for kind in &kinds {
+        let json = serde_json::to_string(kind).unwrap();
+        let back: EngineKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(*kind, back);
+    }
+}
+
+#[test]
+fn lane_choice_serde_roundtrip() {
+    let lanes = [LaneChoice::QuickJs, LaneChoice::V8];
+    for lane in &lanes {
+        let json = serde_json::to_string(lane).unwrap();
+        let back: LaneChoice = serde_json::from_str(&json).unwrap();
+        assert_eq!(*lane, back);
+    }
+}
+
+#[test]
+fn eval_error_correlation_ids_survive_serde() {
+    let err = EvalError::runtime_fault("test-error")
+        .with_correlation_ids("trace-serde", "decision-serde", "policy-serde");
+    let json = serde_json::to_string(&err).unwrap();
+    let back: EvalError = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.code, EvalErrorCode::RuntimeFault);
+    let ids = back.correlation_ids.expect("correlation ids should roundtrip");
+    assert_eq!(ids.trace_id, "trace-serde");
+    assert_eq!(ids.decision_id, "decision-serde");
+    assert_eq!(ids.policy_id, "policy-serde");
+}
+
+#[test]
+fn propagation_through_all_exception_boundaries() {
+    let base = EvalError::runtime_fault("propagation test")
+        .with_correlation_ids("trace-prop", "decision-prop", "policy-prop");
+    let after_sync = propagate_error_across_boundary(base, ExceptionBoundary::SyncCallframe);
+    let after_async = propagate_error_across_boundary(after_sync, ExceptionBoundary::AsyncJob);
+    let after_host = propagate_error_across_boundary(after_async, ExceptionBoundary::Hostcall);
+    assert_eq!(after_host.stack_frames.len(), 3);
+    assert!(after_host.message.contains("boundary=hostcall"));
+    assert_eq!(after_host.code, EvalErrorCode::RuntimeFault);
+}
+
+#[test]
+fn ir3_null_literal_produces_valid_execution() {
+    let tree = make_tree(
+        ParseGoal::Script,
+        vec![expr_stmt(Expression::NullLiteral)],
+    );
+    let ir0 = Ir0Module::from_syntax_tree(tree, "null.js");
+    let ctx = LoweringContext::new("trace-null", "decision-null", "policy-null");
+    let output = lower_ir0_to_ir3(&ir0, &ctx).expect("lowering should succeed");
+
+    let router = LaneRouter::new();
+    let result = router
+        .execute(&output.ir3, "trace-null", Some(LaneChoice::QuickJs))
+        .expect("execution should succeed");
     assert!(result.result.instructions_executed > 0);
 }

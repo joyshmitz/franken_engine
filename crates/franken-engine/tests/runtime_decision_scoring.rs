@@ -495,3 +495,69 @@ fn runtime_decision_scoring_input_serde_roundtrip() {
     assert_eq!(recovered.extension_id, "ext-serde");
     assert_eq!(recovered.trace_id, "trace-dec-serde");
 }
+
+// ---------- expected_losses ----------
+
+#[test]
+fn expected_losses_covers_all_containment_actions() {
+    let selector = ExpectedLossSelector::balanced();
+    let posterior = Posterior::from_millionths(500_000, 100_000, 300_000, 100_000);
+    let losses = selector.expected_losses(&posterior);
+    assert_eq!(
+        losses.len(),
+        ContainmentAction::ALL.len(),
+        "expected_losses must return an entry for every containment action"
+    );
+    for action in ContainmentAction::ALL {
+        assert!(
+            losses.contains_key(&action),
+            "missing expected loss for {action}"
+        );
+    }
+}
+
+// ---------- blocking multiple actions ----------
+
+#[test]
+fn blocking_all_but_terminate_forces_terminate() {
+    let extension_id = "ext-runtime-block-all";
+    let mut updater = BayesianPosteriorUpdater::new(Posterior::default_prior(), extension_id);
+    for _ in 0..3 {
+        updater.update(&benign_evidence(extension_id));
+    }
+
+    let mut input = scoring_input(
+        extension_id,
+        "decision-block-all",
+        updater.posterior().clone(),
+    );
+    // Block every action except Terminate
+    for action in ContainmentAction::ALL {
+        if action != ContainmentAction::Terminate {
+            input.blocked_actions.insert(action);
+        }
+    }
+
+    let mut selector = ExpectedLossSelector::balanced();
+    let artifact = selector
+        .score_runtime_decision(&input)
+        .expect("scoring with heavy blocks");
+    assert_eq!(
+        artifact.selected_action,
+        ContainmentAction::Terminate,
+        "when all actions except Terminate are blocked, Terminate must be selected"
+    );
+}
+
+// ---------- scoring input deterministic serialization ----------
+
+#[test]
+fn scoring_input_serialization_is_deterministic() {
+    let input = scoring_input("ext-det", "dec-det", Posterior::default_prior());
+    let json_a = serde_json::to_string(&input).expect("first serialize");
+    let json_b = serde_json::to_string(&input).expect("second serialize");
+    assert_eq!(
+        json_a, json_b,
+        "RuntimeDecisionScoringInput serialization must be deterministic"
+    );
+}

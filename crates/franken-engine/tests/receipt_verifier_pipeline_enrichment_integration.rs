@@ -486,3 +486,172 @@ fn verifier_log_event_error_code_some_serializes_string() {
     let v: serde_json::Value = serde_json::to_value(&ev).unwrap();
     assert_eq!(v["error_code"].as_str().unwrap(), "signer_revoked");
 }
+
+// ===========================================================================
+// 20) UnifiedReceiptVerificationVerdict — failing verdict carries failure class
+// ===========================================================================
+
+#[test]
+fn failing_verdict_carries_signature_failure_class() {
+    let verdict = UnifiedReceiptVerificationVerdict {
+        receipt_id: "r-sig-fail".into(),
+        trace_id: "t".into(),
+        decision_id: "d".into(),
+        policy_id: "p".into(),
+        verification_timestamp_ns: 42,
+        passed: false,
+        failure_class: Some(VerificationFailureClass::Signature),
+        exit_code: EXIT_CODE_SIGNATURE_FAILURE,
+        signature: LayerResult {
+            passed: false,
+            error_code: Some("signer_revoked".into()),
+            checks: vec![LayerCheck {
+                check: "revocation_status".into(),
+                outcome: "fail".into(),
+                error_code: Some("signer_revoked".into()),
+                detail: "key revoked".into(),
+            }],
+        },
+        transparency: LayerResult {
+            passed: true,
+            error_code: None,
+            checks: vec![],
+        },
+        attestation: LayerResult {
+            passed: true,
+            error_code: None,
+            checks: vec![],
+        },
+        warnings: vec![],
+        logs: vec![],
+    };
+    assert!(!verdict.passed);
+    assert_eq!(
+        verdict.failure_class,
+        Some(VerificationFailureClass::Signature)
+    );
+    assert_eq!(verdict.exit_code, EXIT_CODE_SIGNATURE_FAILURE);
+    assert!(!verdict.signature.passed);
+    assert_eq!(verdict.signature.checks.len(), 1);
+}
+
+// ===========================================================================
+// 21) UnifiedReceiptVerificationVerdict — full serde roundtrip with all fields populated
+// ===========================================================================
+
+#[test]
+fn unified_verdict_full_serde_roundtrip() {
+    let verdict = UnifiedReceiptVerificationVerdict {
+        receipt_id: "rcpt-serde-full".into(),
+        trace_id: "t-full".into(),
+        decision_id: "d-full".into(),
+        policy_id: "p-full".into(),
+        verification_timestamp_ns: 1_700_000_000_000,
+        passed: false,
+        failure_class: Some(VerificationFailureClass::Attestation),
+        exit_code: EXIT_CODE_ATTESTATION_FAILURE,
+        signature: LayerResult {
+            passed: true,
+            error_code: None,
+            checks: vec![LayerCheck {
+                check: "key_valid".into(),
+                outcome: "pass".into(),
+                error_code: None,
+                detail: "ok".into(),
+            }],
+        },
+        transparency: LayerResult {
+            passed: true,
+            error_code: None,
+            checks: vec![],
+        },
+        attestation: LayerResult {
+            passed: false,
+            error_code: Some("enclave_mismatch".into()),
+            checks: vec![LayerCheck {
+                check: "enclave_identity".into(),
+                outcome: "fail".into(),
+                error_code: Some("enclave_mismatch".into()),
+                detail: "MRENCLAVE differs".into(),
+            }],
+        },
+        warnings: vec!["clock skew detected".to_string()],
+        logs: vec![VerifierLogEvent {
+            trace_id: "t-full".into(),
+            decision_id: "d-full".into(),
+            policy_id: "p-full".into(),
+            component: "attestation_layer".into(),
+            event: "check_completed".into(),
+            outcome: "fail".into(),
+            error_code: Some("enclave_mismatch".into()),
+        }],
+    };
+    let json = serde_json::to_string(&verdict).unwrap();
+    let rt: UnifiedReceiptVerificationVerdict = serde_json::from_str(&json).unwrap();
+    assert_eq!(verdict, rt);
+}
+
+// ===========================================================================
+// 22) LayerCheck — Debug representation is distinct per field combination
+// ===========================================================================
+
+#[test]
+fn layer_check_debug_repr_captures_all_fields() {
+    let lc = LayerCheck {
+        check: "sig_valid".into(),
+        outcome: "pass".into(),
+        error_code: None,
+        detail: "ok".into(),
+    };
+    let dbg = format!("{lc:?}");
+    assert!(dbg.contains("sig_valid"), "Debug should contain check name: {dbg}");
+    assert!(dbg.contains("pass"), "Debug should contain outcome: {dbg}");
+    assert!(dbg.contains("None"), "Debug should show None error_code: {dbg}");
+}
+
+// ===========================================================================
+// 23) ReceiptVerifierPipelineError — all variants serde roundtrip
+// ===========================================================================
+
+#[test]
+fn pipeline_error_all_variants_display_nonempty() {
+    let errors = vec![
+        ReceiptVerifierPipelineError::ReceiptNotFound {
+            receipt_id: "rcpt-missing".to_string(),
+        },
+    ];
+    for e in &errors {
+        let s = e.to_string();
+        assert!(!s.is_empty(), "Display for {:?} should not be empty", e);
+        // Verify std::error::Error trait
+        let _: &dyn std::error::Error = e;
+    }
+}
+
+// ===========================================================================
+// 24) UnifiedReceiptVerificationVerdict — warnings field serialization
+// ===========================================================================
+
+#[test]
+fn verdict_warnings_serialize_as_json_array() {
+    let verdict = UnifiedReceiptVerificationVerdict {
+        receipt_id: "r-warn".into(),
+        trace_id: "t".into(),
+        decision_id: "d".into(),
+        policy_id: "p".into(),
+        verification_timestamp_ns: 0,
+        passed: true,
+        failure_class: None,
+        exit_code: EXIT_CODE_SUCCESS,
+        signature: LayerResult { passed: true, error_code: None, checks: vec![] },
+        transparency: LayerResult { passed: true, error_code: None, checks: vec![] },
+        attestation: LayerResult { passed: true, error_code: None, checks: vec![] },
+        warnings: vec!["clock-skew".to_string(), "cert-expiry-soon".to_string()],
+        logs: vec![],
+    };
+    let v: serde_json::Value = serde_json::to_value(&verdict).unwrap();
+    let warnings = v["warnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 2);
+    assert_eq!(warnings[0].as_str().unwrap(), "clock-skew");
+    assert_eq!(warnings[1].as_str().unwrap(), "cert-expiry-soon");
+}

@@ -435,3 +435,26 @@ fn track_d_charter_mentions_fallback_events() {
         "charter must mention fallback events"
     );
 }
+
+#[test]
+fn track_d_charter_doc_file_exists() {
+    let path = repo_root().join("docs/FRX_TRACK_D_WASM_LANE_HYBRID_ROUTER_SPRINT_V1.md");
+    assert!(path.exists(), "track D charter doc must exist");
+}
+
+#[test]
+fn track_d_contract_json_file_exists() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    assert!(path.exists(), "track D contract JSON must exist");
+}
+
+#[test]
+fn track_d_contract_track_name_is_nonempty() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let name = value["track"]["name"]
+        .as_str()
+        .expect("track.name must be a string");
+    assert!(!name.trim().is_empty(), "track.name must not be empty");
+}

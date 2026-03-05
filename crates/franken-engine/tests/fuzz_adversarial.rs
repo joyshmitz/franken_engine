@@ -615,3 +615,124 @@ fn run_handshake_program_handles_small_input() {
     let data: Vec<u8> = (0..20).collect();
     run_handshake_program(&data);
 }
+
+// ---------- enrichment: adversarial boundary and determinism ----------
+
+#[test]
+fn run_decode_program_handles_exactly_32_bytes_triggers_schema_path() {
+    // Exactly 32 bytes activates the schema deserialization branch
+    let data: Vec<u8> = (0..32).collect();
+    run_decode_program(&data);
+}
+
+#[test]
+fn run_decode_program_at_max_corpus_boundary() {
+    // Exactly at the MAX_CORPUS_BYTES limit -- should still process
+    let data = vec![0xAB; MAX_CORPUS_BYTES];
+    run_decode_program(&data);
+    // One byte over -- should be silently rejected
+    let over = vec![0xAB; MAX_CORPUS_BYTES + 1];
+    run_decode_program(&over);
+}
+
+#[test]
+fn synthetic_value_encode_decode_roundtrip_determinism() {
+    // For each variant, encoding and decoding must be deterministic
+    for variant in 0..5u8 {
+        let data = [variant, 10, 20, 30, 40, 50, 60, 70];
+        let value = synthetic_value(&data);
+        let encoded_a = encode_value(&value);
+        let encoded_b = encode_value(&value);
+        assert_eq!(encoded_a, encoded_b, "encoding must be deterministic for variant {variant}");
+        if let Ok(decoded) = decode_value(&encoded_a) {
+            let re_encoded = encode_value(&decoded);
+            assert_eq!(encoded_a, re_encoded, "decode-reencode must be stable for variant {variant}");
+        }
+    }
+}
+
+#[test]
+fn run_token_program_with_all_mutation_opcodes() {
+    // Construct data that exercises every mutation opcode (0-7) in mutate_token
+    let mut data: Vec<u8> = (0..64).collect();
+    // Ensure first 8 bytes cover opcodes 0..7
+    for i in 0..8u8 {
+        data[i as usize] = i;
+    }
+    run_token_program(&data);
+}
+
+#[test]
+fn run_handshake_program_exercises_all_opcodes() {
+    // Build input so that opcodes at cursor positions cycle through 0..7
+    let mut data = vec![0u8; 256];
+    // First 15 bytes for config
+    for i in 0..15 {
+        data[i] = (i as u8).wrapping_add(1);
+    }
+    // From offset 14 onward, place each opcode variant
+    for (step, opcode) in (0..8u8).enumerate() {
+        let pos = 14 + step * 3; // each step: opcode + payload_len + filler
+        if pos < data.len() {
+            data[pos] = opcode;
+        }
+        if pos + 1 < data.len() {
+            data[pos + 1] = 4; // small payload
+        }
+    }
+    run_handshake_program(&data);
+}
+
+// ---------- enrichment: token, decode, and handshake boundary tests ----------
+
+#[test]
+fn build_token_serde_roundtrip_when_present() {
+    let data: Vec<u8> = (0..64).collect();
+    if let Some(token) = build_token(&data) {
+        let json = serde_json::to_string(&token).expect("serialize token");
+        let recovered: CapabilityToken = serde_json::from_str(&json).expect("deserialize token");
+        assert_eq!(token.zone, recovered.zone);
+        assert_eq!(token.nbf, recovered.nbf);
+        assert_eq!(token.expiry, recovered.expiry);
+    }
+}
+
+#[test]
+fn mutate_token_does_not_panic_with_alternating_bytes() {
+    let data: Vec<u8> = (0..64).map(|i| if i % 2 == 0 { 0xFF } else { 0x00 }).collect();
+    if let Some(mut token) = build_token(&data) {
+        mutate_token(&mut token, &data);
+        // Verify we can still serialize after mutation
+        let _ = serde_json::to_string(&token);
+    }
+}
+
+#[test]
+fn run_decode_program_handles_all_zero_input() {
+    let data = vec![0u8; 64];
+    run_decode_program(&data);
+}
+
+#[test]
+fn run_handshake_program_handles_long_deterministic_input() {
+    // Exercise deeper loop iterations with a longer input
+    let data: Vec<u8> = (0..512).map(|i| (i % 256) as u8).collect();
+    run_handshake_program(&data);
+}
+
+#[test]
+fn collect_files_returns_sorted_paths() {
+    // Verify that the corpus helper returns sorted paths (determinism guarantee)
+    let repo = repo_root();
+    let fixture_dir = repo
+        .join("crates/franken-engine/tests/fixtures/fuzz_adversarial/decode_dos");
+    if fixture_dir.exists() {
+        let files = collect_files(&fixture_dir);
+        let sorted: Vec<_> = {
+            let mut v = files.clone();
+            v.sort();
+            v
+        };
+        assert_eq!(files, sorted, "collect_files must return sorted paths");
+    }
+}

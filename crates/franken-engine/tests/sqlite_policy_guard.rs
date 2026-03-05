@@ -764,3 +764,114 @@ fn sqlite_multiple_violations_accumulate() {
     let report = evaluate_guard(&manifests, &[], &[]);
     assert_eq!(report.violations.len(), 2);
 }
+
+// ---------- dependency_names with comments ----------
+
+#[test]
+fn sqlite_dependency_names_ignores_comments_in_toml() {
+    let toml = "[dependencies]\n# rusqlite = \"1\"\nserde = \"1\"\n";
+    let deps = dependency_names(toml);
+    assert!(!deps.contains(&"rusqlite".to_string()), "commented-out dependency must be ignored");
+    assert!(deps.contains(&"serde".to_string()));
+}
+
+// ---------- guard summary event always present ----------
+
+#[test]
+fn sqlite_guard_summary_event_always_last_with_violation_count() {
+    let manifests = vec![ManifestInput {
+        path: "Cargo.toml".to_string(),
+        content: "[dependencies]\nrusqlite = \"1\"\nlibsqlite3-sys = \"1\"\n".to_string(),
+    }];
+    let report = evaluate_guard(&manifests, &[], &[]);
+    let last = report.events.last().expect("events should not be empty");
+    assert_eq!(last.event, "guard_summary");
+    assert_eq!(last.outcome, "fail");
+    assert_eq!(
+        last.error_code.as_deref(),
+        Some("FE-SQLITE-GUARD-BLOCKED")
+    );
+    assert_eq!(last.detail, "violations=2");
+}
+
+// ---------- token scan combined with dependency scan ----------
+
+#[test]
+fn sqlite_combined_dependency_and_usage_violations_both_reported() {
+    let manifests = vec![ManifestInput {
+        path: "Cargo.toml".to_string(),
+        content: "[dependencies]\nrusqlite = \"1\"\n".to_string(),
+    }];
+    let sources = vec![SourceInput {
+        path: "crates/franken-engine/src/bad_module.rs".to_string(),
+        content: "fn connect() { let _ = sqlite3::open(\"test.db\"); }".to_string(),
+    }];
+    let report = evaluate_guard(&manifests, &sources, &[]);
+    assert!(report.violations.len() >= 2, "should have both dependency and usage violations");
+    assert!(
+        report.violations.iter().any(|v| v.error_code == "FE-SQLITE-DEPENDENCY-FORBIDDEN"),
+        "should have a dependency violation"
+    );
+    assert!(
+        report.violations.iter().any(|v| v.error_code == "FE-SQLITE-USAGE-FORBIDDEN"),
+        "should have a usage violation"
+    );
+}
+
+// ---------- exception with path wildcard ----------
+
+#[test]
+fn sqlite_path_wildcard_exception_covers_subtree() {
+    let sources = vec![
+        SourceInput {
+            path: "crates/franken-engine/src/legacy/old_db.rs".to_string(),
+            content: "use rusqlite::Connection;\n".to_string(),
+        },
+        SourceInput {
+            path: "crates/franken-engine/src/legacy/old_schema.rs".to_string(),
+            content: "use rusqlite::params;\n".to_string(),
+        },
+    ];
+    let exception_docs = vec![ExceptionDocumentInput {
+        path: "docs/adr/exceptions/ADR-EXCEPTION-SQLITE-0002.md".to_string(),
+        content: "Status: Approved\nScope: path:crates/franken-engine/src/legacy/*\n".to_string(),
+    }];
+    let report = evaluate_guard(&[], &sources, &exception_docs);
+    assert!(
+        report.violations.is_empty(),
+        "wildcard path exception should cover all files under the subtree"
+    );
+}
+
+// ---------- PolicyGuardEvent serde ----------
+
+#[test]
+fn sqlite_policy_guard_event_serde_roundtrip() {
+    let event = PolicyGuardEvent {
+        trace_id: "trace-sqlite-policy-0001".to_string(),
+        decision_id: "decision-0001".to_string(),
+        policy_id: POLICY_ID.to_string(),
+        component: COMPONENT.to_string(),
+        event: "dependency_scan".to_string(),
+        outcome: "fail".to_string(),
+        error_code: Some("FE-SQLITE-DEPENDENCY-FORBIDDEN".to_string()),
+        subject: "rusqlite".to_string(),
+        detail: "test detail".to_string(),
+    };
+    let json = serde_json::to_string(&event).expect("serialize event");
+    let recovered: serde_json::Value = serde_json::from_str(&json).expect("parse event json");
+    assert_eq!(recovered["trace_id"], "trace-sqlite-policy-0001");
+    assert_eq!(recovered["error_code"], "FE-SQLITE-DEPENDENCY-FORBIDDEN");
+    assert_eq!(recovered["policy_id"], POLICY_ID);
+    assert_eq!(recovered["component"], COMPONENT);
+
+    // Also verify null error_code path
+    let pass_event = PolicyGuardEvent {
+        error_code: None,
+        outcome: "pass".to_string(),
+        ..event
+    };
+    let pass_json = serde_json::to_string(&pass_event).expect("serialize pass event");
+    let pass_recovered: serde_json::Value = serde_json::from_str(&pass_json).expect("parse pass json");
+    assert!(pass_recovered["error_code"].is_null());
+}

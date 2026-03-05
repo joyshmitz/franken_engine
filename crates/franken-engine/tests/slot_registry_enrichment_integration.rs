@@ -484,3 +484,21 @@ fn json_fields_ga_release_guard_config() {
         );
     }
 }
+
+#[test]
+fn slot_registry_debug_is_nonempty() {
+    let registry = SlotRegistry::new();
+    assert!(!format!("{registry:?}").is_empty());
+}
+
+#[test]
+fn ga_release_guard_config_debug_is_nonempty() {
+    let config = GaReleaseGuardConfig::default();
+    assert!(!format!("{config:?}").is_empty());
+}
+
+#[test]
+fn slot_replacement_signal_debug_is_nonempty() {
+    let signal = SlotReplacementSignal::default();
+    assert!(!format!("{signal:?}").is_empty());
+}

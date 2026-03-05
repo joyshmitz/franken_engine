@@ -756,3 +756,80 @@ fn rgc_060_gate_runner_scripts_exist() {
         contract.gate_runner.replay_wrapper
     );
 }
+
+// ---------- regression_millionths 50% regression ----------
+
+#[test]
+fn rgc_060_regression_millionths_fifty_percent() {
+    // 50% regression: (150_000 - 100_000) / 100_000 = 0.5 = 500_000 millionths
+    assert_eq!(regression_millionths(100_000, 150_000), 500_000);
+}
+
+// ---------- failure scenario exit codes are all nonzero ----------
+
+#[test]
+fn rgc_060_failure_scenarios_exit_codes_are_nonzero() {
+    let contract = parse_contract();
+    for scenario in &contract.failure_scenarios {
+        assert_ne!(
+            scenario.expected_exit_code, 0,
+            "failure scenario {} should have nonzero exit code",
+            scenario.scenario_id
+        );
+    }
+}
+
+// ---------- failure scenarios all have failure path_type ----------
+
+#[test]
+fn rgc_060_failure_scenarios_all_have_failure_path_type() {
+    let contract = parse_contract();
+    for scenario in &contract.failure_scenarios {
+        assert_eq!(
+            scenario.path_type, "failure",
+            "scenario {} should have 'failure' path_type",
+            scenario.scenario_id
+        );
+    }
+}
+
+// ---------- operator_verification entries are nonempty ----------
+
+#[test]
+fn rgc_060_operator_verification_entries_are_nonempty() {
+    let contract = parse_contract();
+    assert!(
+        !contract.operator_verification.is_empty(),
+        "operator_verification must have at least one entry"
+    );
+    for entry in &contract.operator_verification {
+        assert!(
+            !entry.trim().is_empty(),
+            "operator_verification entry must not be blank"
+        );
+    }
+}
+
+// ---------- evaluate_regression_gate with whitespace-only metadata hash ----------
+
+#[test]
+fn rgc_060_regression_gate_blocks_whitespace_only_metadata_hash() {
+    let contract = parse_contract();
+    let observations = vec![BenchmarkObservation {
+        workload_id: "whitespace_hash_test".to_string(),
+        baseline_ns: 100_000,
+        observed_ns: 101_000,
+        p_value_millionths: 10_000,
+        profiler_receipt_id: Some("receipt-ok".to_string()),
+        benchmark_metadata_hash: "   ".to_string(),
+    }];
+    let decision = evaluate_regression_gate(&observations, &contract.regression_thresholds);
+    assert_eq!(decision.outcome, "hold");
+    assert!(
+        decision
+            .findings
+            .iter()
+            .any(|f| f.error_code == "FE-RGC-060-INTEGRITY-0004"),
+        "whitespace-only metadata hash should trigger integrity finding"
+    );
+}

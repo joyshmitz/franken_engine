@@ -397,3 +397,24 @@ fn full_lifecycle_registry_lookup() {
     let back: ErrorCodeEntry = serde_json::from_str(&json).unwrap();
     assert_eq!(&back, entry);
 }
+
+#[test]
+fn error_code_registry_debug_is_nonempty() {
+    let registry = error_code_registry();
+    assert!(!format!("{registry:?}").is_empty());
+}
+
+#[test]
+fn error_code_entry_debug_is_nonempty() {
+    let registry = error_code_registry();
+    let entry = registry.entries.first().expect("registry must have entries");
+    assert!(!format!("{entry:?}").is_empty());
+}
+
+#[test]
+fn error_code_registry_serde_is_deterministic() {
+    let registry = error_code_registry();
+    let a = serde_json::to_string(&registry).expect("first");
+    let b = serde_json::to_string(&registry).expect("second");
+    assert_eq!(a, b);
+}

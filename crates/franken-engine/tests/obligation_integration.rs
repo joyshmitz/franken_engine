@@ -540,3 +540,149 @@ fn obligation_error_codes_are_unique() {
     let codes: std::collections::BTreeSet<&str> = errors.iter().map(|e| e.error_code()).collect();
     assert_eq!(codes.len(), errors.len());
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: multi-operation ordering, abort-then-commit, region state edge
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn commit_after_abort_on_same_operation_fails() {
+    let mut cell = ExecutionCell::new("ext-abort-commit", CellKind::Extension, "trace-ac");
+    let mut tracker = ObligationTracker::default();
+    tracker
+        .begin_operation(
+            &mut cell,
+            "op-ac",
+            TwoPhaseCategory::StateMutation,
+            "abort then commit",
+        )
+        .expect("begin");
+    tracker
+        .abort_operation(&mut cell, "op-ac")
+        .expect("abort succeeds");
+    let err = tracker.commit_operation(&mut cell, "op-ac");
+    assert!(
+        err.is_err(),
+        "commit after abort on the same operation must fail"
+    );
+}
+
+#[test]
+fn multiple_operations_independent_lifecycle() {
+    let mut cell = ExecutionCell::new("ext-multi", CellKind::Extension, "trace-multi");
+    let mut tracker = ObligationTracker::default();
+    for idx in 0..5 {
+        tracker
+            .begin_operation(
+                &mut cell,
+                &format!("op-{idx}"),
+                TwoPhaseCategory::ResourceAlloc,
+                &format!("operation {idx}"),
+            )
+            .expect("begin");
+    }
+    // Commit even-numbered, abort odd-numbered
+    for idx in 0..5 {
+        if idx % 2 == 0 {
+            tracker
+                .commit_operation(&mut cell, &format!("op-{idx}"))
+                .expect("commit");
+        } else {
+            tracker
+                .abort_operation(&mut cell, &format!("op-{idx}"))
+                .expect("abort");
+        }
+    }
+    let stats = tracker.category_stats();
+    assert_eq!(stats[&TwoPhaseCategory::ResourceAlloc].started, 5);
+    assert_eq!(stats[&TwoPhaseCategory::ResourceAlloc].committed, 3);
+    assert_eq!(stats[&TwoPhaseCategory::ResourceAlloc].aborted, 2);
+    assert!(!tracker.has_leaks());
+}
+
+#[test]
+fn obligation_error_serde_round_trip_cell_not_running() {
+    let err = ObligationIntegrationError::CellNotRunning {
+        cell_id: "cell-serde".to_string(),
+        current_state: RegionState::Closed,
+    };
+    let json = serde_json::to_string(&err).expect("serialize");
+    let recovered: ObligationIntegrationError =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(format!("{err:?}"), format!("{recovered:?}"));
+}
+
+#[test]
+fn tracker_events_grow_with_each_operation() {
+    let mut cell = ExecutionCell::new("ext-evt", CellKind::Extension, "trace-evt");
+    let mut tracker = ObligationTracker::default();
+    let before = tracker.events().len();
+    tracker
+        .begin_operation(
+            &mut cell,
+            "evt-op",
+            TwoPhaseCategory::EvidenceCommit,
+            "evidence event",
+        )
+        .expect("begin");
+    let after_begin = tracker.events().len();
+    assert!(
+        after_begin > before,
+        "begin_operation must emit at least one event"
+    );
+    tracker
+        .commit_operation(&mut cell, "evt-op")
+        .expect("commit");
+    let after_commit = tracker.events().len();
+    assert!(
+        after_commit > after_begin,
+        "commit_operation must emit at least one event"
+    );
+}
+
+#[test]
+fn get_operation_returns_correct_phase_after_commit() {
+    let mut cell = ExecutionCell::new("ext-phase", CellKind::Extension, "trace-phase");
+    let mut tracker = ObligationTracker::default();
+    tracker
+        .begin_operation(
+            &mut cell,
+            "phase-op",
+            TwoPhaseCategory::PermissionGrant,
+            "check phase",
+        )
+        .expect("begin");
+    assert_eq!(
+        tracker.get_operation("phase-op").unwrap().phase,
+        OperationPhase::Phase1Active,
+    );
+    tracker
+        .commit_operation(&mut cell, "phase-op")
+        .expect("commit");
+    assert_eq!(
+        tracker.get_operation("phase-op").unwrap().phase,
+        OperationPhase::Committed,
+    );
+}
+
+#[test]
+fn obligation_tracker_debug_is_nonempty() {
+    let tracker = ObligationTracker::default();
+    assert!(!format!("{tracker:?}").is_empty());
+}
+
+#[test]
+fn operation_phase_debug_is_nonempty() {
+    let phase = OperationPhase::Aborted;
+    assert!(!format!("{phase:?}").is_empty());
+}
+
+#[test]
+fn obligation_error_serde_is_deterministic() {
+    let err = ObligationIntegrationError::OperationNotFound {
+        operation_id: "test".to_string(),
+    };
+    let a = serde_json::to_string(&err).expect("first");
+    let b = serde_json::to_string(&err).expect("second");
+    assert_eq!(a, b);
+}

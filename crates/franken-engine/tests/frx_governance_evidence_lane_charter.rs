@@ -319,3 +319,190 @@ fn governance_contract_schema_version_is_nonempty() {
         .expect("schema_version string");
     assert!(!sv.trim().is_empty());
 }
+
+// ---------- enrichment: deeper structural and cross-field checks ----------
+
+#[test]
+fn governance_contract_ownership_section_has_required_subsections() {
+    let path = repo_root().join("docs/frx_governance_evidence_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let ownership = &value["ownership"];
+    assert!(ownership.is_object(), "ownership must be an object");
+    for subsection in [
+        "schema_governance",
+        "policy_signing_and_verification",
+        "explainability_surfaces",
+    ] {
+        assert!(
+            ownership[subsection].is_object(),
+            "ownership missing subsection: {subsection}"
+        );
+    }
+    // policy signing must be fail-closed on errors
+    assert_eq!(
+        ownership["policy_signing_and_verification"]["fail_closed_on_signature_or_digest_error"]
+            .as_bool(),
+        Some(true),
+        "policy signing must fail closed on signature/digest errors"
+    );
+}
+
+#[test]
+fn governance_contract_serde_roundtrip_via_value() {
+    let path = repo_root().join("docs/frx_governance_evidence_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let reserialized = serde_json::to_string(&value).expect("re-serialize");
+    let reparsed: Value = serde_json::from_str(&reserialized).expect("re-parse");
+    assert_eq!(value, reparsed, "serde roundtrip must preserve all data");
+}
+
+#[test]
+fn governance_contract_release_gate_all_booleans_true() {
+    let path = repo_root().join("docs/frx_governance_evidence_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let gate = &value["release_gate_contract"];
+    assert!(gate.is_object());
+    // all release gate predicates must be true (fail-closed)
+    for (key, val) in gate.as_object().expect("release_gate_contract object") {
+        assert_eq!(
+            val.as_bool(),
+            Some(true),
+            "release_gate_contract.{key} must be true for fail-closed semantics"
+        );
+    }
+}
+
+#[test]
+fn governance_contract_logging_fields_are_superset_of_evidence_ledger_query_fields() {
+    let path = repo_root().join("docs/frx_governance_evidence_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+
+    let logging_fields: std::collections::BTreeSet<&str> = value["logging_contract"]["required_fields"]
+        .as_array()
+        .expect("logging required_fields array")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+
+    let query_fields: std::collections::BTreeSet<&str> = value["outputs"]["evidence_ledger"]["required_query_fields"]
+        .as_array()
+        .expect("evidence ledger query fields array")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+
+    // every query field must also appear in logging fields so evidence can be reconstructed from logs
+    for qf in &query_fields {
+        assert!(
+            logging_fields.contains(qf),
+            "evidence ledger query field '{qf}' missing from logging contract required_fields"
+        );
+    }
+}
+
+#[test]
+fn governance_contract_outputs_policy_conformance_report_has_required_fields() {
+    let path = repo_root().join("docs/frx_governance_evidence_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let pcr = &value["outputs"]["policy_conformance_report"];
+    assert!(pcr.is_object(), "policy_conformance_report must exist");
+    assert_eq!(pcr["required"].as_bool(), Some(true));
+    let fields = pcr["required_fields"]
+        .as_array()
+        .expect("required_fields array");
+    for expected in ["policy_id", "outcome", "signature_status"] {
+        assert!(
+            fields.iter().any(|f| f.as_str() == Some(expected)),
+            "policy_conformance_report missing field: {expected}"
+        );
+    }
+}
+
+// ---------- enrichment: deeper edge-case and structural tests ----------
+
+#[test]
+fn governance_charter_doc_references_explainability_surfaces() {
+    let path = repo_root().join("docs/FRX_GOVERNANCE_EVIDENCE_LANE_CHARTER_V1.md");
+    let doc = fs::read_to_string(&path).expect("read charter doc");
+    assert!(
+        doc.contains("explainability"),
+        "governance charter must reference explainability surfaces"
+    );
+}
+
+#[test]
+fn governance_contract_failure_policy_requires_incident_artifact() {
+    let path = repo_root().join("docs/frx_governance_evidence_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert_eq!(
+        value["failure_policy"]["incident_artifact_required"].as_bool(),
+        Some(true),
+        "failure_policy must require incident artifact"
+    );
+    assert_eq!(
+        value["failure_policy"]["block_promotion_until_revalidated"].as_bool(),
+        Some(true),
+        "failure_policy must block promotion until revalidated"
+    );
+}
+
+#[test]
+fn governance_contract_all_top_level_keys_are_present() {
+    let path = repo_root().join("docs/frx_governance_evidence_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let obj = value.as_object().expect("top-level must be object");
+    let keys: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+    for required_key in [
+        "schema_version",
+        "generated_by",
+        "generated_at_utc",
+        "lane",
+        "primary_bead",
+        "failure_policy",
+        "logging_contract",
+        "outputs",
+    ] {
+        assert!(
+            keys.contains(required_key),
+            "governance contract missing top-level key: {required_key}"
+        );
+    }
+}
+
+#[test]
+fn governance_charter_contains_no_todo_markers() {
+    let path = repo_root().join("docs/FRX_GOVERNANCE_EVIDENCE_LANE_CHARTER_V1.md");
+    let doc = fs::read_to_string(&path).expect("read charter doc");
+    let lower = doc.to_ascii_lowercase();
+    assert!(
+        !lower.contains("todo") && !lower.contains("fixme") && !lower.contains("xxx"),
+        "governance charter must not contain unresolved TODO/FIXME/XXX markers"
+    );
+}
+
+#[test]
+fn governance_contract_logging_required_fields_are_nonempty_strings() {
+    let path = repo_root().join("docs/frx_governance_evidence_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let fields = value["logging_contract"]["required_fields"]
+        .as_array()
+        .expect("required_fields array");
+    assert!(
+        !fields.is_empty(),
+        "logging required_fields must not be empty"
+    );
+    for field in fields {
+        assert!(
+            field.as_str().is_some_and(|s| !s.trim().is_empty()),
+            "each logging required_field must be a non-empty string"
+        );
+    }
+}

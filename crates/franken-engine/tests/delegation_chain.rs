@@ -861,3 +861,21 @@ fn chain_verify_method_matches_free_function() {
         proof_fn.authorized_capability
     );
 }
+
+#[test]
+fn chain_error_debug_is_nonempty() {
+    let err = ChainError::EmptyChain;
+    assert!(!format!("{err:?}").is_empty());
+}
+
+#[test]
+fn no_revocation_oracle_debug_is_nonempty() {
+    let oracle = NoRevocationOracle;
+    assert!(!format!("{oracle:?}").is_empty());
+}
+
+#[test]
+fn delegation_verification_context_debug_is_nonempty() {
+    let ctx = DelegationVerificationContext::default();
+    assert!(!format!("{ctx:?}").is_empty());
+}

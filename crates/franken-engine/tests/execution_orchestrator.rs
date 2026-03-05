@@ -397,3 +397,54 @@ fn execution_value_is_deterministic_across_configs() {
     assert_eq!(values[0], values[1]);
     assert_eq!(values[1], values[2]);
 }
+
+#[test]
+fn ledger_length_matches_execution_count() {
+    let mut orch = ExecutionOrchestrator::with_defaults();
+    for i in 0..5 {
+        let pkg = simple_package(&format!("ext-ledger-{i}"), "42");
+        orch.execute(&pkg).expect("execute");
+    }
+    assert_eq!(orch.execution_count(), 5);
+    assert!(
+        orch.ledger().len() >= 5,
+        "ledger should contain at least one entry per execution"
+    );
+}
+
+#[test]
+fn extension_package_with_many_capabilities_serde_round_trip() {
+    let pkg = ExtensionPackage {
+        extension_id: "ext-many-caps".to_string(),
+        source: "42".to_string(),
+        capabilities: (0..32).map(|i| format!("cap_{i}")).collect(),
+        version: "3.0.0".to_string(),
+        metadata: BTreeMap::from([
+            ("key1".to_string(), "val1".to_string()),
+            ("key2".to_string(), "val2".to_string()),
+        ]),
+    };
+    let json = serde_json::to_string(&pkg).expect("serialize");
+    let recovered: ExtensionPackage = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.capabilities.len(), 32);
+    assert_eq!(recovered.metadata.len(), 2);
+    assert_eq!(recovered.version, "3.0.0");
+}
+
+#[test]
+fn orchestrator_config_debug_is_nonempty() {
+    let config = OrchestratorConfig::default();
+    assert!(!format!("{config:?}").is_empty());
+}
+
+#[test]
+fn loss_matrix_preset_debug_is_nonempty() {
+    let preset = LossMatrixPreset::Balanced;
+    assert!(!format!("{preset:?}").is_empty());
+}
+
+#[test]
+fn orchestrator_error_debug_is_nonempty() {
+    let err = OrchestratorError::EmptySource;
+    assert!(!format!("{err:?}").is_empty());
+}

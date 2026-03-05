@@ -594,3 +594,99 @@ fn migration_step_serde_round_trip() {
         assert_eq!(step, recovered);
     }
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: terminal states, declaration accessor, events accessor, verification failure
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn migration_state_is_terminal_covers_all_terminal_and_non_terminal() {
+    let terminal = [
+        MigrationState::Committed,
+        MigrationState::RolledBack,
+        MigrationState::DryRunFailed,
+    ];
+    let non_terminal = [
+        MigrationState::Declared,
+        MigrationState::DryRunPassed,
+        MigrationState::Executing,
+        MigrationState::Verifying,
+        MigrationState::Verified,
+    ];
+    for state in terminal {
+        assert!(state.is_terminal(), "{state} should be terminal");
+    }
+    for state in non_terminal {
+        assert!(!state.is_terminal(), "{state} should not be terminal");
+    }
+}
+
+#[test]
+fn declaration_accessor_returns_original_declaration() {
+    let mut runner = MigrationRunner::new();
+    let decl = declaration("acc-1", CutoverType::ParallelRun);
+    runner.declare(decl.clone(), "t").unwrap();
+
+    let retrieved = runner.declaration("acc-1").expect("should find declaration");
+    assert_eq!(retrieved.migration_id, "acc-1");
+    assert_eq!(retrieved.cutover_type, CutoverType::ParallelRun);
+    assert_eq!(retrieved.from_version, "v1");
+    assert_eq!(retrieved.to_version, "v2");
+    assert_eq!(retrieved.compatible_across, decl.compatible_across);
+    assert_eq!(retrieved.incompatible_across, decl.incompatible_across);
+
+    // Nonexistent migration returns None
+    assert!(runner.declaration("nonexistent").is_none());
+}
+
+#[test]
+fn events_accessor_returns_accumulated_events_without_drain() {
+    let mut runner = MigrationRunner::new();
+    runner
+        .declare(declaration("ev-1", CutoverType::HardCutover), "trace-ev")
+        .unwrap();
+    runner
+        .dry_run("ev-1", pass_dry_run("ev-1"), "trace-ev")
+        .unwrap();
+
+    // events() should return accumulated events without consuming them
+    let events_snapshot = runner.events().to_vec();
+    assert!(events_snapshot.len() >= 2);
+    assert!(events_snapshot.iter().any(|e| e.event == "migration_declared"));
+    assert!(events_snapshot.iter().any(|e| e.event == "dry_run_complete"));
+
+    // Calling events() again returns same data (not drained)
+    assert_eq!(runner.events().len(), events_snapshot.len());
+
+    // drain_events() consumes them
+    let drained = runner.drain_events();
+    assert_eq!(drained.len(), events_snapshot.len());
+    assert!(runner.events().is_empty());
+}
+
+#[test]
+fn verification_with_discrepancies_blocks_commit() {
+    let mut runner = MigrationRunner::new();
+    runner
+        .declare(declaration("vf-1", CutoverType::HardCutover), "t")
+        .unwrap();
+    runner
+        .dry_run("vf-1", pass_dry_run("vf-1"), "t")
+        .unwrap();
+    runner.create_checkpoint("vf-1", 10, "t").unwrap();
+    runner.complete_execution("vf-1", 100, "t").unwrap();
+
+    let failed_verify = VerificationResult {
+        migration_id: "vf-1".to_string(),
+        objects_checked: 200,
+        discrepancies: 7,
+        details: vec!["7 objects mismatched after migration".to_string()],
+    };
+    assert!(!failed_verify.passed());
+
+    let err = runner.verify("vf-1", failed_verify, "t").unwrap_err();
+    assert!(
+        matches!(err, MigrationContractError::VerificationFailed { discrepancy_count: 7, .. }),
+        "expected VerificationFailed with 7 discrepancies, got: {err}"
+    );
+}

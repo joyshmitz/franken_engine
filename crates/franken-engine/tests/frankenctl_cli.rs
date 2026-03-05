@@ -929,3 +929,203 @@ fn frankenctl_benchmark_score_and_verify_bundle_round_trip() {
     let _ = fs::remove_file(verify_report_path);
     let _ = fs::remove_dir_all(bundle_dir);
 }
+
+// ── Replay trace serde roundtrip tests ────────────────────────────────
+
+#[test]
+fn frankenctl_replay_trace_serde_roundtrip_preserves_all_source_kinds() {
+    let trace_path = temp_path("frankenctl_replay_serde_all", "json");
+
+    let mut trace = NondeterminismTrace::new("session-serde-all-sources");
+    for (vts, source) in NondeterminismSource::ALL.iter().enumerate() {
+        trace.capture(source.clone(), vec![(vts as u8)], (vts as u64) + 1, "serde-test");
+    }
+    trace.finalise((NondeterminismSource::ALL.len() as u64) + 1);
+
+    let serialized = serde_json::to_vec_pretty(&trace).expect("trace should serialize");
+    fs::write(&trace_path, &serialized).expect("trace file should write");
+
+    let read_back = fs::read(&trace_path).expect("trace file should be readable");
+    let deserialized: NondeterminismTrace =
+        serde_json::from_slice(&read_back).expect("trace should deserialize");
+
+    assert_eq!(
+        deserialized.event_count(),
+        NondeterminismSource::ALL.len(),
+        "deserialized trace should preserve all source kind events"
+    );
+    assert!(deserialized.is_finalised());
+
+    // Verify the roundtripped trace replays successfully
+    let report_path = temp_path("frankenctl_replay_serde_all_report", "json");
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "replay",
+            "run",
+            "--trace",
+            trace_path.to_str().unwrap(),
+            "--mode",
+            "best-effort",
+            "--out",
+            report_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("replay should execute");
+
+    assert!(
+        output.status.success(),
+        "replay of roundtripped trace failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = parse_stdout_json(&output);
+    assert_eq!(
+        json["event_count"].as_u64(),
+        Some(NondeterminismSource::ALL.len() as u64)
+    );
+
+    let _ = fs::remove_file(trace_path);
+    let _ = fs::remove_file(report_path);
+}
+
+#[test]
+fn frankenctl_compile_empty_source_file_fails_with_structured_error() {
+    let source_path = temp_path("frankenctl_compile_empty", "js");
+    let artifact_path = temp_path("frankenctl_compile_empty_art", "json");
+    write_source(&source_path, "");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "compile",
+            "--input",
+            source_path.to_str().unwrap(),
+            "--out",
+            artifact_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("compile empty source should execute");
+
+    assert!(
+        !output.status.success(),
+        "compile of empty source should fail"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(
+        stderr.contains("[frankenctl"),
+        "error should include frankenctl prefix: {stderr}"
+    );
+    assert!(
+        stderr.contains("remediation:"),
+        "error should include remediation guidance: {stderr}"
+    );
+
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_file(artifact_path);
+}
+
+#[test]
+fn frankenctl_compile_deterministic_hashes_across_runs() {
+    let source_path = temp_path("frankenctl_compile_determ", "js");
+    let artifact_1 = temp_path("frankenctl_compile_determ_1", "json");
+    let artifact_2 = temp_path("frankenctl_compile_determ_2", "json");
+    write_source(&source_path, "const pi = 3;\n");
+
+    let run_compile = |art: &std::path::Path| -> serde_json::Value {
+        let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+            .args([
+                "compile",
+                "--input",
+                source_path.to_str().unwrap(),
+                "--out",
+                art.to_str().unwrap(),
+                "--trace-id",
+                "trace-determ",
+                "--decision-id",
+                "decision-determ",
+                "--policy-id",
+                "policy-determ",
+            ])
+            .output()
+            .expect("compile should execute");
+        assert!(output.status.success());
+        parse_stdout_json(&output)
+    };
+
+    let json1 = run_compile(&artifact_1);
+    let json2 = run_compile(&artifact_2);
+
+    assert_eq!(
+        json1["hashes"]["parse_event_ir"],
+        json2["hashes"]["parse_event_ir"],
+        "parse_event_ir hash must be deterministic across runs"
+    );
+    assert_eq!(
+        json1["hashes"]["ir0"],
+        json2["hashes"]["ir0"],
+        "ir0 hash must be deterministic across runs"
+    );
+
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_file(artifact_1);
+    let _ = fs::remove_file(artifact_2);
+}
+
+#[test]
+fn frankenctl_replay_empty_trace_completes_immediately() {
+    let trace_path = temp_path("frankenctl_replay_empty", "json");
+
+    let mut trace = NondeterminismTrace::new("session-empty");
+    trace.finalise(1);
+
+    fs::write(
+        &trace_path,
+        serde_json::to_vec_pretty(&trace).expect("trace should serialize"),
+    )
+    .expect("trace file should write");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "replay",
+            "run",
+            "--trace",
+            trace_path.to_str().unwrap(),
+            "--mode",
+            "strict",
+        ])
+        .output()
+        .expect("replay empty trace should execute");
+
+    assert!(
+        output.status.success(),
+        "replay empty trace failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = parse_stdout_json(&output);
+    assert_eq!(json["event_count"].as_u64(), Some(0));
+    assert_eq!(json["divergence_count"].as_u64(), Some(0));
+    assert_eq!(json["complete"].as_bool(), Some(true));
+
+    let _ = fs::remove_file(trace_path);
+}
+
+#[test]
+fn frankenctl_benchmark_verify_missing_bundle_dir_fails() {
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "benchmark",
+            "verify",
+            "--bundle",
+            "/tmp/nonexistent_bundle_dir_99999",
+        ])
+        .output()
+        .expect("benchmark verify with missing bundle should execute");
+
+    assert!(
+        !output.status.success(),
+        "benchmark verify should fail for missing bundle dir"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(
+        stderr.contains("[frankenctl"),
+        "error output should include frankenctl trace prefix: {stderr}"
+    );
+}

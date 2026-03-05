@@ -690,3 +690,96 @@ fn evaluate_gate_deterministic() {
     let eval2 = evaluate_gate(&fixture);
     assert_eq!(eval1, eval2);
 }
+
+// ---------- additional edge-case coverage ----------
+
+#[test]
+fn evaluate_gate_blockers_are_sorted_and_deduped() {
+    let mut fixture = make_fixture(vec![
+        make_drift("d2", "critical", "open", None),
+        make_drift("d1", "high", "open", None),
+        make_drift("d1_dup", "high", "open", None),
+    ]);
+    fixture.required_evidence_lanes = vec!["lane_z".to_string(), "lane_a".to_string()];
+    let eval = evaluate_gate(&fixture);
+
+    // Blockers must be sorted lexicographically
+    let sorted = {
+        let mut s = eval.blockers.clone();
+        s.sort();
+        s.dedup();
+        s
+    };
+    assert_eq!(eval.blockers, sorted, "blockers must be sorted and deduped");
+}
+
+#[test]
+fn collect_waiver_issues_accumulates_multiple_independent_issues() {
+    let bad_waiver_missing_fields = WaiverRecord {
+        waiver_id: "".to_string(),
+        approved_by: "".to_string(),
+        remediation_due_utc: "2027-06-01T00:00:00Z".to_string(),
+        rationale: "".to_string(),
+    };
+    let bad_waiver_invalid_date = WaiverRecord {
+        waiver_id: "w2".to_string(),
+        approved_by: "admin".to_string(),
+        remediation_due_utc: "2020-01-01T00:00:00Z".to_string(),
+        rationale: "reason".to_string(),
+    };
+    let fixture = make_fixture(vec![
+        make_drift("d1", "high", "waived", Some(bad_waiver_missing_fields)),
+        make_drift("d2", "low", "waived", Some(bad_waiver_invalid_date)),
+        make_drift("d3", "medium", "waived", None),
+    ]);
+    let issues = collect_waiver_issues(&fixture);
+    assert_eq!(issues.len(), 3);
+    assert!(issues.iter().any(|i| i.contains("d1") && i.contains("missing_fields")));
+    assert!(issues.iter().any(|i| i.contains("d2") && i.contains("invalid_due_date")));
+    assert!(issues.iter().any(|i| i.contains("d3") && i.contains("missing_record")));
+}
+
+#[test]
+fn evaluate_gate_failing_fixture_ids_are_sorted_and_deduped() {
+    let fixture = make_fixture(vec![
+        make_drift("d2", "critical", "open", None),
+        make_drift("d1", "high", "open", None),
+    ]);
+    let eval = evaluate_gate(&fixture);
+
+    let sorted = {
+        let mut s = eval.failing_fixture_ids.clone();
+        s.sort();
+        s.dedup();
+        s
+    };
+    assert_eq!(eval.failing_fixture_ids, sorted, "failing_fixture_ids must be sorted and deduped");
+}
+
+#[test]
+fn emit_structured_event_replay_pointers_are_deduplicated() {
+    let mut fixture = make_fixture(vec![
+        make_drift("d1", "low", "resolved", None),
+        make_drift("d2", "low", "resolved", None),
+    ]);
+    // Both drifts share the same replay_command from make_drift
+    fixture.evidence_vectors.push(EvidenceVector {
+        lane_id: "lane_a".to_string(),
+        status: "pass".to_string(),
+        artifact_manifest: "path/run_manifest.json".to_string(),
+        replay_command: "./scripts/e2e/replay.sh".to_string(),
+    });
+    let eval = evaluate_gate(&fixture);
+    let event = emit_structured_event(&fixture, &eval);
+    let pointers = event
+        .get("replay_pointers")
+        .and_then(serde_json::Value::as_array)
+        .expect("replay_pointers must be array");
+
+    // All three share "./scripts/e2e/replay.sh" so dedup via BTreeSet should yield 1
+    let unique: BTreeSet<&str> = pointers
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert_eq!(pointers.len(), unique.len(), "replay_pointers must already be deduplicated");
+}

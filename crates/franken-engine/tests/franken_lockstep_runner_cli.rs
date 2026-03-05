@@ -1229,3 +1229,75 @@ fn canonical_parser_hash_is_deterministic() {
         .canonical_hash();
     assert_eq!(h1, h2);
 }
+
+#[test]
+fn write_fixture_catalog_produces_valid_json_with_expected_schema() {
+    let path = temp_path("lockstep_catalog_json_check", "json");
+    write_fixture_catalog(&path);
+    let bytes = fs::read(&path).expect("read fixture catalog");
+    let catalog: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("fixture catalog must be valid json");
+    assert_eq!(
+        catalog["schema_version"].as_str(),
+        Some("franken-engine.parser-phase0.semantic-fixtures.v1")
+    );
+    assert!(
+        catalog["fixtures"].as_array().expect("fixtures array").len() >= 1,
+        "catalog must contain at least one fixture"
+    );
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn write_engine_specs_produces_array_with_two_entries() {
+    let path = temp_path("lockstep_engine_specs_check", "json");
+    write_engine_specs(&path);
+    let bytes = fs::read(&path).expect("read engine specs");
+    let specs: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("engine specs must be valid json");
+    let arr = specs.as_array().expect("engine specs should be an array");
+    assert_eq!(arr.len(), 2);
+    assert_eq!(arr[0]["engine_id"].as_str(), Some("franken_canonical"));
+    assert_eq!(arr[1]["engine_id"].as_str(), Some("fixture_expected_hash"));
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn read_jsonl_on_empty_file_returns_empty_vec() {
+    let path = temp_path("lockstep_empty_jsonl", "jsonl");
+    fs::write(&path, "").expect("write empty file");
+    let records = read_jsonl(&path);
+    assert!(records.is_empty());
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn read_jsonl_on_single_line_returns_one_record() {
+    let path = temp_path("lockstep_single_jsonl", "jsonl");
+    fs::write(&path, "{\"key\":\"value\"}\n").expect("write single-line jsonl");
+    let records = read_jsonl(&path);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["key"].as_str(), Some("value"));
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn runtime_specs_content_with_single_runtime_includes_one_block() {
+    let content = runtime_specs_content("sha256:abc", &["deno"]);
+    assert!(content.contains("franken-engine.lockstep-runtimes.v1"));
+    assert!(content.contains("deno"));
+    let deno_count = content.matches("runtime_id").count();
+    assert_eq!(deno_count, 1, "single runtime should produce one block");
+}
+
+#[test]
+fn lockstep_runner_missing_fixture_catalog_exits_nonzero() {
+    let output = Command::new(env!("CARGO_BIN_EXE_franken_lockstep_runner"))
+        .args([
+            "--fixture-catalog",
+            "/tmp/franken_lockstep_nonexistent_catalog_42.json",
+        ])
+        .output()
+        .expect("command should execute");
+    assert!(!output.status.success());
+}

@@ -679,3 +679,57 @@ fn full_lifecycle_synthesizer() {
     let back: SynthesisResult = serde_json::from_str(&json).unwrap();
     assert_eq!(back, result);
 }
+
+// ===========================================================================
+// 21. Too many rules returns error
+// ===========================================================================
+
+#[test]
+fn synthesizer_error_too_many_rules() {
+    let rules: Vec<SynthesisRule> = (0..257)
+        .map(|i| {
+            basic_rule(
+                &format!("r-{i}"),
+                EvidenceTrigger::PreemptiveActionRecommended,
+                BundleKind::SafeMode,
+            )
+        })
+        .collect();
+    let result = RollbackSafemodeSynthesizer::new(default_config(), rules, vec![]);
+    match result {
+        Err(SynthesizerError::TooManyRules { count, max }) => {
+            assert_eq!(count, 257);
+            assert!(max < 257);
+        }
+        other => panic!("expected TooManyRules, got {other:?}"),
+    }
+}
+
+// ===========================================================================
+// 22. Synthesizer determinism — same input produces identical result
+// ===========================================================================
+
+#[test]
+fn synthesizer_determinism_same_input_same_result() {
+    let rule = basic_rule(
+        "r-det",
+        EvidenceTrigger::CounterfactualImprovement {
+            min_improvement_millionths: 50_000,
+        },
+        BundleKind::Rollback,
+    );
+    let input = SynthesisInput {
+        replay_result: Some(make_replay_result(200_000, 950_000)),
+        scan_result: None,
+    };
+
+    let mut synth1 = RollbackSafemodeSynthesizer::new(default_config(), vec![rule.clone()], vec![]).unwrap();
+    let mut synth2 = RollbackSafemodeSynthesizer::new(default_config(), vec![rule], vec![]).unwrap();
+
+    let r1 = synth1.synthesize(&input).unwrap();
+    let r2 = synth2.synthesize(&input).unwrap();
+
+    let json1 = serde_json::to_string(&r1).unwrap();
+    let json2 = serde_json::to_string(&r2).unwrap();
+    assert_eq!(json1, json2, "identical inputs must produce identical serialized results");
+}

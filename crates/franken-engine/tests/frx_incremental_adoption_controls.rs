@@ -505,3 +505,175 @@ fn frx_07_4_doc_has_more_than_50_lines() {
     let doc = fs::read_to_string(&path).expect("read doc");
     assert!(doc.lines().count() > 50);
 }
+
+// ---------- enrichment: deeper edge-case and structural tests ----------
+
+#[test]
+fn frx_07_4_canary_flow_promote_chain_reaches_active() {
+    // Verify the promote transitions form a path from shadow to active
+    let contract = parse_contract();
+    let promotes: BTreeMap<&str, &str> = contract
+        .canary_flow
+        .allowed_transitions
+        .iter()
+        .filter(|t| t.kind == "promote")
+        .map(|t| (t.from.as_str(), t.to.as_str()))
+        .collect();
+    // Walk the promote chain from "shadow"
+    let mut current = "shadow";
+    let mut steps = 0;
+    while current != "active" {
+        current = promotes
+            .get(current)
+            .unwrap_or_else(|| panic!("no promote transition from '{current}'"));
+        steps += 1;
+        assert!(steps <= 10, "infinite promote chain detected");
+    }
+    assert!(
+        steps >= 2,
+        "promote chain must have at least 2 steps (shadow->...->active)"
+    );
+}
+
+#[test]
+fn frx_07_4_every_rollback_target_is_a_prior_promote_stage() {
+    // Rollback targets should only go to stages that appear earlier in the promote chain
+    let contract = parse_contract();
+    let stage_order: BTreeMap<&str, usize> = contract
+        .canary_flow
+        .stages
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.as_str(), i))
+        .collect();
+    for t in &contract.canary_flow.allowed_transitions {
+        if t.kind == "rollback" {
+            let from_idx = stage_order.get(t.from.as_str()).expect("from stage");
+            let to_idx = stage_order.get(t.to.as_str()).expect("to stage");
+            assert!(
+                to_idx < from_idx,
+                "rollback must go to an earlier stage: {} -> {} but {} >= {}",
+                t.from,
+                t.to,
+                to_idx,
+                from_idx
+            );
+        }
+    }
+}
+
+#[test]
+fn frx_07_4_migration_diagnostics_owner_lanes_are_nonempty_strings() {
+    let contract = parse_contract();
+    let mut lanes = BTreeSet::new();
+    for d in &contract.migration_diagnostics {
+        assert!(
+            !d.owner_lane.trim().is_empty(),
+            "owner_lane must not be empty for {}",
+            d.diagnostic_code
+        );
+        lanes.insert(d.owner_lane.as_str());
+    }
+    // at least one lane must own diagnostics
+    assert!(
+        !lanes.is_empty(),
+        "expected diagnostics owned by at least 1 lane, got 0"
+    );
+}
+
+#[test]
+fn frx_07_4_serde_roundtrip_via_pretty_print_preserves_contract() {
+    let contract = parse_contract();
+    let pretty = serde_json::to_string_pretty(&contract).expect("serialize pretty");
+    let recovered: AdoptionControlsContract =
+        serde_json::from_str(&pretty).expect("deserialize from pretty");
+    assert_eq!(contract, recovered);
+}
+
+#[test]
+fn frx_07_4_required_structured_log_fields_are_unique() {
+    let contract = parse_contract();
+    let fields = &contract.required_structured_log_fields;
+    let unique: BTreeSet<&str> = fields.iter().map(String::as_str).collect();
+    assert_eq!(
+        unique.len(),
+        fields.len(),
+        "duplicate structured log fields detected"
+    );
+}
+
+// ---------- enrichment: additional edge-case tests ----------
+
+#[test]
+fn frx_07_4_doc_contains_no_todo_markers() {
+    let path = repo_root().join("docs/FRX_INCREMENTAL_ADOPTION_CONTROLS_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    let lower = doc.to_ascii_lowercase();
+    assert!(
+        !lower.contains("todo") && !lower.contains("fixme") && !lower.contains("xxx"),
+        "adoption controls doc must not contain unresolved TODO/FIXME/XXX markers"
+    );
+}
+
+#[test]
+fn frx_07_4_all_policy_toggle_fallback_routes_are_known() {
+    let contract = parse_contract();
+    let known_routes: BTreeSet<&str> = [
+        "compatibility_fallback",
+        "deterministic_safe_mode",
+    ]
+    .into_iter()
+    .collect();
+    for (name, toggle) in &contract.policy_toggles {
+        assert!(
+            known_routes.contains(toggle.fallback_route.as_str()),
+            "toggle '{}' has unknown fallback_route '{}', expected one of {:?}",
+            name,
+            toggle.fallback_route,
+            known_routes
+        );
+    }
+}
+
+#[test]
+fn frx_07_4_canary_flow_has_at_least_one_rollback_transition() {
+    let contract = parse_contract();
+    let rollbacks: Vec<_> = contract
+        .canary_flow
+        .allowed_transitions
+        .iter()
+        .filter(|t| t.kind == "rollback")
+        .collect();
+    assert!(
+        rollbacks.len() >= 2,
+        "canary flow should have at least 2 rollback transitions for safety, got {}",
+        rollbacks.len()
+    );
+}
+
+#[test]
+fn frx_07_4_migration_diagnostic_target_milestones_are_nonempty() {
+    let contract = parse_contract();
+    for d in &contract.migration_diagnostics {
+        assert!(
+            !d.target_milestone.trim().is_empty(),
+            "target_milestone must not be empty for {}",
+            d.diagnostic_code
+        );
+    }
+}
+
+#[test]
+fn frx_07_4_operator_verification_commands_are_nonempty_strings() {
+    let contract = parse_contract();
+    assert!(
+        !contract.operator_verification.is_empty(),
+        "operator_verification must not be empty"
+    );
+    for cmd in &contract.operator_verification {
+        assert!(
+            !cmd.trim().is_empty(),
+            "operator_verification command must not be blank"
+        );
+    }
+}

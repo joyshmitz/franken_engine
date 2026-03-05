@@ -466,3 +466,12 @@ fn contract_thresholds_max_cv_is_positive() {
     let contract = parse_contract();
     assert!(contract.thresholds.max_cv_millionths > 0);
 }
+
+#[test]
+fn contract_thresholds_min_effect_size_is_positive() {
+    let contract = parse_contract();
+    assert!(
+        contract.thresholds.min_effect_size_millionths > 0,
+        "min effect size threshold must be positive"
+    );
+}

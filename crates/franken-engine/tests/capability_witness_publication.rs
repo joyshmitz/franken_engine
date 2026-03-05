@@ -630,3 +630,139 @@ fn witness_publication_config_serde_roundtrip() {
     let recovered: WitnessPublicationConfig = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(serde_json::to_string(&recovered).unwrap(), json);
 }
+
+// ---------- Multi-witness query and pipeline boundary tests ----------
+
+#[test]
+fn query_by_content_hash_filters_correctly() {
+    let synthesizer_key = synthesizer_signing_key();
+    let mut pipeline = build_pipeline();
+    let witness_a = build_promoted_witness(1_100, &synthesizer_key);
+    let witness_b = build_promoted_witness(1_101, &synthesizer_key);
+    let target_hash = witness_a.content_hash.clone();
+
+    pipeline
+        .publish_witness(witness_a, 10_000_000)
+        .expect("publish A");
+    pipeline
+        .publish_witness(witness_b, 10_100_000)
+        .expect("publish B");
+
+    let filtered = pipeline.query(&WitnessPublicationQuery {
+        extension_id: None,
+        policy_id: None,
+        epoch: None,
+        content_hash: Some(target_hash.clone()),
+        include_revoked: true,
+    });
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].witness.content_hash, target_hash);
+}
+
+#[test]
+fn pipeline_events_accumulate_across_multiple_publishes() {
+    let synthesizer_key = synthesizer_signing_key();
+    let mut pipeline = build_pipeline();
+
+    for seed in 1_200..1_205 {
+        let witness = build_promoted_witness(seed, &synthesizer_key);
+        pipeline
+            .publish_witness(witness, seed * 1_000)
+            .expect("publish");
+    }
+
+    assert_eq!(
+        pipeline.events().len(),
+        5,
+        "each publish should emit one event"
+    );
+    for event in pipeline.events() {
+        assert_eq!(event.event, "publish_witness");
+        assert_eq!(event.outcome, "success");
+    }
+}
+
+#[test]
+fn verify_artifact_rejects_wrong_synthesizer_key() {
+    let synthesizer_key = synthesizer_signing_key();
+    let mut pipeline = build_pipeline();
+    let witness = build_promoted_witness(1_300, &synthesizer_key);
+    pipeline
+        .publish_witness(witness, 11_000_000)
+        .expect("publish");
+
+    let artifact = &pipeline.publications()[0];
+    let wrong_key = SigningKey::from_bytes([0xFF; 32]);
+    let err = WitnessPublicationPipeline::verify_artifact(
+        artifact,
+        &wrong_key.verification_key(),
+        &tree_head_signing_key().verification_key(),
+    )
+    .expect_err("wrong synthesizer key must fail verification");
+
+    // Should be some kind of verification error (signature mismatch or hash mismatch)
+    let msg = format!("{err}");
+    assert!(!msg.is_empty(), "error must have a display message");
+}
+
+#[test]
+fn pipeline_publications_are_ordered_by_insertion() {
+    let synthesizer_key = synthesizer_signing_key();
+    let mut pipeline = build_pipeline();
+    let mut ids = Vec::new();
+    for seed in 1_400..1_403 {
+        let witness = build_promoted_witness(seed, &synthesizer_key);
+        let pub_id = pipeline
+            .publish_witness(witness, seed * 1_000)
+            .expect("publish");
+        ids.push(pub_id);
+    }
+
+    let publications = pipeline.publications();
+    assert_eq!(publications.len(), 3);
+    for (i, pub_artifact) in publications.iter().enumerate() {
+        assert_eq!(
+            pub_artifact.publication_id, ids[i],
+            "publications must preserve insertion order"
+        );
+    }
+}
+
+#[test]
+fn witness_publication_error_variants_display_distinctly() {
+    let err_a = WitnessPublicationError::WitnessNotPromoted {
+        state: LifecycleState::Draft,
+    };
+    let err_b = WitnessPublicationError::EmptyRevocationReason;
+    let err_c = WitnessPublicationError::LogEntryHashMismatch;
+
+    let msgs: BTreeSet<String> = [err_a, err_b, err_c]
+        .iter()
+        .map(|e| format!("{e}"))
+        .collect();
+    assert_eq!(
+        msgs.len(),
+        3,
+        "distinct error variants must produce distinct messages"
+    );
+}
+
+#[test]
+fn witness_publication_pipeline_debug_is_nonempty() {
+    let pipeline = build_pipeline();
+    assert!(!format!("{pipeline:?}").is_empty());
+}
+
+#[test]
+fn witness_publication_query_debug_is_nonempty() {
+    let query = WitnessPublicationQuery::all();
+    assert!(!format!("{query:?}").is_empty());
+}
+
+#[test]
+fn witness_publication_config_serde_is_deterministic() {
+    let config = WitnessPublicationConfig::default();
+    let a = serde_json::to_string(&config).expect("first");
+    let b = serde_json::to_string(&config).expect("second");
+    assert_eq!(a, b);
+}

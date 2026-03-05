@@ -394,3 +394,131 @@ fn trust_zone_error_is_std_error() {
     let dyn_err: &dyn std::error::Error = &err;
     assert!(!dyn_err.to_string().is_empty());
 }
+
+// ---------- Additional edge-case and boundary tests ----------
+
+#[test]
+fn authority_reference_across_different_zones_is_always_denied() {
+    let hierarchy = ZoneHierarchy::standard("test-maintainer", 1).expect("hierarchy");
+    let mut checker = CrossZoneReferenceChecker::new();
+    // Authority from any zone to any other zone should be denied
+    let pairs = [
+        ("community", "private"),
+        ("team", "community"),
+        ("private", "team"),
+    ];
+    for (from, to) in pairs {
+        let err = hierarchy
+            .validate_cross_zone_reference(
+                &mut checker,
+                CrossZoneReferenceRequest::new(
+                    from,
+                    to,
+                    ReferenceType::Authority,
+                    &format!("trace-auth-{from}-{to}"),
+                ),
+            )
+            .expect_err(&format!("authority from {from} to {to} must be denied"));
+        assert!(
+            matches!(err, TrustZoneError::CrossZoneAuthorityLeak { .. }),
+            "expected CrossZoneAuthorityLeak for {from} -> {to}, got: {err}"
+        );
+    }
+}
+
+#[test]
+fn duplicate_entity_assignment_to_same_zone_does_not_error() {
+    let mut hierarchy = ZoneHierarchy::standard("test-maintainer", 1).expect("hierarchy");
+    hierarchy
+        .assign_entity("ext-dup", "community", "trace-dup-1")
+        .expect("first assign should succeed");
+    // Assigning the same entity again to the same zone should be idempotent or succeed
+    hierarchy
+        .assign_entity("ext-dup", "community", "trace-dup-2")
+        .expect("second assign to same zone should succeed");
+}
+
+#[test]
+fn capset_deduplicates_identical_capabilities() {
+    let set = capset(&[
+        RuntimeCapability::VmDispatch,
+        RuntimeCapability::VmDispatch,
+        RuntimeCapability::VmDispatch,
+    ]);
+    assert_eq!(set.len(), 1, "BTreeSet must deduplicate identical capabilities");
+    assert!(set.contains(&RuntimeCapability::VmDispatch));
+}
+
+#[test]
+fn zone_hierarchy_serde_roundtrip_after_entity_assignment() {
+    let mut hierarchy = ZoneHierarchy::standard("test-maintainer", 1).expect("hierarchy");
+    hierarchy
+        .assign_entity("ext-persist", "team", "trace-persist")
+        .expect("assign");
+
+    let json = serde_json::to_string(&hierarchy).expect("serialize");
+    let recovered: ZoneHierarchy = serde_json::from_str(&json).expect("deserialize");
+    let recovered_json = serde_json::to_string(&recovered).expect("re-serialize");
+    assert_eq!(json, recovered_json, "serde roundtrip must be stable after entity assignment");
+}
+
+#[test]
+fn provenance_allowance_is_directional() {
+    let hierarchy = ZoneHierarchy::standard("test-maintainer", 1).expect("hierarchy");
+    let mut checker = CrossZoneReferenceChecker::new();
+    // Allow community -> team but NOT team -> community
+    checker.allow_provenance("community", "team");
+
+    hierarchy
+        .validate_cross_zone_reference(
+            &mut checker,
+            CrossZoneReferenceRequest::new(
+                "community",
+                "team",
+                ReferenceType::Provenance,
+                "trace-fwd",
+            ),
+        )
+        .expect("community -> team provenance should succeed");
+
+    let err = hierarchy
+        .validate_cross_zone_reference(
+            &mut checker,
+            CrossZoneReferenceRequest::new(
+                "team",
+                "community",
+                ReferenceType::Provenance,
+                "trace-rev",
+            ),
+        )
+        .expect_err("team -> community provenance must be denied (not allowed)");
+    assert!(matches!(
+        err,
+        TrustZoneError::CrossZoneProvenanceNotPermitted { .. }
+    ));
+}
+
+#[test]
+fn zone_hierarchy_debug_is_nonempty() {
+    let hierarchy = ZoneHierarchy::standard("test-debug", 1).expect("hierarchy");
+    assert!(!format!("{hierarchy:?}").is_empty());
+}
+
+#[test]
+fn zone_hierarchy_serde_is_deterministic() {
+    let hierarchy = ZoneHierarchy::standard("test-det", 1).expect("hierarchy");
+    let a = serde_json::to_string(&hierarchy).expect("first");
+    let b = serde_json::to_string(&hierarchy).expect("second");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn zone_hierarchy_standard_serialized_length_exceeds_minimum() {
+    let hierarchy = ZoneHierarchy::standard("test-len", 1).expect("hierarchy");
+    let json = serde_json::to_string(&hierarchy).expect("serialize");
+    assert!(
+        json.len() > 50,
+        "serialized hierarchy should be >50 chars, got {}",
+        json.len()
+    );
+}

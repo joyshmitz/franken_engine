@@ -926,3 +926,108 @@ fn severity_parse_roundtrip_weight_consistency() {
         assert_eq!(severity.weight(), expected_weight, "weight mismatch for {label}");
     }
 }
+
+#[test]
+fn rank_open_risks_excludes_mitigated_risks() {
+    let risks = vec![
+        ResidualRisk {
+            risk_id: "r-open".into(),
+            severity: "high".into(),
+            likelihood_millionths: 500_000,
+            impact_millionths: 400_000,
+            owner: "owner-a".into(),
+            mitigation: "m1".into(),
+            trigger_threshold: "t1".into(),
+            rollback_trigger_id: "trig-1".into(),
+            status: "open".into(),
+        },
+        ResidualRisk {
+            risk_id: "r-mitigated".into(),
+            severity: "critical".into(),
+            likelihood_millionths: 900_000,
+            impact_millionths: 900_000,
+            owner: "owner-b".into(),
+            mitigation: "m2".into(),
+            trigger_threshold: "t2".into(),
+            rollback_trigger_id: "trig-2".into(),
+            status: "mitigated".into(),
+        },
+    ];
+    let ranked = rank_open_risks(&risks);
+    assert_eq!(ranked.len(), 1, "only open risks should be ranked");
+    assert_eq!(ranked[0].risk_id, "r-open");
+}
+
+#[test]
+fn compute_risk_register_hash_empty_slice_is_deterministic() {
+    let a = compute_risk_register_hash(&[]);
+    let b = compute_risk_register_hash(&[]);
+    assert_eq!(a, b);
+    assert!(a.starts_with("sha256:"));
+    // Empty slice should still produce a valid hash (of `[]`)
+    assert!(a.len() > "sha256:".len());
+}
+
+#[test]
+fn readiness_event_serde_roundtrip_preserves_all_fields() {
+    let fixture = load_fixture();
+    let evaluation = evaluate_dossier(&fixture);
+    let event = emit_structured_event(&fixture, &evaluation);
+    let json = serde_json::to_string(&event).expect("serialize event");
+    let map: BTreeMap<String, serde_json::Value> =
+        serde_json::from_str(&json).expect("deserialize event as map");
+    // Verify key fields survive roundtrip
+    assert_eq!(map["schema_version"].as_str().unwrap(), event.schema_version);
+    assert_eq!(map["trace_id"].as_str().unwrap(), event.trace_id);
+    assert_eq!(map["component"].as_str().unwrap(), event.component);
+    assert_eq!(map["outcome"].as_str().unwrap(), event.outcome);
+    assert_eq!(
+        map["blocked_dependency_count"].as_u64().unwrap(),
+        event.blocked_dependency_count as u64
+    );
+    assert_eq!(
+        map["hold_reason_count"].as_u64().unwrap(),
+        event.hold_reason_count as u64
+    );
+    assert_eq!(
+        map["fail_reason_count"].as_u64().unwrap(),
+        event.fail_reason_count as u64
+    );
+}
+
+#[test]
+#[should_panic(expected = "unknown verification outcome")]
+fn verification_outcome_parse_panics_on_unknown() {
+    VerificationOutcome::parse("bogus");
+}
+
+#[test]
+fn risk_register_hash_changes_when_risk_data_changes() {
+    let fixture = load_fixture();
+    let original_hash = compute_risk_register_hash(&fixture.residual_risks);
+
+    // Create a modified copy with a different likelihood value
+    let mut modified_risks: Vec<ResidualRisk> = Vec::new();
+    for (i, risk) in fixture.residual_risks.iter().enumerate() {
+        modified_risks.push(ResidualRisk {
+            risk_id: risk.risk_id.clone(),
+            severity: risk.severity.clone(),
+            likelihood_millionths: if i == 0 {
+                risk.likelihood_millionths.wrapping_add(1).min(1_000_000)
+            } else {
+                risk.likelihood_millionths
+            },
+            impact_millionths: risk.impact_millionths,
+            owner: risk.owner.clone(),
+            mitigation: risk.mitigation.clone(),
+            trigger_threshold: risk.trigger_threshold.clone(),
+            rollback_trigger_id: risk.rollback_trigger_id.clone(),
+            status: risk.status.clone(),
+        });
+    }
+    let modified_hash = compute_risk_register_hash(&modified_risks);
+    assert_ne!(
+        original_hash, modified_hash,
+        "hash must change when risk data changes"
+    );
+}

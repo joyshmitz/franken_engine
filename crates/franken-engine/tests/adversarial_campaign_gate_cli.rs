@@ -376,3 +376,121 @@ fn unique_temp_path_generates_distinct_paths() {
     let b = unique_temp_path("test-distinct-b");
     assert_ne!(a, b);
 }
+
+// ---------- CLI error handling and fixture invariants ----------
+
+#[test]
+fn suppression_gate_cli_exits_nonzero_for_missing_input_file() {
+    let output = Command::new(env!("CARGO_BIN_EXE_franken_adversarial_campaign_gate"))
+        .arg("--input")
+        .arg("/tmp/nonexistent_adversarial_input_999999.json")
+        .output()
+        .expect("should execute suppression gate CLI");
+
+    assert!(
+        !output.status.success(),
+        "CLI must fail when input file does not exist"
+    );
+}
+
+#[test]
+fn suppression_gate_cli_exits_nonzero_for_invalid_json_input() {
+    let bad_input_path = unique_temp_path("franken-adv-bad-json");
+    fs::write(&bad_input_path, b"{ this is not valid json }").expect("write bad json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_franken_adversarial_campaign_gate"))
+        .arg("--input")
+        .arg(&bad_input_path)
+        .output()
+        .expect("should execute suppression gate CLI");
+
+    assert!(
+        !output.status.success(),
+        "CLI must fail on malformed JSON input"
+    );
+
+    let _ = fs::remove_file(bad_input_path);
+}
+
+#[test]
+fn adversarial_gate_fixture_serde_roundtrip_preserves_structure() {
+    let bytes = fs::read(fixture_path()).expect("read fixture");
+    let parsed: serde_json::Value = serde_json::from_slice(&bytes).expect("parse fixture");
+    let re_encoded = serde_json::to_vec_pretty(&parsed).expect("re-encode fixture");
+    let re_parsed: serde_json::Value =
+        serde_json::from_slice(&re_encoded).expect("re-parse fixture");
+    assert_eq!(parsed, re_parsed, "serde roundtrip must preserve fixture");
+}
+
+#[test]
+fn adversarial_gate_fixture_escalations_reference_existing_campaigns() {
+    let bytes = fs::read(fixture_path()).expect("read fixture");
+    let fixture: serde_json::Value = serde_json::from_slice(&bytes).expect("parse fixture");
+
+    let sample_ids: std::collections::BTreeSet<String> = fixture["samples"]
+        .as_array()
+        .expect("samples array")
+        .iter()
+        .map(|s| s["campaign_id"].as_str().unwrap().to_string())
+        .collect();
+
+    let escalations = fixture["escalations"]
+        .as_array()
+        .expect("escalations array");
+    for esc in escalations {
+        let esc_campaign_id = esc["campaign_id"]
+            .as_str()
+            .expect("escalation campaign_id");
+        assert!(
+            sample_ids.contains(esc_campaign_id),
+            "escalation references unknown campaign_id: {esc_campaign_id}"
+        );
+    }
+}
+
+#[test]
+fn adversarial_gate_fixture_all_attempt_counts_are_positive() {
+    let bytes = fs::read(fixture_path()).expect("read fixture");
+    let fixture: serde_json::Value = serde_json::from_slice(&bytes).expect("parse fixture");
+    let samples = fixture["samples"].as_array().expect("samples array");
+    for sample in samples {
+        let attempt_count = sample["attempt_count"].as_u64().expect("attempt_count u64");
+        assert!(
+            attempt_count > 0,
+            "attempt_count must be positive for campaign {}",
+            sample["campaign_id"]
+        );
+        let success_count = sample["success_count"].as_u64().expect("success_count u64");
+        assert!(
+            success_count <= attempt_count,
+            "success_count must not exceed attempt_count for campaign {}",
+            sample["campaign_id"]
+        );
+    }
+}
+
+#[test]
+fn adversarial_gate_fixture_raw_length_exceeds_100() {
+    let raw = fs::read_to_string(fixture_path()).expect("read fixture");
+    assert!(
+        raw.len() > 100,
+        "fixture raw length should be >100 bytes, got {}",
+        raw.len()
+    );
+}
+
+#[test]
+fn fixture_path_parent_directory_exists() {
+    let path = fixture_path();
+    let parent = path.parent().expect("fixture path must have parent");
+    assert!(parent.exists(), "fixture parent directory must exist");
+}
+
+#[test]
+fn adversarial_gate_fixture_pretty_printed_is_deterministic() {
+    let raw = fs::read_to_string(fixture_path()).expect("read fixture");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("parse");
+    let a = serde_json::to_string_pretty(&value).expect("first");
+    let b = serde_json::to_string_pretty(&value).expect("second");
+    assert_eq!(a, b);
+}

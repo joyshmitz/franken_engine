@@ -683,3 +683,192 @@ fn frx_09_2_operator_verification_commands_are_all_nonempty() {
         );
     }
 }
+
+// ---------- enrichment: deeper structural and edge-case checks ----------
+
+#[test]
+fn frx_09_2_ga_stage_requires_all_channels() {
+    let contract = parse_contract();
+    let ga = contract
+        .stage_checklists
+        .iter()
+        .find(|c| c.stage == "ga")
+        .expect("ga checklist must exist");
+    let all_channel_ids: BTreeSet<&str> = contract
+        .release_packet_channels
+        .iter()
+        .map(|ch| ch.channel_id.as_str())
+        .collect();
+    let ga_channel_ids: BTreeSet<&str> = ga
+        .required_channels
+        .iter()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        ga_channel_ids, all_channel_ids,
+        "GA stage must require every declared release packet channel"
+    );
+}
+
+#[test]
+fn frx_09_2_alpha_stage_channels_are_subset_of_beta() {
+    let contract = parse_contract();
+    let alpha = contract
+        .stage_checklists
+        .iter()
+        .find(|c| c.stage == "alpha")
+        .expect("alpha checklist");
+    let beta = contract
+        .stage_checklists
+        .iter()
+        .find(|c| c.stage == "beta")
+        .expect("beta checklist");
+    let alpha_set: BTreeSet<&str> = alpha
+        .required_channels
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let beta_set: BTreeSet<&str> = beta
+        .required_channels
+        .iter()
+        .map(String::as_str)
+        .collect();
+    assert!(
+        alpha_set.is_subset(&beta_set),
+        "alpha required_channels must be a subset of beta required_channels"
+    );
+}
+
+#[test]
+fn frx_09_2_channel_max_age_ns_are_all_positive_and_bounded() {
+    let contract = parse_contract();
+    for channel in &contract.release_packet_channels {
+        assert!(
+            channel.max_age_ns > 0 && channel.max_age_ns <= 86_400_000_000_000,
+            "channel {} max_age_ns must be > 0 and <= 24h in nanoseconds, got {}",
+            channel.channel_id,
+            channel.max_age_ns
+        );
+    }
+}
+
+#[test]
+fn frx_09_2_prerequisite_statuses_are_in_allowed_set() {
+    let contract = parse_contract();
+    let allowed: BTreeSet<&str> = ["open", "in_progress", "closed"].into_iter().collect();
+    for p in &contract.prerequisites {
+        assert!(
+            allowed.contains(p.status.as_str()),
+            "prerequisite {} has unexpected status '{}'; allowed: {:?}",
+            p.bead_id,
+            p.status,
+            allowed
+        );
+    }
+}
+
+#[test]
+fn frx_09_2_serde_roundtrip_via_pretty_print_preserves_contract() {
+    let contract = parse_contract();
+    let pretty = serde_json::to_string_pretty(&contract).expect("pretty serialize");
+    let deserialized: ReleaseOperationsGatebookContract =
+        serde_json::from_str(&pretty).expect("deserialize from pretty");
+    assert_eq!(contract, deserialized);
+}
+
+#[test]
+fn frx_09_2_beta_stage_channels_are_subset_of_ga() {
+    let contract = parse_contract();
+    let beta = contract
+        .stage_checklists
+        .iter()
+        .find(|c| c.stage == "beta")
+        .expect("beta checklist");
+    let ga = contract
+        .stage_checklists
+        .iter()
+        .find(|c| c.stage == "ga")
+        .expect("ga checklist");
+    let beta_set: BTreeSet<&str> = beta
+        .required_channels
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let ga_set: BTreeSet<&str> = ga
+        .required_channels
+        .iter()
+        .map(String::as_str)
+        .collect();
+    assert!(
+        beta_set.is_subset(&ga_set),
+        "beta required_channels must be a subset of GA required_channels"
+    );
+}
+
+#[test]
+fn frx_09_2_all_prerequisite_reasons_are_nonempty() {
+    let contract = parse_contract();
+    for p in &contract.prerequisites {
+        assert!(
+            !p.reason.trim().is_empty(),
+            "prerequisite {} must have a non-empty reason",
+            p.bead_id
+        );
+        assert!(
+            !p.bead_id.trim().is_empty(),
+            "prerequisite bead_id must not be empty"
+        );
+    }
+}
+
+#[test]
+fn frx_09_2_claim_publication_record_requires_bundle_links_and_digest() {
+    let contract = parse_contract();
+    assert!(
+        contract
+            .claim_publication_record
+            .require_reproducibility_bundle_links,
+        "claim_publication_record must require reproducibility bundle links"
+    );
+    assert!(
+        contract
+            .claim_publication_record
+            .require_release_packet_digest,
+        "claim_publication_record must require release packet digest"
+    );
+    assert!(
+        contract.claim_publication_record.block_on_incomplete_record,
+        "claim_publication_record must block on incomplete record"
+    );
+}
+
+#[test]
+fn frx_09_2_stage_checklist_publication_modes_are_valid() {
+    let contract = parse_contract();
+    let allowed_modes: BTreeSet<&str> = [
+        "internal_only",
+        "internal_and_external",
+        "full_public",
+    ]
+    .into_iter()
+    .collect();
+    for checklist in &contract.stage_checklists {
+        assert!(
+            allowed_modes.contains(checklist.publication_mode.as_str()),
+            "stage {} has unexpected publication_mode '{}'; allowed: {:?}",
+            checklist.stage,
+            checklist.publication_mode,
+            allowed_modes
+        );
+    }
+}
+
+#[test]
+fn frx_09_2_contract_track_name_contains_release_operations() {
+    let contract = parse_contract();
+    assert!(
+        contract.track.name.contains("Release Operations"),
+        "track.name must contain 'Release Operations', got '{}'",
+        contract.track.name
+    );
+}

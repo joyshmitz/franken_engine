@@ -662,3 +662,90 @@ fn fixture_deterministic_double_load() {
     assert_eq!(a.schema_version, b.schema_version);
     assert_eq!(a.contract_version, b.contract_version);
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: serde depth, event determinism, edge cases
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn structured_events_pass_cases_have_no_error_code() {
+    let fixture = load_fixture();
+    let events = emit_structured_events(&fixture);
+    for (event, case) in events.iter().zip(fixture.cases.iter()) {
+        let outcome = event["outcome"].as_str().unwrap();
+        if outcome == "pass" {
+            assert!(
+                event["error_code"].is_null(),
+                "pass-outcome event for case {} must have null error_code",
+                case.case_id
+            );
+        }
+    }
+}
+
+#[test]
+fn structured_events_fail_cases_have_error_code() {
+    let fixture = load_fixture();
+    let events = emit_structured_events(&fixture);
+    for (event, case) in events.iter().zip(fixture.cases.iter()) {
+        let outcome = event["outcome"].as_str().unwrap();
+        if outcome == "fail" {
+            assert!(
+                event["error_code"].as_str().is_some(),
+                "fail-outcome event for case {} must have non-null error_code",
+                case.case_id
+            );
+        }
+    }
+}
+
+#[test]
+fn parse_error_code_serde_round_trip() {
+    let codes = [
+        ParseErrorCode::EmptySource,
+        ParseErrorCode::InvalidGoal,
+        ParseErrorCode::UnsupportedSyntax,
+        ParseErrorCode::IoReadFailed,
+        ParseErrorCode::InvalidUtf8,
+        ParseErrorCode::SourceTooLarge,
+        ParseErrorCode::BudgetExceeded,
+    ];
+    for code in &codes {
+        let json = serde_json::to_string(code).expect("serialize");
+        let recovered: ParseErrorCode = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(*code, recovered);
+    }
+}
+
+#[test]
+fn materialization_error_code_serde_round_trip() {
+    let codes = [
+        ParseEventMaterializationErrorCode::ParseFailedEventStream,
+        ParseEventMaterializationErrorCode::StatementHashMismatch,
+        ParseEventMaterializationErrorCode::SourceHashMismatch,
+        ParseEventMaterializationErrorCode::AstHashMismatch,
+        ParseEventMaterializationErrorCode::MissingParseStarted,
+        ParseEventMaterializationErrorCode::InvalidEventSequence,
+        ParseEventMaterializationErrorCode::GoalMismatch,
+    ];
+    for code in &codes {
+        let json = serde_json::to_string(code).expect("serialize");
+        let recovered: ParseEventMaterializationErrorCode =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(*code, recovered);
+    }
+}
+
+#[test]
+fn parity_cases_all_have_tamper_kind_none() {
+    let fixture = load_fixture();
+    for case in &fixture.cases {
+        if case.expect_hash_parity {
+            assert_eq!(
+                case.tamper_kind, "none",
+                "parity case {} should have tamper_kind=none but got {}",
+                case.case_id, case.tamper_kind
+            );
+        }
+    }
+}

@@ -744,3 +744,211 @@ fn load_doc_has_more_than_50_lines() {
     let doc = load_doc();
     assert!(doc.lines().count() > 50);
 }
+
+// ---------- evaluate_gate edge cases ----------
+
+#[test]
+fn evaluate_gate_negative_delta_blocks_even_with_zero_threshold() {
+    // franken slower than peer: delta = 500_000 - 1_000_000 = -500_000 < 0
+    let fixture = minimal_fixture(500_000, 1_000_000, 100, 1, 1_500_000, 0);
+    let eval = evaluate_gate(&fixture);
+    assert_eq!(eval.outcome, "hold");
+    assert!(
+        eval.blocked_pairs
+            .iter()
+            .any(|b| b.contains("delta_below_threshold")),
+        "negative delta should trigger delta_below_threshold"
+    );
+    assert_eq!(eval.verified_pairs, 0);
+}
+
+#[test]
+fn evaluate_gate_evidence_lane_with_non_pass_status_blocks() {
+    let mut fixture = minimal_fixture(2_000_000, 1_000_000, 100, 500_000, 1_500_000, 500_000);
+    fixture.required_evidence_lanes = vec!["lane_a".to_string()];
+    fixture.evidence_vectors.push(EvidenceVector {
+        lane_id: "lane_a".to_string(),
+        status: "fail".to_string(),
+        artifact_manifest: "path/run_manifest.json".to_string(),
+        replay_command: "./scripts/e2e/replay.sh".to_string(),
+    });
+    let eval = evaluate_gate(&fixture);
+    assert_eq!(eval.outcome, "hold");
+    assert!(
+        eval.blocked_pairs
+            .iter()
+            .any(|b| b.contains("evidence_not_green:lane_a:fail")),
+        "evidence lane with fail status should block"
+    );
+}
+
+#[test]
+fn evaluate_gate_telemetry_protocol_drift_blocks() {
+    let mut fixture = minimal_fixture(2_000_000, 1_000_000, 100, 500_000, 1_500_000, 500_000);
+    fixture.telemetry_artifacts.push(TelemetryArtifact {
+        artifact_id: "art-drift".to_string(),
+        manifest_path: "path/run_manifest.json".to_string(),
+        protocol_hash: "sha256:different_hash".to_string(),
+        reproducible: true,
+        replay_command: "./scripts/e2e/replay.sh".to_string(),
+    });
+    let eval = evaluate_gate(&fixture);
+    assert_eq!(eval.outcome, "hold");
+    assert!(
+        eval.blocked_pairs
+            .iter()
+            .any(|b| b.contains("telemetry_protocol_drift:art-drift")),
+        "telemetry with mismatched protocol hash should block"
+    );
+}
+
+// ---------- emit_structured_event field coverage ----------
+
+#[test]
+fn emit_structured_event_contains_corpus_and_quantile_inventories() {
+    let fixture = minimal_fixture(2_000_000, 1_000_000, 100, 500_000, 1_500_000, 500_000);
+    let eval = evaluate_gate(&fixture);
+    let event = emit_structured_event(&fixture, &eval);
+
+    let corpus_inv = event["corpus_inventory"]
+        .as_array()
+        .expect("corpus_inventory should be an array");
+    assert!(
+        corpus_inv.iter().any(|v| v == "corpus-1"),
+        "corpus inventory must contain rows' corpus_id"
+    );
+
+    let quantile_inv = event["quantile_inventory"]
+        .as_array()
+        .expect("quantile_inventory should be an array");
+    assert!(
+        quantile_inv.iter().any(|v| v == "p50"),
+        "quantile inventory must reflect required_quantiles"
+    );
+}
+
+// ---------- fixture benchmark rows deterministic ordering ----------
+
+#[test]
+fn evaluate_gate_deterministic_blocker_ordering_for_multiple_pairs() {
+    let protocol_hash = "sha256:abc123".to_string();
+    let fixture = ParserPerformancePromotionGateFixture {
+        schema_version: "franken-engine.parser-performance-promotion-gate.v1".to_string(),
+        gate_version: "1.0.0".to_string(),
+        protocol_version: "1.0".to_string(),
+        protocol_hash: protocol_hash.clone(),
+        required_peers: vec!["peer-a".to_string(), "peer-b".to_string()],
+        required_quantiles: vec!["p50".to_string(), "p99".to_string()],
+        minimum_delta_millionths_by_quantile: {
+            let mut m = BTreeMap::new();
+            m.insert("p50".to_string(), 0);
+            m.insert("p99".to_string(), 0);
+            m
+        },
+        required_evidence_lanes: vec![],
+        required_structured_log_keys: vec![],
+        evidence_vectors: vec![],
+        telemetry_artifacts: vec![],
+        benchmark_rows: vec![],
+        expected_gate: ExpectedGate {
+            expected_outcome: String::new(),
+            expected_blocked_pairs: vec![],
+            expected_failing_workload_ids: vec![],
+            expected_verified_pairs: 0,
+        },
+        replay_scenarios: vec![],
+    };
+    let eval1 = evaluate_gate(&fixture);
+    let eval2 = evaluate_gate(&fixture);
+    assert_eq!(
+        eval1.blocked_pairs, eval2.blocked_pairs,
+        "blocker ordering must be deterministic across runs"
+    );
+    // All pairs are missing, so we should see 4 missing_pair blockers
+    assert_eq!(eval1.blocked_pairs.len(), 4);
+    assert!(
+        eval1
+            .blocked_pairs
+            .iter()
+            .all(|b| b.contains("missing_pair")),
+        "all blockers should be missing_pair for empty rows"
+    );
+}
+
+#[test]
+fn emit_structured_event_verified_pairs_field_matches_evaluation() {
+    let fixture = minimal_fixture(2_000_000, 1_000_000, 100, 500_000, 1_500_000, 500_000);
+    let eval = evaluate_gate(&fixture);
+    let event = emit_structured_event(&fixture, &eval);
+    assert_eq!(
+        event["verified_pairs"].as_u64().unwrap(),
+        eval.verified_pairs as u64
+    );
+}
+
+#[test]
+fn emit_structured_event_replay_pointers_are_deduped_and_sorted() {
+    let mut fixture = minimal_fixture(2_000_000, 1_000_000, 100, 500_000, 1_500_000, 500_000);
+    fixture.evidence_vectors.push(EvidenceVector {
+        lane_id: "lane_dup".to_string(),
+        status: "pass".to_string(),
+        artifact_manifest: "p/run_manifest.json".to_string(),
+        replay_command: "./scripts/e2e/replay_a.sh".to_string(),
+    });
+    fixture.replay_scenarios.push(ReplayScenario {
+        scenario_id: "sc-dup".to_string(),
+        replay_command: "./scripts/e2e/replay_a.sh".to_string(),
+        expected_pass: true,
+        expected_outcome: "promote".to_string(),
+    });
+    let eval = evaluate_gate(&fixture);
+    let event = emit_structured_event(&fixture, &eval);
+    let pointers = event["replay_pointers"]
+        .as_array()
+        .expect("replay_pointers array");
+    // The duplicate replay command should appear only once (BTreeSet dedup)
+    let replay_strs: Vec<&str> = pointers
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    let unique: BTreeSet<&str> = replay_strs.iter().copied().collect();
+    assert_eq!(
+        replay_strs.len(),
+        unique.len(),
+        "replay pointers must be deduplicated"
+    );
+    // Also must be sorted
+    let mut sorted = replay_strs.clone();
+    sorted.sort();
+    assert_eq!(replay_strs, sorted, "replay pointers must be sorted");
+}
+
+#[test]
+fn evaluate_gate_exactly_at_threshold_promotes() {
+    // delta = 2_000_000 - 1_500_000 = 500_000, threshold = 500_000
+    let fixture = minimal_fixture(2_000_000, 1_500_000, 100, 1, 1_500_000, 500_000);
+    let eval = evaluate_gate(&fixture);
+    assert_eq!(eval.outcome, "promote", "delta == threshold should promote");
+    assert_eq!(eval.verified_pairs, 1);
+}
+
+#[test]
+fn pair_blocker_format_is_colon_separated() {
+    let b = pair_blocker("peer-x", "p99.9", "reason_y");
+    let parts: Vec<&str> = b.split(':').collect();
+    assert_eq!(parts.len(), 3);
+    assert_eq!(parts[0], "peer-x");
+    assert_eq!(parts[1], "p99.9");
+    assert_eq!(parts[2], "reason_y");
+}
+
+#[test]
+fn evaluate_gate_fixture_double_evaluation_is_stable() {
+    let fixture = load_fixture();
+    let first = evaluate_gate(&fixture);
+    let second = evaluate_gate(&fixture);
+    assert_eq!(first.outcome, second.outcome);
+    assert_eq!(first.blocked_pairs, second.blocked_pairs);
+    assert_eq!(first.failing_workload_ids, second.failing_workload_ids);
+    assert_eq!(first.verified_pairs, second.verified_pairs);
+}

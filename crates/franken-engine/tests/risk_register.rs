@@ -543,3 +543,43 @@ fn risk_register_contains_title_heading() {
     let register = read_risk_register();
     assert!(register.contains("# FrankenEngine Program Risk Register"));
 }
+
+#[test]
+fn risk_register_has_risk_schema_section() {
+    let register = read_risk_register();
+    assert!(register.contains("## Risk Schema"));
+}
+
+#[test]
+fn risk_register_has_update_procedure_section() {
+    let register = read_risk_register();
+    assert!(register.contains("## Update Procedure"));
+}
+
+#[test]
+fn risk_ids_start_with_r_prefix() {
+    let register = read_risk_register();
+    let (_, rows) = parse_table_by_heading(&register, "## Active Risks");
+    for row in &rows {
+        assert!(
+            row[0].starts_with("R-"),
+            "risk ID should start with 'R-', got: {}",
+            row[0]
+        );
+    }
+}
+
+#[test]
+fn risk_register_has_no_duplicate_headings() {
+    let register = read_risk_register();
+    let headings: Vec<&str> = register
+        .lines()
+        .filter(|l| l.starts_with("## "))
+        .collect();
+    let unique: BTreeSet<&str> = headings.iter().copied().collect();
+    assert_eq!(
+        headings.len(),
+        unique.len(),
+        "risk register should not have duplicate ## headings"
+    );
+}

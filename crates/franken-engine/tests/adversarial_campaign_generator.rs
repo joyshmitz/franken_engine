@@ -620,8 +620,33 @@ fn suppression_gate_rejects_non_continuous_run() {
         escalations: Vec::new(),
     };
     let result = evaluate_compromise_suppression_gate(&input, &SuppressionGateConfig::default());
-    match result {
-        Ok(gate_result) => assert!(!gate_result.passed),
-        Err(_) => {} // error is also acceptable
+    if let Ok(gate_result) = result {
+        assert!(!gate_result.passed);
     }
+}
+
+#[test]
+fn suppression_gate_config_debug_is_nonempty() {
+    let config = SuppressionGateConfig::default();
+    assert!(!format!("{config:?}").is_empty());
+}
+
+#[test]
+fn suppression_gate_config_serde_is_deterministic() {
+    let config = SuppressionGateConfig::default();
+    let a = serde_json::to_string(&config).expect("first");
+    let b = serde_json::to_string(&config).expect("second");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn suppression_gate_input_debug_is_nonempty() {
+    let input = SuppressionGateInput {
+        release_candidate_id: "rc-debug".to_string(),
+        continuous_run: true,
+        samples: Vec::new(),
+        trend_points: Vec::new(),
+        escalations: Vec::new(),
+    };
+    assert!(!format!("{input:?}").is_empty());
 }

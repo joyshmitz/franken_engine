@@ -583,3 +583,31 @@ fn empty_trace_id_request_produces_fail() {
     assert_eq!(decision.outcome, "fail");
     assert!(decision.error_code.is_some());
 }
+
+#[test]
+fn benchmark_pressure_from_cases_returns_i64() {
+    let cases_a = [benchmark_case("wl-a", 100.0, 100.0)];
+    let cases_b = [benchmark_case("wl-b", 100.0, 100.0)];
+    let pressure = benchmark_pressure_from_cases(&cases_a, &cases_b);
+    // Result is a millionths-scale i64 — verify it's in a reasonable range
+    assert!(pressure.abs() <= 2_000_000, "pressure should be within ±2.0");
+}
+
+#[test]
+fn derive_candidates_from_empty_hotspots_returns_empty() {
+    let candidates = derive_candidates_from_hotspots(&[], 0, 0, 0, 0, 0, 0);
+    assert!(candidates.is_empty());
+}
+
+#[test]
+fn opportunity_outcome_observation_deterministic_serde() {
+    let obs = OpportunityOutcomeObservation {
+        opportunity_id: "opp:det".to_string(),
+        predicted_gain_millionths: 300_000,
+        actual_gain_millionths: 280_000,
+        completed_at_utc: "2026-02-22T12:00:00Z".to_string(),
+    };
+    let json1 = serde_json::to_string(&obs).expect("serialize");
+    let json2 = serde_json::to_string(&obs).expect("serialize again");
+    assert_eq!(json1, json2);
+}

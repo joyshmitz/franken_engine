@@ -421,3 +421,153 @@ fn validation_is_deterministic() {
     let b = record.validate_for_activation();
     assert_eq!(a, b);
 }
+
+// ---------- additional edge-case coverage ----------
+
+#[test]
+fn verification_with_empty_checklist_version_blocks_activation() {
+    let mut record = valid_record(PrimitiveTier::B);
+    record.verification = Some(VerificationChecklist {
+        checklist_version: "   ".to_string(),
+        primary_paper_verified: true,
+        independent_replication_completed: true,
+        verification_notes: "notes".to_string(),
+    });
+
+    let err = record.validate_for_activation().unwrap_err();
+    assert_eq!(
+        err,
+        PrimitiveAdoptionValidationError::MissingVerificationMetadata
+    );
+}
+
+#[test]
+fn fallback_with_zero_time_budget_blocks_activation() {
+    let mut record = valid_record(PrimitiveTier::B);
+    record.fallback = Some(FallbackBudget {
+        trigger: "oom".to_string(),
+        deterministic_mode: "safe".to_string(),
+        max_retry_count: 1,
+        time_budget_ms: 0,
+        memory_budget_mb: 128,
+    });
+
+    let err = record.validate_for_activation().unwrap_err();
+    assert_eq!(
+        err,
+        PrimitiveAdoptionValidationError::MissingFallbackMetadata
+    );
+}
+
+#[test]
+fn adopt_existing_crate_with_empty_candidates_blocks_s_tier() {
+    let mut record = valid_record(PrimitiveTier::S);
+    record.reuse_scan = Some(ReuseScan {
+        catalog_version: "v1".to_string(),
+        decision: ReuseDecision::AdoptExistingCrate,
+        candidate_crates: vec![],
+        rationale: "we chose to adopt".to_string(),
+    });
+
+    let err = record.validate_for_activation().unwrap_err();
+    assert_eq!(
+        err,
+        PrimitiveAdoptionValidationError::InvalidMetadataField {
+            field: "candidate_crates".to_string()
+        }
+    );
+}
+
+#[test]
+fn score_at_boundary_one_million_passes_validation() {
+    let mut record = valid_record(PrimitiveTier::B);
+    record.score.relevance_millionths = 1_000_000;
+    record.score.risk_millionths = 1_000_000;
+
+    assert_eq!(record.validate_for_activation(), Ok(()));
+}
+
+// ---------- enrichment: additional edge-case and validation coverage ----------
+
+#[test]
+fn fallback_with_zero_memory_budget_blocks_activation() {
+    let mut record = valid_record(PrimitiveTier::B);
+    record.fallback = Some(FallbackBudget {
+        trigger: "oom".to_string(),
+        deterministic_mode: "safe".to_string(),
+        max_retry_count: 1,
+        time_budget_ms: 50,
+        memory_budget_mb: 0,
+    });
+
+    let err = record.validate_for_activation().unwrap_err();
+    assert_eq!(
+        err,
+        PrimitiveAdoptionValidationError::MissingFallbackMetadata
+    );
+}
+
+#[test]
+fn verification_with_primary_paper_not_verified_blocks_activation() {
+    let mut record = valid_record(PrimitiveTier::B);
+    record.verification = Some(VerificationChecklist {
+        checklist_version: "v1".to_string(),
+        primary_paper_verified: false,
+        independent_replication_completed: true,
+        verification_notes: "notes here".to_string(),
+    });
+
+    let err = record.validate_for_activation().unwrap_err();
+    assert_eq!(
+        err,
+        PrimitiveAdoptionValidationError::MissingVerificationMetadata
+    );
+}
+
+#[test]
+fn verification_with_empty_notes_blocks_activation() {
+    let mut record = valid_record(PrimitiveTier::B);
+    record.verification = Some(VerificationChecklist {
+        checklist_version: "v1".to_string(),
+        primary_paper_verified: true,
+        independent_replication_completed: true,
+        verification_notes: "   ".to_string(),
+    });
+
+    let err = record.validate_for_activation().unwrap_err();
+    assert_eq!(
+        err,
+        PrimitiveAdoptionValidationError::MissingVerificationMetadata
+    );
+}
+
+#[test]
+fn reuse_scan_with_empty_catalog_version_blocks_s_tier() {
+    let mut record = valid_record(PrimitiveTier::S);
+    record.reuse_scan = Some(ReuseScan {
+        catalog_version: "   ".to_string(),
+        decision: ReuseDecision::BuildNew,
+        candidate_crates: vec![],
+        rationale: "build new".to_string(),
+    });
+
+    let err = record.validate_for_activation().unwrap_err();
+    assert_eq!(
+        err,
+        PrimitiveAdoptionValidationError::MissingReuseScanOutcome
+    );
+}
+
+#[test]
+fn score_ev_millionths_negative_value_passes_validation() {
+    let mut record = valid_record(PrimitiveTier::B);
+    record.score.ev_millionths = -1_000_000;
+    record.score.relevance_millionths = 500_000;
+    record.score.risk_millionths = 500_000;
+
+    assert_eq!(
+        record.validate_for_activation(),
+        Ok(()),
+        "negative ev_millionths is allowed (signed field)"
+    );
+}

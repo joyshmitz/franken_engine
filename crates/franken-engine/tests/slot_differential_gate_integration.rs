@@ -1011,3 +1011,131 @@ fn divergence_repro_serde_round_trip() {
     let back: DivergenceRepro = serde_json::from_str(&json).unwrap();
     assert_eq!(repro, back);
 }
+
+// ---------------------------------------------------------------------------
+// DifferentialConfig serde round trip
+// ---------------------------------------------------------------------------
+
+#[test]
+fn differential_config_serde_round_trip() {
+    let cfg = DifferentialConfig::default();
+    let json = serde_json::to_string(&cfg).unwrap();
+    let back: DifferentialConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(cfg, back);
+}
+
+// ---------------------------------------------------------------------------
+// Enrichment: double evaluation, gate reset, receipt fragment serde, config
+// ---------------------------------------------------------------------------
+
+#[test]
+fn double_evaluation_of_same_slot_updates_verdict() {
+    let mut gate = make_gate();
+    gate.register_slot(inventory_entry("re-eval-slot", SlotKind::Parser, false));
+
+    let sid = slot("re-eval-slot");
+
+    // First evaluation: diverge
+    let (_, v1) = gate
+        .evaluate_single(&sid, &[workload("w1", WorkloadCategory::SemanticEquivalence)], &|_| Ok(matching_output("42")), &|_| {
+            Ok(matching_output("99"))
+        })
+        .unwrap();
+    assert!(v1.is_blocked());
+    assert!(!gate.passes());
+
+    // Second evaluation: matching (re-evaluate same slot)
+    let (_, v2) = gate
+        .evaluate_single(&sid, &[workload("w2", WorkloadCategory::SemanticEquivalence)], &|_| Ok(matching_output("42")), &|_| {
+            Ok(matching_output("42"))
+        })
+        .unwrap();
+    assert!(v2.is_ready());
+    // Gate should now pass since the latest verdict is Ready
+    assert!(gate.passes());
+}
+
+#[test]
+fn replacement_receipt_fragment_serde_roundtrip() {
+    let results = vec![WorkloadResult {
+        workload_id: "w1".to_string(),
+        category: WorkloadCategory::SemanticEquivalence,
+        native_output: matching_output("42"),
+        delegate_output: matching_output("42"),
+        outcome: DifferentialOutcome::Match,
+        divergence_class: None,
+    }];
+
+    let fragment = ReplacementReceiptFragment::from_evaluation(
+        slot("serde-frag"),
+        &results,
+        ContentHash::compute(b"evidence"),
+        ContentHash::compute(b"corpus"),
+        epoch(7),
+    );
+
+    let json = serde_json::to_string(&fragment).unwrap();
+    let back: ReplacementReceiptFragment = serde_json::from_str(&json).unwrap();
+    assert_eq!(fragment, back);
+}
+
+#[test]
+fn slot_inventory_entry_serde_roundtrip() {
+    let entry = inventory_entry("inv-serde", SlotKind::Parser, true);
+    let json = serde_json::to_string(&entry).unwrap();
+    let back: SlotInventoryEntry = serde_json::from_str(&json).unwrap();
+    assert_eq!(entry, back);
+}
+
+#[test]
+fn differential_config_default_has_positive_thresholds() {
+    let cfg = DifferentialConfig::default();
+    assert!(
+        cfg.performance_threshold_millionths > 0,
+        "performance threshold should be positive"
+    );
+    assert!(
+        cfg.memory_threshold_millionths > 0,
+        "memory threshold should be positive"
+    );
+}
+
+#[test]
+fn evidence_with_only_informational_divergences_passes_gate() {
+    let mut gate = make_gate();
+    gate.register_slot(inventory_entry("resource-slot", SlotKind::GarbageCollector, false));
+
+    let sid = slot("resource-slot");
+    let corpus = vec![workload("w1", WorkloadCategory::SemanticEquivalence)];
+
+    // Native uses more memory but same semantics (resource divergence = informational)
+    let (results, verdict) = gate
+        .evaluate_single(
+            &sid,
+            &corpus,
+            &|_| {
+                Ok(CellOutput {
+                    return_value: "42".to_string(),
+                    side_effects: vec![],
+                    exceptions: vec![],
+                    evidence_entries: vec![],
+                    capabilities_exercised: vec![SlotCapability::ReadSource],
+                    duration_us: 100,
+                    memory_bytes: 2048, // much more memory
+                })
+            },
+            &|_| Ok(matching_output("42")),
+        )
+        .unwrap();
+
+    // Resource divergence is informational, should not block
+    assert!(
+        results[0].divergence_class == Some(DivergenceClass::ResourceDivergence)
+            || results[0].divergence_class == Some(DivergenceClass::BenignImprovement)
+            || results[0].divergence_class.is_none(),
+        "divergence: {:?}",
+        results[0].divergence_class
+    );
+    // Gate passes because resource divergence is informational
+    assert!(gate.passes());
+}

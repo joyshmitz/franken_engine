@@ -422,3 +422,111 @@ fn benchmark_spec_file_path_exists() {
     let path = repo_root().join("docs/EXTENSION_HEAVY_BENCHMARK_SUITE_V1.md");
     assert!(path.exists());
 }
+
+// ---------- Additional spec invariant and parsing tests ----------
+
+#[test]
+fn scale_profile_matrix_has_monotonically_increasing_extension_counts() {
+    let spec = read_spec();
+    let (_header, rows) =
+        parse_table_by_heading(&spec, "## Scale Profile Matrix (Normative Defaults)");
+
+    // Build a map from profile name to extension count
+    let mut profile_counts: Vec<(&str, u64)> = Vec::new();
+    let order = ["`S`", "`M`", "`L`"];
+    for profile_name in &order {
+        let row = rows
+            .iter()
+            .find(|r| r[0] == *profile_name)
+            .unwrap_or_else(|| panic!("missing profile {profile_name}"));
+        let count_str = row[1].trim().replace(',', "").replace('_', "");
+        let count: u64 = count_str
+            .parse()
+            .unwrap_or_else(|_| panic!("extension count for {profile_name} must be numeric: '{count_str}'"));
+        profile_counts.push((profile_name, count));
+    }
+
+    // S < M < L
+    assert!(
+        profile_counts[0].1 < profile_counts[1].1,
+        "S extension count must be less than M"
+    );
+    assert!(
+        profile_counts[1].1 < profile_counts[2].1,
+        "M extension count must be less than L"
+    );
+}
+
+#[test]
+fn per_case_publication_requirements_section_has_content() {
+    let spec = read_spec();
+    let section_marker = "## Per-Case Publication Requirements";
+    let idx = spec
+        .find(section_marker)
+        .expect("must contain Per-Case Publication Requirements section");
+    let after_section = &spec[idx + section_marker.len()..];
+    // Find next section or end of doc
+    let next_section = after_section.find("\n## ").unwrap_or(after_section.len());
+    let section_body = &after_section[..next_section];
+    assert!(
+        section_body.len() > 50,
+        "Per-Case Publication Requirements section must have substantive content"
+    );
+}
+
+#[test]
+fn behavior_equivalence_hard_gates_section_mentions_gate_criteria() {
+    let spec = read_spec();
+    let section_marker = "## Behavior-Equivalence Hard Gates";
+    assert!(
+        spec.contains(section_marker),
+        "behavior equivalence section must exist"
+    );
+    // Hard gates section should reference equivalence checking and failure
+    let idx = spec.find(section_marker).unwrap();
+    let section_tail = &spec[idx..std::cmp::min(idx + 2000, spec.len())];
+    assert!(
+        section_tail.contains("equivalence") || section_tail.contains("Equivalence"),
+        "behavior equivalence section must discuss equivalence"
+    );
+}
+
+#[test]
+fn family_table_rows_all_have_nonempty_purpose() {
+    let spec = read_spec();
+    let (_header, rows) = parse_table_by_heading(&spec, "## Required Benchmark Families");
+    for row in &rows {
+        assert!(
+            !row[1].trim().is_empty(),
+            "family {} must have a non-empty purpose",
+            row[0]
+        );
+    }
+}
+
+#[test]
+fn parse_table_row_handles_leading_trailing_whitespace_in_cells() {
+    let row = parse_table_row("|  spaced  |  padded  |  value  |");
+    assert_eq!(row, vec!["spaced", "padded", "value"]);
+}
+
+#[test]
+fn benchmark_spec_mentions_throughput() {
+    let spec = read_spec();
+    let lower = spec.to_lowercase();
+    assert!(lower.contains("throughput"), "spec should mention throughput");
+}
+
+#[test]
+fn benchmark_spec_mentions_latency() {
+    let spec = read_spec();
+    let lower = spec.to_lowercase();
+    assert!(lower.contains("latency"), "spec should mention latency");
+}
+
+#[test]
+fn benchmark_spec_mentions_scoring() {
+    let spec = read_spec();
+    let lower = spec.to_lowercase();
+    assert!(lower.contains("scor"), "spec should mention scoring");
+}

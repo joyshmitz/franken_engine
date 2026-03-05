@@ -2,9 +2,9 @@ use std::{collections::BTreeSet, fs, path::Path};
 
 use frankenengine_engine::ast::ParseGoal;
 use frankenengine_engine::parser::{CanonicalEs2020Parser, ParserMode, ParserOptions};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct MeasurementWindow {
     warmup_iterations: u32,
     measurement_iterations: u32,
@@ -413,4 +413,97 @@ fn fixture_deterministic_double_load() {
 fn doc_has_more_than_50_lines() {
     let doc = load_doc();
     assert!(doc.lines().count() > 50);
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: parse stability, family coverage, serde depth
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn benchmark_cases_produce_deterministic_canonical_hashes() {
+    let fixture = load_fixture();
+    let parser = CanonicalEs2020Parser;
+    let options = ParserOptions::default();
+
+    for case in &fixture.benchmark_cases {
+        let goal = parse_goal(&case.goal);
+        let tree_1 = parser
+            .parse_with_options(case.source.as_str(), goal, &options)
+            .unwrap_or_else(|e| panic!("case {} first parse failed: {e}", case.case_id));
+        let tree_2 = parser
+            .parse_with_options(case.source.as_str(), goal, &options)
+            .unwrap_or_else(|e| panic!("case {} second parse failed: {e}", case.case_id));
+        assert_eq!(
+            tree_1.canonical_hash(),
+            tree_2.canonical_hash(),
+            "case {} must produce deterministic canonical hash",
+            case.case_id
+        );
+    }
+}
+
+#[test]
+fn benchmark_cases_cover_all_corpus_tiers() {
+    let fixture = load_fixture();
+    let tier_ids: BTreeSet<&str> = fixture
+        .corpus_tiers
+        .iter()
+        .map(|t| t.tier_id.as_str())
+        .collect();
+    let case_tiers: BTreeSet<&str> = fixture
+        .benchmark_cases
+        .iter()
+        .map(|c| c.tier_id.as_str())
+        .collect();
+    for tier in &tier_ids {
+        assert!(
+            case_tiers.contains(tier),
+            "no benchmark case covers required corpus tier: {tier}"
+        );
+    }
+}
+
+#[test]
+fn benchmark_cases_family_ids_are_nonempty_and_lowercase() {
+    let fixture = load_fixture();
+    for case in &fixture.benchmark_cases {
+        assert!(
+            !case.family_id.trim().is_empty(),
+            "case {} has empty family_id",
+            case.case_id
+        );
+        assert_eq!(
+            case.family_id,
+            case.family_id.to_lowercase(),
+            "case {} family_id should be lowercase: {}",
+            case.case_id,
+            case.family_id
+        );
+    }
+}
+
+#[test]
+fn measurement_window_serde_round_trip() {
+    let fixture = load_fixture();
+    let json = serde_json::to_string(&fixture.measurement_window).expect("serialize");
+    let recovered: MeasurementWindow = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.warmup_iterations, fixture.measurement_window.warmup_iterations);
+    assert_eq!(recovered.measurement_iterations, fixture.measurement_window.measurement_iterations);
+    assert_eq!(recovered.replicates, fixture.measurement_window.replicates);
+    assert_eq!(
+        recovered.max_relative_stdev_millionths,
+        fixture.measurement_window.max_relative_stdev_millionths
+    );
+}
+
+#[test]
+fn benchmark_cases_expected_semantic_class_is_nonempty() {
+    let fixture = load_fixture();
+    for case in &fixture.benchmark_cases {
+        assert!(
+            !case.expected_semantic_class.trim().is_empty(),
+            "case {} has empty expected_semantic_class",
+            case.case_id
+        );
+    }
 }

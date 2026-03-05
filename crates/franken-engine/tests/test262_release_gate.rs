@@ -570,3 +570,22 @@ fn profile_decision_not_selected_for_unmatched_path() {
     let decision = profile.classify("totally/unrelated/path.js");
     assert!(matches!(decision, ProfileDecision::NotSelected));
 }
+
+#[test]
+fn test262_runner_config_serde_round_trip() {
+    let config = Test262RunnerConfig {
+        run_date: "2026-03-05".to_string(),
+        acknowledge_pass_regression: true,
+        ..Test262RunnerConfig::default()
+    };
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: Test262RunnerConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.run_date, "2026-03-05");
+    assert!(recovered.acknowledge_pass_regression);
+}
+
+#[test]
+fn test262_runner_config_default_does_not_acknowledge_regression() {
+    let config = Test262RunnerConfig::default();
+    assert!(!config.acknowledge_pass_regression);
+}

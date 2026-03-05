@@ -485,3 +485,154 @@ fn authority_envelope_debug_is_nonempty() {
     let debug = format!("{authority:?}");
     assert!(!debug.trim().is_empty());
 }
+
+// ---------- enrichment: edge cases, coverage, determinism ----------
+
+#[test]
+fn empty_registry_ga_guard_passes_with_no_core_slots() {
+    let registry = SlotRegistry::new();
+    let core_slots = BTreeSet::new();
+    let input = pipeline_input(core_slots, Some(0));
+    let artifact = registry
+        .evaluate_ga_release_guard(&input)
+        .expect("guard should evaluate on empty registry");
+    assert_eq!(artifact.verdict, GaReleaseGuardVerdict::Pass);
+    assert!(artifact.blocking_slots.is_empty());
+    assert_eq!(artifact.core_delegate_count, 0);
+    assert_eq!(artifact.non_core_delegate_count, 0);
+}
+
+#[test]
+fn non_core_delegate_limit_none_allows_unlimited_delegates() {
+    let mut registry = SlotRegistry::new();
+    let _parser = register_slot(&mut registry, "parser", SlotKind::Parser, "sha256:d-parser");
+    let _interp = register_slot(
+        &mut registry,
+        "interpreter",
+        SlotKind::Interpreter,
+        "sha256:d-interp",
+    );
+    let _builtins = register_slot(
+        &mut registry,
+        "builtins",
+        SlotKind::Builtins,
+        "sha256:d-builtins",
+    );
+    // No core slots => all are non-core delegates, but limit is None => unlimited
+    let core_slots = BTreeSet::new();
+    let input = pipeline_input(core_slots, None);
+    let artifact = registry
+        .evaluate_ga_release_guard(&input)
+        .expect("guard should evaluate");
+    // No core slots means Pass even with all delegates
+    assert_eq!(artifact.verdict, GaReleaseGuardVerdict::Pass);
+    assert_eq!(artifact.non_core_delegate_count, 3);
+}
+
+#[test]
+fn lineage_artifact_with_unverified_signature_still_does_not_panic() {
+    let mut registry = SlotRegistry::new();
+    let parser = register_slot(&mut registry, "parser", SlotKind::Parser, "sha256:d-parser");
+    promote_slot(&mut registry, &parser, "sha256:native-parser");
+
+    let core_slots = BTreeSet::from([parser.clone()]);
+    let mut input = pipeline_input(core_slots, Some(5));
+    let mut la = lineage_artifact(&parser, "sha256:d-parser", "sha256:native-parser");
+    la.signature_verified = false;
+    input.lineage_artifacts = vec![la];
+    // Should not panic regardless of verification flag
+    let _artifact = registry.evaluate_ga_release_guard(&input);
+}
+
+#[test]
+fn slot_registry_native_and_delegate_counts_track_promotions() {
+    let mut registry = SlotRegistry::new();
+    assert_eq!(registry.native_count(), 0);
+    assert_eq!(registry.delegate_count(), 0);
+    assert!(registry.is_empty());
+
+    let parser = register_slot(&mut registry, "parser", SlotKind::Parser, "sha256:d-p");
+    assert_eq!(registry.delegate_count(), 1);
+    assert_eq!(registry.native_count(), 0);
+    assert_eq!(registry.len(), 1);
+
+    promote_slot(&mut registry, &parser, "sha256:native-p");
+    assert_eq!(registry.delegate_count(), 0);
+    assert_eq!(registry.native_count(), 1);
+    assert_eq!(registry.len(), 1);
+}
+
+#[test]
+fn ga_release_guard_input_serde_round_trip() {
+    let core_slots = BTreeSet::from([
+        SlotId::new("parser").expect("valid"),
+        SlotId::new("interpreter").expect("valid"),
+    ]);
+    let input = pipeline_input(core_slots, Some(3));
+    let json = serde_json::to_string(&input).expect("serialize");
+    let recovered: GaReleaseGuardInput = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(input.trace_id, recovered.trace_id);
+    assert_eq!(input.decision_id, recovered.decision_id);
+    assert_eq!(input.policy_id, recovered.policy_id);
+    assert_eq!(input.config.core_slots, recovered.config.core_slots);
+    assert_eq!(
+        input.config.non_core_delegate_limit,
+        recovered.config.non_core_delegate_limit
+    );
+}
+
+// ---------- enrichment: demotion, is_ga_ready, authority subsumes ----------
+
+#[test]
+fn demoted_slot_reverts_to_delegate_status() {
+    let mut registry = SlotRegistry::new();
+    let parser = register_slot(&mut registry, "parser", SlotKind::Parser, "sha256:d-p");
+    promote_slot(&mut registry, &parser, "sha256:native-p");
+    assert_eq!(registry.native_count(), 1);
+
+    registry
+        .demote(
+            &parser,
+            "regression detected".to_string(),
+            "sha256:d-p".to_string(),
+            "2026-02-21T01:00:00Z".to_string(),
+        )
+        .expect("demote");
+
+    assert_eq!(registry.native_count(), 0);
+    assert_eq!(registry.delegate_count(), 1);
+    let entry = registry.get(&parser).expect("slot should exist");
+    assert!(entry.status.is_delegate());
+}
+
+#[test]
+fn is_ga_ready_false_when_delegates_remain() {
+    let mut registry = SlotRegistry::new();
+    let _parser = register_slot(&mut registry, "parser", SlotKind::Parser, "sha256:d-p");
+    assert!(!registry.is_ga_ready(), "registry with delegates should not be GA-ready");
+}
+
+#[test]
+fn is_ga_ready_true_when_all_promoted() {
+    let mut registry = SlotRegistry::new();
+    let parser = register_slot(&mut registry, "parser", SlotKind::Parser, "sha256:d-p");
+    promote_slot(&mut registry, &parser, "sha256:native-p");
+    assert!(registry.is_ga_ready(), "registry with all native slots should be GA-ready");
+}
+
+#[test]
+fn authority_envelope_subsumes_itself() {
+    let auth = test_authority();
+    assert!(auth.subsumes(&auth), "authority should subsume itself");
+}
+
+#[test]
+fn authority_envelope_is_consistent_when_required_subset_of_permitted() {
+    let auth = test_authority();
+    assert!(auth.is_consistent(), "test authority should be consistent");
+
+    let narrow = narrower_authority();
+    assert!(narrow.is_consistent(), "narrower authority should be consistent");
+    // Full authority should subsume narrower authority
+    assert!(auth.subsumes(&narrow), "full authority should subsume narrower");
+}

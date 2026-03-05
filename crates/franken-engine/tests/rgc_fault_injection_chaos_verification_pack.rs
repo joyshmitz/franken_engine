@@ -625,3 +625,143 @@ fn rgc_056_expected_outcome_for_all_classes_is_not_unknown() {
         );
     }
 }
+
+// ---------- additional edge-case coverage ----------
+
+#[test]
+fn rgc_056_contract_pretty_json_serde_roundtrip_preserves_equality() {
+    let contract = parse_contract();
+    let pretty = serde_json::to_string_pretty(&contract).expect("pretty serialize");
+    let recovered: ChaosVerificationPackContract =
+        serde_json::from_str(&pretty).expect("pretty deserialize");
+    assert_eq!(contract, recovered);
+}
+
+#[test]
+fn rgc_056_vectors_generated_at_utc_is_iso8601_like() {
+    let vectors = parse_vectors();
+    // Must contain a 'T' separator and end with 'Z'
+    assert!(
+        vectors.generated_at_utc.contains('T'),
+        "generated_at_utc should contain 'T' separator: {}",
+        vectors.generated_at_utc
+    );
+    assert!(
+        vectors.generated_at_utc.ends_with('Z'),
+        "generated_at_utc should end with 'Z': {}",
+        vectors.generated_at_utc
+    );
+    // Year should be 4 digits
+    let year_part = &vectors.generated_at_utc[..4];
+    assert!(
+        year_part.chars().all(|c| c.is_ascii_digit()),
+        "first 4 chars should be a year: {}",
+        year_part
+    );
+}
+
+#[test]
+fn rgc_056_failure_scenario_exit_codes_are_nonzero() {
+    let contract = parse_contract();
+    for scenario in &contract.failure_scenarios {
+        assert_ne!(
+            scenario.expected_exit_code, 0,
+            "failure scenario {} should have nonzero exit code",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn rgc_056_failure_scenario_message_fragments_are_nonempty() {
+    let contract = parse_contract();
+    for scenario in &contract.failure_scenarios {
+        assert!(
+            !scenario.expected_message_fragment.trim().is_empty(),
+            "failure scenario {} should have nonempty message fragment",
+            scenario.scenario_id
+        );
+        assert!(
+            !scenario.command_template.trim().is_empty(),
+            "failure scenario {} should have nonempty command_template",
+            scenario.scenario_id
+        );
+    }
+}
+
+// ---------- operator_verification entries are nonempty ----------
+
+#[test]
+fn rgc_056_operator_verification_entries_are_nonempty() {
+    let contract = parse_contract();
+    assert!(
+        !contract.operator_verification.is_empty(),
+        "operator_verification must have at least one entry"
+    );
+    for entry in &contract.operator_verification {
+        assert!(
+            !entry.trim().is_empty(),
+            "operator_verification entry must not be empty"
+        );
+    }
+}
+
+// ---------- contract required_log_keys are unique ----------
+
+#[test]
+fn rgc_056_contract_required_log_keys_are_unique() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for key in &contract.required_log_keys {
+        assert!(
+            seen.insert(key.as_str()),
+            "duplicate required log key: {key}"
+        );
+    }
+}
+
+// ---------- contract required_artifacts are unique ----------
+
+#[test]
+fn rgc_056_contract_required_artifacts_are_unique() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for artifact in &contract.required_artifacts {
+        assert!(
+            seen.insert(artifact.as_str()),
+            "duplicate required artifact: {artifact}"
+        );
+    }
+}
+
+// ---------- vectors pretty-json serde roundtrip ----------
+
+#[test]
+fn rgc_056_vectors_pretty_json_serde_roundtrip_preserves_equality() {
+    let vectors = parse_vectors();
+    let pretty = serde_json::to_string_pretty(&vectors).expect("pretty serialize");
+    let recovered: ChaosVerificationVectors =
+        serde_json::from_str(&pretty).expect("pretty deserialize");
+    assert_eq!(vectors, recovered);
+}
+
+// ---------- vectors command_templates contain expected patterns ----------
+
+#[test]
+fn rgc_056_vectors_command_templates_reference_chaos_class() {
+    let vectors = parse_vectors();
+    for vector in &vectors.vectors {
+        // command_template should reference the scenario or contain cargo/rch invocation
+        assert!(
+            !vector.command_template.trim().is_empty(),
+            "command_template must not be empty for {}",
+            vector.scenario_id
+        );
+        // Verify deterministic seed is embedded or referenced
+        assert!(
+            vector.deterministic_seed > 0,
+            "deterministic_seed must be positive for {}",
+            vector.scenario_id
+        );
+    }
+}

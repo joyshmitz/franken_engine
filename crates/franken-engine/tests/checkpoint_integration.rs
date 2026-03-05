@@ -424,3 +424,21 @@ fn coverage_serde_roundtrip() {
     let restored: CheckpointCoverage = serde_json::from_str(&json).unwrap();
     assert_eq!(cov, restored);
 }
+
+#[test]
+fn density_config_debug_is_nonempty() {
+    let config = DensityConfig::default();
+    assert!(!format!("{config:?}").is_empty());
+}
+
+#[test]
+fn cancellation_token_debug_is_nonempty() {
+    let token = CancellationToken::default();
+    assert!(!format!("{token:?}").is_empty());
+}
+
+#[test]
+fn checkpoint_coverage_debug_is_nonempty() {
+    let cov = CheckpointCoverage::new();
+    assert!(!format!("{cov:?}").is_empty());
+}

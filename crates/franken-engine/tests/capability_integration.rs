@@ -382,3 +382,136 @@ fn deterministic_profile_serialization() {
         assert_eq!(j1, j2);
     }
 }
+
+#[test]
+fn capability_profile_debug_is_nonempty() {
+    for profile in [
+        CapabilityProfile::full(),
+        CapabilityProfile::engine_core(),
+        CapabilityProfile::policy(),
+        CapabilityProfile::remote(),
+        CapabilityProfile::compute_only(),
+    ] {
+        assert!(!format!("{profile:?}").is_empty());
+    }
+}
+
+#[test]
+fn capability_profile_serialized_length_exceeds_minimum() {
+    for profile in [
+        CapabilityProfile::full(),
+        CapabilityProfile::engine_core(),
+        CapabilityProfile::policy(),
+        CapabilityProfile::remote(),
+        CapabilityProfile::compute_only(),
+    ] {
+        let json = serde_json::to_string(&profile).expect("serialize");
+        assert!(
+            json.len() > 20,
+            "serialized profile should be >20 chars, got {}",
+            json.len()
+        );
+    }
+}
+
+#[test]
+fn require_all_empty_succeeds_for_all_profiles() {
+    for profile in [
+        CapabilityProfile::full(),
+        CapabilityProfile::engine_core(),
+        CapabilityProfile::policy(),
+        CapabilityProfile::remote(),
+        CapabilityProfile::compute_only(),
+    ] {
+        assert!(require_all(&profile, &[], "test-trace").is_ok());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Intersection symmetry and idempotence
+// ---------------------------------------------------------------------------
+
+#[test]
+fn intersection_is_symmetric() {
+    let ec = CapabilityProfile::engine_core();
+    let full = CapabilityProfile::full();
+    let a = ec.intersect(&full);
+    let b = full.intersect(&ec);
+    assert_eq!(a.capabilities, b.capabilities);
+    assert_eq!(a.len(), b.len());
+}
+
+#[test]
+fn intersection_with_self_preserves_capabilities() {
+    let pol = CapabilityProfile::policy();
+    let inter = pol.intersect(&pol);
+    assert_eq!(inter.capabilities, pol.capabilities);
+    assert_eq!(inter.len(), pol.len());
+}
+
+// ---------------------------------------------------------------------------
+// require_all partial denial reports only missing caps
+// ---------------------------------------------------------------------------
+
+#[test]
+fn require_all_partial_denial_reports_exact_missing_caps() {
+    let ec = CapabilityProfile::engine_core();
+    // VmDispatch is held, PolicyWrite and NetworkEgress are NOT held
+    let denials = require_all(
+        &ec,
+        &[
+            RuntimeCapability::VmDispatch,
+            RuntimeCapability::PolicyWrite,
+            RuntimeCapability::NetworkEgress,
+        ],
+        "partial-test",
+    )
+    .unwrap_err();
+    assert_eq!(denials.len(), 2);
+    assert!(denials.iter().any(|d| d.required == RuntimeCapability::PolicyWrite));
+    assert!(denials.iter().any(|d| d.required == RuntimeCapability::NetworkEgress));
+    assert!(denials.iter().all(|d| d.component == "partial-test"));
+    assert!(denials.iter().all(|d| d.held_profile == ProfileKind::EngineCore));
+}
+
+// ---------------------------------------------------------------------------
+// Clone equality
+// ---------------------------------------------------------------------------
+
+#[test]
+fn capability_profile_clone_equals_original() {
+    let profiles = [
+        CapabilityProfile::full(),
+        CapabilityProfile::engine_core(),
+        CapabilityProfile::policy(),
+        CapabilityProfile::remote(),
+        CapabilityProfile::compute_only(),
+    ];
+    for p in &profiles {
+        let cloned = p.clone();
+        assert_eq!(*p, cloned);
+        assert_eq!(p.kind, cloned.kind);
+        assert_eq!(p.len(), cloned.len());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RuntimeCapability Ord ordering is deterministic
+// ---------------------------------------------------------------------------
+
+#[test]
+fn runtime_capability_ord_is_deterministic() {
+    use std::collections::BTreeSet;
+    let caps = [
+        RuntimeCapability::FsWrite,
+        RuntimeCapability::VmDispatch,
+        RuntimeCapability::NetworkEgress,
+        RuntimeCapability::PolicyRead,
+        RuntimeCapability::HeapAllocate,
+    ];
+    let set1: BTreeSet<RuntimeCapability> = caps.iter().copied().collect();
+    let set2: BTreeSet<RuntimeCapability> = caps.iter().rev().copied().collect();
+    let v1: Vec<RuntimeCapability> = set1.into_iter().collect();
+    let v2: Vec<RuntimeCapability> = set2.into_iter().collect();
+    assert_eq!(v1, v2, "BTreeSet ordering must be independent of insertion order");
+}

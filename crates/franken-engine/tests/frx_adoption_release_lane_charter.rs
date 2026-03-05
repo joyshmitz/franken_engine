@@ -316,3 +316,95 @@ fn adoption_contract_deterministic_double_parse() {
     let b: Value = serde_json::from_str(&raw).expect("parse 2");
     assert_eq!(a, b);
 }
+
+#[test]
+fn adoption_contract_serde_roundtrip_preserves_all_top_level_keys() {
+    let path = repo_root().join("docs/frx_adoption_release_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+
+    let serialized = serde_json::to_string_pretty(&value).expect("re-serialize");
+    let roundtripped: Value = serde_json::from_str(&serialized).expect("re-parse");
+
+    let orig_keys: Vec<&str> = value
+        .as_object()
+        .expect("top-level object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let rt_keys: Vec<&str> = roundtripped
+        .as_object()
+        .expect("top-level object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(orig_keys, rt_keys, "serde roundtrip must preserve all top-level keys");
+    assert_eq!(value, roundtripped, "serde roundtrip must be lossless");
+}
+
+#[test]
+fn adoption_contract_failure_policy_all_booleans_are_true() {
+    let path = repo_root().join("docs/frx_adoption_release_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+
+    let fp = &value["failure_policy"];
+    for key in [
+        "halt_promotion_on_stage_gate_failure",
+        "halt_promotion_on_rollback_readiness_failure",
+        "block_claim_publication_on_incomplete_repro_bundle",
+    ] {
+        assert_eq!(
+            fp[key].as_bool(),
+            Some(true),
+            "failure_policy.{key} must be true for fail-closed semantics"
+        );
+    }
+}
+
+#[test]
+fn adoption_charter_interface_contracts_section_references_known_lanes() {
+    let path = repo_root().join("docs/FRX_ADOPTION_RELEASE_LANE_CHARTER_V1.md");
+    let doc = fs::read_to_string(&path).expect("read charter doc");
+
+    // Interface Contracts section should cross-reference at least one other lane
+    let interface_idx = doc.find("## Interface Contracts").expect("section must exist");
+    let interface_section = &doc[interface_idx..];
+    assert!(
+        interface_section.contains("Compiler") || interface_section.contains("Verification")
+            || interface_section.contains("Toolchain") || interface_section.contains("Optimization"),
+        "Interface Contracts section must reference at least one peer lane"
+    );
+}
+
+#[test]
+fn adoption_contract_stages_are_ordered_alpha_beta_ga() {
+    let path = repo_root().join("docs/frx_adoption_release_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+
+    let stages: Vec<&str> = value["ownership"]["stage_gate_authority"]["stages"]
+        .as_array()
+        .expect("stages array")
+        .iter()
+        .filter_map(|s| s.as_str())
+        .collect();
+
+    let alpha_pos = stages.iter().position(|&s| s == "alpha");
+    let beta_pos = stages.iter().position(|&s| s == "beta");
+    let ga_pos = stages.iter().position(|&s| s == "ga");
+
+    assert!(alpha_pos < beta_pos, "alpha must precede beta in stage order");
+    assert!(beta_pos < ga_pos, "beta must precede ga in stage order");
+}
+
+#[test]
+fn adoption_charter_contains_no_todo_markers() {
+    let path = repo_root().join("docs/FRX_ADOPTION_RELEASE_LANE_CHARTER_V1.md");
+    let doc = fs::read_to_string(&path).expect("read charter doc");
+    let lower = doc.to_ascii_lowercase();
+    assert!(
+        !lower.contains("todo") && !lower.contains("fixme") && !lower.contains("xxx"),
+        "charter must not contain unresolved TODO/FIXME/XXX markers"
+    );
+}

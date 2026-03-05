@@ -379,3 +379,155 @@ fn track_f_charter_mentions_adoption() {
     let doc = fs::read_to_string(&path).expect("read doc");
     assert!(doc.to_ascii_lowercase().contains("adoption"));
 }
+
+// ---------- enrichment: deeper structural invariants ----------
+
+#[test]
+fn track_f_contract_scope_requires_track_b_and_c_baselines() {
+    let path = repo_root().join("docs/frx_track_f_toolchain_ecosystem_adoption_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert_eq!(
+        value["scope"]["requires_track_b_baseline"].as_bool(),
+        Some(true),
+        "scope must require track B baseline"
+    );
+    assert_eq!(
+        value["scope"]["requires_track_c_baseline"].as_bool(),
+        Some(true),
+        "scope must require track C baseline"
+    );
+    assert_eq!(
+        value["scope"]["execution_window"].as_str(),
+        Some("alpha_to_ga")
+    );
+}
+
+#[test]
+fn track_f_contract_operator_verification_scripts_are_non_empty() {
+    let path = repo_root().join("docs/frx_track_f_toolchain_ecosystem_adoption_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let ov = value["operator_verification"]
+        .as_array()
+        .expect("operator_verification must be array");
+    assert!(ov.len() >= 2, "at least 2 operator verification scripts expected");
+    for entry in ov {
+        let s = entry.as_str().expect("each entry must be a string");
+        assert!(!s.trim().is_empty(), "operator verification entry must not be blank");
+    }
+}
+
+#[test]
+fn track_f_contract_outputs_pilot_canary_evidence_section() {
+    let path = repo_root().join("docs/frx_track_f_toolchain_ecosystem_adoption_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(
+        value["outputs"]["pilot_canary_evidence"].is_object(),
+        "outputs must contain pilot_canary_evidence"
+    );
+}
+
+#[test]
+fn track_f_contract_json_roundtrip_preserves_all_keys() {
+    let path = repo_root().join("docs/frx_track_f_toolchain_ecosystem_adoption_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let reserialized = serde_json::to_string_pretty(&value).expect("re-serialize");
+    let reparsed: Value = serde_json::from_str(&reserialized).expect("re-parse");
+    let original_keys: std::collections::BTreeSet<String> = value
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    let reparsed_keys: std::collections::BTreeSet<String> = reparsed
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    assert_eq!(original_keys, reparsed_keys);
+}
+
+#[test]
+fn track_f_contract_activation_gate_all_blocks_are_true() {
+    let path = repo_root().join("docs/frx_track_f_toolchain_ecosystem_adoption_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let gate = value["activation_gate"]
+        .as_object()
+        .expect("activation_gate must be object");
+    // Every boolean key in the gate must be true (fail-closed invariant)
+    for (key, val) in gate {
+        if let Some(b) = val.as_bool() {
+            assert!(b, "activation_gate.{key} must be true for fail-closed policy");
+        }
+    }
+}
+
+// ---------- enrichment: additional structural and runtime surface checks ----------
+
+#[test]
+fn track_f_contract_has_logging_contract() {
+    let path = repo_root().join("docs/frx_track_f_toolchain_ecosystem_adoption_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(
+        value["logging_contract"].is_object(),
+        "track F contract must have logging_contract section"
+    );
+}
+
+#[test]
+fn track_f_contract_logging_required_fields_include_core_set() {
+    let path = repo_root().join("docs/frx_track_f_toolchain_ecosystem_adoption_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let fields = value["logging_contract"]["required_fields"]
+        .as_array()
+        .expect("logging required_fields array");
+    let field_set: std::collections::BTreeSet<&str> =
+        fields.iter().filter_map(|v| v.as_str()).collect();
+    for required in ["trace_id", "component", "event", "outcome"] {
+        assert!(
+            field_set.contains(required),
+            "logging_contract missing required field: {required}"
+        );
+    }
+}
+
+#[test]
+fn track_f_contract_failure_policy_fallback_mode_is_conservative() {
+    let path = repo_root().join("docs/frx_track_f_toolchain_ecosystem_adoption_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert_eq!(
+        value["failure_policy"]["fallback_mode"].as_str(),
+        Some("conservative_compatibility"),
+        "fallback_mode must be conservative_compatibility"
+    );
+}
+
+#[test]
+fn track_f_charter_references_program_constitution() {
+    let path = repo_root().join("docs/FRX_TRACK_F_TOOLCHAIN_ECOSYSTEM_ADOPTION_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(
+        doc.contains("FRX_PROGRAM_CONSTITUTION_V1.md"),
+        "track F charter must reference program constitution"
+    );
+}
+
+#[test]
+fn track_f_contract_status_is_active() {
+    let path = repo_root().join("docs/frx_track_f_toolchain_ecosystem_adoption_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert_eq!(
+        value["status"].as_str(),
+        Some("active"),
+        "track F contract status must be active"
+    );
+}

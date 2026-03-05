@@ -625,3 +625,141 @@ fn frx_07_2_doc_has_more_than_50_lines() {
     let doc = fs::read_to_string(&path).expect("read doc");
     assert!(doc.lines().count() > 50);
 }
+
+// ---------- enrichment: deeper structural and semantic checks ----------
+
+#[test]
+fn frx_07_2_known_divergences_reference_only_declared_scenarios() {
+    let strategy = parse_strategy();
+    let fixture_refs: BTreeSet<&str> = strategy
+        .scenarios
+        .iter()
+        .map(|s| s.fixture_ref.as_str())
+        .collect();
+    for divergence in &strategy.known_divergences {
+        assert!(
+            fixture_refs.contains(divergence.fixture_ref.as_str()),
+            "known_divergence fixture_ref '{}' must reference a declared scenario",
+            divergence.fixture_ref
+        );
+    }
+}
+
+#[test]
+fn frx_07_2_fallback_scenarios_carry_non_native_policy_action() {
+    let strategy = parse_strategy();
+    for scenario in &strategy.scenarios {
+        if scenario.expected_outcome == "fallback" {
+            assert_ne!(
+                scenario.expected_policy_action, "native",
+                "fallback scenario {} must not have native policy action",
+                scenario.scenario_id
+            );
+        }
+    }
+}
+
+#[test]
+fn frx_07_2_scenario_structured_log_templates_are_internally_consistent() {
+    let strategy = parse_strategy();
+    for scenario in &strategy.scenarios {
+        let tpl = &scenario.structured_log_template;
+        assert!(
+            tpl.scenario_id.starts_with("frx-07.2-"),
+            "log template scenario_id must start with frx-07.2- for {}",
+            scenario.fixture_ref
+        );
+        assert_eq!(
+            tpl.decision_path, scenario.decision_path,
+            "log template decision_path must match scenario for {}",
+            scenario.fixture_ref
+        );
+        assert_eq!(
+            tpl.outcome, scenario.expected_outcome,
+            "log template outcome must match scenario for {}",
+            scenario.fixture_ref
+        );
+    }
+}
+
+#[test]
+fn frx_07_2_strategy_failure_mode_is_fail_closed() {
+    let strategy = parse_strategy();
+    assert_eq!(
+        strategy.strategy.failure_mode, "fail_closed",
+        "strategy failure_mode must be fail_closed"
+    );
+}
+
+#[test]
+fn frx_07_2_serde_roundtrip_via_pretty_print_preserves_strategy() {
+    let strategy = parse_strategy();
+    let pretty = serde_json::to_string_pretty(&strategy).expect("pretty serialize");
+    let deserialized: StrategyContract =
+        serde_json::from_str(&pretty).expect("deserialize from pretty");
+    assert_eq!(strategy, deserialized);
+}
+
+#[test]
+fn frx_07_2_all_scenarios_have_nonempty_scenario_ids() {
+    let strategy = parse_strategy();
+    for scenario in &strategy.scenarios {
+        assert!(
+            !scenario.scenario_id.trim().is_empty(),
+            "scenario_id must not be blank for fixture {}",
+            scenario.fixture_ref
+        );
+    }
+}
+
+#[test]
+fn frx_07_2_known_divergences_all_have_nonempty_mitigation_plans() {
+    let strategy = parse_strategy();
+    for divergence in &strategy.known_divergences {
+        assert!(
+            !divergence.mitigation_plan.trim().is_empty(),
+            "mitigation_plan must not be blank for divergence fixture {}",
+            divergence.fixture_ref
+        );
+        assert!(
+            !divergence.owner_lane.trim().is_empty(),
+            "owner_lane must not be blank for divergence fixture {}",
+            divergence.fixture_ref
+        );
+    }
+}
+
+#[test]
+fn frx_07_2_strategy_default_fallback_route_is_compatibility_fallback() {
+    let strategy = parse_strategy();
+    assert_eq!(
+        strategy.strategy.default_fallback_route, "compatibility_fallback",
+        "default_fallback_route must be compatibility_fallback"
+    );
+}
+
+#[test]
+fn frx_07_2_strategy_deterministic_safe_mode_route_is_correct() {
+    let strategy = parse_strategy();
+    assert_eq!(
+        strategy.strategy.deterministic_safe_mode_route, "deterministic_safe_mode",
+        "deterministic_safe_mode_route must be 'deterministic_safe_mode'"
+    );
+}
+
+#[test]
+fn frx_07_2_known_divergence_blocking_issues_all_start_with_bead_prefix() {
+    let strategy = parse_strategy();
+    for divergence in &strategy.known_divergences {
+        assert!(
+            divergence.blocking_issue.starts_with("bd-mjh3."),
+            "known divergence blocking_issue '{}' must start with 'bd-mjh3.'",
+            divergence.blocking_issue
+        );
+        assert!(
+            divergence.error_code.starts_with("FE-FRX-07-2-DIV-"),
+            "known divergence error_code '{}' must start with 'FE-FRX-07-2-DIV-'",
+            divergence.error_code
+        );
+    }
+}

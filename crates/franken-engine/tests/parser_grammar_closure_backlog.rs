@@ -549,3 +549,83 @@ fn backlog_family_ids_match_coverage_target_count() {
         "families.len() must equal coverage_target_family_count"
     );
 }
+
+#[test]
+fn backlog_replay_commands_are_family_scoped() {
+    let backlog = load_grammar_closure_backlog();
+    for family in &backlog.families {
+        for replay in &family.replay_commands {
+            assert!(
+                !replay.trim().is_empty(),
+                "family `{}` has empty replay command",
+                family.family_id
+            );
+            assert!(
+                replay.contains(&family.family_id),
+                "replay `{replay}` must reference family `{}`",
+                family.family_id
+            );
+        }
+    }
+}
+
+#[test]
+fn backlog_e2e_scripts_start_with_scripts_dir() {
+    let backlog = load_grammar_closure_backlog();
+    for family in &backlog.families {
+        for script in &family.e2e_conformance_scripts {
+            assert!(
+                script.starts_with("./scripts/"),
+                "e2e script `{script}` for family `{}` must start with ./scripts/",
+                family.family_id
+            );
+        }
+    }
+}
+
+#[test]
+fn aggregate_family_status_supported_and_partial_is_partial() {
+    assert_eq!(
+        aggregate_family_status(
+            GrammarCoverageStatus::Supported,
+            GrammarCoverageStatus::Partial
+        ),
+        "partial"
+    );
+    assert_eq!(
+        aggregate_family_status(
+            GrammarCoverageStatus::Partial,
+            GrammarCoverageStatus::Supported
+        ),
+        "partial"
+    );
+}
+
+#[test]
+fn semantic_fixture_catalog_has_scalar_reference_parser_mode() {
+    let catalog = load_semantic_fixture_catalog();
+    assert_eq!(
+        catalog.parser_mode,
+        ParserMode::ScalarReference.as_str(),
+        "fixture catalog parser_mode must match ScalarReference"
+    );
+}
+
+#[test]
+fn backlog_family_evidence_paths_are_nonempty() {
+    let backlog = load_grammar_closure_backlog();
+    for family in &backlog.families {
+        assert!(
+            !family.evidence_paths.is_empty(),
+            "family `{}` must have at least one evidence path",
+            family.family_id
+        );
+        for path in &family.evidence_paths {
+            assert!(
+                !path.trim().is_empty(),
+                "family `{}` has blank evidence path",
+                family.family_id
+            );
+        }
+    }
+}

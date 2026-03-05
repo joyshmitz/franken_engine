@@ -627,3 +627,134 @@ fn counterfactual_delta_with_identical_runs_shows_no_changes() {
     assert_eq!(delta.changed_outcomes, 0);
     assert!(delta.divergence_samples.is_empty());
 }
+
+#[test]
+fn counterfactual_delta_serde_roundtrip() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+
+    let baseline = runner.run_fixture(&fixture).expect("baseline run");
+    let mut counterfactual = fixture.clone();
+    counterfactual.policy_id = "policy-serde-cf".to_string();
+    counterfactual.steps[1]
+        .metadata
+        .insert("outcome".to_string(), "challenge".to_string());
+    let cf_run = runner
+        .run_fixture(&counterfactual)
+        .expect("counterfactual run");
+
+    let delta = compare_counterfactual(&baseline, &cf_run);
+    let json = serde_json::to_string(&delta).expect("serialize delta");
+    let recovered: e2e_harness::CounterfactualDelta =
+        serde_json::from_str(&json).expect("deserialize delta");
+    assert_eq!(delta, recovered);
+}
+
+#[test]
+fn replay_environment_fingerprint_serde_roundtrip() {
+    let env = ReplayEnvironmentFingerprint {
+        os: "linux".to_string(),
+        architecture: "x86_64".to_string(),
+        family: "unix".to_string(),
+        pointer_width_bits: 64,
+        endian: "little".to_string(),
+    };
+    let json = serde_json::to_string(&env).expect("serialize");
+    let recovered: ReplayEnvironmentFingerprint =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(env, recovered);
+}
+
+#[test]
+fn replay_performance_report_has_positive_virtual_duration() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+    let run = runner.run_fixture(&fixture).expect("run");
+    // Use a generous wall time so speedup check is meaningful
+    let perf = evaluate_replay_performance(&run, 1_000_000);
+    assert!(
+        perf.virtual_duration_micros > 0,
+        "virtual_duration_micros must be positive"
+    );
+    assert!(
+        perf.wall_duration_micros > 0,
+        "wall_duration_micros must be positive (was the input)"
+    );
+}
+
+#[test]
+fn cross_machine_diagnosis_multiple_deltas_reported() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+
+    let baseline = runner.run_fixture(&fixture).expect("baseline run");
+    let replay = runner.run_fixture(&fixture).expect("replay run");
+
+    let expected_env = ReplayEnvironmentFingerprint {
+        os: "linux".to_string(),
+        architecture: "x86_64".to_string(),
+        family: "unix".to_string(),
+        pointer_width_bits: 64,
+        endian: "little".to_string(),
+    };
+    let actual_env = ReplayEnvironmentFingerprint {
+        os: "macos".to_string(),
+        architecture: "aarch64".to_string(),
+        family: "unix".to_string(),
+        pointer_width_bits: 64,
+        endian: "little".to_string(),
+    };
+
+    let diagnosis = diagnose_cross_machine_replay(&baseline, &replay, &expected_env, &actual_env);
+    assert!(diagnosis.cross_machine_match);
+    // Both os and architecture differ
+    assert!(diagnosis.environment_mismatches.len() >= 2);
+    assert!(diagnosis.environment_mismatches.contains(&"os".to_string()));
+    assert!(diagnosis.environment_mismatches.contains(&"architecture".to_string()));
+}
+
+#[test]
+fn golden_store_verify_detects_digest_mismatch() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+    let run = runner.run_fixture(&fixture).expect("run");
+
+    let store_dir = test_temp_dir("golden-store-mismatch");
+    let store = e2e_harness::GoldenStore::new(&store_dir).expect("golden store");
+    store.write_baseline(&run).expect("write baseline");
+
+    // Mutate the run to produce a different digest
+    let mut mutated = run.clone();
+    mutated.output_digest = format!("{}-mutated", mutated.output_digest);
+
+    let err = store
+        .verify_run(&mutated)
+        .expect_err("mismatched digest should fail");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("digest mismatch"),
+        "error should mention digest mismatch: {msg}"
+    );
+
+    fs::remove_dir_all(store_dir).ok();
+}

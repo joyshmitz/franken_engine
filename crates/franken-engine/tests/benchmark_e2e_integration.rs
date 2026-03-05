@@ -399,3 +399,22 @@ fn benchmark_e2e_script_emits_artifacts_to_env_dir() {
     maybe_emit_artifact_bridge(&artifacts.benchmark_env_manifest_path);
     maybe_emit_artifact_bridge(&artifacts.raw_results_archive_path);
 }
+
+#[test]
+fn scale_profile_debug_is_nonempty() {
+    let profile = ScaleProfile::Small;
+    assert!(!format!("{profile:?}").is_empty());
+}
+
+#[test]
+fn regression_thresholds_debug_is_nonempty() {
+    let t = RegressionThresholds::default();
+    assert!(!format!("{t:?}").is_empty());
+}
+
+#[test]
+fn latency_distribution_debug_is_nonempty() {
+    let mut samples = vec![100u64, 200, 300];
+    let dist = LatencyDistribution::from_samples(&mut samples);
+    assert!(!format!("{dist:?}").is_empty());
+}

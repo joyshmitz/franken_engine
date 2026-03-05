@@ -313,3 +313,156 @@ fn compiler_contract_schema_version_is_nonempty() {
         .expect("schema_version string");
     assert!(!sv.trim().is_empty());
 }
+
+#[test]
+fn compiler_contract_serde_roundtrip_preserves_all_fields() {
+    let path = repo_root().join("docs/frx_compiler_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+
+    let serialized = serde_json::to_string(&value).expect("re-serialize");
+    let roundtripped: Value = serde_json::from_str(&serialized).expect("re-parse");
+    assert_eq!(value, roundtripped, "serde roundtrip must be lossless");
+}
+
+#[test]
+fn compiler_contract_activation_gate_all_blocks_are_true() {
+    let path = repo_root().join("docs/frx_compiler_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+
+    let gate = &value["activation_gate"];
+    for key in [
+        "block_on_missing_verification_or_fallback_metadata",
+        "block_on_missing_reuse_scan_outcome",
+    ] {
+        assert_eq!(
+            gate[key].as_bool(),
+            Some(true),
+            "activation_gate.{key} must be true for fail-closed semantics"
+        );
+    }
+}
+
+#[test]
+fn compiler_contract_pass_witness_fields_are_non_empty_strings() {
+    let path = repo_root().join("docs/frx_compiler_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+
+    let fields = value["outputs"]["pass_witness_bundle"]["required_fields"]
+        .as_array()
+        .expect("required_fields array");
+    assert!(fields.len() >= 6, "at least 6 witness fields required");
+    for field in fields {
+        let s = field.as_str().expect("field must be string");
+        assert!(!s.trim().is_empty(), "witness field must not be empty");
+    }
+}
+
+#[test]
+fn compiler_charter_contains_no_todo_markers() {
+    let path = repo_root().join("docs/FRX_COMPILER_LANE_CHARTER_V1.md");
+    let doc = fs::read_to_string(&path).expect("read charter doc");
+    let lower = doc.to_ascii_lowercase();
+    assert!(
+        !lower.contains("todo") && !lower.contains("fixme") && !lower.contains("xxx"),
+        "charter must not contain unresolved TODO/FIXME/XXX markers"
+    );
+}
+
+#[test]
+fn compiler_charter_interface_contracts_section_references_peer_lanes() {
+    let path = repo_root().join("docs/FRX_COMPILER_LANE_CHARTER_V1.md");
+    let doc = fs::read_to_string(&path).expect("read charter doc");
+
+    let section_idx = doc.find("## Interface Contracts").expect("section must exist");
+    let section_text = &doc[section_idx..];
+    // Interface Contracts must reference at least one upstream/downstream lane
+    assert!(
+        section_text.contains("Runtime") || section_text.contains("Verification")
+            || section_text.contains("Toolchain") || section_text.contains("Adoption"),
+        "Interface Contracts must reference at least one peer lane"
+    );
+}
+
+// ---------- enrichment: deeper structural and cross-field checks ----------
+
+#[test]
+fn compiler_contract_lane_name_is_nonempty() {
+    let path = repo_root().join("docs/frx_compiler_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let name = value["lane"]["name"]
+        .as_str()
+        .expect("lane.name must be a string");
+    assert!(
+        !name.trim().is_empty(),
+        "lane.name must not be empty"
+    );
+}
+
+#[test]
+fn compiler_contract_inputs_section_exists_and_is_nonempty() {
+    let path = repo_root().join("docs/frx_compiler_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let inputs = &value["inputs"];
+    assert!(
+        inputs.is_object() || inputs.is_array(),
+        "inputs must be an object or array"
+    );
+    if let Some(obj) = inputs.as_object() {
+        assert!(!obj.is_empty(), "inputs object must not be empty");
+    }
+}
+
+#[test]
+fn compiler_charter_doc_mentions_deterministic_fallback() {
+    let path = repo_root().join("docs/FRX_COMPILER_LANE_CHARTER_V1.md");
+    let doc = fs::read_to_string(&path).expect("read charter doc");
+    assert!(
+        doc.contains("deterministic fallback"),
+        "charter must mention deterministic fallback"
+    );
+}
+
+#[test]
+fn compiler_contract_logging_contract_has_required_fields_array() {
+    let path = repo_root().join("docs/frx_compiler_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let fields = value["logging_contract"]["required_fields"]
+        .as_array()
+        .expect("logging_contract.required_fields must be an array");
+    assert!(
+        !fields.is_empty(),
+        "logging_contract.required_fields must not be empty"
+    );
+    for field in fields {
+        assert!(
+            field.as_str().is_some_and(|s| !s.trim().is_empty()),
+            "each logging_contract required_field must be a non-empty string"
+        );
+    }
+}
+
+#[test]
+fn compiler_contract_failure_policy_is_fail_closed_mode() {
+    let path = repo_root().join("docs/frx_compiler_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert_eq!(
+        value["failure_policy"]["mode"].as_str(),
+        Some("fail_closed"),
+        "compiler lane failure_policy mode must be fail_closed"
+    );
+    // failure_policy should have an error_code
+    let error_code = value["failure_policy"]["error_code"]
+        .as_str()
+        .unwrap_or("");
+    assert!(
+        !error_code.trim().is_empty(),
+        "failure_policy.error_code must not be empty"
+    );
+}

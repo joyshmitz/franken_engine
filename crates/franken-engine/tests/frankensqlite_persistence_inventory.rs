@@ -396,3 +396,50 @@ fn frankensqlite_inventory_frankensqlite_integration_points_present() {
         );
     }
 }
+
+#[test]
+fn frankensqlite_inventory_is_not_empty() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    assert!(
+        content.len() > 500,
+        "Inventory should be substantial, got {} bytes",
+        content.len()
+    );
+}
+
+#[test]
+fn frankensqlite_inventory_has_markdown_title() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    assert!(
+        content.starts_with("# "),
+        "Inventory must start with a top-level heading"
+    );
+}
+
+#[test]
+fn frankensqlite_inventory_no_todo_markers() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    let todo_count = content.to_lowercase().matches("todo").count();
+    assert!(
+        todo_count == 0,
+        "Inventory should not contain TODO markers, found {todo_count}"
+    );
+}
+
+#[test]
+fn frankensqlite_inventory_contains_determinism_keyword() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    let lower = content.to_lowercase();
+    assert!(
+        lower.contains("determinism") || lower.contains("deterministic"),
+        "Inventory must reference determinism guarantees"
+    );
+}

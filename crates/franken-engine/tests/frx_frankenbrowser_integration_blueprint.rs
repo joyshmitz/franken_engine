@@ -150,6 +150,7 @@ fn frx_09_3_doc_contains_required_sections() {
         "migration",
         "sidecar",
         "frankenbrowser",
+        "frx-20.6",
     ] {
         assert!(
             doc_lower.contains(phrase),
@@ -284,7 +285,7 @@ fn frx_09_3_prerequisites_include_required_dependencies() {
         .map(|prereq| (prereq.bead_id.as_str(), prereq))
         .collect();
 
-    for bead_id in ["bd-mjh3.7.2", "bd-mjh3.9.2"] {
+    for bead_id in ["bd-mjh3.7.2", "bd-mjh3.9.2", "bd-mjh3.20.6"] {
         let prereq = prereq_map
             .get(bead_id)
             .unwrap_or_else(|| panic!("missing required prerequisite bead {bead_id}"));
@@ -348,6 +349,25 @@ fn frx_09_3_scenarios_cover_boundary_scheduler_policy_and_cutover() {
 }
 
 #[test]
+fn frx_09_3_includes_frx_12_6_c5_integrated_evidence_scenario() {
+    let blueprint = parse_blueprint();
+    let scenario = blueprint
+        .scenarios
+        .iter()
+        .find(|scenario| scenario.scenario_id == "frx-12.6-c5-evidence-integration")
+        .expect("missing FRX-12.6 integrated-evidence scenario");
+
+    assert_eq!(scenario.category, "release_evidence");
+    assert_eq!(scenario.required_phase, "P3_first_class_subsystem");
+    assert_eq!(scenario.expected_decision_path, "c5_integrated_evidence_gate");
+    assert_eq!(scenario.expected_outcome, "pass");
+    assert_eq!(
+        scenario.log_template.component,
+        "frx_frankenbrowser_integration_blueprint"
+    );
+}
+
+#[test]
 fn frx_09_3_structured_log_requirements_and_operator_commands_are_present() {
     let blueprint = parse_blueprint();
 
@@ -387,6 +407,18 @@ fn frx_09_3_structured_log_requirements_and_operator_commands_are_present() {
             .iter()
             .any(|entry| { entry.contains("frx_frankenbrowser_integration_blueprint_replay.sh") }),
         "operator verification must include replay command"
+    );
+    assert!(
+        blueprint.operator_verification.iter().any(|entry| {
+            entry.contains("run_frx_milestone_release_test_evidence_integrator_suite.sh ci")
+        }),
+        "operator verification must include FRX-20.6 integrated gate command"
+    );
+    assert!(
+        blueprint.operator_verification.iter().any(|entry| {
+            entry.contains("frx_milestone_release_test_evidence_integrator_replay.sh")
+        }),
+        "operator verification must include FRX-20.6 replay command"
     );
     assert!(
         blueprint.operator_verification.iter().any(|entry| entry
@@ -547,4 +579,196 @@ fn frx_09_3_blueprint_has_at_least_one_prerequisite() {
 fn frx_09_3_blueprint_has_at_least_one_migration_phase() {
     let blueprint = parse_blueprint();
     assert!(!blueprint.migration_phases.is_empty());
+}
+
+#[test]
+fn frx_09_3_blueprint_json_value_roundtrip_preserves_all_keys() {
+    let value: serde_json::Value =
+        serde_json::from_str(BLUEPRINT_JSON).expect("parse as Value");
+    let serialized = serde_json::to_string(&value).expect("re-serialize");
+    let roundtripped: serde_json::Value =
+        serde_json::from_str(&serialized).expect("re-parse");
+    assert_eq!(value, roundtripped, "JSON Value serde roundtrip must be lossless");
+
+    let keys: BTreeSet<&str> = value
+        .as_object()
+        .expect("top-level object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    for expected_key in [
+        "schema_version",
+        "bead_id",
+        "generated_by",
+        "track",
+        "architecture",
+        "migration_phases",
+        "scenarios",
+    ] {
+        assert!(
+            keys.contains(expected_key),
+            "roundtripped JSON missing key: {expected_key}"
+        );
+    }
+}
+
+#[test]
+fn frx_09_3_migration_phases_entry_and_exit_criteria_are_nonempty_strings() {
+    let blueprint = parse_blueprint();
+    for phase in &blueprint.migration_phases {
+        for criterion in &phase.entry_criteria {
+            assert!(
+                !criterion.trim().is_empty(),
+                "phase {} has empty entry criterion",
+                phase.phase_id
+            );
+        }
+        for criterion in &phase.exit_criteria {
+            assert!(
+                !criterion.trim().is_empty(),
+                "phase {} has empty exit criterion",
+                phase.phase_id
+            );
+        }
+        for blocker in &phase.promotion_blockers {
+            assert!(
+                !blocker.trim().is_empty(),
+                "phase {} has empty promotion blocker",
+                phase.phase_id
+            );
+        }
+    }
+}
+
+#[test]
+fn frx_09_3_embedding_boundary_capabilities_are_nonempty_strings() {
+    let blueprint = parse_blueprint();
+    for boundary in &blueprint.architecture.embedding_boundaries {
+        for cap in &boundary.allowed_capabilities {
+            assert!(
+                !cap.trim().is_empty(),
+                "boundary {} has empty allowed capability",
+                boundary.boundary_id
+            );
+        }
+        for cap in &boundary.denied_capabilities {
+            assert!(
+                !cap.trim().is_empty(),
+                "boundary {} has empty denied capability",
+                boundary.boundary_id
+            );
+        }
+    }
+}
+
+#[test]
+fn frx_09_3_scenarios_log_templates_component_is_consistent() {
+    let blueprint = parse_blueprint();
+    let expected_component = "frx_frankenbrowser_integration_blueprint";
+    for scenario in &blueprint.scenarios {
+        assert_eq!(
+            scenario.log_template.component, expected_component,
+            "scenario {} log_template.component must be {expected_component}",
+            scenario.scenario_id
+        );
+        assert_eq!(
+            scenario.log_template.scenario_id, scenario.scenario_id,
+            "scenario {} log_template.scenario_id must match scenario_id",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn frx_09_3_doc_contains_no_todo_markers() {
+    let path = repo_root().join("docs/FRX_FRANKENBROWSER_INTEGRATION_BLUEPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    let lower = doc.to_ascii_lowercase();
+    assert!(
+        !lower.contains("todo") && !lower.contains("fixme") && !lower.contains("xxx"),
+        "blueprint doc must not contain unresolved TODO/FIXME/XXX markers"
+    );
+}
+
+// ---------- enrichment: deeper structural and cross-field checks ----------
+
+#[test]
+fn frx_09_3_embedding_boundary_isolation_modes_are_nonempty() {
+    let blueprint = parse_blueprint();
+    let mut modes = BTreeSet::new();
+    for boundary in &blueprint.architecture.embedding_boundaries {
+        assert!(
+            !boundary.isolation_mode.trim().is_empty(),
+            "boundary {} isolation_mode must not be empty",
+            boundary.boundary_id
+        );
+        modes.insert(boundary.isolation_mode.as_str());
+    }
+    // There should be at least two different isolation modes across boundaries
+    assert!(
+        modes.len() >= 2,
+        "expected at least 2 distinct isolation modes, got {}",
+        modes.len()
+    );
+}
+
+#[test]
+fn frx_09_3_scheduler_preemption_budget_is_within_bounds() {
+    let blueprint = parse_blueprint();
+    let budget = blueprint.architecture.scheduler_contract.preemption_budget_us;
+    // budget must be between 1us and 20ms
+    assert!(
+        (1..=20_000).contains(&budget),
+        "preemption_budget_us {} out of range [1, 20000]",
+        budget
+    );
+}
+
+#[test]
+fn frx_09_3_migration_phase_positions_are_contiguous_from_zero() {
+    let blueprint = parse_blueprint();
+    let mut positions: Vec<u32> = blueprint
+        .migration_phases
+        .iter()
+        .map(|phase| phase.position)
+        .collect();
+    positions.sort();
+    for (i, pos) in positions.iter().enumerate() {
+        assert_eq!(
+            *pos, i as u32,
+            "migration phase positions must be contiguous from 0, gap at index {i}"
+        );
+    }
+}
+
+#[test]
+fn frx_09_3_scenarios_with_pass_outcome_do_not_mention_fallback_in_decision_path() {
+    let blueprint = parse_blueprint();
+    for scenario in &blueprint.scenarios {
+        if scenario.expected_outcome == "pass" {
+            assert!(
+                !scenario.expected_decision_path.contains("fallback")
+                    && !scenario.expected_decision_path.contains("deny"),
+                "pass scenario {} should not route through fallback/deny: {}",
+                scenario.scenario_id,
+                scenario.expected_decision_path
+            );
+        }
+    }
+}
+
+#[test]
+fn frx_09_3_security_policy_boundaries_enforcement_modes_are_nonempty() {
+    let blueprint = parse_blueprint();
+    for boundary in &blueprint.architecture.security_policy_boundaries {
+        assert!(
+            !boundary.enforcement_mode.trim().is_empty(),
+            "security boundary {} enforcement_mode must not be empty",
+            boundary.policy_surface
+        );
+        assert!(
+            !boundary.policy_surface.trim().is_empty(),
+            "security boundary policy_surface must not be empty"
+        );
+    }
 }

@@ -316,3 +316,173 @@ fn verification_charter_mentions_formal() {
     let doc = fs::read_to_string(&path).expect("read doc");
     assert!(doc.to_ascii_lowercase().contains("formal"));
 }
+
+// ---------- enrichment: deeper structural invariants ----------
+
+#[test]
+fn verification_contract_consumer_interfaces_cover_all_lanes() {
+    let path = repo_root().join("docs/frx_verification_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let ci = value["consumer_interfaces"]
+        .as_object()
+        .expect("consumer_interfaces must be object");
+    for lane in ["governance_lane", "compiler_lane", "runtime_lane"] {
+        assert!(
+            ci.contains_key(lane),
+            "consumer_interfaces missing lane: {lane}"
+        );
+        let entries = ci[lane].as_array().expect("lane entries must be array");
+        assert!(!entries.is_empty(), "consumer_interfaces.{lane} must not be empty");
+    }
+}
+
+#[test]
+fn verification_contract_counterexample_triage_repro_required() {
+    let path = repo_root().join("docs/frx_verification_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert_eq!(
+        value["counterexample_triage"]["repro_required"].as_bool(),
+        Some(true),
+        "counterexample triage must require reproducibility"
+    );
+}
+
+#[test]
+fn verification_contract_logging_contract_has_component_and_fields() {
+    let path = repo_root().join("docs/frx_verification_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let lc = &value["logging_contract"];
+    let component = lc["component"]
+        .as_str()
+        .expect("logging_contract.component must be string");
+    assert!(!component.trim().is_empty());
+    let fields = lc["required_fields"]
+        .as_array()
+        .expect("logging_contract.required_fields must be array");
+    assert!(!fields.is_empty(), "logging required_fields must not be empty");
+    for field in fields {
+        let s = field.as_str().expect("each field must be string");
+        assert!(!s.trim().is_empty());
+    }
+}
+
+#[test]
+fn verification_contract_json_roundtrip_preserves_all_keys() {
+    let path = repo_root().join("docs/frx_verification_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let reserialized = serde_json::to_string_pretty(&value).expect("re-serialize");
+    let reparsed: Value = serde_json::from_str(&reserialized).expect("re-parse");
+    let original_keys: std::collections::BTreeSet<String> = value
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    let reparsed_keys: std::collections::BTreeSet<String> = reparsed
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    assert_eq!(original_keys, reparsed_keys);
+}
+
+#[test]
+fn verification_contract_activation_gate_all_blocks_are_true() {
+    let path = repo_root().join("docs/frx_verification_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let gate = value["activation_gate"]
+        .as_object()
+        .expect("activation_gate must be object");
+    for (key, val) in gate {
+        if let Some(b) = val.as_bool() {
+            assert!(b, "activation_gate.{key} must be true for fail-closed policy");
+        }
+    }
+}
+
+// ---------- enrichment: deeper contract invariants ----------
+
+#[test]
+fn verification_contract_counterexample_triage_has_all_required_fields() {
+    let path = repo_root().join("docs/frx_verification_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let fields = value["counterexample_triage"]["required_fields"]
+        .as_array()
+        .expect("required_fields must be array");
+    // Each field must be a non-empty string
+    for field in fields {
+        let s = field.as_str().expect("each field must be string");
+        assert!(!s.trim().is_empty(), "empty counterexample triage field");
+    }
+    // Must have at least 4 required fields
+    assert!(
+        fields.len() >= 4,
+        "counterexample triage should have at least 4 required fields, got {}",
+        fields.len()
+    );
+}
+
+#[test]
+fn verification_contract_failure_policy_has_error_code() {
+    let path = repo_root().join("docs/frx_verification_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let fp = &value["failure_policy"];
+    let code = fp["error_code"]
+        .as_str()
+        .expect("failure_policy.error_code must be string");
+    assert!(!code.trim().is_empty(), "error_code must not be empty");
+    assert!(
+        code.starts_with("FE-"),
+        "error_code should start with FE- prefix, got {code}"
+    );
+}
+
+#[test]
+fn verification_charter_doc_contains_all_input_and_output_sections() {
+    let path = repo_root().join("docs/FRX_VERIFICATION_LANE_CHARTER_V1.md");
+    let doc = fs::read_to_string(&path).expect("read charter doc");
+    // Inputs and Outputs are required charter sections
+    assert!(doc.contains("## Inputs"), "charter missing ## Inputs section");
+    assert!(doc.contains("## Outputs"), "charter missing ## Outputs section");
+    // Should have content under each (not just empty sections)
+    let inputs_idx = doc.find("## Inputs").unwrap();
+    let outputs_idx = doc.find("## Outputs").unwrap();
+    assert!(
+        outputs_idx > inputs_idx,
+        "Outputs section should come after Inputs"
+    );
+}
+
+#[test]
+fn verification_contract_lane_has_name_and_description() {
+    let path = repo_root().join("docs/frx_verification_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let lane = &value["lane"];
+    assert!(lane.is_object(), "lane must be an object");
+    // lane should have id, name, or description fields
+    let id = lane["id"].as_str().expect("lane.id must be string");
+    assert!(!id.trim().is_empty(), "lane.id must not be empty");
+}
+
+#[test]
+fn verification_contract_logging_contract_fail_closed() {
+    let path = repo_root().join("docs/frx_verification_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let lc = &value["logging_contract"];
+    // The logging contract's fail_closed_on_missing_fields should be true
+    assert_eq!(
+        lc["fail_closed_on_missing_fields"].as_bool(),
+        Some(true),
+        "logging_contract must be fail-closed on missing fields"
+    );
+}

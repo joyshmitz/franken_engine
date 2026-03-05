@@ -318,3 +318,153 @@ fn track_c_contract_has_logging_contract() {
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     assert!(value["logging_contract"].is_object());
 }
+
+// ---------- enrichment: deeper structural invariants ----------
+
+#[test]
+fn track_c_contract_logging_contract_required_fields_are_nonempty_strings() {
+    let path = repo_root().join("docs/frx_track_c_js_runtime_lane_mvp_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let fields = value["logging_contract"]["required_fields"]
+        .as_array()
+        .expect("logging_contract.required_fields must be array");
+    assert!(!fields.is_empty(), "required_fields must not be empty");
+    for field in fields {
+        let s = field.as_str().expect("each field must be a string");
+        assert!(!s.trim().is_empty(), "field must not be blank");
+    }
+}
+
+#[test]
+fn track_c_contract_failover_hook_required_fields_present() {
+    let path = repo_root().join("docs/frx_track_c_js_runtime_lane_mvp_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let hook = &value["outputs"]["failover_hook_contract"];
+    assert!(
+        hook["required"].as_bool() == Some(true),
+        "failover_hook_contract must be required"
+    );
+    let fields = hook["required_fields"]
+        .as_array()
+        .expect("failover_hook_contract.required_fields");
+    for expected in ["hook_id", "trigger_condition", "fallback_mode"] {
+        assert!(
+            fields.iter().any(|v| v.as_str() == Some(expected)),
+            "failover_hook_contract missing field: {expected}"
+        );
+    }
+}
+
+#[test]
+fn track_c_contract_promotion_evidence_pointer_fields_present() {
+    let path = repo_root().join("docs/frx_track_c_js_runtime_lane_mvp_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let pointer = &value["outputs"]["promotion_evidence_pointer"];
+    assert!(
+        pointer["required"].as_bool() == Some(true),
+        "promotion_evidence_pointer must be required"
+    );
+    let fields = pointer["required_fields"]
+        .as_array()
+        .expect("promotion_evidence_pointer.required_fields");
+    for expected in ["bead_id", "artifact_root", "manifest_path", "replay_command"] {
+        assert!(
+            fields.iter().any(|v| v.as_str() == Some(expected)),
+            "promotion_evidence_pointer missing field: {expected}"
+        );
+    }
+}
+
+#[test]
+fn track_c_contract_json_roundtrip_preserves_all_keys() {
+    let path = repo_root().join("docs/frx_track_c_js_runtime_lane_mvp_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    // Re-serialize and re-parse, verifying the full key set is stable
+    let reserialized = serde_json::to_string_pretty(&value).expect("re-serialize");
+    let reparsed: Value = serde_json::from_str(&reserialized).expect("re-parse");
+    let original_keys: std::collections::BTreeSet<String> = value
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    let reparsed_keys: std::collections::BTreeSet<String> = reparsed
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    assert_eq!(original_keys, reparsed_keys);
+}
+
+#[test]
+fn track_c_contract_status_is_active() {
+    let path = repo_root().join("docs/frx_track_c_js_runtime_lane_mvp_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert_eq!(value["status"].as_str(), Some("active"));
+}
+
+// ---------- enrichment: additional structural and semantic checks ----------
+
+#[test]
+fn track_c_contract_has_ownership_section() {
+    let path = repo_root().join("docs/frx_track_c_js_runtime_lane_mvp_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(
+        value["ownership"].is_object(),
+        "track C contract must have ownership section"
+    );
+}
+
+#[test]
+fn track_c_charter_references_program_constitution() {
+    let path = repo_root().join("docs/FRX_TRACK_C_JS_RUNTIME_LANE_MVP_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(
+        doc.contains("FRX_PROGRAM_CONSTITUTION_V1.md"),
+        "track C charter must reference program constitution"
+    );
+}
+
+#[test]
+fn track_c_contract_activation_gate_blocks_nondeterministic_scheduler() {
+    let path = repo_root().join("docs/frx_track_c_js_runtime_lane_mvp_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert_eq!(
+        value["activation_gate"]["block_on_nondeterministic_scheduler_observation"].as_bool(),
+        Some(true),
+        "activation gate must block on nondeterministic scheduler observations"
+    );
+}
+
+#[test]
+fn track_c_charter_mentions_dom_patch() {
+    let path = repo_root().join("docs/FRX_TRACK_C_JS_RUNTIME_LANE_MVP_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    let lower = doc.to_ascii_lowercase();
+    assert!(
+        lower.contains("dom patch"),
+        "track C charter must mention DOM patch batches"
+    );
+}
+
+#[test]
+fn track_c_contract_failure_policy_has_error_code() {
+    let path = repo_root().join("docs/frx_track_c_js_runtime_lane_mvp_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let error_code = value["failure_policy"]["error_code"]
+        .as_str()
+        .expect("failure_policy.error_code must be a string");
+    assert!(
+        error_code.starts_with("FE-FRX-"),
+        "error_code must start with FE-FRX-, got {error_code}"
+    );
+}

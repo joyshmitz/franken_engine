@@ -7,9 +7,10 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use e2e_harness::{
-    ArtifactCollector, DeterministicRunner, FixtureStore, GoldenStore, GoldenVerificationError,
-    LogExpectation, ReplayInputErrorCode, ScenarioClass, ScenarioMatrixEntry, ScenarioStep,
-    TestFixture, assert_structured_logs, audit_collected_artifacts,
+    ArtifactCollector, DeterministicRng, DeterministicRunner, FixtureStore, GoldenStore,
+    GoldenVerificationError, LogExpectation, ReplayEnvironmentFingerprint, ReplayInputErrorCode,
+    RunReport, ScenarioClass, ScenarioMatrixEntry, ScenarioStep, TestFixture, VirtualClock,
+    assert_structured_logs, audit_collected_artifacts, diagnose_cross_machine_replay,
     rgc_advanced_scenario_matrix_registry, run_scenario_matrix,
     select_rgc_advanced_scenario_matrix, validate_replay_input, verify_replay,
 };
@@ -623,4 +624,152 @@ fn deterministic_e2e_harness_readme_documents_ci_clippy_and_step_logs() {
             readme_path.display()
         );
     }
+}
+
+#[test]
+fn parse_fixture_with_migration_rejects_invalid_json() {
+    let bad_bytes = b"this is not json";
+    let err = e2e_harness::parse_fixture_with_migration(bad_bytes)
+        .expect_err("invalid JSON should fail migration parse");
+    let msg = format!("{err}");
+    assert!(!msg.is_empty(), "migration error should have a message");
+}
+
+#[test]
+fn golden_store_write_baseline_is_idempotent() {
+    let runner = DeterministicRunner::default();
+    let fixture = sample_fixture();
+    let run = runner.run_fixture(&fixture).expect("run");
+
+    let root = test_temp_dir("golden-idempotent");
+    let store = GoldenStore::new(root.join("golden")).expect("golden store");
+
+    let path_a = store.write_baseline(&run).expect("first write");
+    let path_b = store.write_baseline(&run).expect("second write");
+    assert_eq!(path_a, path_b, "writing the same baseline twice must produce the same path");
+    assert!(store.verify_run(&run).is_ok());
+}
+
+#[test]
+fn evidence_linkage_records_are_serde_deterministic() {
+    let runner = DeterministicRunner::default();
+    let fixture = sample_fixture();
+    let run = runner.run_fixture(&fixture).expect("run");
+
+    let linkage = e2e_harness::build_evidence_linkage(&run.events);
+    let json_a = serde_json::to_string(&linkage).expect("first serialize");
+    let json_b = serde_json::to_string(&linkage).expect("second serialize");
+    assert_eq!(json_a, json_b, "evidence linkage serialization must be deterministic");
+}
+
+#[test]
+fn scenario_class_debug_is_nonempty() {
+    let class = ScenarioClass::Baseline;
+    assert!(!format!("{class:?}").is_empty());
+}
+
+#[test]
+fn log_expectation_debug_is_nonempty() {
+    let exp = LogExpectation {
+        component: "test".to_string(),
+        event: "init".to_string(),
+        outcome: "ok".to_string(),
+        error_code: None,
+    };
+    assert!(!format!("{exp:?}").is_empty());
+}
+
+#[test]
+fn replay_input_error_code_debug_is_nonempty() {
+    let code = ReplayInputErrorCode::MissingModelSnapshot;
+    assert!(!format!("{code:?}").is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// VirtualClock deterministic advance
+// ---------------------------------------------------------------------------
+
+#[test]
+fn virtual_clock_advances_deterministically() {
+    let mut clock = VirtualClock::new(1_000);
+    assert_eq!(clock.now_micros(), 1_000); // Copy, so self isn't consumed
+    clock.advance(500);
+    assert_eq!(clock.now_micros(), 1_500);
+    // saturating add caps at u64::MAX
+    clock.advance(u64::MAX);
+    assert_eq!(clock.now_micros(), u64::MAX);
+}
+
+// ---------------------------------------------------------------------------
+// DeterministicRng reproducibility
+// ---------------------------------------------------------------------------
+
+#[test]
+fn deterministic_rng_same_seed_produces_same_sequence() {
+    let mut rng_a = DeterministicRng::seeded(42);
+    let mut rng_b = DeterministicRng::seeded(42);
+    let seq_a: Vec<u64> = (0..10).map(|_| rng_a.next_u64()).collect();
+    let seq_b: Vec<u64> = (0..10).map(|_| rng_b.next_u64()).collect();
+    assert_eq!(seq_a, seq_b, "same seed must produce identical sequences");
+    // zero seed also works
+    let mut rng_zero = DeterministicRng::seeded(0);
+    let val = rng_zero.next_u64();
+    assert_ne!(val, 0, "zero seed should be remapped to avoid degenerate xorshift");
+}
+
+// ---------------------------------------------------------------------------
+// ReplayEnvironmentFingerprint::local()
+// ---------------------------------------------------------------------------
+
+#[test]
+fn replay_environment_fingerprint_local_is_populated() {
+    let fp = ReplayEnvironmentFingerprint::local();
+    assert!(!fp.os.is_empty());
+    assert!(!fp.architecture.is_empty());
+    assert!(!fp.family.is_empty());
+    assert!(fp.pointer_width_bits > 0);
+    assert!(!fp.endian.is_empty());
+    // serde roundtrip
+    let json = serde_json::to_string(&fp).expect("serialize");
+    let recovered: ReplayEnvironmentFingerprint = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(fp, recovered);
+}
+
+// ---------------------------------------------------------------------------
+// RunReport::from_result and to_markdown
+// ---------------------------------------------------------------------------
+
+#[test]
+fn run_report_from_result_captures_error_status() {
+    let runner = DeterministicRunner::default();
+    let fixture = sample_fixture(); // has an error_code step
+    let run = runner.run_fixture(&fixture).expect("run");
+
+    let report = RunReport::from_result(&run);
+    assert_eq!(report.fixture_id, "fixture-hello");
+    assert_eq!(report.event_count, fixture.steps.len());
+    assert!(!report.pass, "fixture with error_code step should report fail");
+    assert_eq!(report.first_error_code.as_deref(), Some("FE-E2E-0007"));
+    let md = report.to_markdown();
+    assert!(md.contains("# E2E Run Report"));
+    assert!(md.contains("fail"));
+    assert!(md.contains("FE-E2E-0007"));
+}
+
+// ---------------------------------------------------------------------------
+// diagnose_cross_machine_replay same environment
+// ---------------------------------------------------------------------------
+
+#[test]
+fn diagnose_cross_machine_replay_same_env_matches() {
+    let runner = DeterministicRunner::default();
+    let fixture = sample_fixture();
+    let run_a = runner.run_fixture(&fixture).expect("run a");
+    let run_b = runner.run_fixture(&fixture).expect("run b");
+    let env_fp = ReplayEnvironmentFingerprint::local();
+
+    let diag = diagnose_cross_machine_replay(&run_a, &run_b, &env_fp, &env_fp);
+    assert!(diag.cross_machine_match, "same seed + same env should match");
+    assert!(diag.environment_mismatches.is_empty());
+    assert!(diag.replay_verification.matches);
 }

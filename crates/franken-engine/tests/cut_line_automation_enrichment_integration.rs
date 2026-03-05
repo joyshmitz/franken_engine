@@ -417,3 +417,68 @@ fn serde_roundtrip_input_validity_all_variants() {
         assert_eq!(*v, rt);
     }
 }
+
+// ===========================================================================
+// 13) CutLineEvaluator — revoke on unpromoted line returns false
+// ===========================================================================
+
+#[test]
+fn evaluator_revoke_unpromoted_returns_false() {
+    let mut eval = CutLineEvaluator::with_defaults();
+    assert!(
+        !eval.revoke_promotion(CutLine::C0),
+        "revoking a line that was never promoted should return false"
+    );
+}
+
+// ===========================================================================
+// 14) CutLineSpec mandatory_count
+// ===========================================================================
+
+#[test]
+fn cut_line_spec_mandatory_count_default_c0() {
+    let spec = CutLineSpec::default_c0();
+    let mandatory = spec.mandatory_count();
+    assert!(
+        mandatory > 0,
+        "default C0 spec should have at least one mandatory requirement"
+    );
+    assert!(
+        mandatory <= spec.requirements.len(),
+        "mandatory count cannot exceed total requirements"
+    );
+}
+
+// ===========================================================================
+// 15) CutLineSpec serde roundtrip
+// ===========================================================================
+
+#[test]
+fn cut_line_spec_serde_roundtrip() {
+    let spec = CutLineSpec::default_c0();
+    let json = serde_json::to_string(&spec).unwrap();
+    let recovered: CutLineSpec = serde_json::from_str(&json).unwrap();
+    assert_eq!(recovered.cut_line, spec.cut_line);
+    assert_eq!(recovered.requirements.len(), spec.requirements.len());
+    assert_eq!(recovered.requires_predecessor, spec.requires_predecessor);
+}
+
+#[test]
+fn cut_line_evaluator_debug_is_nonempty() {
+    let eval = CutLineEvaluator::with_defaults();
+    assert!(!format!("{eval:?}").is_empty());
+}
+
+#[test]
+fn input_validity_serde_is_deterministic() {
+    let v = InputValidity::Valid;
+    let a = serde_json::to_string(&v).expect("first");
+    let b = serde_json::to_string(&v).expect("second");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn cut_line_spec_debug_is_nonempty() {
+    let spec = CutLineSpec::default_c0();
+    assert!(!format!("{spec:?}").is_empty());
+}

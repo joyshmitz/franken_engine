@@ -479,3 +479,30 @@ fn matrix_has_at_least_one_entry() {
     let matrix = ModuleCompatibilityMatrix::from_default_json().expect("load matrix");
     assert!(!matrix.entries().is_empty(), "matrix must have entries");
 }
+
+#[test]
+fn default_matrix_json_is_nonempty() {
+    assert!(!DEFAULT_MATRIX_JSON.is_empty(), "DEFAULT_MATRIX_JSON constant must not be empty");
+}
+
+#[test]
+fn compatibility_context_debug_is_nonempty() {
+    let ctx = context();
+    assert!(!format!("{ctx:?}").is_empty());
+}
+
+#[test]
+fn waiver_record_debug_is_nonempty() {
+    let waiver = WaiverRecord {
+        waiver_id: "w1".to_string(),
+        feature_id: "f1".to_string(),
+        reason: "test".to_string(),
+        approved_by: "ops".to_string(),
+        approved_at_ns: 100,
+        valid_until_ns: None,
+        test262_exemptions: Vec::new(),
+        lockstep_exemptions: Vec::new(),
+        sealed: false,
+    };
+    assert!(!format!("{waiver:?}").is_empty());
+}

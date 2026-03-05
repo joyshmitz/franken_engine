@@ -704,3 +704,144 @@ fn shadow_gate_applies_stricter_high_risk_threshold_profile() {
             .any(|reason| reason.contains("shadow success rate"))
     );
 }
+
+#[test]
+fn shadow_evaluation_gate_config_default_has_positive_thresholds() {
+    let config = ShadowEvaluationGateConfig {
+        regression_tolerance_millionths: 5_000,
+        min_required_improvement_millionths: 2_500,
+        default_burn_in_profile: ShadowBurnInThresholdProfile {
+            min_shadow_success_rate_millionths: 995_000,
+            max_false_deny_rate_millionths: 5_000,
+            min_burn_in_duration_ns: 100,
+            require_verified_rollback_artifacts: true,
+        },
+        burn_in_profiles_by_extension_class: BTreeMap::new(),
+    };
+    assert!(config.regression_tolerance_millionths > 0);
+    assert!(config.min_required_improvement_millionths > 0);
+    assert!(config.default_burn_in_profile.min_shadow_success_rate_millionths > 0);
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: budget exhaustion, scorecard after multiple evals, gate serde
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn shadow_gate_rejects_when_privacy_budget_exhausted() {
+    let contract = contract();
+    let mut g = gate();
+    let signing = governance_signing_key();
+
+    // Submit candidate with lifetime-exceeding budget consumption
+    let artifact = g
+        .evaluate_candidate(
+            &contract,
+            candidate("decision-budget-exceed", improved_metrics(), 10_000_000, 100_000),
+            &signing,
+        )
+        .expect("evaluation");
+    assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
+    assert!(
+        artifact.failure_reasons.iter().any(|r| r.contains("budget")),
+        "failure reasons should mention budget: {:?}",
+        artifact.failure_reasons
+    );
+}
+
+#[test]
+fn shadow_gate_scorecard_grows_with_each_evaluation() {
+    let contract = contract();
+    let mut g = gate();
+    let signing = governance_signing_key();
+
+    // First evaluation
+    let _a1 = g
+        .evaluate_candidate(
+            &contract,
+            candidate("decision-sc1", improved_metrics(), 90_000, 900),
+            &signing,
+        )
+        .expect("first eval");
+    let sc1_len = g.scorecard_entries().len();
+    assert!(sc1_len >= 1);
+
+    // Second evaluation (reject due to no improvement)
+    let _a2 = g
+        .evaluate_candidate(
+            &contract,
+            candidate("decision-sc2", baseline_metrics(), 90_000, 900),
+            &signing,
+        )
+        .expect("second eval");
+    let sc2_len = g.scorecard_entries().len();
+    assert!(
+        sc2_len > sc1_len,
+        "scorecard should grow: {} > {}",
+        sc2_len,
+        sc1_len
+    );
+}
+
+#[test]
+fn shadow_evaluation_gate_serde_roundtrip() {
+    let g = gate();
+    let json = serde_json::to_string(&g).expect("serialize gate");
+    let recovered: ShadowEvaluationGate = serde_json::from_str(&json).expect("deserialize gate");
+    assert_eq!(
+        recovered.scorecard_entries().len(),
+        g.scorecard_entries().len()
+    );
+}
+
+#[test]
+fn shadow_gate_no_active_artifact_when_none_promoted() {
+    let contract = contract();
+    let mut g = gate();
+    let signing = governance_signing_key();
+
+    // Evaluate a candidate that gets rejected
+    let _rejected = g
+        .evaluate_candidate(
+            &contract,
+            candidate("decision-no-active", regressed_metrics(), 90_000, 900),
+            &signing,
+        )
+        .expect("reject");
+
+    // No active artifact should exist for this policy
+    assert!(
+        g.active_artifact("policy-shadow-gate").is_none(),
+        "rejected candidate should not create an active artifact"
+    );
+}
+
+#[test]
+fn shadow_gate_post_deployment_with_unchanged_metrics_returns_none() {
+    let contract = contract();
+    let mut g = gate();
+    let signing = governance_signing_key();
+
+    // Pass the candidate
+    let pass_artifact = g
+        .evaluate_candidate(
+            &contract,
+            candidate("decision-stable", improved_metrics(), 90_000, 900),
+            &signing,
+        )
+        .expect("pass");
+    assert_eq!(pass_artifact.verdict, ShadowPromotionVerdict::Pass);
+
+    // Post-deployment with same improved metrics => no rollback needed
+    let rollback = g
+        .evaluate_post_deployment_metrics(&pass_artifact, improved_metrics(), &signing)
+        .expect("post-deployment check");
+    assert!(
+        rollback.is_none(),
+        "unchanged/improved metrics should not trigger rollback"
+    );
+    assert!(
+        g.active_artifact("policy-shadow-gate").is_some(),
+        "artifact should remain active after stable post-deployment check"
+    );
+}

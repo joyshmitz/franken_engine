@@ -657,3 +657,194 @@ fn constants_stable() {
         "governance_scorecard"
     );
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: conformance edge cases, json parse, overrun incidents, request serde
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn privacy_overrun_incidents_surface_warning() {
+    let mut request = baseline_request();
+    request.privacy_budget.overrun_incidents = 5;
+
+    let mut governance_ledger = ledger();
+    let publication = publish_governance_scorecard(
+        &request,
+        &signing_key(),
+        &mut governance_ledger,
+        GovernanceActor::System("scorecard-publisher".to_string()),
+    )
+    .expect("publication should succeed");
+
+    // Overrun incidents should cause at least a warning outcome
+    assert!(
+        publication.outcome == GovernanceScorecardOutcome::Warning
+            || publication.outcome == GovernanceScorecardOutcome::Critical,
+        "overrun incidents should degrade outcome, got: {:?}",
+        publication.outcome
+    );
+}
+
+#[test]
+fn to_json_pretty_parses_as_valid_json_with_scorecard_id() {
+    let request = baseline_request();
+    let mut governance_ledger = ledger();
+    let publication = publish_governance_scorecard(
+        &request,
+        &signing_key(),
+        &mut governance_ledger,
+        GovernanceActor::System("scorecard-publisher".to_string()),
+    )
+    .expect("publication");
+
+    let json = publication.to_json_pretty().expect("json");
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+    assert!(parsed.is_object());
+    // The scorecard_id should appear in the serialized JSON
+    assert!(
+        json.contains(&publication.scorecard_id),
+        "JSON should contain scorecard_id"
+    );
+}
+
+#[test]
+fn request_serde_roundtrip_preserves_all_fields() {
+    let request = baseline_request();
+    let json = serde_json::to_string(&request).expect("serialize request");
+    let recovered: GovernanceScorecardRequest =
+        serde_json::from_str(&json).expect("deserialize request");
+    assert_eq!(recovered.trace_id, request.trace_id);
+    assert_eq!(recovered.decision_id, request.decision_id);
+    assert_eq!(recovered.policy_id, request.policy_id);
+    assert_eq!(recovered.attested_receipts.len(), request.attested_receipts.len());
+    assert_eq!(
+        recovered.conformance.matrix_health.total_cells,
+        request.conformance.matrix_health.total_cells
+    );
+    assert_eq!(
+        recovered.moonshot_governor.active_moonshots,
+        request.moonshot_governor.active_moonshots
+    );
+}
+
+#[test]
+fn conformance_with_outstanding_exemptions_degrades_outcome() {
+    let mut request = baseline_request();
+    request.conformance.outstanding_exemptions = 50;
+
+    let mut governance_ledger = ledger();
+    let publication = publish_governance_scorecard(
+        &request,
+        &signing_key(),
+        &mut governance_ledger,
+        GovernanceActor::System("scorecard-publisher".to_string()),
+    )
+    .expect("publication should succeed");
+
+    // Outstanding exemptions should trigger at least a warning
+    assert!(
+        publication.outcome == GovernanceScorecardOutcome::Warning
+            || publication.outcome == GovernanceScorecardOutcome::Critical
+            || !publication.warnings.is_empty(),
+        "outstanding exemptions should surface as warning or blocker, outcome: {:?}, warnings: {:?}",
+        publication.outcome,
+        publication.warnings
+    );
+}
+
+// ---------- enrichment: determinism, coverage summary, zero receipts, thresholds ----------
+
+#[test]
+fn publish_scorecard_deterministic_for_same_request() {
+    let request = baseline_request();
+    let key = signing_key();
+
+    let mut ledger_a = ledger();
+    let pub_a = publish_governance_scorecard(
+        &request,
+        &key,
+        &mut ledger_a,
+        GovernanceActor::System("test".to_string()),
+    )
+    .expect("publication A");
+
+    let mut ledger_b = ledger();
+    let pub_b = publish_governance_scorecard(
+        &request,
+        &key,
+        &mut ledger_b,
+        GovernanceActor::System("test".to_string()),
+    )
+    .expect("publication B");
+
+    assert_eq!(pub_a.scorecard_id, pub_b.scorecard_id);
+    assert_eq!(pub_a.outcome, pub_b.outcome);
+    assert_eq!(pub_a.artifact_hash_hex, pub_b.artifact_hash_hex);
+    assert_eq!(pub_a.attested_receipt_coverage, pub_b.attested_receipt_coverage);
+}
+
+#[test]
+fn scorecard_with_zero_attested_receipts_is_critical() {
+    let mut request = baseline_request();
+    request.attested_receipts.clear();
+
+    let mut governance_ledger = ledger();
+    let publication = publish_governance_scorecard(
+        &request,
+        &signing_key(),
+        &mut governance_ledger,
+        GovernanceActor::System("test".to_string()),
+    )
+    .expect("publication should succeed");
+
+    assert_eq!(publication.outcome, GovernanceScorecardOutcome::Critical);
+    assert!(!publication.blockers.is_empty());
+}
+
+#[test]
+fn thresholds_custom_values_serde_roundtrip() {
+    let thresholds = GovernanceScorecardThresholds {
+        fail_on_trend_regression: true,
+        warn_privacy_exhaustion_within_ns: Some(999_999),
+        ..GovernanceScorecardThresholds::default()
+    };
+    let json = serde_json::to_string(&thresholds).expect("serialize");
+    let recovered: GovernanceScorecardThresholds =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(thresholds, recovered);
+    assert!(recovered.fail_on_trend_regression);
+    assert_eq!(recovered.warn_privacy_exhaustion_within_ns, Some(999_999));
+}
+
+#[test]
+fn moonshot_governor_health_input_serde_roundtrip() {
+    let request = baseline_request();
+    let json = serde_json::to_string(&request.moonshot_governor).expect("serialize");
+    let recovered: MoonshotGovernorHealthInput =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(
+        recovered.active_moonshots,
+        request.moonshot_governor.active_moonshots
+    );
+    assert_eq!(
+        recovered.killed_moonshots,
+        request.moonshot_governor.killed_moonshots
+    );
+}
+
+#[test]
+fn cross_repo_conformance_input_serde_roundtrip() {
+    let request = baseline_request();
+    let json = serde_json::to_string(&request.conformance).expect("serialize");
+    let recovered: CrossRepoConformanceInput =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.release_id, request.conformance.release_id);
+    assert_eq!(
+        recovered.matrix_health.total_cells,
+        request.conformance.matrix_health.total_cells
+    );
+    assert_eq!(
+        recovered.failure_class_distribution,
+        request.conformance.failure_class_distribution
+    );
+}

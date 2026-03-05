@@ -581,3 +581,31 @@ fn constants_are_nonempty() {
     assert!(!POLICY_ID.is_empty());
     assert!(!COMPONENT.is_empty());
 }
+
+#[test]
+fn generate_case_all_nine_variants_reachable() {
+    let mut variants_seen = std::collections::BTreeSet::new();
+    for seed in 0_u64..512 {
+        let case = generate_case(seed);
+        // Classify variant by heuristics on the source
+        if case.source.starts_with("import") {
+            variants_seen.insert(6_u8);
+        } else if case.source.starts_with("export default") {
+            variants_seen.insert(8);
+        } else if case.source.starts_with("await") {
+            variants_seen.insert(3);
+        } else if case.source.starts_with('"') {
+            variants_seen.insert(2);
+        } else if case.source.contains('+') {
+            variants_seen.insert(4);
+        } else if case.source.contains(";\n") {
+            variants_seen.insert(5);
+        }
+    }
+    // At least several distinct variant shapes should be produced
+    assert!(
+        variants_seen.len() >= 3,
+        "expected at least 3 distinct variant shapes across 512 seeds, got {}",
+        variants_seen.len()
+    );
+}

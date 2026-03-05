@@ -389,3 +389,108 @@ fn unit_test_class_serde_is_deterministic() {
         assert_eq!(a, b);
     }
 }
+
+// ---------- LaneId uniqueness ----------
+
+#[test]
+fn lane_id_as_str_values_are_all_distinct() {
+    let strs: BTreeSet<&str> = LaneId::ALL.iter().map(|l| l.as_str()).collect();
+    assert_eq!(
+        strs.len(),
+        LaneId::ALL.len(),
+        "every LaneId must have a distinct as_str() value"
+    );
+}
+
+// ---------- UnitTestClass uniqueness ----------
+
+#[test]
+fn unit_test_class_as_str_values_are_all_distinct() {
+    let strs: BTreeSet<&str> = UnitTestClass::ALL.iter().map(|c| c.as_str()).collect();
+    assert_eq!(
+        strs.len(),
+        UnitTestClass::ALL.len(),
+        "every UnitTestClass must have a distinct as_str() value"
+    );
+}
+
+// ---------- default_frx20_bundle fixture IDs are unique ----------
+
+#[test]
+fn default_bundle_fixture_ids_are_unique() {
+    let bundle = default_frx20_bundle();
+    let mut seen = BTreeSet::new();
+    for fixture in &bundle.fixture_registry {
+        assert!(
+            seen.insert(fixture.fixture_id.clone()),
+            "duplicate fixture_id in default bundle: {}",
+            fixture.fixture_id
+        );
+    }
+}
+
+// ---------- enrichment: deeper validation and error-path coverage ----------
+
+#[test]
+fn default_bundle_determinism_contract_requires_seed_and_replay() {
+    let bundle = default_frx20_bundle();
+    assert!(
+        bundle.determinism_contract.require_seed,
+        "determinism contract must require seed"
+    );
+    assert!(
+        bundle.determinism_contract.require_replay_command,
+        "determinism contract must require replay command"
+    );
+    assert!(
+        bundle.determinism_contract.require_toolchain_fingerprint,
+        "determinism contract must require toolchain fingerprint"
+    );
+}
+
+#[test]
+fn default_bundle_determinism_contract_timezone_is_utc() {
+    let bundle = default_frx20_bundle();
+    assert_eq!(
+        bundle.determinism_contract.timezone, "UTC",
+        "determinism contract timezone must be UTC"
+    );
+    assert!(bundle.determinism_contract.require_fixed_timezone);
+}
+
+#[test]
+fn default_bundle_lane_coverage_has_all_eight_lanes() {
+    let bundle = default_frx20_bundle();
+    assert_eq!(
+        bundle.lane_coverage.len(),
+        LaneId::ALL.len(),
+        "lane_coverage must have exactly {} entries (one per LaneId)",
+        LaneId::ALL.len()
+    );
+}
+
+#[test]
+fn default_bundle_fixture_registry_entries_have_nonempty_e2e_families() {
+    let bundle = default_frx20_bundle();
+    for fixture in &bundle.fixture_registry {
+        assert!(
+            !fixture.e2e_family.trim().is_empty(),
+            "fixture {} must have a non-empty e2e_family",
+            fixture.fixture_id
+        );
+        assert!(
+            !fixture.seed_strategy.trim().is_empty(),
+            "fixture {} must have a non-empty seed_strategy",
+            fixture.fixture_id
+        );
+    }
+}
+
+#[test]
+fn default_bundle_serde_roundtrip_preserves_bundle() {
+    let bundle = default_frx20_bundle();
+    let json = serde_json::to_string(&bundle).expect("serialize bundle");
+    let recovered: unit_test_taxonomy::UnitTestTaxonomyBundle =
+        serde_json::from_str(&json).expect("deserialize bundle");
+    assert_eq!(bundle, recovered, "serde roundtrip must preserve bundle");
+}

@@ -381,3 +381,158 @@ fn freeze_manifest_json_file_exists() {
     let path = repo_root().join("docs/FRX_C0_FREEZE_MANIFEST_V1.json");
     assert!(path.exists());
 }
+
+// ---------- enrichment: deeper structural checks ----------
+
+#[test]
+fn objective_function_non_goals_are_declared_and_nonempty() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let non_goals = value["non_goals"]
+        .as_array()
+        .expect("non_goals must be an array");
+    assert!(
+        non_goals.len() >= 2,
+        "at least 2 non-goals must be declared"
+    );
+    for ng in non_goals {
+        let s = ng.as_str().expect("non-goal must be a string");
+        assert!(!s.trim().is_empty(), "non-goal entry must not be blank");
+    }
+}
+
+#[test]
+fn objective_function_hard_constraints_include_fail_closed() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let hc = value["objective"]["hard_constraints"]
+        .as_array()
+        .expect("hard_constraints must be an array");
+    assert!(
+        hc.iter()
+            .any(|c| c.as_str().is_some_and(|s| s.contains("fail_closed"))),
+        "hard_constraints must include a fail-closed constraint"
+    );
+    assert!(
+        hc.iter()
+            .any(|c| c.as_str().is_some_and(|s| s.contains("deterministic_safe_mode"))),
+        "hard_constraints must include deterministic safe mode constraint"
+    );
+}
+
+#[test]
+fn objective_function_status_is_active() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert_eq!(
+        value["status"].as_str(),
+        Some("active"),
+        "objective function status must be active"
+    );
+}
+
+#[test]
+fn freeze_manifest_downstream_reference_required_is_true() {
+    let path = repo_root().join("docs/FRX_C0_FREEZE_MANIFEST_V1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert_eq!(
+        value["downstream_reference_required"].as_bool(),
+        Some(true),
+        "freeze manifest must require downstream references"
+    );
+}
+
+#[test]
+fn objective_function_serde_roundtrip_via_value_preserves_all_keys() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let serialized = serde_json::to_string_pretty(&value).expect("serialize");
+    let reparsed: Value = serde_json::from_str(&serialized).expect("reparse");
+    let original_keys: Vec<&str> = value
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let reparsed_keys: Vec<&str> = reparsed
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        original_keys, reparsed_keys,
+        "serde roundtrip must preserve all top-level keys"
+    );
+    assert_eq!(value, reparsed);
+}
+
+// ---------- enrichment: deeper cross-document and constraint checks ----------
+
+#[test]
+fn constitution_doc_mentions_loss_matrix() {
+    let path = repo_root().join("docs/FRX_PROGRAM_CONSTITUTION_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(
+        doc.to_ascii_lowercase().contains("loss matrix"),
+        "constitution doc must mention loss matrix"
+    );
+}
+
+#[test]
+fn objective_function_dimensions_are_all_nonempty_strings() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let dims = value["objective"]["dimensions"]
+        .as_array()
+        .expect("dimensions array");
+    for dim in dims {
+        let s = dim.as_str().expect("dimension must be a string");
+        assert!(!s.trim().is_empty(), "dimension entry must not be blank");
+    }
+}
+
+#[test]
+fn freeze_manifest_has_generated_at_utc_ending_with_z() {
+    let path = repo_root().join("docs/FRX_C0_FREEZE_MANIFEST_V1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let ts = value["generated_at_utc"]
+        .as_str()
+        .expect("generated_at_utc must be string");
+    assert!(
+        ts.ends_with('Z'),
+        "freeze manifest generated_at_utc must end with Z"
+    );
+}
+
+#[test]
+fn objective_function_testable_invariants_include_ci_codes() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let invariants = value["testable_invariants"]
+        .as_array()
+        .expect("testable_invariants");
+    let invariant_strs: Vec<&str> = invariants.iter().filter_map(|v| v.as_str()).collect();
+    assert!(
+        invariant_strs.iter().any(|s| s.contains("FRX-CI-001")),
+        "testable_invariants must reference FRX-CI-001"
+    );
+}
+
+#[test]
+fn constitution_doc_references_compatibility() {
+    let path = repo_root().join("docs/FRX_PROGRAM_CONSTITUTION_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(
+        doc.to_ascii_lowercase().contains("compatibility"),
+        "constitution doc must mention compatibility"
+    );
+}

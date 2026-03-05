@@ -634,3 +634,139 @@ fn frx_09_1_doc_has_more_than_50_lines() {
     let doc = fs::read_to_string(&path).expect("read doc");
     assert!(doc.lines().count() > 50);
 }
+
+// ---------- enrichment: deeper edge-case and structural tests ----------
+
+#[test]
+fn frx_09_1_strata_target_shares_are_all_positive() {
+    let contract = parse_contract();
+    for stratum in &contract.pilot_portfolio.strata {
+        assert!(
+            stratum.target_share_bps > 0,
+            "stratum {} has zero target_share_bps",
+            stratum.stratum_id
+        );
+    }
+}
+
+#[test]
+fn frx_09_1_serde_roundtrip_via_pretty_print_preserves_contract() {
+    let contract = parse_contract();
+    let pretty = serde_json::to_string_pretty(&contract).expect("serialize pretty");
+    let recovered: PilotRolloutHarnessContract =
+        serde_json::from_str(&pretty).expect("deserialize from pretty");
+    assert_eq!(contract, recovered);
+}
+
+#[test]
+fn frx_09_1_sequential_monitoring_thresholds_are_within_millionths_range() {
+    let contract = parse_contract();
+    let t = &contract.sequential_monitoring.thresholds_millionths;
+    // All thresholds should be within valid millionths range (0, 10_000_000]
+    // (allowing up to 10x for regret/delta which are relative)
+    for (name, val) in [
+        ("promote_min_confidence", t.promote_min_confidence),
+        ("stop_max_regret", t.stop_max_regret),
+        ("rollback_incident_delta", t.rollback_incident_delta),
+        ("rollback_tail_latency_delta", t.rollback_tail_latency_delta),
+    ] {
+        assert!(
+            val > 0 && val <= 10_000_000,
+            "{name} value {val} out of plausible millionths range"
+        );
+    }
+}
+
+#[test]
+fn frx_09_1_experiment_modes_and_decision_actions_are_disjoint() {
+    let contract = parse_contract();
+    let modes: BTreeSet<&str> = contract
+        .experiment_harness
+        .modes
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let actions: BTreeSet<&str> = contract
+        .sequential_monitoring
+        .decision_actions
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let overlap: BTreeSet<&&str> = modes.intersection(&actions).collect();
+    assert!(
+        overlap.is_empty(),
+        "experiment modes and decision actions should be disjoint, found overlap: {overlap:?}"
+    );
+}
+
+#[test]
+fn frx_09_1_workload_archetypes_are_unique_across_strata() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for stratum in &contract.pilot_portfolio.strata {
+        assert!(
+            seen.insert(&stratum.workload_archetype),
+            "duplicate workload_archetype: {}",
+            stratum.workload_archetype
+        );
+    }
+}
+
+// ---------- enrichment: additional edge-case tests ----------
+
+#[test]
+fn frx_09_1_doc_contains_no_todo_markers() {
+    let path = repo_root().join("docs/FRX_PILOT_ROLLOUT_HARNESS_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    let lower = doc.to_ascii_lowercase();
+    assert!(
+        !lower.contains("todo") && !lower.contains("fixme") && !lower.contains("xxx"),
+        "pilot rollout harness doc must not contain unresolved TODO/FIXME/XXX markers"
+    );
+}
+
+#[test]
+fn frx_09_1_required_structured_log_fields_are_unique() {
+    let contract = parse_contract();
+    let fields = &contract.required_structured_log_fields;
+    let unique: BTreeSet<&str> = fields.iter().map(String::as_str).collect();
+    assert_eq!(
+        unique.len(),
+        fields.len(),
+        "duplicate structured log fields detected"
+    );
+}
+
+#[test]
+fn frx_09_1_strata_risk_tiers_are_nonempty() {
+    let contract = parse_contract();
+    for stratum in &contract.pilot_portfolio.strata {
+        assert!(
+            !stratum.risk_tier.trim().is_empty(),
+            "stratum {} risk_tier must not be empty",
+            stratum.stratum_id
+        );
+    }
+}
+
+#[test]
+fn frx_09_1_minimum_effective_sample_size_is_at_least_100() {
+    let contract = parse_contract();
+    assert!(
+        contract.off_policy_evaluation.minimum_effective_sample_size >= 100,
+        "minimum_effective_sample_size must be at least 100 for statistical validity, got {}",
+        contract.off_policy_evaluation.minimum_effective_sample_size
+    );
+}
+
+#[test]
+fn frx_09_1_decision_actions_are_unique() {
+    let contract = parse_contract();
+    let actions = &contract.sequential_monitoring.decision_actions;
+    let unique: BTreeSet<&str> = actions.iter().map(String::as_str).collect();
+    assert_eq!(
+        unique.len(),
+        actions.len(),
+        "duplicate decision actions detected"
+    );
+}

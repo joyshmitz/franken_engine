@@ -466,3 +466,258 @@ fn load_trace_file_invalid_json_returns_parse_error() {
     assert!(matches!(err, FrxLockstepOracleError::ParseTrace { .. }));
     assert!(!err.to_string().is_empty());
 }
+
+// ---------- enrichment: deeper edge-case and structural tests ----------
+
+#[test]
+fn evaluate_case_detects_phase_divergence_at_specific_index() {
+    let fixture_ref = "compat.effects.phase_mismatch";
+    let scenario_id = "frx-react-test-phase";
+    let react_trace = build_trace(
+        fixture_ref,
+        scenario_id,
+        "trace-react-phase",
+        vec![
+            event(1, "render", "dom_commit", "render_path", 100),
+            event(2, "effects", "effect_fire", "effect_path", 200),
+        ],
+    );
+    let franken_trace = build_trace(
+        fixture_ref,
+        scenario_id,
+        "trace-franken-phase",
+        vec![
+            event(1, "render", "dom_commit", "render_path", 100),
+            event(2, "commit", "effect_fire", "effect_path", 200),
+        ],
+    );
+    let result = evaluate_case(FrxLockstepCaseInput {
+        fixture_ref: fixture_ref.to_string(),
+        scenario_id: scenario_id.to_string(),
+        react_trace,
+        franken_trace,
+        react_trace_path: None,
+        franken_trace_path: None,
+    })
+    .expect("should evaluate");
+    assert!(!result.pass);
+    let div = result.divergence.expect("divergence expected");
+    assert_eq!(div.event_index, Some(1), "divergence should be at index 1");
+}
+
+#[test]
+fn lockstep_case_result_serde_roundtrip() {
+    use frankenengine_engine::frx_lockstep_oracle::{
+        FrxDivergenceDetail, FrxLockstepCaseResult,
+    };
+    let case_result = FrxLockstepCaseResult {
+        fixture_ref: "compat.render.basic".to_string(),
+        scenario_id: "scen-rt".to_string(),
+        react_trace_id: "trace-r".to_string(),
+        franken_trace_id: "trace-f".to_string(),
+        pass: false,
+        divergence: Some(FrxDivergenceDetail {
+            class: FrxDivergenceClass::EventSequence,
+            message: "event mismatch at index 0".to_string(),
+            event_index: Some(0),
+            react_signature: None,
+            franken_signature: None,
+        }),
+        replay_command: "replay --fixture compat.render.basic".to_string(),
+    };
+    let json = serde_json::to_string(&case_result).expect("serialize");
+    let recovered: FrxLockstepCaseResult =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.fixture_ref, case_result.fixture_ref);
+    assert_eq!(recovered.pass, false);
+    assert_eq!(
+        recovered.divergence.as_ref().unwrap().class,
+        FrxDivergenceClass::EventSequence
+    );
+}
+
+#[test]
+fn lockstep_report_serde_roundtrip() {
+    use frankenengine_engine::frx_lockstep_oracle::{FrxLockstepReport, FrxLockstepSummary};
+    let report = FrxLockstepReport {
+        schema_version: "frx.lockstep.report.v1".to_string(),
+        generated_at_utc: "2026-01-01T00:00:00Z".to_string(),
+        trace_id: "trace-1".to_string(),
+        decision_id: "decision-1".to_string(),
+        policy_id: "policy-1".to_string(),
+        component: "test".to_string(),
+        react_traces_dir: "/tmp/react".to_string(),
+        franken_traces_dir: "/tmp/franken".to_string(),
+        summary: FrxLockstepSummary {
+            total_cases: 5,
+            pass_cases: 3,
+            failed_cases: 2,
+            divergence_counts_by_class: std::collections::BTreeMap::from([
+                ("HydrationOutcome".to_string(), 1),
+                ("EventSequence".to_string(), 1),
+            ]),
+        },
+        case_results: vec![],
+    };
+    let json = serde_json::to_string_pretty(&report).expect("serialize");
+    let recovered: FrxLockstepReport = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.summary.total_cases, 5);
+    assert_eq!(recovered.summary.failed_cases, 2);
+    assert_eq!(recovered.summary.divergence_counts_by_class.len(), 2);
+}
+
+#[test]
+fn load_trace_file_valid_roundtrip() {
+    let dir = unique_temp_dir("load-valid");
+    let trace = build_trace(
+        "compat.load.roundtrip",
+        "load-scenario",
+        "trace-load",
+        vec![
+            event(1, "render", "dom_commit", "path", 50),
+            event(2, "effects", "cleanup", "path", 75),
+        ],
+    );
+    write_trace_file(dir.as_path(), "compat.load.roundtrip", &trace);
+    let loaded = load_trace_file(&dir.join("compat.load.roundtrip.trace.json"))
+        .expect("should load valid trace");
+    assert_eq!(loaded.fixture_ref, "compat.load.roundtrip");
+    assert_eq!(loaded.events.len(), 2);
+    assert_eq!(loaded.events[0].timing_us, 50);
+    assert_eq!(loaded.events[1].event, "cleanup");
+}
+
+#[test]
+fn run_lockstep_oracle_empty_dirs_returns_invalid_input_error() {
+    let react_dir = unique_temp_dir("empty-react2");
+    let franken_dir = unique_temp_dir("empty-franken2");
+    let err = run_lockstep_oracle(
+        react_dir.as_path(),
+        franken_dir.as_path(),
+        FrxLockstepRunContext::deterministic(
+            "trace-empty",
+            "decision-empty",
+            "policy-empty",
+        ),
+        None,
+    )
+    .expect_err("empty dirs should be rejected");
+    assert!(
+        matches!(err, FrxLockstepOracleError::InvalidInput(_)),
+        "expected InvalidInput error for empty directories"
+    );
+    assert!(err.to_string().contains("trace.json"));
+}
+
+// ---------- enrichment: additional edge-case tests ----------
+
+#[test]
+fn evaluate_case_detects_event_name_divergence() {
+    let fixture_ref = "compat.events.name_mismatch";
+    let scenario_id = "frx-react-test-name";
+    let react_trace = build_trace(
+        fixture_ref,
+        scenario_id,
+        "trace-react-name",
+        vec![
+            event(1, "render", "dom_commit", "render_path", 100),
+            event(2, "effects", "effect_fire", "effect_path", 200),
+        ],
+    );
+    let franken_trace = build_trace(
+        fixture_ref,
+        scenario_id,
+        "trace-franken-name",
+        vec![
+            event(1, "render", "dom_commit", "render_path", 100),
+            event(2, "effects", "effect_cleanup", "effect_path", 200),
+        ],
+    );
+    let result = evaluate_case(FrxLockstepCaseInput {
+        fixture_ref: fixture_ref.to_string(),
+        scenario_id: scenario_id.to_string(),
+        react_trace,
+        franken_trace,
+        react_trace_path: None,
+        franken_trace_path: None,
+    })
+    .expect("should evaluate");
+    assert!(!result.pass, "different event names should cause failure");
+    assert!(result.divergence.is_some());
+}
+
+#[test]
+fn lockstep_report_summary_pass_plus_failed_equals_total() {
+    use frankenengine_engine::frx_lockstep_oracle::FrxLockstepSummary;
+    let summary = FrxLockstepSummary {
+        total_cases: 10,
+        pass_cases: 7,
+        failed_cases: 3,
+        divergence_counts_by_class: std::collections::BTreeMap::new(),
+    };
+    assert_eq!(
+        summary.pass_cases + summary.failed_cases,
+        summary.total_cases,
+        "pass + failed must equal total"
+    );
+}
+
+#[test]
+fn oracle_error_read_file_display_includes_path() {
+    let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
+    let err = FrxLockstepOracleError::ReadFile {
+        path: "/some/file.json".to_string(),
+        source: io_err,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("/some/file.json"),
+        "ReadFile error display must include the path"
+    );
+}
+
+#[test]
+fn oracle_error_parse_trace_display_includes_path() {
+    // Create a serde_json::Error by attempting to parse invalid JSON
+    let parse_err = serde_json::from_str::<serde_json::Value>("not valid json").unwrap_err();
+    let err = FrxLockstepOracleError::ParseTrace {
+        path: "/some/bad.json".to_string(),
+        source: parse_err,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("/some/bad.json"),
+        "ParseTrace error display must include the path"
+    );
+}
+
+#[test]
+fn run_lockstep_oracle_single_matching_pair_passes() {
+    let react_dir = unique_temp_dir("single-react");
+    let franken_dir = unique_temp_dir("single-franken");
+    let fixture_ref = "compat.single.basic";
+    let scenario_id = "frx-react-single";
+    let events = vec![
+        event(1, "render", "dom_commit", "render_path", 100),
+        event(2, "effects", "cleanup", "effect_path", 200),
+    ];
+    let react_trace = build_trace(fixture_ref, scenario_id, "trace-react-single", events.clone());
+    let franken_trace = build_trace(fixture_ref, scenario_id, "trace-franken-single", events);
+    write_trace_file(react_dir.as_path(), fixture_ref, &react_trace);
+    write_trace_file(franken_dir.as_path(), fixture_ref, &franken_trace);
+
+    let report = run_lockstep_oracle(
+        react_dir.as_path(),
+        franken_dir.as_path(),
+        FrxLockstepRunContext::deterministic(
+            "trace-single-test",
+            "decision-single-test",
+            "policy-single-test",
+        ),
+        None,
+    )
+    .expect("oracle should succeed");
+    assert_eq!(report.summary.total_cases, 1);
+    assert_eq!(report.summary.pass_cases, 1);
+    assert_eq!(report.summary.failed_cases, 0);
+}

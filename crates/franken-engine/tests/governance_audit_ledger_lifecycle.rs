@@ -440,3 +440,312 @@ fn governance_ledger_config_serde_roundtrip() {
     let recovered: GovernanceLedgerConfig = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(serde_json::to_string(&recovered).unwrap(), json);
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: edge-case coverage for query, chain, report,
+// duplicate rejection, serde, and bypass validation
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn query_with_time_range_excluding_all_entries_returns_empty() {
+    let mut ledger = ledger();
+
+    // Append two entries at timestamps 500 and 600
+    for (i, ts) in [500u64, 600].iter().enumerate() {
+        let decision = GovernorDecision {
+            decision_id: format!("tr-{i}"),
+            moonshot_id: "moon-tr".to_string(),
+            kind: GovernorDecisionKind::Promote {
+                from: MoonshotStage::Research,
+                to: MoonshotStage::Shadow,
+            },
+            scorecard: sample_scorecard(),
+            timestamp_ns: *ts,
+            epoch: SecurityEpoch::from_raw(3),
+            rationale: "gate met".to_string(),
+        };
+        ledger
+            .append_governor_decision(
+                &decision,
+                GovernanceActor::System("gov".to_string()),
+                vec![],
+                Some(10),
+            )
+            .expect("append");
+    }
+    assert_eq!(ledger.entries().len(), 2);
+
+    // Query a time range that falls entirely before the entries
+    let results_before = ledger.query(&GovernanceLedgerQuery {
+        start_time_ns: Some(0),
+        end_time_ns: Some(100),
+        ..GovernanceLedgerQuery::all()
+    });
+    assert!(results_before.is_empty(), "no entries in [0,100]");
+
+    // Query a time range that falls entirely after the entries
+    let results_after = ledger.query(&GovernanceLedgerQuery {
+        start_time_ns: Some(900),
+        end_time_ns: Some(1_000),
+        ..GovernanceLedgerQuery::all()
+    });
+    assert!(results_after.is_empty(), "no entries in [900,1000]");
+}
+
+#[test]
+fn chain_verification_passes_after_multiple_appends_and_checkpoints() {
+    // checkpoint_interval=2, so appending 6 entries produces 3 checkpoints
+    let mut ledger = ledger();
+    for i in 0u64..6 {
+        let decision = GovernorDecision {
+            decision_id: format!("chain-{i}"),
+            moonshot_id: "moon-chain".to_string(),
+            kind: GovernorDecisionKind::Promote {
+                from: MoonshotStage::Research,
+                to: MoonshotStage::Shadow,
+            },
+            scorecard: sample_scorecard(),
+            timestamp_ns: 100 + i * 100,
+            epoch: SecurityEpoch::from_raw(3),
+            rationale: "gate met".to_string(),
+        };
+        ledger
+            .append_governor_decision(
+                &decision,
+                GovernanceActor::System("gov".to_string()),
+                vec![format!("artifact://chain/{i}")],
+                Some(10),
+            )
+            .expect("append");
+    }
+    assert_eq!(ledger.entries().len(), 6);
+    assert_eq!(ledger.checkpoints().len(), 3, "6 entries / interval 2 = 3 checkpoints");
+
+    // Full chain verification: hashes, signatures, and checkpoint signatures
+    ledger.verify_chain().expect("chain with 3 checkpoints should verify");
+
+    // Each entry's previous_hash links to the prior entry
+    for (idx, entry) in ledger.entries().iter().enumerate() {
+        if idx == 0 {
+            assert!(entry.previous_hash.is_none());
+        } else {
+            assert_eq!(
+                entry.previous_hash.as_deref(),
+                Some(ledger.entries()[idx - 1].entry_hash.as_str())
+            );
+        }
+    }
+}
+
+#[test]
+fn governance_report_with_only_automatic_decisions_has_zero_override_count() {
+    let mut ledger = ledger();
+
+    // Append 3 automatic (non-override) decisions
+    for i in 0u64..3 {
+        let decision = GovernorDecision {
+            decision_id: format!("auto-rpt-{i}"),
+            moonshot_id: "moon-rpt".to_string(),
+            kind: GovernorDecisionKind::Promote {
+                from: MoonshotStage::Research,
+                to: MoonshotStage::Shadow,
+            },
+            scorecard: sample_scorecard(),
+            timestamp_ns: 100 + i * 100,
+            epoch: SecurityEpoch::from_raw(3),
+            rationale: "auto gate".to_string(),
+        };
+        ledger
+            .append_governor_decision(
+                &decision,
+                GovernanceActor::System("gov".to_string()),
+                vec![],
+                Some(5),
+            )
+            .expect("append");
+    }
+
+    let report = ledger
+        .governance_report(0, 1_000, 500)
+        .expect("report generation");
+    assert_eq!(report.total_decisions, 3);
+    assert_eq!(report.override_count, 0);
+    assert_eq!(report.override_frequency_millionths, 0);
+    assert_eq!(report.kill_count, 0);
+    assert_eq!(report.kill_rate_millionths, 0);
+    // All decisions have moonshot_started_at_ns=Some(5), so mean latency is computable
+    assert!(report.mean_time_to_decision_ns.is_some());
+}
+
+#[test]
+fn duplicate_decision_id_append_fails_with_correct_error_code() {
+    let mut ledger = ledger();
+
+    let decision = GovernorDecision {
+        decision_id: "dup-1".to_string(),
+        moonshot_id: "moon-dup".to_string(),
+        kind: GovernorDecisionKind::Hold {
+            reason: "low signal".to_string(),
+        },
+        scorecard: sample_scorecard(),
+        timestamp_ns: 100,
+        epoch: SecurityEpoch::from_raw(3),
+        rationale: "hold gate".to_string(),
+    };
+    ledger
+        .append_governor_decision(
+            &decision,
+            GovernanceActor::System("gov".to_string()),
+            vec![],
+            Some(10),
+        )
+        .expect("first append should succeed");
+
+    // Attempt second append with the same decision_id but later timestamp
+    let duplicate = GovernorDecision {
+        decision_id: "dup-1".to_string(),
+        moonshot_id: "moon-dup".to_string(),
+        kind: GovernorDecisionKind::Hold {
+            reason: "low signal".to_string(),
+        },
+        scorecard: sample_scorecard(),
+        timestamp_ns: 200,
+        epoch: SecurityEpoch::from_raw(3),
+        rationale: "hold gate again".to_string(),
+    };
+    let err = ledger
+        .append_governor_decision(
+            &duplicate,
+            GovernanceActor::System("gov".to_string()),
+            vec![],
+            Some(10),
+        )
+        .expect_err("duplicate decision_id must be rejected");
+
+    assert_eq!(err.code(), "FE-GOV-LED-0003");
+    assert!(err.to_string().contains("dup-1"));
+    // Only 1 entry should exist
+    assert_eq!(ledger.entries().len(), 1);
+}
+
+#[test]
+fn governance_ledger_query_serde_roundtrip() {
+    let mut decision_types = BTreeSet::new();
+    decision_types.insert(GovernanceDecisionType::Override);
+    decision_types.insert(GovernanceDecisionType::Kill);
+
+    let query = GovernanceLedgerQuery {
+        moonshot_id: Some("moon-serde".to_string()),
+        decision_types: Some(decision_types),
+        actor_id: Some("operator-42".to_string()),
+        start_time_ns: Some(100),
+        end_time_ns: Some(999),
+        override_only: Some(true),
+    };
+
+    let json = serde_json::to_string(&query).expect("serialize query");
+    let recovered: GovernanceLedgerQuery =
+        serde_json::from_str(&json).expect("deserialize query");
+
+    assert_eq!(recovered.moonshot_id, query.moonshot_id);
+    assert_eq!(recovered.decision_types, query.decision_types);
+    assert_eq!(recovered.actor_id, query.actor_id);
+    assert_eq!(recovered.start_time_ns, query.start_time_ns);
+    assert_eq!(recovered.end_time_ns, query.end_time_ns);
+    assert_eq!(recovered.override_only, query.override_only);
+
+    // Also roundtrip the `all()` variant
+    let all = GovernanceLedgerQuery::all();
+    let all_json = serde_json::to_string(&all).expect("serialize all");
+    let all_recovered: GovernanceLedgerQuery =
+        serde_json::from_str(&all_json).expect("deserialize all");
+    assert_eq!(all_recovered, all);
+}
+
+#[test]
+fn override_with_bypassed_criteria_but_no_acknowledgment_is_rejected() {
+    let mut ledger = ledger();
+
+    // First append a valid automatic entry so the ledger is not empty
+    let auto_decision = GovernorDecision {
+        decision_id: "pre-auto".to_string(),
+        moonshot_id: "moon-bypass".to_string(),
+        kind: GovernorDecisionKind::Promote {
+            from: MoonshotStage::Research,
+            to: MoonshotStage::Shadow,
+        },
+        scorecard: sample_scorecard(),
+        timestamp_ns: 50,
+        epoch: SecurityEpoch::from_raw(3),
+        rationale: "gate met".to_string(),
+    };
+    ledger
+        .append_governor_decision(
+            &auto_decision,
+            GovernanceActor::System("gov".to_string()),
+            vec![],
+            Some(10),
+        )
+        .expect("auto append");
+
+    // Attempt an override with bypassed_risk_criteria but acknowledged_bypass=false
+    let err = ledger
+        .append(GovernanceLedgerInput {
+            decision_id: "ovr-noack".to_string(),
+            moonshot_id: "moon-bypass".to_string(),
+            decision_type: GovernanceDecisionType::Override,
+            actor: GovernanceActor::Human("operator-99".to_string()),
+            rationale: GovernanceRationale {
+                summary: "override without acknowledgment".to_string(),
+                passed_criteria: vec!["ev_threshold".to_string()],
+                failed_criteria: vec!["risk_budget".to_string()],
+                confidence_millionths: 750_000,
+                risk_of_harm_millionths: 280_000,
+                bypassed_risk_criteria: vec!["risk_of_harm <= 200_000".to_string()],
+                acknowledged_bypass: false,
+            },
+            scorecard_snapshot: ScorecardSnapshot::from(&sample_scorecard()),
+            artifact_references: vec!["artifact://override/noack".to_string()],
+            timestamp_ns: 100,
+            moonshot_started_at_ns: Some(10),
+        })
+        .expect_err("override without acknowledged_bypass must fail validation");
+
+    // Error code FE-GOV-LED-0002 = InvalidInput
+    assert_eq!(err.code(), "FE-GOV-LED-0002");
+    assert!(
+        err.to_string().contains("acknowledged_bypass")
+            || err.to_string().contains("acknowledge bypass"),
+        "error message should mention bypass acknowledgment, got: {err}"
+    );
+
+    // Ledger should still only have the automatic entry
+    assert_eq!(ledger.entries().len(), 1);
+    assert_eq!(ledger.entries()[0].decision_id, "pre-auto");
+}
+
+#[test]
+fn governance_ledger_config_debug_is_nonempty() {
+    let config = GovernanceLedgerConfig::default();
+    assert!(!format!("{config:?}").is_empty());
+}
+
+#[test]
+fn scorecard_snapshot_debug_is_nonempty() {
+    let snapshot = ScorecardSnapshot::from(&sample_scorecard());
+    assert!(!format!("{snapshot:?}").is_empty());
+}
+
+#[test]
+fn governance_rationale_debug_is_nonempty() {
+    let rationale = GovernanceRationale {
+        summary: "test".to_string(),
+        passed_criteria: vec!["c1".to_string()],
+        failed_criteria: vec![],
+        confidence_millionths: 500_000,
+        risk_of_harm_millionths: 100_000,
+        bypassed_risk_criteria: vec![],
+        acknowledged_bypass: false,
+    };
+    assert!(!format!("{rationale:?}").is_empty());
+}

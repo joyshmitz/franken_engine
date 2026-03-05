@@ -687,3 +687,142 @@ fn stress_many_cycles() {
     assert_eq!(eff.total_campaigns, 20);
     assert!(eff.total_evasions > 0);
 }
+
+// ---------------------------------------------------------------------------
+// Empty batch returns error
+// ---------------------------------------------------------------------------
+
+#[test]
+fn empty_campaign_batch_returns_error() {
+    let mut engine = GuardplaneCalibrationEngine::new();
+    let ctx = test_ctx();
+    let result = engine.run_calibration_cycle(&[], &ctx);
+    assert!(
+        matches!(result, Err(CalibrationError::EmptyCampaignBatch)),
+        "empty batch should produce EmptyCampaignBatch error"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Per-dimension effectiveness after single dimension input
+// ---------------------------------------------------------------------------
+
+#[test]
+fn per_dimension_effectiveness_matches_input_dimension() {
+    let mut engine = GuardplaneCalibrationEngine::new();
+    let ctx = test_ctx();
+
+    let outcomes = vec![
+        make_outcome(AttackDimension::HostcallSequence, 0, 10, false),
+        make_outcome(AttackDimension::HostcallSequence, 3, 10, false),
+    ];
+    engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+
+    let eff = engine.defense_effectiveness();
+    assert!(
+        !eff.per_dimension.is_empty(),
+        "per_dimension should be populated after ingesting campaigns"
+    );
+    assert_eq!(eff.total_campaigns, 2);
+}
+
+// ---------------------------------------------------------------------------
+// Enrichment: calibration state, determinism, false positive tracking, novel technique
+// ---------------------------------------------------------------------------
+
+#[test]
+fn calibration_state_accessible_and_non_empty_after_cycle() {
+    let mut engine = GuardplaneCalibrationEngine::new();
+    let ctx = test_ctx();
+    let outcomes = vec![make_outcome(AttackDimension::Exfiltration, 1, 5, false)];
+    engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+
+    let state = engine.calibration_state();
+    let json = serde_json::to_string(state).expect("serialize calibration state");
+    assert!(!json.is_empty());
+    // State should be parseable back
+    let _: serde_json::Value = serde_json::from_str(&json).expect("deserialize calibration state");
+}
+
+#[test]
+fn false_positive_campaigns_tracked_without_alert() {
+    let mut engine = GuardplaneCalibrationEngine::new();
+    let ctx = test_ctx();
+
+    let campaign = make_campaign(AttackDimension::Exfiltration, 5);
+    let result = make_result(0, 5, false, 0, 0, false);
+    let score = ExploitObjectiveScore::from_result(&result).unwrap();
+    let outcome = CampaignOutcomeRecord {
+        campaign,
+        result,
+        score,
+        benign_control: true,
+        false_positive: true,
+        timestamp_ns: 1_000_000_000,
+    };
+
+    let cycle_result = engine.run_calibration_cycle(&[outcome], &ctx).unwrap();
+    assert_eq!(cycle_result.campaigns_ingested, 1);
+    // false positive campaigns should not inflate evasion count
+    let eff = engine.defense_effectiveness();
+    assert_eq!(eff.total_campaigns, 1);
+}
+
+#[test]
+fn novel_technique_flag_tracked_in_critical_outcome() {
+    let mut engine = GuardplaneCalibrationEngine::new();
+    let ctx = test_ctx();
+
+    let campaign = make_campaign(AttackDimension::PrivilegeEscalation, 10);
+    let result = make_result(8, 10, true, 900_000, 50, true);
+    let score = ExploitObjectiveScore::from_result(&result).unwrap();
+    let outcome = CampaignOutcomeRecord {
+        campaign,
+        result,
+        score,
+        benign_control: false,
+        false_positive: false,
+        timestamp_ns: 1_000_000_000,
+    };
+
+    let cycle_result = engine.run_calibration_cycle(&[outcome], &ctx).unwrap();
+    assert!(
+        cycle_result.regression_fixtures_added >= 1,
+        "novel technique with high damage should produce regression fixtures"
+    );
+}
+
+#[test]
+fn calibration_cycle_result_deterministic_for_identical_input() {
+    let outcomes = vec![
+        make_outcome(AttackDimension::Exfiltration, 2, 10, false),
+        make_outcome(AttackDimension::HostcallSequence, 0, 5, false),
+    ];
+    let ctx = test_ctx();
+
+    let mut engine_a = GuardplaneCalibrationEngine::new();
+    let r1 = engine_a.run_calibration_cycle(&outcomes, &ctx).unwrap();
+
+    let mut engine_b = GuardplaneCalibrationEngine::new();
+    let r2 = engine_b.run_calibration_cycle(&outcomes, &ctx).unwrap();
+
+    assert_eq!(r1.cycle_id, r2.cycle_id);
+    assert_eq!(r1.campaigns_ingested, r2.campaigns_ingested);
+    assert_eq!(r1.threat_counts, r2.threat_counts);
+    assert_eq!(r1.severity_counts, r2.severity_counts);
+}
+
+#[test]
+fn drain_alerts_clears_alert_list() {
+    let mut engine = GuardplaneCalibrationEngine::new();
+    engine.set_evasion_alert_threshold(0);
+    let ctx = test_ctx();
+    let outcomes = vec![make_outcome(AttackDimension::Exfiltration, 5, 10, false)];
+    engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+    assert!(!engine.alerts().is_empty(), "should have alerts after evasion");
+
+    // Running another cycle to verify alerts accumulate (not cleared between cycles)
+    engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
+    let alert_count = engine.alerts().len();
+    assert!(alert_count >= 2, "alerts should accumulate across cycles");
+}

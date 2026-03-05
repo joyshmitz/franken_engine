@@ -814,3 +814,98 @@ fn fixture_entry_derive_id_is_deterministic() {
     let id_b = entry.derive_id().expect("derive_id b");
     assert_eq!(id_a, id_b);
 }
+
+// ---------- FixtureRegistry by_surface ----------
+
+#[test]
+fn fixture_registry_by_surface_filters_correctly() {
+    let mut registry = FixtureRegistry::new();
+    let entry1 = FixtureEntry {
+        fixture_id: "surf-filter-1".to_string(),
+        description: "first".to_string(),
+        test_class: TestClass::Core,
+        surfaces: BTreeSet::from([TestSurface::Parser, TestSurface::Runtime]),
+        provenance: TestClass::Core.min_provenance_level(),
+        seed: Some(1),
+        content_hash: "sha256:sf1".to_string(),
+        format_version: "v1".to_string(),
+        origin_ref: "bd-test".to_string(),
+        tags: BTreeSet::new(),
+    };
+    let entry2 = FixtureEntry {
+        fixture_id: "surf-filter-2".to_string(),
+        description: "second".to_string(),
+        test_class: TestClass::Edge,
+        surfaces: BTreeSet::from([TestSurface::Compiler]),
+        provenance: TestClass::Edge.min_provenance_level(),
+        seed: Some(2),
+        content_hash: "sha256:sf2".to_string(),
+        format_version: "v1".to_string(),
+        origin_ref: "bd-test".to_string(),
+        tags: BTreeSet::new(),
+    };
+    registry.register(entry1).unwrap();
+    registry.register(entry2).unwrap();
+    assert_eq!(registry.by_surface(TestSurface::Parser).len(), 1);
+    assert_eq!(registry.by_surface(TestSurface::Runtime).len(), 1);
+    assert_eq!(registry.by_surface(TestSurface::Compiler).len(), 1);
+    assert_eq!(registry.by_surface(TestSurface::Scheduler).len(), 0);
+}
+
+// ---------- DeterminismContract validate ----------
+
+#[test]
+fn determinism_contract_strict_validates_clean() {
+    let dc = DeterminismContract::strict();
+    assert!(dc.seed_required);
+    assert!(dc.virtual_clock_required);
+    assert!(dc.deterministic_rng_required);
+    let violations = dc.validate();
+    assert!(violations.is_empty(), "strict contract should have no violations");
+}
+
+#[test]
+fn determinism_contract_relaxed_has_correct_tolerance() {
+    let dc = DeterminismContract::relaxed(500_000);
+    // Relaxed contracts do not require seed, virtual clock, or deterministic RNG
+    assert!(!dc.seed_required);
+    assert!(!dc.virtual_clock_required);
+    assert!(!dc.deterministic_rng_required);
+    assert_eq!(dc.tolerance_millionths, 500_000);
+}
+
+// ---------- TestClass min_provenance_level ----------
+
+#[test]
+fn test_class_min_provenance_level_is_defined_for_all() {
+    for class in TestClass::ALL {
+        let prov = class.min_provenance_level();
+        // Provenance level must have non-empty as_str
+        assert!(!prov.as_str().is_empty(), "provenance as_str empty for {class}");
+        // trust_rank must be in range 0..=3
+        assert!(prov.trust_rank() <= 3, "trust_rank out of range for {class}");
+    }
+}
+
+// ---------- FixtureEntry validate_against_contract ----------
+
+#[test]
+fn fixture_entry_validation_detects_missing_seed_for_core_class() {
+    let dc = DeterminismContract::for_class(TestClass::Core);
+    let entry = FixtureEntry {
+        fixture_id: "no-seed-core".to_string(),
+        description: "missing seed for core class".to_string(),
+        test_class: TestClass::Core,
+        surfaces: BTreeSet::from([TestSurface::Parser]),
+        provenance: TestClass::Core.min_provenance_level(),
+        seed: None, // core class requires seed
+        content_hash: "sha256:noseed".to_string(),
+        format_version: "v1".to_string(),
+        origin_ref: "bd-test".to_string(),
+        tags: BTreeSet::new(),
+    };
+    if dc.seed_required {
+        let violations = entry.validate_against_contract(&dc);
+        assert!(!violations.is_empty(), "missing seed should produce violation for core class");
+    }
+}

@@ -352,3 +352,28 @@ fn default_spec_validate_succeeds() {
     let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
     spec.validate().expect("default spec should pass validation");
 }
+
+#[test]
+fn semantic_twin_specification_debug_is_nonempty() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    assert!(!format!("{spec:?}").is_empty());
+}
+
+#[test]
+fn default_spec_serde_is_deterministic() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    let a = serde_json::to_string(&spec).expect("first");
+    let b = serde_json::to_string(&spec).expect("second");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn default_spec_serialized_length_exceeds_minimum() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    let json = serde_json::to_string(&spec).expect("serialize");
+    assert!(
+        json.len() > 50,
+        "serialized spec should be >50 chars, got {}",
+        json.len()
+    );
+}

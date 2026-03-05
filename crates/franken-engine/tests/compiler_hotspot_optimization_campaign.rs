@@ -622,3 +622,99 @@ fn fixture_deterministic_double_load() {
     assert_eq!(a.schema_version, b.schema_version);
     assert_eq!(a.campaign_runs.len(), b.campaign_runs.len());
 }
+
+// ---------- Edge cases and boundary conditions ----------
+
+#[test]
+fn scaled_delta_lower_is_better_handles_zero_baseline() {
+    let delta = scaled_delta_lower_is_better(0, 100);
+    // baseline.max(1) → 1, candidate.max(1) → 100
+    // (1 - 100) * 1_000_000 / 1 = -99_000_000
+    assert_eq!(delta, -99_000_000);
+}
+
+#[test]
+fn ev_score_millionths_with_all_ones_equals_one_million() {
+    let inputs = EvInputs {
+        impact: 1,
+        confidence: 1,
+        reuse: 1,
+        effort: 1,
+        friction: 1,
+    };
+    assert_eq!(ev_score_millionths(&inputs), 1_000_000);
+}
+
+#[test]
+fn rank_by_ev_breaks_ties_alphabetically() {
+    let results = vec![
+        CampaignResult {
+            campaign_id: "beta".to_string(),
+            ev_score_millionths: 500,
+            gain_millionths: 0,
+        },
+        CampaignResult {
+            campaign_id: "alpha".to_string(),
+            ev_score_millionths: 500,
+            gain_millionths: 0,
+        },
+    ];
+    let ranking = rank_by_ev(&results);
+    assert_eq!(ranking, vec!["alpha", "beta"], "tied EV scores must break by campaign_id ascending");
+}
+
+#[test]
+fn rank_by_gain_breaks_ties_alphabetically() {
+    let results = vec![
+        CampaignResult {
+            campaign_id: "zulu".to_string(),
+            ev_score_millionths: 0,
+            gain_millionths: 100,
+        },
+        CampaignResult {
+            campaign_id: "alpha".to_string(),
+            ev_score_millionths: 0,
+            gain_millionths: 100,
+        },
+    ];
+    let ranking = rank_by_gain(&results);
+    assert_eq!(ranking, vec!["alpha", "zulu"], "tied gain scores must break by campaign_id ascending");
+}
+
+#[test]
+fn fixture_campaign_ids_are_unique() {
+    let fixture = load_fixture();
+    let ids: BTreeSet<&str> = fixture
+        .campaign_runs
+        .iter()
+        .map(|r| r.campaign_id.as_str())
+        .collect();
+    assert_eq!(
+        ids.len(),
+        fixture.campaign_runs.len(),
+        "campaign_ids must be unique across all runs"
+    );
+}
+
+#[test]
+fn doc_word_count_exceeds_minimum() {
+    let doc = load_doc();
+    let count = doc.split_whitespace().count();
+    assert!(count >= 20, "doc should have at least 20 words, got {count}");
+}
+
+#[test]
+fn fixture_schema_version_is_nonempty() {
+    let fixture = load_fixture();
+    assert!(
+        !fixture.schema_version.is_empty(),
+        "schema_version must be nonempty"
+    );
+}
+
+#[test]
+fn compute_campaign_results_count_matches_fixture() {
+    let fixture = load_fixture();
+    let results = compute_campaign_results(&fixture);
+    assert_eq!(results.len(), fixture.campaign_runs.len());
+}

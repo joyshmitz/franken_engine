@@ -475,3 +475,99 @@ fn fallback_execution_route_debug_is_nonempty() {
         assert!(!format!("{route:?}").is_empty());
     }
 }
+
+#[test]
+fn diagnostic_derive_id_is_deterministic_across_calls() {
+    let d = build_unsupported_semantics_diagnostic(
+        "StableId",
+        UnsupportedSemanticsTrigger::SchedulerOrderingAmbiguity,
+        "trace-stable-id",
+        "decision-stable-id",
+    );
+    let id1 = d.derive_id();
+    let id2 = d.derive_id();
+    assert_eq!(id1, id2, "derive_id must be deterministic");
+}
+
+#[test]
+fn diagnostic_for_different_components_produces_different_ids() {
+    let d1 = build_unsupported_semantics_diagnostic(
+        "Alpha",
+        UnsupportedSemanticsTrigger::HookTopologyDrift,
+        "t",
+        "d",
+    );
+    let d2 = build_unsupported_semantics_diagnostic(
+        "Beta",
+        UnsupportedSemanticsTrigger::HookTopologyDrift,
+        "t",
+        "d",
+    );
+    assert_ne!(d1.derive_id(), d2.derive_id());
+}
+
+#[test]
+fn adding_slots_triggers_topology_drift_violation() {
+    let prev = HookManifest::new(
+        "Grow",
+        vec![make_slot(0, HookKind::State)],
+    );
+    let curr = HookManifest::new(
+        "Grow",
+        vec![
+            make_slot(0, HookKind::State),
+            make_slot(1, HookKind::Effect),
+        ],
+    );
+    let violations = validate_hook_consistency(&prev, &curr);
+    // Hook count change (either direction) is a topology drift violation
+    assert!(
+        !violations.is_empty(),
+        "changing hook count should trigger a violation"
+    );
+    let trigger = classify_unsupported_semantics(&violations[0]);
+    assert_eq!(trigger, UnsupportedSemanticsTrigger::HookTopologyDrift);
+}
+
+#[test]
+fn hook_manifest_serde_roundtrip() {
+    let manifest = HookManifest::new(
+        "SerdeTest",
+        vec![
+            make_slot(0, HookKind::State),
+            make_slot(1, HookKind::Memo),
+        ],
+    );
+    let json = serde_json::to_string(&manifest).expect("serialize");
+    let recovered: HookManifest = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(manifest.component_name, recovered.component_name);
+    assert_eq!(manifest.slots.len(), recovered.slots.len());
+}
+
+#[test]
+fn unsupported_hook_primitive_routes_to_compatibility_lane() {
+    let diagnostic = build_unsupported_semantics_diagnostic(
+        "PrimTest",
+        UnsupportedSemanticsTrigger::UnsupportedHookPrimitive,
+        "trace-prim",
+        "decision-prim",
+    );
+    assert!(diagnostic.compile_path_rejected);
+    assert_eq!(diagnostic.error_code, "FE-HOOK-UNSUPPORTED-0005");
+}
+
+#[test]
+fn dependency_shape_drift_routes_to_compatibility_lane() {
+    let diagnostic = build_unsupported_semantics_diagnostic(
+        "DepTest",
+        UnsupportedSemanticsTrigger::DependencyShapeDrift,
+        "trace-dep",
+        "decision-dep",
+    );
+    assert!(diagnostic.compile_path_rejected);
+    assert_eq!(diagnostic.error_code, "FE-HOOK-UNSUPPORTED-0002");
+    assert_eq!(
+        diagnostic.fallback_route,
+        FallbackExecutionRoute::CompatibilityRuntimeLane
+    );
+}

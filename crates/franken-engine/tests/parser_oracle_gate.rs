@@ -438,3 +438,226 @@ fn summary_drift_rate_zero_when_all_equivalent() {
     assert_eq!(report.summary.drift_rate_millionths, 0);
     let _ = fs::remove_file(path);
 }
+
+// ---------- serde roundtrip ----------
+
+#[test]
+fn oracle_report_serde_roundtrip_preserves_all_fields() {
+    let fixtures = json!([
+        { "id": "serde1", "family_id": "fam", "goal": "script", "source": "q", "expected_hash": fixture_hash("q", ParseGoal::Script) },
+        { "id": "serde2", "family_id": "fam", "goal": "script", "source": "r", "expected_hash": "sha256:bad" }
+    ]);
+    let path = write_fixture_catalog(fixtures);
+    let mut config =
+        ParserOracleConfig::with_defaults(OraclePartition::Full, OracleGateMode::FailClosed, 55);
+    config.fixture_catalog_path = path.clone();
+    config.trace_id = "trace-serde-rt".to_string();
+    config.decision_id = "decision-serde-rt".to_string();
+    config.policy_id = "policy-serde-rt".to_string();
+    let report = run_parser_oracle(&config).expect("oracle");
+
+    let json_bytes = serde_json::to_vec(&report).expect("serialize report");
+    let recovered: serde_json::Value =
+        serde_json::from_slice(&json_bytes).expect("deserialize report");
+    let obj = recovered.as_object().expect("report should be an object");
+
+    assert!(obj.contains_key("schema_version"));
+    assert!(obj.contains_key("taxonomy_version"));
+    assert!(obj.contains_key("summary"));
+    assert!(obj.contains_key("decision"));
+    assert!(obj.contains_key("fixture_results"));
+
+    let results = obj["fixture_results"].as_array().expect("results array");
+    assert_eq!(results.len(), 2);
+    assert_eq!(
+        obj["summary"]["critical_drift_count"].as_u64().unwrap(),
+        1
+    );
+    let _ = fs::remove_file(path);
+}
+
+// ---------- drift_rate nonzero ----------
+
+#[test]
+fn summary_drift_rate_nonzero_when_critical_drift_present() {
+    let fixtures = json!([
+        { "id": "good", "family_id": "fam", "goal": "script", "source": "m", "expected_hash": fixture_hash("m", ParseGoal::Script) },
+        { "id": "bad",  "family_id": "fam", "goal": "script", "source": "n", "expected_hash": "sha256:wrong" }
+    ]);
+    let path = write_fixture_catalog(fixtures);
+    let mut config =
+        ParserOracleConfig::with_defaults(OraclePartition::Full, OracleGateMode::FailClosed, 77);
+    config.fixture_catalog_path = path.clone();
+    config.trace_id = "trace-nonzero-dr".to_string();
+    config.decision_id = "decision-nonzero-dr".to_string();
+    config.policy_id = "policy-nonzero-dr".to_string();
+    let report = run_parser_oracle(&config).expect("oracle");
+    assert!(
+        report.summary.drift_rate_millionths > 0,
+        "drift rate must be positive when a fixture has critical drift"
+    );
+    let _ = fs::remove_file(path);
+}
+
+// ---------- derive_seed mode isolation ----------
+
+#[test]
+fn derive_seed_varies_with_fixture_id_not_just_master_seed() {
+    let a = derive_seed(42, "fixture_one", ParserMode::ScalarReference);
+    let b = derive_seed(42, "fixture_two", ParserMode::ScalarReference);
+    let c = derive_seed(42, "fixture_one", ParserMode::ScalarReference);
+    assert_ne!(
+        a, b,
+        "same master seed but different fixture IDs must produce different seeds"
+    );
+    assert_eq!(a, c, "identical inputs must produce identical seeds");
+}
+
+// ---------- smoke partition truncation ----------
+
+#[test]
+fn smoke_partition_truncates_to_four_even_with_many_fixtures() {
+    let mut fixture_array = Vec::new();
+    for i in 0..10 {
+        let src = format!("src_{i}");
+        fixture_array.push(json!({
+            "id": format!("fix_{i}"),
+            "family_id": "fam",
+            "goal": "script",
+            "source": src,
+            "expected_hash": fixture_hash(&src, ParseGoal::Script)
+        }));
+    }
+    let fixtures = serde_json::Value::Array(fixture_array);
+    let path = write_fixture_catalog(fixtures);
+    let mut config =
+        ParserOracleConfig::with_defaults(OraclePartition::Smoke, OracleGateMode::FailClosed, 99);
+    config.fixture_catalog_path = path.clone();
+    config.trace_id = "trace-trunc".to_string();
+    config.decision_id = "decision-trunc".to_string();
+    config.policy_id = "policy-trunc".to_string();
+    let report = run_parser_oracle(&config).expect("oracle");
+    assert_eq!(
+        report.summary.total_fixtures, 4,
+        "smoke partition must limit to 4 fixtures regardless of catalog size"
+    );
+    assert_eq!(report.fixture_results.len(), 4);
+    let _ = fs::remove_file(path);
+}
+
+// ---------- nightly partition uses all fixtures ----------
+
+#[test]
+fn nightly_partition_uses_all_fixtures_like_full() {
+    let fixtures = json!([
+        { "id": "n1", "family_id": "fam", "goal": "script", "source": "aa", "expected_hash": fixture_hash("aa", ParseGoal::Script) },
+        { "id": "n2", "family_id": "fam", "goal": "script", "source": "bb", "expected_hash": fixture_hash("bb", ParseGoal::Script) },
+        { "id": "n3", "family_id": "fam", "goal": "script", "source": "cc", "expected_hash": fixture_hash("cc", ParseGoal::Script) },
+        { "id": "n4", "family_id": "fam", "goal": "script", "source": "dd", "expected_hash": fixture_hash("dd", ParseGoal::Script) },
+        { "id": "n5", "family_id": "fam", "goal": "script", "source": "ee", "expected_hash": fixture_hash("ee", ParseGoal::Script) },
+        { "id": "n6", "family_id": "fam", "goal": "script", "source": "ff", "expected_hash": fixture_hash("ff", ParseGoal::Script) }
+    ]);
+    let path = write_fixture_catalog(fixtures);
+    let mut config =
+        ParserOracleConfig::with_defaults(OraclePartition::Nightly, OracleGateMode::FailClosed, 11);
+    config.fixture_catalog_path = path.clone();
+    config.trace_id = "trace-nightly".to_string();
+    config.decision_id = "decision-nightly".to_string();
+    config.policy_id = "policy-nightly".to_string();
+    let report = run_parser_oracle(&config).expect("oracle");
+    assert_eq!(
+        report.summary.total_fixtures, 6,
+        "nightly partition must include all fixtures (no limit)"
+    );
+    assert!(!report.decision.promotion_blocked);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn drift_class_serde_roundtrip_all_variants() {
+    for class in [
+        DriftClass::Equivalent,
+        DriftClass::DiagnosticsDrift,
+        DriftClass::SemanticDrift,
+        DriftClass::HarnessNondeterminism,
+        DriftClass::ArtifactIntegrityFailure,
+    ] {
+        let json = serde_json::to_string(&class).expect("serialize drift class");
+        let recovered: DriftClass = serde_json::from_str(&json).expect("deserialize drift class");
+        assert_eq!(recovered, class, "serde roundtrip must preserve DriftClass");
+    }
+}
+
+#[test]
+fn gate_action_serde_roundtrip() {
+    use frankenengine_engine::parser_oracle::GateAction;
+    for action in [GateAction::Promote, GateAction::Reject, GateAction::Hold] {
+        let json = serde_json::to_string(&action).expect("serialize gate action");
+        let recovered: GateAction = serde_json::from_str(&json).expect("deserialize gate action");
+        assert_eq!(recovered, action, "serde roundtrip must preserve GateAction");
+    }
+}
+
+#[test]
+fn load_fixture_catalog_returns_correct_schema() {
+    use frankenengine_engine::parser_oracle::load_fixture_catalog;
+    let fixtures = json!([
+        { "id": "lfc1", "family_id": "fam", "goal": "script", "source": "cat", "expected_hash": fixture_hash("cat", ParseGoal::Script) }
+    ]);
+    let path = write_fixture_catalog(fixtures);
+    let catalog = load_fixture_catalog(&path).expect("load catalog");
+    assert_eq!(
+        catalog.schema_version,
+        "franken-engine.parser-phase0.semantic-fixtures.v1"
+    );
+    assert_eq!(catalog.parser_mode, "scalar_reference");
+    assert_eq!(catalog.fixtures.len(), 1);
+    assert_eq!(catalog.fixtures[0].id, "lfc1");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn partition_fixtures_smoke_sorts_and_limits() {
+    use frankenengine_engine::parser_oracle::{OracleFixtureCatalog, OracleFixtureSpec, partition_fixtures};
+    let specs: Vec<OracleFixtureSpec> = (0..8)
+        .map(|i| OracleFixtureSpec {
+            id: format!("pf_{i}"),
+            family_id: "fam".into(),
+            goal: "script".into(),
+            source: format!("src_{i}"),
+            expected_hash: fixture_hash(&format!("src_{i}"), ParseGoal::Script),
+        })
+        .collect();
+    let catalog = OracleFixtureCatalog {
+        schema_version: "franken-engine.parser-phase0.semantic-fixtures.v1".into(),
+        parser_mode: "scalar_reference".into(),
+        fixtures: specs,
+    };
+    let partitioned = partition_fixtures(&catalog, OraclePartition::Smoke);
+    assert_eq!(partitioned.len(), 4, "smoke must limit to 4");
+    // Must be sorted by id
+    for window in partitioned.windows(2) {
+        assert!(
+            window[0].id <= window[1].id,
+            "partitioned fixtures must be sorted by id"
+        );
+    }
+}
+
+#[test]
+fn report_decision_fallback_not_triggered_when_no_drift_in_fail_closed() {
+    let fixtures = json!([
+        { "id": "no_drift", "family_id": "fam", "goal": "script", "source": "clean", "expected_hash": fixture_hash("clean", ParseGoal::Script) }
+    ]);
+    let path = write_fixture_catalog(fixtures);
+    let mut config =
+        ParserOracleConfig::with_defaults(OraclePartition::Full, OracleGateMode::FailClosed, 200);
+    config.fixture_catalog_path = path.clone();
+    config.trace_id = "trace-no-fb".to_string();
+    config.decision_id = "decision-no-fb".to_string();
+    config.policy_id = "policy-no-fb".to_string();
+    let report = run_parser_oracle(&config).expect("oracle");
+    assert!(!report.decision.fallback_triggered, "fallback should not trigger when no drift");
+    assert!(!report.decision.promotion_blocked);
+    let _ = fs::remove_file(path);
+}

@@ -1,7 +1,7 @@
 use frankenengine_engine::plas_benchmark_bundle::{
     PLAS_BENCHMARK_BUNDLE_SCHEMA_VERSION, PlasBenchmarkBundleError, PlasBenchmarkBundleRequest,
-    PlasBenchmarkCohort, PlasBenchmarkExtensionSample, PlasBenchmarkThresholds,
-    PlasBenchmarkTrendPoint, build_plas_benchmark_bundle,
+    PlasBenchmarkCohort, PlasBenchmarkCohortSummary, PlasBenchmarkExtensionSample,
+    PlasBenchmarkThresholds, PlasBenchmarkTrendPoint, build_plas_benchmark_bundle,
 };
 
 fn base_sample(extension_id: &str, cohort: PlasBenchmarkCohort) -> PlasBenchmarkExtensionSample {
@@ -410,4 +410,59 @@ fn bundle_denies_duplicate_extension_ids() {
     let err = build_plas_benchmark_bundle(&request)
         .expect_err("duplicate extension_id should be rejected");
     assert!(err.to_string().contains("ext-simple"));
+}
+
+// ---------- enrichment: validation, thresholds, boundary values ----------
+
+#[test]
+fn sample_with_zero_synthesized_capability_count_rejected() {
+    let mut samples = representative_samples();
+    samples[0].synthesized_capability_count = 0;
+    let request = request_with_samples(samples);
+    let err = build_plas_benchmark_bundle(&request).expect_err("zero capability count");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("synthesized_capability_count"),
+        "error should mention the invalid field: {msg}"
+    );
+}
+
+#[test]
+fn custom_thresholds_with_zero_over_privilege_ratio_rejected() {
+    let mut request = request_with_samples(representative_samples());
+    request.thresholds = Some(PlasBenchmarkThresholds {
+        max_over_privilege_ratio_millionths: 0,
+        ..PlasBenchmarkThresholds::default()
+    });
+    let err = build_plas_benchmark_bundle(&request).expect_err("invalid threshold");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("max_over_privilege_ratio_millionths"),
+        "error should reference the threshold field: {msg}"
+    );
+}
+
+#[test]
+fn cohort_summary_serde_roundtrip() {
+    let request = request_with_samples(representative_samples());
+    let decision = build_plas_benchmark_bundle(&request).expect("bundle");
+    for summary in &decision.cohort_summaries {
+        let json = serde_json::to_string(summary).expect("serialize cohort summary");
+        let recovered: PlasBenchmarkCohortSummary =
+            serde_json::from_str(&json).expect("deserialize cohort summary");
+        assert_eq!(*summary, recovered);
+    }
+}
+
+#[test]
+fn sample_with_false_deny_exceeding_benign_requests_rejected() {
+    let mut samples = representative_samples();
+    samples[1].benign_false_deny_count = samples[1].benign_request_count + 1;
+    let request = request_with_samples(samples);
+    let err = build_plas_benchmark_bundle(&request).expect_err("false_deny > benign_requests");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("benign_false_deny_count"),
+        "error should mention benign_false_deny_count: {msg}"
+    );
 }

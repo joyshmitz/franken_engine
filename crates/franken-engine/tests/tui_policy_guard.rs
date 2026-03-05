@@ -742,3 +742,142 @@ fn evaluate_guard_multiple_violations_accumulate() {
     let report = evaluate_guard(&manifests, &[], &[]);
     assert_eq!(report.violations.len(), 2);
 }
+
+// ---------- module exception with wildcard ----------
+
+#[test]
+fn tui_module_exception_wildcard_covers_subtree() {
+    let module_paths = vec![
+        "crates/franken-engine/src/legacy_tui/widget.rs".to_string(),
+        "crates/franken-engine/src/legacy_tui/renderer.rs".to_string(),
+    ];
+    let exception_docs = vec![ExceptionDocumentInput {
+        path: "docs/adr/exceptions/ADR-EXCEPTION-TUI-0002.md".to_string(),
+        content: "Status: Approved\nScope: module:crates/franken-engine/src/legacy_tui/*\n"
+            .to_string(),
+    }];
+    let report = evaluate_guard(&[], &module_paths, &exception_docs);
+    assert!(
+        report.violations.is_empty(),
+        "wildcard module exception should cover all files under the subtree"
+    );
+    assert!(
+        report
+            .events
+            .iter()
+            .filter(|e| e.event == "module_scan" && e.outcome == "pass")
+            .count()
+            == 2,
+        "both modules should produce pass events via exception"
+    );
+}
+
+// ---------- combined dependency + module violations ----------
+
+#[test]
+fn tui_combined_dep_and_module_violations_both_reported() {
+    let manifests = vec![ManifestInput {
+        path: "Cargo.toml".to_string(),
+        content: "[dependencies]\ncrossterm = \"0.27\"\n".to_string(),
+    }];
+    let module_paths = vec!["crates/franken-engine/src/local_tui_renderer.rs".to_string()];
+    let report = evaluate_guard(&manifests, &module_paths, &[]);
+    assert!(
+        report.violations.len() >= 2,
+        "should have both dependency and module violations"
+    );
+    assert!(
+        report
+            .violations
+            .iter()
+            .any(|v| v.error_code == "FE-TUI-DEPENDENCY-FORBIDDEN"),
+        "must have a dependency violation"
+    );
+    assert!(
+        report
+            .violations
+            .iter()
+            .any(|v| v.error_code == "FE-TUI-MODULE-FORBIDDEN"),
+        "must have a module violation"
+    );
+}
+
+// ---------- guard_summary is always the last event ----------
+
+#[test]
+fn tui_guard_summary_is_always_last_event() {
+    // Test with violations present
+    let manifests = vec![ManifestInput {
+        path: "Cargo.toml".to_string(),
+        content: "[dependencies]\ntui = \"1\"\n".to_string(),
+    }];
+    let report = evaluate_guard(&manifests, &[], &[]);
+    let last = report.events.last().expect("should have at least one event");
+    assert_eq!(last.event, "guard_summary");
+    assert_eq!(last.outcome, "fail");
+    assert_eq!(
+        last.error_code.as_deref(),
+        Some("FE-TUI-GUARD-BLOCKED")
+    );
+    assert_eq!(last.detail, "violations=1");
+
+    // Test with no violations
+    let clean_report = evaluate_guard(&[], &[], &[]);
+    let clean_last = clean_report
+        .events
+        .last()
+        .expect("should have summary event");
+    assert_eq!(clean_last.event, "guard_summary");
+    assert_eq!(clean_last.outcome, "pass");
+    assert!(clean_last.error_code.is_none());
+}
+
+// ---------- is_blocked_local_tui_module requires /src/ ----------
+
+#[test]
+fn tui_is_blocked_local_module_requires_src_directory() {
+    // A tui-named file in tests/ (not src/) should not be blocked
+    assert!(
+        !is_blocked_local_tui_module("crates/foo/tests/tui_integration.rs"),
+        "tui file outside /src/ should not be blocked"
+    );
+    // Same name under src/ should be blocked
+    assert!(
+        is_blocked_local_tui_module("crates/foo/src/tui_integration.rs"),
+        "tui file under /src/ should be blocked"
+    );
+}
+
+// ---------- PolicyGuardEvent serde roundtrip ----------
+
+#[test]
+fn tui_policy_guard_event_serde_roundtrip() {
+    let event = PolicyGuardEvent {
+        trace_id: "trace-tui-policy-0001".to_string(),
+        decision_id: "decision-0001".to_string(),
+        policy_id: POLICY_ID.to_string(),
+        component: COMPONENT.to_string(),
+        event: "module_scan".to_string(),
+        outcome: "fail".to_string(),
+        error_code: Some("FE-TUI-MODULE-FORBIDDEN".to_string()),
+        subject: "crates/foo/src/tui_widget.rs".to_string(),
+        detail: "blocked local interactive TUI module path detected".to_string(),
+    };
+    let json = serde_json::to_string(&event).expect("serialize event");
+    let recovered: serde_json::Value = serde_json::from_str(&json).expect("parse event json");
+    assert_eq!(recovered["trace_id"], "trace-tui-policy-0001");
+    assert_eq!(recovered["policy_id"], POLICY_ID);
+    assert_eq!(recovered["component"], COMPONENT);
+    assert_eq!(recovered["error_code"], "FE-TUI-MODULE-FORBIDDEN");
+
+    // Verify null error_code for pass events
+    let pass_event = PolicyGuardEvent {
+        error_code: None,
+        outcome: "pass".to_string(),
+        ..event
+    };
+    let pass_json = serde_json::to_string(&pass_event).expect("serialize pass event");
+    let pass_recovered: serde_json::Value =
+        serde_json::from_str(&pass_json).expect("parse pass json");
+    assert!(pass_recovered["error_code"].is_null());
+}

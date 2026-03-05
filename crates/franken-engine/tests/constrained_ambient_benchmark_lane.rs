@@ -462,3 +462,46 @@ fn mismatched_lane_sizes_produces_deny() {
     let decision = run_constrained_ambient_benchmark_lane(&request);
     assert!(decision.blocked);
 }
+
+#[test]
+fn lane_workload_metrics_preserves_all_fields_through_serde() {
+    let wl = workload("wl-full", "digest-full", 10_000, 500, 1_000, 2_000, 4096, 100);
+    let json = serde_json::to_string(&wl).expect("serialize");
+    let recovered: LaneWorkloadMetrics = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.workload_id, "wl-full");
+    assert_eq!(recovered.latency_p95_ns, 1_000);
+    assert_eq!(recovered.memory_peak_bytes, 4096);
+}
+
+#[test]
+fn proof_attribution_speedup_is_consistent() {
+    let sample = attribution("proof-consistent", "spec-x", 50_000, 40_000, 800, 1_200);
+    assert!(
+        sample.constrained_throughput_ops_per_sec >= sample.without_proof_throughput_ops_per_sec,
+        "constrained should be faster or equal"
+    );
+}
+
+#[test]
+fn baseline_request_has_matching_lane_sizes() {
+    let request = baseline_request();
+    assert_eq!(request.constrained_lane.len(), request.ambient_lane.len());
+}
+
+#[test]
+fn baseline_request_debug_is_nonempty() {
+    let request = baseline_request();
+    assert!(!format!("{request:?}").is_empty());
+}
+
+#[test]
+fn lane_workload_metrics_debug_is_nonempty() {
+    let m = workload("wl-dbg", "digest-dbg", 1000, 100, 200, 300, 400, 500);
+    assert!(!format!("{m:?}").is_empty());
+}
+
+#[test]
+fn proof_attribution_sample_debug_is_nonempty() {
+    let sample = attribution("proof-dbg", "spec-dbg", 50_000, 40_000, 800, 1_200);
+    assert!(!format!("{sample:?}").is_empty());
+}

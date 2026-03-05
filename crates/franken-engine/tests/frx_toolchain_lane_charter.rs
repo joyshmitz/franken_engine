@@ -310,3 +310,160 @@ fn toolchain_charter_mentions_ecosystem() {
     let doc = fs::read_to_string(&path).expect("read charter doc");
     assert!(doc.to_ascii_lowercase().contains("ecosystem"));
 }
+
+// ---------- enrichment: deeper structural and edge-case checks ----------
+
+#[test]
+fn toolchain_contract_release_gate_requires_promotion_green_or_waiver() {
+    let path = repo_root().join("docs/frx_toolchain_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert_eq!(
+        value["release_gate_contract"]["promotion_requires_green_or_explicit_waiver"].as_bool(),
+        Some(true),
+        "release gate must require green or explicit waiver for promotion"
+    );
+    assert_eq!(
+        value["release_gate_contract"]["rollback_path_required"].as_bool(),
+        Some(true),
+        "release gate must require rollback path"
+    );
+}
+
+#[test]
+fn toolchain_contract_logging_fields_include_core_observability_set() {
+    let path = repo_root().join("docs/frx_toolchain_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let fields = value["logging_contract"]["required_fields"]
+        .as_array()
+        .expect("required_fields array");
+    let field_set: std::collections::BTreeSet<&str> = fields
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    for required in ["trace_id", "decision_id", "component", "event", "outcome"] {
+        assert!(
+            field_set.contains(required),
+            "logging_contract missing required field: {required}"
+        );
+    }
+}
+
+#[test]
+fn toolchain_contract_status_is_active() {
+    let path = repo_root().join("docs/frx_toolchain_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert_eq!(
+        value["status"].as_str(),
+        Some("active"),
+        "toolchain contract status must be active"
+    );
+}
+
+#[test]
+fn toolchain_contract_auto_route_on_instability_is_enabled() {
+    let path = repo_root().join("docs/frx_toolchain_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert_eq!(
+        value["failure_policy"]["auto_route_on_instability"].as_bool(),
+        Some(true),
+        "failure policy must auto-route on instability"
+    );
+    assert_eq!(
+        value["failure_policy"]["block_promotion_on_persistent_instability"].as_bool(),
+        Some(true),
+        "failure policy must block promotion on persistent instability"
+    );
+}
+
+#[test]
+fn toolchain_contract_serde_roundtrip_via_value_preserves_all_keys() {
+    let path = repo_root().join("docs/frx_toolchain_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let serialized = serde_json::to_string_pretty(&value).expect("serialize");
+    let reparsed: Value = serde_json::from_str(&serialized).expect("reparse");
+    let original_keys: Vec<&str> = value
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let reparsed_keys: Vec<&str> = reparsed
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        original_keys, reparsed_keys,
+        "serde roundtrip must preserve all top-level keys"
+    );
+    assert_eq!(value, reparsed);
+}
+
+// ---------- enrichment: additional structural and semantic checks ----------
+
+#[test]
+fn toolchain_contract_has_incremental_adoption_controls_section() {
+    let path = repo_root().join("docs/frx_toolchain_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(
+        value["ownership"]["incremental_adoption_controls"].is_object(),
+        "contract must have ownership.incremental_adoption_controls section"
+    );
+}
+
+#[test]
+fn toolchain_contract_rollout_axes_include_all_required_axes() {
+    let path = repo_root().join("docs/frx_toolchain_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let axes = value["ownership"]["incremental_adoption_controls"]["supported_rollout_axes"]
+        .as_array()
+        .expect("rollout axes array");
+    let axis_set: std::collections::BTreeSet<&str> =
+        axes.iter().filter_map(|v| v.as_str()).collect();
+    for required in ["file", "component", "route", "policy"] {
+        assert!(
+            axis_set.contains(required),
+            "rollout axis missing: {required}"
+        );
+    }
+}
+
+#[test]
+fn toolchain_charter_doc_references_interface_contracts_section() {
+    let path = repo_root().join("docs/FRX_TOOLCHAIN_ECOSYSTEM_LANE_CHARTER_V1.md");
+    let doc = fs::read_to_string(&path).expect("read charter doc");
+    assert!(
+        doc.contains("## Interface Contracts"),
+        "charter must have an Interface Contracts section"
+    );
+}
+
+#[test]
+fn toolchain_charter_mentions_rollout_toggles() {
+    let path = repo_root().join("docs/FRX_TOOLCHAIN_ECOSYSTEM_LANE_CHARTER_V1.md");
+    let doc = fs::read_to_string(&path).expect("read charter doc");
+    assert!(
+        doc.contains("Rollout toggles"),
+        "charter must mention rollout toggles"
+    );
+}
+
+#[test]
+fn toolchain_contract_failure_policy_blocks_promotion_on_persistent_instability() {
+    let path = repo_root().join("docs/frx_toolchain_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert_eq!(
+        value["failure_policy"]["block_promotion_on_persistent_instability"].as_bool(),
+        Some(true),
+        "failure_policy must block promotion on persistent instability"
+    );
+}

@@ -633,3 +633,69 @@ fn rgc_057_operator_verification_entries_are_nonempty() {
         );
     }
 }
+
+// ---------- additional edge-case coverage ----------
+
+#[test]
+fn rgc_057_contract_pretty_json_serde_roundtrip_preserves_equality() {
+    let contract = parse_contract();
+    let pretty = serde_json::to_string_pretty(&contract).expect("pretty serialize");
+    let recovered: RuntimeSemanticsPackContract =
+        serde_json::from_str(&pretty).expect("pretty deserialize");
+    assert_eq!(contract, recovered);
+}
+
+#[test]
+fn rgc_057_vectors_generated_at_utc_is_iso8601_like() {
+    let vectors = parse_vectors();
+    assert!(
+        vectors.generated_at_utc.contains('T'),
+        "generated_at_utc should contain 'T' separator: {}",
+        vectors.generated_at_utc
+    );
+    assert!(
+        vectors.generated_at_utc.ends_with('Z'),
+        "generated_at_utc should end with 'Z': {}",
+        vectors.generated_at_utc
+    );
+    let year_part = &vectors.generated_at_utc[..4];
+    assert!(
+        year_part.chars().all(|c| c.is_ascii_digit()),
+        "first 4 chars should be a year: {}",
+        year_part
+    );
+}
+
+#[test]
+fn rgc_057_failure_scenario_exit_codes_are_nonzero() {
+    let contract = parse_contract();
+    for scenario in &contract.failure_scenarios {
+        assert_ne!(
+            scenario.expected_exit_code, 0,
+            "failure scenario {} should have nonzero exit code",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn rgc_057_vectors_path_types_match_expected_outcome_pattern() {
+    let vectors = parse_vectors();
+    for vector in &vectors.vectors {
+        // Golden path vectors should expect pass
+        if vector.path_type == "golden" {
+            assert_eq!(
+                vector.expected_outcome, "expect_pass",
+                "golden path_type vector {} should expect_pass",
+                vector.scenario_id
+            );
+        }
+        // Verify all minimal_repro_pointer values start with a path-like prefix
+        assert!(
+            vector.minimal_repro_pointer.contains('/') || vector.minimal_repro_pointer.contains('.'),
+            "minimal_repro_pointer for {} should look like a path: {}",
+            vector.scenario_id,
+            vector.minimal_repro_pointer
+        );
+    }
+}

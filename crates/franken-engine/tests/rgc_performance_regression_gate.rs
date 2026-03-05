@@ -712,3 +712,21 @@ fn culprit_ranking_sorted_by_regression_magnitude() {
         assert_eq!(report.culprit_ranking[1].workload_id, "small-regression");
     }
 }
+
+#[test]
+fn regression_gate_policy_debug_is_nonempty() {
+    let policy = RegressionGatePolicy::default();
+    assert!(!format!("{policy:?}").is_empty());
+}
+
+#[test]
+fn regression_observation_debug_is_nonempty() {
+    let obs = RegressionObservation::new("w1", "s1", "sha256:abc", 1000, 1100, 50_000, None);
+    assert!(!format!("{obs:?}").is_empty());
+}
+
+#[test]
+fn contract_debug_is_nonempty() {
+    let contract: Contract = serde_json::from_str(CONTRACT_JSON).expect("parse");
+    assert!(!format!("{contract:?}").is_empty());
+}

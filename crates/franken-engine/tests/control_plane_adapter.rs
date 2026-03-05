@@ -511,3 +511,152 @@ fn posterior_uniform_has_equal_weights() {
     let json_again = serde_json::to_string(&again).expect("serialize again");
     assert_eq!(json, json_again);
 }
+
+// ---------- LossMatrix validation ----------
+
+#[test]
+fn loss_matrix_dimension_mismatch_returns_error() {
+    // 2 states x 3 actions = 6 values expected, but we supply only 4
+    let result = LossMatrix::new(
+        vec!["good".to_string(), "bad".to_string()],
+        vec![
+            "allow".to_string(),
+            "deny".to_string(),
+            "timeout".to_string(),
+        ],
+        vec![0.1, 0.2, 0.3, 0.4],
+    );
+    assert!(result.is_err(), "LossMatrix::new should reject mismatched dimensions");
+}
+
+// ---------- EvidenceLedgerBuilder missing fields ----------
+
+#[test]
+fn evidence_ledger_builder_missing_component_fails() {
+    // Omit the `component` field — build must return Err.
+    let result = control_plane::EvidenceLedgerBuilder::new()
+        .ts_unix_ms(1_000)
+        // .component("missing")  — intentionally omitted
+        .action("allow")
+        .posterior(vec![0.5, 0.5])
+        .expected_loss("allow", 0.1)
+        .chosen_expected_loss(0.1)
+        .calibration_score(0.5)
+        .fallback_active(false)
+        .build();
+    assert!(result.is_err(), "builder without component should fail");
+}
+
+// ---------- MockBudget exact exhaustion ----------
+
+#[test]
+fn mock_budget_consume_exact_remaining_succeeds_with_zero_left() {
+    let mut budget = control_plane::mocks::MockBudget::new(42);
+    budget.consume(42).expect("exact remaining should succeed");
+    assert_eq!(budget.remaining_ms(), 0);
+    assert_eq!(budget.consumed_ms(), 42);
+
+    // A subsequent consume of even 1 ms must fail.
+    let err = budget.consume(1);
+    assert!(err.is_err(), "budget at zero should reject any further consume");
+}
+
+// ---------- MockDecisionContract empty queue ----------
+
+#[test]
+fn mock_decision_contract_empty_queue_returns_timeout_fallback() {
+    // Construct with an empty queue — no pre-loaded verdicts.
+    let mut mock = control_plane::mocks::MockDecisionContract::new(Vec::<DecisionVerdict>::new());
+    let request = DecisionRequest {
+        decision_id: control_plane::DecisionId::from_parts(3_000, 1_u128),
+        policy_id: control_plane::PolicyId::new("test.empty", 1),
+        trace_id: control_plane::TraceId::from_parts(3_000, 1_u128),
+        ts_unix_ms: 3_000,
+        calibration_score_bps: 5_000,
+        e_process_milli: 100,
+        ci_width_milli: 50,
+    };
+    let verdict = mock.evaluate(&request).expect("should succeed with fallback");
+    assert_eq!(
+        verdict,
+        DecisionVerdict::Timeout,
+        "empty queue should fall back to Timeout"
+    );
+}
+
+// ---------- Successive Bayesian updates shift posteriors ----------
+
+#[test]
+fn multiple_bayesian_updates_produce_different_posteriors() {
+    let mut posterior = Posterior::uniform(2);
+    let initial = serde_json::to_string(&posterior).expect("serialize initial");
+
+    // First update: strongly favor state 0
+    posterior.bayesian_update(&[0.9, 0.1]);
+    let after_first = serde_json::to_string(&posterior).expect("serialize after first");
+    assert_ne!(initial, after_first, "first update should change posterior");
+
+    // Second update: strongly favor state 1
+    posterior.bayesian_update(&[0.1, 0.9]);
+    let after_second = serde_json::to_string(&posterior).expect("serialize after second");
+    assert_ne!(
+        after_first, after_second,
+        "second update should change posterior again"
+    );
+
+    // Third update with same likelihoods as second to push further
+    posterior.bayesian_update(&[0.1, 0.9]);
+    let after_third = serde_json::to_string(&posterior).expect("serialize after third");
+    assert_ne!(
+        after_second, after_third,
+        "third update should shift posterior further"
+    );
+}
+
+// ---------- DecisionId / TraceId from_parts determinism ----------
+
+#[test]
+fn decision_id_and_trace_id_from_parts_are_deterministic() {
+    let ts = 1_700_000_000_000_u64;
+    let rand_val = 0xABCD_u128;
+
+    // Same inputs must produce identical ids every time.
+    let d1 = control_plane::DecisionId::from_parts(ts, rand_val);
+    let d2 = control_plane::DecisionId::from_parts(ts, rand_val);
+    assert_eq!(d1, d2, "DecisionId::from_parts must be deterministic");
+
+    let t1 = control_plane::TraceId::from_parts(ts, rand_val);
+    let t2 = control_plane::TraceId::from_parts(ts, rand_val);
+    assert_eq!(t1, t2, "TraceId::from_parts must be deterministic");
+
+    // Different random parts must produce different ids.
+    let d3 = control_plane::DecisionId::from_parts(ts, rand_val + 1);
+    assert_ne!(d1, d3, "different random should yield different DecisionId");
+
+    let t3 = control_plane::TraceId::from_parts(ts, rand_val + 1);
+    assert_ne!(t1, t3, "different random should yield different TraceId");
+
+    // Display format should be stable hex.
+    assert_eq!(d1.to_string(), d2.to_string());
+    assert_eq!(t1.to_string(), t2.to_string());
+}
+
+#[test]
+fn fallback_policy_debug_is_nonempty() {
+    let policy = FallbackPolicy::default();
+    assert!(!format!("{policy:?}").is_empty());
+}
+
+#[test]
+fn posterior_debug_is_nonempty() {
+    let posterior = Posterior::uniform(3);
+    assert!(!format!("{posterior:?}").is_empty());
+}
+
+#[test]
+fn posterior_serde_is_deterministic() {
+    let posterior = Posterior::uniform(5);
+    let a = serde_json::to_string(&posterior).expect("first");
+    let b = serde_json::to_string(&posterior).expect("second");
+    assert_eq!(a, b);
+}

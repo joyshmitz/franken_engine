@@ -608,3 +608,231 @@ fn all_capability_denial_reasons_have_error_codes() {
         );
     }
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: prometheus format, metrics serde, zone metadata
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn prometheus_export_counters_reflect_recorded_events() {
+    let mut observability = RuntimeSecurityObservability::new();
+    for _ in 0..3 {
+        observability.record_auth_failure(
+            context(1, "auth"),
+            AuthFailureType::KeyRevoked,
+            None,
+            None,
+        );
+    }
+    observability.record_capability_denial(
+        context(2, "cap"),
+        CapabilityDenialReason::Expired,
+        "policy",
+    );
+
+    let prom = observability.export_prometheus_metrics();
+    // Verify the specific counter value appears for key_revoked
+    assert!(
+        prom.contains("auth_failure_total{type=\"key_revoked\"} 3"),
+        "prometheus output should contain key_revoked=3, got:\n{prom}"
+    );
+    assert!(
+        prom.contains("capability_denial_total{reason=\"expired\"} 1"),
+        "prometheus output should contain expired=1, got:\n{prom}"
+    );
+}
+
+#[test]
+fn runtime_security_metrics_default_has_all_zero_counters() {
+    let metrics = RuntimeSecurityMetrics::default();
+    for ft in AuthFailureType::ALL {
+        assert_eq!(metrics.auth_failure_total[&ft], 0);
+    }
+    for reason in CapabilityDenialReason::ALL {
+        assert_eq!(metrics.capability_denial_total[&reason], 0);
+    }
+    for reason in ReplayDropReason::ALL {
+        assert_eq!(metrics.replay_drop_total[&reason], 0);
+    }
+    for vt in CheckpointViolationType::ALL {
+        assert_eq!(metrics.checkpoint_violation_total[&vt], 0);
+    }
+    for outcome in RevocationCheckOutcome::ALL {
+        assert_eq!(metrics.revocation_check_total[&outcome], 0);
+    }
+    for zt in CrossZoneReferenceType::ALL {
+        assert_eq!(metrics.cross_zone_reference_total[&zt], 0);
+    }
+    assert_eq!(metrics.revocation_freshness_degraded_seconds, 0);
+}
+
+use frankenengine_engine::runtime_observability::RuntimeSecurityMetrics;
+
+#[test]
+fn cross_zone_reference_denied_type_emits_denied_outcome() {
+    let mut observability = RuntimeSecurityObservability::new();
+    let event = observability.record_cross_zone_reference(
+        context(50, "zone_checker"),
+        CrossZoneReferenceType::AuthorityDenied,
+        "zone-src",
+        "zone-dst",
+    );
+
+    assert_eq!(event.event_type, "cross_zone_reference");
+    assert_eq!(event.outcome, "denied");
+    assert!(event.error_code.is_some());
+    assert!(event.required_fields_present());
+    // The zone IDs should appear in metadata (possibly redacted)
+    assert!(
+        !event.metadata.is_empty(),
+        "cross-zone reference should carry metadata"
+    );
+}
+
+#[test]
+fn capability_denial_metadata_includes_capability_name() {
+    let mut observability = RuntimeSecurityObservability::new();
+    let event = observability.record_capability_denial(
+        context(60, "cap_gate"),
+        CapabilityDenialReason::InsufficientAuthority,
+        "admin_write_policy",
+    );
+
+    assert_eq!(event.event_type, "capability_denial");
+    assert_eq!(event.outcome, "denied");
+    // The capability name should appear somewhere in metadata
+    let meta_values: Vec<&str> = event.metadata.values().map(|v| v.as_str()).collect();
+    assert!(
+        meta_values
+            .iter()
+            .any(|v| v.contains("admin_write_policy")),
+        "capability name should be in metadata, got: {:?}",
+        meta_values
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment batch: replay drop variants, revocation pass, jsonl multi-line
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn all_replay_drop_reasons_emit_dropped_outcome() {
+    for reason in ReplayDropReason::ALL {
+        let mut observability = RuntimeSecurityObservability::new();
+        let event = observability.record_replay_drop(
+            context(1, "session"),
+            reason,
+            10,
+            20,
+            "sess-variant",
+        );
+        assert_eq!(
+            event.outcome, "dropped",
+            "replay drop reason {:?} should have outcome=dropped",
+            reason
+        );
+        assert!(
+            event.error_code.is_some(),
+            "replay drop reason {:?} should have an error code",
+            reason
+        );
+    }
+}
+
+#[test]
+fn all_checkpoint_violation_types_emit_rejected_outcome() {
+    for vt in CheckpointViolationType::ALL {
+        let mut observability = RuntimeSecurityObservability::new();
+        let event = observability.record_checkpoint_violation(
+            context(1, "checkpoint"),
+            vt,
+            100,
+            101,
+        );
+        assert_eq!(
+            event.outcome, "rejected",
+            "checkpoint violation type {:?} should have outcome=rejected",
+            vt
+        );
+        assert!(event.error_code.is_some());
+    }
+}
+
+#[test]
+fn jsonl_roundtrip_preserves_metadata_values() {
+    let mut observability = RuntimeSecurityObservability::new();
+    observability.record_auth_failure(
+        context(1, "auth"),
+        AuthFailureType::KeyRevoked,
+        Some("secret-material"),
+        None,
+    );
+    observability.record_capability_denial(
+        context(2, "cap"),
+        CapabilityDenialReason::InsufficientAuthority,
+        "admin_write_policy",
+    );
+
+    let jsonl = observability.export_logs_jsonl();
+    let parsed = parse_security_logs_jsonl(&jsonl).expect("parse JSONL");
+    assert_eq!(parsed.len(), 2);
+    // Verify metadata is preserved through the roundtrip
+    for (original, recovered) in observability.logs().iter().zip(parsed.iter()) {
+        assert_eq!(original.metadata, recovered.metadata);
+    }
+}
+
+#[test]
+fn security_event_context_fields_all_propagated_to_log() {
+    let mut observability = RuntimeSecurityObservability::new();
+    let ctx = SecurityEventContext {
+        timestamp_ns: 999_999,
+        trace_id: "trace-propagation-test".to_string(),
+        principal_id: "principal-propagation".to_string(),
+        decision_id: "decision-propagation".to_string(),
+        policy_id: "policy-propagation".to_string(),
+        zone_id: "zone-propagation".to_string(),
+        component: "propagation_test".to_string(),
+    };
+
+    let event = observability.record_auth_failure(
+        ctx.clone(),
+        AuthFailureType::KeyExpired,
+        None,
+        None,
+    );
+
+    assert_eq!(event.timestamp_ns, 999_999);
+    assert_eq!(event.trace_id, "trace-propagation-test");
+    assert_eq!(event.principal_id, "principal-propagation");
+    assert_eq!(event.decision_id, "decision-propagation");
+    assert_eq!(event.policy_id, "policy-propagation");
+    assert_eq!(event.zone_id, "zone-propagation");
+    assert_eq!(event.component, "propagation_test");
+}
+
+#[test]
+fn runtime_security_metrics_serde_roundtrip() {
+    let mut observability = RuntimeSecurityObservability::new();
+    observability.record_auth_failure(
+        context(1, "auth"),
+        AuthFailureType::KeyRevoked,
+        None,
+        None,
+    );
+    observability.record_revocation_check(
+        context(2, "rev"),
+        RevocationCheckOutcome::Stale,
+        10,
+        20,
+        5,
+        Some(42),
+    );
+
+    let metrics = observability.metrics();
+    let json = serde_json::to_string(&metrics).expect("serialize metrics");
+    let recovered: RuntimeSecurityMetrics =
+        serde_json::from_str(&json).expect("deserialize metrics");
+    assert_eq!(recovered.auth_failure_total[&AuthFailureType::KeyRevoked], 1);
+    assert_eq!(recovered.revocation_freshness_degraded_seconds, 42);
+}

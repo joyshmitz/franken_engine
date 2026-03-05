@@ -639,3 +639,217 @@ fn contract_failure_policy_is_fail_closed() {
     assert_eq!(contract.failure_policy.mode, "fail_closed");
     assert!(!contract.failure_policy.error_code.trim().is_empty());
 }
+
+// ---------- operator_verification ----------
+
+#[test]
+fn contract_operator_verification_is_non_empty() {
+    let path = repo_root().join("docs/frx_canonical_react_behavior_corpus_v1.json");
+    let contract: CorpusContract = load_json(&path);
+    assert!(
+        !contract.operator_verification.is_empty(),
+        "operator_verification must contain at least one verification entry"
+    );
+    for (i, entry) in contract.operator_verification.iter().enumerate() {
+        assert!(
+            !entry.trim().is_empty(),
+            "operator_verification[{i}] must not be blank"
+        );
+    }
+}
+
+// ---------- stimulus coverage ----------
+
+#[test]
+fn all_fixtures_have_at_least_one_stimulus_step() {
+    let files = list_json_files(&fixtures_dir(), ".fixture.json");
+    for path in &files {
+        let fixture: FixtureSpec = load_json(path);
+        assert!(
+            !fixture.stimulus.is_empty(),
+            "fixture {} must contain at least one stimulus step",
+            path.display()
+        );
+        for step in &fixture.stimulus {
+            assert!(
+                !step.step.trim().is_empty(),
+                "stimulus step name must be non-empty in {}",
+                path.display()
+            );
+        }
+    }
+}
+
+// ---------- trace seed determinism ----------
+
+#[test]
+fn all_traces_have_non_zero_seed() {
+    let files = list_json_files(&traces_dir(), ".trace.json");
+    for path in &files {
+        let trace: ObservableTrace = load_json(path);
+        assert!(
+            trace.seed > 0,
+            "trace {} must carry non-zero seed for deterministic replay, got 0",
+            path.display()
+        );
+    }
+}
+
+// ---------- contract required_focus_tags ----------
+
+#[test]
+fn contract_required_focus_tags_is_non_empty() {
+    let path = repo_root().join("docs/frx_canonical_react_behavior_corpus_v1.json");
+    let contract: CorpusContract = load_json(&path);
+    assert!(
+        !contract.corpus.required_focus_tags.is_empty(),
+        "contract must mandate at least one required_focus_tag for risk coverage"
+    );
+    for tag in &contract.corpus.required_focus_tags {
+        assert!(
+            !tag.trim().is_empty(),
+            "required_focus_tags entries must be non-blank"
+        );
+    }
+}
+
+// ---------- trace decision_id prefix ----------
+
+#[test]
+fn all_trace_decision_ids_carry_frx_react_prefix() {
+    let files = list_json_files(&traces_dir(), ".trace.json");
+    for path in &files {
+        let trace: ObservableTrace = load_json(path);
+        assert!(
+            trace.decision_id.starts_with("decision-frx-react-"),
+            "decision_id in {} must start with 'decision-frx-react-', got '{}'",
+            path.display(),
+            trace.decision_id
+        );
+    }
+}
+
+// ---------- fixture scenario_id non-empty ----------
+
+#[test]
+fn all_fixture_scenario_ids_are_non_empty() {
+    let files = list_json_files(&fixtures_dir(), ".fixture.json");
+    let mut seen_ids = BTreeSet::new();
+    for path in &files {
+        let fixture: FixtureSpec = load_json(path);
+        assert!(
+            !fixture.scenario_id.trim().is_empty(),
+            "scenario_id must be non-empty in {}",
+            path.display()
+        );
+        assert!(
+            seen_ids.insert(fixture.scenario_id.clone()),
+            "duplicate scenario_id '{}' in {}",
+            fixture.scenario_id,
+            path.display()
+        );
+    }
+}
+
+// ---------- trace policy_id prefix ----------
+
+#[test]
+fn all_trace_policy_ids_carry_frx_react_corpus_prefix() {
+    let files = list_json_files(&traces_dir(), ".trace.json");
+    for path in &files {
+        let trace: ObservableTrace = load_json(path);
+        assert!(
+            trace.policy_id.starts_with("policy-frx-react-corpus-v"),
+            "policy_id in {} must start with 'policy-frx-react-corpus-v', got '{}'",
+            path.display(),
+            trace.policy_id
+        );
+    }
+}
+
+// ---------- fixture runtime_mode coverage ----------
+
+#[test]
+fn fixtures_cover_both_client_and_server_runtime_modes() {
+    let files = list_json_files(&fixtures_dir(), ".fixture.json");
+    let modes: BTreeSet<String> = files
+        .iter()
+        .map(|p| {
+            let fixture: FixtureSpec = load_json(p);
+            fixture.runtime_mode
+        })
+        .collect();
+    assert!(
+        modes.contains("client"),
+        "fixture corpus must include client runtime_mode"
+    );
+    assert!(
+        modes.contains("server") || modes.contains("hydrate") || modes.contains("hydration"),
+        "fixture corpus must include at least one server-side runtime_mode"
+    );
+}
+
+// ---------- trace component is always frx_react_corpus ----------
+
+#[test]
+fn all_traces_have_frx_react_corpus_component() {
+    let files = list_json_files(&traces_dir(), ".trace.json");
+    for path in &files {
+        let trace: ObservableTrace = load_json(path);
+        assert_eq!(
+            trace.component, "frx_react_corpus",
+            "trace {} must have component 'frx_react_corpus', got '{}'",
+            path.display(),
+            trace.component
+        );
+    }
+}
+
+// ---------- fixture expected_observable entries are nonempty ----------
+
+#[test]
+fn all_fixture_expected_observables_are_nonempty_strings() {
+    let files = list_json_files(&fixtures_dir(), ".fixture.json");
+    for path in &files {
+        let fixture: FixtureSpec = load_json(path);
+        assert!(
+            !fixture.expected_observable.is_empty(),
+            "expected_observable in {} must not be empty",
+            path.display()
+        );
+        for (i, obs) in fixture.expected_observable.iter().enumerate() {
+            assert!(
+                !obs.trim().is_empty(),
+                "expected_observable[{i}] in {} must not be blank",
+                path.display()
+            );
+        }
+    }
+}
+
+// ---------- trace event decision_paths are consistent within a trace ----------
+
+#[test]
+fn all_trace_events_have_non_empty_event_field() {
+    let files = list_json_files(&traces_dir(), ".trace.json");
+    for path in &files {
+        let trace: ObservableTrace = load_json(path);
+        for (i, ev) in trace.events.iter().enumerate() {
+            assert!(
+                !ev.event.trim().is_empty(),
+                "event[{i}].event in trace {} must not be blank",
+                path.display()
+            );
+            assert!(
+                !ev.phase.trim().is_empty(),
+                "event[{i}].phase in trace {} must not be blank",
+                path.display()
+            );
+            assert!(
+                !ev.actor.trim().is_empty(),
+                "event[{i}].actor in trace {} must not be blank",
+                path.display()
+            );
+        }
+    }
+}

@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::counterexample_synthesizer::{
-    ControllerConfig, CounterexampleSynthesizer, DEFAULT_BUDGET_NS,
-    DEFAULT_MAX_MINIMIZATION_ROUNDS, InterferenceKind, SynthesisConfig, SynthesisError,
+    ControllerConfig, ControllerInterference, ControllerInterferenceEvent,
+    CounterexampleSynthesizer, DEFAULT_BUDGET_NS, DEFAULT_MAX_MINIMIZATION_ROUNDS,
+    InterferenceKind, MinimalityEvidence, SynthesisConfig, SynthesisError, SynthesisOutcome,
     SynthesisStrategy,
 };
 
@@ -498,4 +499,181 @@ fn metric_value_stream_is_deterministic() {
     let a = metric_value_stream(10);
     let b = metric_value_stream(10);
     assert_eq!(a, b);
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment batch: boundary values, mixed overlap, serde depth
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn synthesis_error_timeout_serde_round_trip_no_partial() {
+    let err = SynthesisError::Timeout {
+        elapsed_ns: 999_999_999,
+        budget_ns: 1_000_000_000,
+        partial: None,
+    };
+    let json = serde_json::to_string(&err).expect("serialize");
+    let recovered: SynthesisError = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(err, recovered);
+    assert!(json.contains("999999999"));
+    assert!(json.contains("1000000000"));
+}
+
+#[test]
+fn identical_timescale_writers_still_produce_interference() {
+    let synth = synth();
+    let configs = vec![
+        controller("w-same-1", &[], &["cpu_pct"], 100_000, "100ms"),
+        controller("w-same-2", &[], &["cpu_pct"], 100_000, "100ms"),
+    ];
+    let interferences = synth.detect_interference(&configs);
+    assert!(
+        !interferences.is_empty(),
+        "two writers on the same metric at identical timescale should still interfere"
+    );
+}
+
+#[test]
+fn mixed_reader_writer_overlap_across_multiple_metrics() {
+    let synth = synth();
+    let configs = vec![
+        controller("rw-1", &["m1"], &["m2"], 100_000, "100ms"),
+        controller("rw-2", &["m2"], &["m1"], 200_000, "200ms"),
+    ];
+    let interferences = synth.detect_interference(&configs);
+    assert!(
+        !interferences.is_empty(),
+        "cross-metric reader-writer overlap must produce interference"
+    );
+    // Both metrics should appear across interferences
+    let all_shared: BTreeSet<String> = interferences
+        .iter()
+        .flat_map(|i| i.shared_metrics.iter().cloned())
+        .collect();
+    assert!(
+        all_shared.contains("m1") || all_shared.contains("m2"),
+        "at least one overlapping metric must be reported"
+    );
+}
+
+#[test]
+fn synthesis_config_with_custom_fields_serde_round_trip() {
+    let config = SynthesisConfig {
+        budget_ns: 42,
+        max_minimization_rounds: 7,
+        preferred_strategy: SynthesisStrategy::TimeBounded,
+        detect_controller_interference: false,
+        ..SynthesisConfig::default()
+    };
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: SynthesisConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(config, recovered);
+    assert_eq!(recovered.budget_ns, 42);
+    assert_eq!(recovered.max_minimization_rounds, 7);
+    assert_eq!(
+        recovered.preferred_strategy,
+        SynthesisStrategy::TimeBounded
+    );
+    assert!(!recovered.detect_controller_interference);
+}
+
+#[test]
+fn metric_value_stream_zero_iterations_returns_empty() {
+    let stream = metric_value_stream(0);
+    assert!(stream.is_empty(), "zero iterations should produce empty stream");
+}
+
+// ────────────────────────────────────────────────────────────
+// Enrichment batch: untested types serde & display
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn synthesis_outcome_display_and_serde_round_trip() {
+    for (outcome, expected_display) in [
+        (SynthesisOutcome::Complete, "complete"),
+        (SynthesisOutcome::Partial, "partial"),
+        (SynthesisOutcome::Incomplete, "incomplete"),
+    ] {
+        assert_eq!(outcome.to_string(), expected_display);
+        let json = serde_json::to_string(&outcome).expect("serialize");
+        let recovered: SynthesisOutcome = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(outcome, recovered);
+    }
+}
+
+#[test]
+fn controller_interference_serde_round_trip() {
+    let interference = ControllerInterference {
+        kind: InterferenceKind::Oscillation,
+        controller_ids: vec!["ctrl-a".to_string(), "ctrl-b".to_string()],
+        shared_metrics: set(&["m1", "m2"]),
+        timescale_separation_millionths: 50_000,
+        evidence_description: "oscillating writes detected".to_string(),
+        convergence_steps: Some(42),
+    };
+    let json = serde_json::to_string(&interference).expect("serialize");
+    let recovered: ControllerInterference = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(interference, recovered);
+    assert_eq!(recovered.convergence_steps, Some(42));
+    assert_eq!(recovered.kind, InterferenceKind::Oscillation);
+}
+
+#[test]
+fn controller_interference_event_serde_round_trip() {
+    let event = ControllerInterferenceEvent {
+        trace_id: "trace-evt".to_string(),
+        decision_id: "decision-evt".to_string(),
+        policy_id: "policy-evt".to_string(),
+        component: "counterexample_synthesizer".to_string(),
+        event: "controller_interference_rejected".to_string(),
+        outcome: "reject".to_string(),
+        error_code: Some("FE-CX-INTERFERENCE-TIMESCALE".to_string()),
+        kind: InterferenceKind::TimescaleConflict,
+        controller_ids: vec!["ctrl-x".to_string()],
+        shared_metrics: vec!["cpu_pct".to_string()],
+        timescale_separation_millionths: 200_000,
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: ControllerInterferenceEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(event, recovered);
+    assert_eq!(recovered.error_code.as_deref(), Some("FE-CX-INTERFERENCE-TIMESCALE"));
+}
+
+#[test]
+fn minimality_evidence_serde_round_trip() {
+    let evidence = MinimalityEvidence {
+        rounds: 12,
+        elements_removed: 8,
+        starting_size: 20,
+        final_size: 12,
+        is_fixed_point: true,
+    };
+    let json = serde_json::to_string(&evidence).expect("serialize");
+    let recovered: MinimalityEvidence = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(evidence, recovered);
+    assert!(recovered.is_fixed_point);
+    assert_eq!(recovered.elements_removed, 8);
+}
+
+#[test]
+fn synthesis_error_all_variants_serde_round_trip() {
+    let variants = vec![
+        SynthesisError::NoViolations,
+        SynthesisError::Timeout {
+            elapsed_ns: 500,
+            budget_ns: 1000,
+            partial: None,
+        },
+        SynthesisError::InvalidPolicy {
+            reason: "missing root node".to_string(),
+        },
+        SynthesisError::IdDerivation("collision".to_string()),
+        SynthesisError::MinimizationExhausted { rounds: 99 },
+        SynthesisError::CompilerFailure("OOM".to_string()),
+    ];
+    for err in &variants {
+        let json = serde_json::to_string(err).expect("serialize");
+        let recovered: SynthesisError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(*err, recovered);
+    }
 }

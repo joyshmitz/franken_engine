@@ -320,3 +320,78 @@ fn parse_goal_script_and_module_are_distinct() {
         .canonical_hash();
     assert_ne!(h1, h2);
 }
+
+#[test]
+fn fixture_catalog_schema_version_is_stable() {
+    let path = Path::new("tests/fixtures/parser_phase0_semantic_fixtures.json");
+    let bytes = fs::read(path).expect("read fixture catalog");
+    let catalog: FixtureCatalog =
+        serde_json::from_slice(&bytes).expect("deserialize fixture catalog");
+    assert_eq!(
+        catalog.schema_version,
+        "franken-engine.parser-phase0.semantic-fixtures.v1"
+    );
+}
+
+#[test]
+fn all_fixture_hashes_start_with_sha256_prefix() {
+    let path = Path::new("tests/fixtures/parser_phase0_semantic_fixtures.json");
+    let bytes = fs::read(path).expect("read fixture catalog");
+    let catalog: FixtureCatalog =
+        serde_json::from_slice(&bytes).expect("deserialize fixture catalog");
+    for fixture in &catalog.fixtures {
+        assert!(
+            fixture.expected_hash.starts_with("sha256:"),
+            "fixture `{}` hash missing sha256 prefix",
+            fixture.id
+        );
+    }
+}
+
+#[test]
+fn all_fixture_sources_are_nonempty() {
+    let path = Path::new("tests/fixtures/parser_phase0_semantic_fixtures.json");
+    let bytes = fs::read(path).expect("read fixture catalog");
+    let catalog: FixtureCatalog =
+        serde_json::from_slice(&bytes).expect("deserialize fixture catalog");
+    for fixture in &catalog.fixtures {
+        assert!(
+            !fixture.source.trim().is_empty(),
+            "fixture `{}` has empty source",
+            fixture.id
+        );
+    }
+}
+
+#[test]
+fn fixture_goals_are_valid_values() {
+    let path = Path::new("tests/fixtures/parser_phase0_semantic_fixtures.json");
+    let bytes = fs::read(path).expect("read fixture catalog");
+    let catalog: FixtureCatalog =
+        serde_json::from_slice(&bytes).expect("deserialize fixture catalog");
+    for fixture in &catalog.fixtures {
+        assert!(
+            matches!(fixture.goal.as_str(), "script" | "module"),
+            "fixture `{}` has invalid goal: {}",
+            fixture.id,
+            fixture.goal
+        );
+    }
+}
+
+#[test]
+fn parse_goal_helper_maps_correctly() {
+    assert_eq!(parse_goal("script"), ParseGoal::Script);
+    assert_eq!(parse_goal("module"), ParseGoal::Module);
+}
+
+#[test]
+fn grammar_matrix_supported_count_is_positive() {
+    let parser = CanonicalEs2020Parser;
+    let matrix = parser.scalar_reference_grammar_matrix();
+    let summary = matrix.summary();
+    assert!(
+        summary.supported_families > 0,
+        "at least some grammar families should be supported"
+    );
+}

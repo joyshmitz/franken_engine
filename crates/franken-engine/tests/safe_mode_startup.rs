@@ -660,3 +660,87 @@ fn startup_normal_mode_has_empty_restricted_features() {
         "normal mode should not restrict any features"
     );
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: fork detector edge cases, startup artifact serde, env values
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn fork_detector_acknowledge_nonexistent_incident_returns_false() {
+    let detector = ForkDetector::with_defaults();
+    assert!(
+        !detector.acknowledge_incident("zone-nonexistent", "fake-incident-id"),
+        "acknowledging a nonexistent incident should return false"
+    );
+}
+
+#[test]
+fn safe_mode_startup_artifact_full_serde_roundtrip() {
+    let input = SafeModeStartupInput {
+        trace_id: "trace-full-rt".to_string(),
+        decision_id: "decision-full-rt".to_string(),
+        policy_id: "policy-safe-startup-v1".to_string(),
+        cli_safe_mode: true,
+        environment: BTreeMap::from([
+            ("FRANKEN_SAFE_MODE".to_string(), "1".to_string()),
+        ]),
+    };
+    let artifact = evaluate_safe_mode_startup(&input).expect("artifact");
+
+    let json = serde_json::to_string(&artifact).expect("serialize");
+    let value: serde_json::Value = serde_json::from_str(&json).expect("deserialize");
+
+    // Verify key fields are present in the serialized form
+    assert_eq!(value["safe_mode_active"], true);
+    assert!(value["restricted_features"].is_array());
+    assert!(value["exit_procedure"].is_array());
+    assert!(value["evidence_preserved"].as_bool().unwrap());
+}
+
+#[test]
+fn exit_artifact_blocking_reasons_include_descriptive_text() {
+    let exit = evaluate_safe_mode_exit(&SafeModeExitCheckInput {
+        trace_id: "trace-descriptive".to_string(),
+        decision_id: "decision-descriptive".to_string(),
+        policy_id: "policy-descriptive".to_string(),
+        active_incidents: 1,
+        pending_quarantines: 0,
+        evidence_ledger_flushed: true,
+    })
+    .expect("exit artifact");
+    assert!(!exit.can_exit);
+    // Each blocking reason should be a non-empty descriptive string
+    for reason in &exit.blocking_reasons {
+        assert!(
+            !reason.trim().is_empty(),
+            "blocking reasons should contain descriptive text"
+        );
+    }
+}
+
+#[test]
+fn fork_detector_exit_safe_mode_fails_when_not_in_safe_mode() {
+    let mut detector = ForkDetector::with_defaults();
+    let result = detector.exit_safe_mode("zone-never-forked", "trace-exit-attempt");
+    assert!(
+        result.is_err(),
+        "exiting safe mode on a zone not in safe mode should fail"
+    );
+}
+
+#[test]
+fn startup_env_both_flags_set_to_true_still_activates_safe_mode() {
+    let mut environment = BTreeMap::new();
+    environment.insert("FRANKEN_SAFE_MODE".to_string(), "1".to_string());
+    environment.insert("FRANKENENGINE_SAFE_MODE".to_string(), "true".to_string());
+    let input = SafeModeStartupInput {
+        trace_id: "trace-both-env".to_string(),
+        decision_id: "decision-both-env".to_string(),
+        policy_id: "policy-safe-startup-v1".to_string(),
+        cli_safe_mode: false,
+        environment,
+    };
+    let artifact = evaluate_safe_mode_startup(&input).expect("startup artifact");
+    assert!(artifact.safe_mode_active);
+    assert_eq!(artifact.source, SafeModeStartupSource::EnvironmentVariable);
+}

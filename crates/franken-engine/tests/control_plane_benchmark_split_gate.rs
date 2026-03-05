@@ -607,3 +607,53 @@ fn benchmark_split_finding_serde_round_trip() {
     let recovered: BenchmarkSplitFinding = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(finding, recovered);
 }
+
+// ────────────────────────────────────────────────────────────
+// Enrichment: threshold edge cases, evaluation field coverage,
+// decision structure, finding detail content
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn thresholds_default_min_baseline_runs_is_ten() {
+    let t = BenchmarkSplitThresholds::default();
+    assert_eq!(t.min_baseline_runs, 10);
+}
+
+#[test]
+fn benchmark_split_as_str_covers_all_variants() {
+    let variants = [
+        (BenchmarkSplit::Baseline, "Baseline"),
+        (BenchmarkSplit::CxThreading, "CxThreading"),
+        (BenchmarkSplit::DecisionContracts, "DecisionContracts"),
+        (BenchmarkSplit::EvidenceEmission, "EvidenceEmission"),
+        (BenchmarkSplit::FullIntegration, "FullIntegration"),
+    ];
+    for (v, expected) in variants {
+        assert_eq!(v.as_str(), expected);
+    }
+}
+
+#[test]
+fn evaluation_regression_fields_are_zero_for_identical_snapshots() {
+    let snap = previous_snapshot();
+    let decision = evaluate_control_plane_benchmark_split(
+        &input(snap.clone(), snap),
+        &BenchmarkSplitThresholds::default(),
+    );
+    for eval in &decision.evaluations {
+        assert_eq!(
+            eval.throughput_regression_vs_previous_millionths, 0,
+            "identical snapshots should show zero throughput regression for {:?}",
+            eval.split
+        );
+    }
+}
+
+#[test]
+fn decision_id_is_nonempty_for_any_evaluation() {
+    let decision = evaluate_control_plane_benchmark_split(
+        &input(previous_snapshot(), candidate_snapshot(0, true)),
+        &BenchmarkSplitThresholds::default(),
+    );
+    assert!(!decision.decision_id.is_empty());
+}
