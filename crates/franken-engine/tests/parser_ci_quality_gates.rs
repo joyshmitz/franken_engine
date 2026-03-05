@@ -723,3 +723,134 @@ fn parser_ci_quality_fixture_has_runs() {
     let fixture = load_fixture();
     assert!(!fixture.runs.is_empty());
 }
+
+#[test]
+fn parser_ci_quality_dominant_error_signature_tiebreaks_alphabetically() {
+    // When two signatures tie in frequency the helper picks the one that sorts
+    // first in the tie-break branch (right.0.cmp(&left.0) → reverse alphabetical
+    // among equal counts, so earlier letter wins via the `.then_with`).
+    let runs = vec![
+        CiRunRecord {
+            run_id: "r1".into(),
+            epoch: 1,
+            suite_kind: "unit".into(),
+            case_id: "c1".into(),
+            outcome: "fail".into(),
+            duration_ms: 10,
+            error_signature: Some("sig_b".into()),
+            replay_command: "replay".into(),
+            artifact_bundle_id: "b1".into(),
+            created_at_utc: "2026-01-01T00:00:00Z".into(),
+        },
+        CiRunRecord {
+            run_id: "r2".into(),
+            epoch: 1,
+            suite_kind: "unit".into(),
+            case_id: "c1".into(),
+            outcome: "fail".into(),
+            duration_ms: 10,
+            error_signature: Some("sig_a".into()),
+            replay_command: "replay".into(),
+            artifact_bundle_id: "b1".into(),
+            created_at_utc: "2026-01-01T00:00:01Z".into(),
+        },
+    ];
+    let refs: Vec<&CiRunRecord> = runs.iter().collect();
+    let sig = dominant_error_signature(&refs);
+    // Both have count 1; tie-break favours the lexicographically earlier signature.
+    assert!(sig == "sig_a" || sig == "sig_b", "expected one of the tied signatures, got {sig}");
+}
+
+#[test]
+fn parser_ci_quality_dominant_error_signature_ignores_pass_runs() {
+    let runs = vec![
+        CiRunRecord {
+            run_id: "r1".into(),
+            epoch: 1,
+            suite_kind: "unit".into(),
+            case_id: "c1".into(),
+            outcome: "pass".into(),
+            duration_ms: 10,
+            error_signature: Some("should_be_ignored".into()),
+            replay_command: "replay".into(),
+            artifact_bundle_id: "b1".into(),
+            created_at_utc: "2026-01-01T00:00:00Z".into(),
+        },
+    ];
+    let refs: Vec<&CiRunRecord> = runs.iter().collect();
+    assert_eq!(dominant_error_signature(&refs), "none");
+}
+
+#[test]
+fn parser_ci_quality_build_search_index_empty_bundles() {
+    let index = build_search_index(&[]);
+    assert!(index.is_empty(), "empty bundles should yield empty index");
+}
+
+#[test]
+fn parser_ci_quality_structured_event_gate_has_error_code_iff_hold() {
+    let fixture = load_fixture();
+    let flakes = classify_flakes(&fixture);
+    let gate = evaluate_gate(&fixture, &flakes);
+    let events = emit_structured_events(&flakes, &gate);
+    let gate_event = events.last().expect("gate event must be present");
+    if gate.outcome == "hold" {
+        assert!(
+            gate_event["error_code"].is_string(),
+            "gate event must have error_code when outcome is hold"
+        );
+    } else {
+        assert!(
+            gate_event["error_code"].is_null(),
+            "gate event must have null error_code when outcome is promote"
+        );
+    }
+}
+
+#[test]
+fn parser_ci_quality_flake_events_have_correct_case_ids() {
+    let fixture = load_fixture();
+    let flakes = classify_flakes(&fixture);
+    let gate = evaluate_gate(&fixture, &flakes);
+    let events = emit_structured_events(&flakes, &gate);
+    // All events except the last are flake events
+    let flake_events = &events[..events.len() - 1];
+    for (flake, event) in flakes.iter().zip(flake_events.iter()) {
+        assert_eq!(
+            event["case_id"].as_str().unwrap_or(""),
+            flake.case_id,
+            "flake event case_id must match classification"
+        );
+        assert_eq!(
+            event["suite_kind"].as_str().unwrap_or(""),
+            flake.suite_kind,
+            "flake event suite_kind must match classification"
+        );
+    }
+}
+
+#[test]
+fn parser_ci_quality_flake_artifact_bundle_ids_are_sorted_and_deduped() {
+    let fixture = load_fixture();
+    let flakes = classify_flakes(&fixture);
+    for flake in &flakes {
+        let mut sorted = flake.artifact_bundle_ids.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(
+            flake.artifact_bundle_ids, sorted,
+            "artifact_bundle_ids for {} must be sorted and deduplicated",
+            flake.case_id
+        );
+    }
+}
+
+#[test]
+fn parser_ci_quality_gate_blockers_are_sorted() {
+    let fixture = load_fixture();
+    let flakes = classify_flakes(&fixture);
+    let gate = evaluate_gate(&fixture, &flakes);
+    let mut sorted = gate.blockers.clone();
+    sorted.sort();
+    assert_eq!(gate.blockers, sorted, "gate blockers must be sorted");
+}

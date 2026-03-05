@@ -478,3 +478,102 @@ fn workload_matrix_is_a_json_object() {
     let matrix = read_json("docs/extension_heavy_workload_matrix_v1.json");
     assert!(matrix.is_object());
 }
+
+#[test]
+fn golden_output_manifest_is_a_json_object() {
+    let golden = read_json("docs/extension_heavy_golden_outputs_v1.json");
+    assert!(golden.is_object());
+}
+
+#[test]
+fn workload_matrix_json_file_exists() {
+    let path = repo_root().join("docs/extension_heavy_workload_matrix_v1.json");
+    assert!(path.exists(), "workload matrix JSON must exist");
+}
+
+#[test]
+fn golden_output_json_file_exists() {
+    let path = repo_root().join("docs/extension_heavy_golden_outputs_v1.json");
+    assert!(path.exists(), "golden output JSON must exist");
+}
+
+#[test]
+fn workload_matrix_profile_defaults_has_three_profiles() {
+    let matrix = read_json("docs/extension_heavy_workload_matrix_v1.json");
+    let profile_defaults = matrix
+        .get("profile_defaults")
+        .and_then(Value::as_object)
+        .expect("profile_defaults must be an object");
+    assert_eq!(
+        profile_defaults.len(),
+        3,
+        "must have exactly 3 profile defaults (S, M, L)"
+    );
+    for profile in ["S", "M", "L"] {
+        assert!(
+            profile_defaults.contains_key(profile),
+            "missing profile default: {profile}"
+        );
+    }
+}
+
+#[test]
+fn workload_matrix_family_ids_are_nonempty_and_unique() {
+    let matrix = read_json("docs/extension_heavy_workload_matrix_v1.json");
+    let families = matrix["family_definitions"].as_array().expect("array");
+    let mut seen = BTreeSet::new();
+    for family in families {
+        let fid = require_string_field(family, "family_id");
+        assert!(!fid.trim().is_empty(), "family_id must be non-empty");
+        assert!(
+            seen.insert(fid.to_string()),
+            "duplicate family_id: {fid}"
+        );
+    }
+}
+
+#[test]
+fn golden_output_entries_all_have_security_envelope() {
+    let golden = read_json("docs/extension_heavy_golden_outputs_v1.json");
+    let entries = golden["entries"].as_array().expect("array");
+    for entry in entries {
+        let envelope = entry.get("security_envelope");
+        assert!(
+            envelope.is_some(),
+            "entry {} missing security_envelope",
+            require_string_field(entry, "workload_id")
+        );
+    }
+}
+
+#[test]
+fn is_sha256_hex_rejects_65_char_string() {
+    let too_long = "a".repeat(65);
+    assert!(!is_sha256_hex(&too_long), "65-char string should be rejected");
+}
+
+#[test]
+fn is_sha256_hex_rejects_63_char_string() {
+    let too_short = "a".repeat(63);
+    assert!(!is_sha256_hex(&too_short), "63-char string should be rejected");
+}
+
+#[test]
+fn is_sha256_hex_accepts_mixed_case_hex() {
+    let mixed = "aAbBcCdDeEfF0011223344556677889900aabbccddeeff0011223344556677".to_string();
+    assert_eq!(mixed.len(), 64);
+    assert!(
+        is_sha256_hex(&mixed),
+        "mixed-case valid hex of length 64 should be accepted"
+    );
+}
+
+#[test]
+fn golden_output_entries_have_nonempty_golden_output_ids() {
+    let golden = read_json("docs/extension_heavy_golden_outputs_v1.json");
+    let entries = golden["entries"].as_array().expect("array");
+    for entry in entries {
+        let gid = require_string_field(entry, "golden_output_id");
+        assert!(!gid.trim().is_empty(), "golden_output_id must be non-empty");
+    }
+}

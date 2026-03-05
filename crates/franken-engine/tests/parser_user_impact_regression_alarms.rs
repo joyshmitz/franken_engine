@@ -709,3 +709,110 @@ fn emit_structured_logs_deterministic() {
     let b = emit_structured_logs(&fixture);
     assert_eq!(a.len(), b.len());
 }
+
+// ---------- compare_millionths zero threshold ----------
+
+#[test]
+fn compare_millionths_zero_threshold_min_never_breaches_at_zero() {
+    let policy = AlarmPolicy {
+        alarm_id: "zero-thresh".to_string(),
+        slo_id: "s".to_string(),
+        metric_key: "k".to_string(),
+        comparator: "min".to_string(),
+        threshold_millionths: 0,
+        severity: "warning".to_string(),
+        escalation_action: "notify".to_string(),
+        error_code: "ERR".to_string(),
+        replay_command: "cmd".to_string(),
+    };
+    // observed = 0, threshold = 0 → 0 < 0 is false
+    assert!(!compare_millionths(&policy, 0));
+}
+
+// ---------- guardrail gate blockers only include critical/high ----------
+
+#[test]
+fn guardrail_gate_does_not_include_warning_severity_in_blockers() {
+    let fixture = load_fixture();
+    let gate = evaluate_guardrail_gate(&fixture);
+    for blocker in &gate.blockers {
+        assert!(
+            blocker.starts_with("critical_alarm:") || blocker.starts_with("high_alarm:"),
+            "blocker `{blocker}` must be critical or high severity"
+        );
+    }
+}
+
+// ---------- evaluate_windows each window has full alarm coverage ----------
+
+#[test]
+fn evaluate_windows_each_window_has_alarm_for_every_policy() {
+    let fixture = load_fixture();
+    let windows = evaluate_windows(&fixture);
+    let policy_count = fixture.alarm_policies.len();
+    for window in &windows {
+        assert_eq!(
+            window.alarms.len(),
+            policy_count,
+            "window `{}` must evaluate all alarm policies",
+            window.window_id
+        );
+    }
+}
+
+// ---------- structured log schema_version is consistent ----------
+
+#[test]
+fn structured_log_events_all_carry_schema_version() {
+    let fixture = load_fixture();
+    let events = emit_structured_logs(&fixture);
+    for event in &events {
+        assert_eq!(
+            event["schema_version"].as_str(),
+            Some(fixture.log_schema_version.as_str()),
+            "all events must carry the log_schema_version"
+        );
+    }
+}
+
+// ---------- structured log policy_id is consistent ----------
+
+#[test]
+fn structured_log_events_all_carry_policy_id() {
+    let fixture = load_fixture();
+    let events = emit_structured_logs(&fixture);
+    for event in &events {
+        assert_eq!(
+            event["policy_id"].as_str(),
+            Some("policy-parser-user-impact-regression-alarms-v1"),
+            "all events must share the same policy_id"
+        );
+    }
+}
+
+// ---------- incident simulation scenario IDs are nonempty ----------
+
+#[test]
+fn incident_simulations_have_nonempty_scenario_ids() {
+    let fixture = load_fixture();
+    for sim in &fixture.incident_simulations {
+        assert!(
+            !sim.scenario_id.trim().is_empty(),
+            "incident simulation scenario_id must not be empty"
+        );
+    }
+}
+
+// ---------- required_log_keys are all unique ----------
+
+#[test]
+fn required_log_keys_are_unique() {
+    let fixture = load_fixture();
+    let mut seen = BTreeSet::new();
+    for key in &fixture.required_log_keys {
+        assert!(
+            seen.insert(key.as_str()),
+            "duplicate required_log_key: {key}"
+        );
+    }
+}

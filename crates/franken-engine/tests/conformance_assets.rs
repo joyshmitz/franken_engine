@@ -556,3 +556,138 @@ fn conformance_runner_config_default_is_constructible() {
     let config = ConformanceRunnerConfig::default();
     assert!(config.seed > 0 || config.seed == 0);
 }
+
+#[test]
+fn sample_manifest_file_exists() {
+    assert!(sample_manifest_path().exists(), "sample manifest fixture must exist");
+}
+
+#[test]
+fn conformance_runner_config_debug_is_nonempty() {
+    let config = ConformanceRunnerConfig::default();
+    assert!(!format!("{config:?}").is_empty());
+}
+
+#[test]
+fn conformance_waiver_set_debug_is_nonempty() {
+    let waivers = ConformanceWaiverSet::default();
+    assert!(!format!("{waivers:?}").is_empty());
+}
+
+#[test]
+fn manifest_expected_output_hashes_are_valid_sha256_hex() {
+    let manifest = conformance_harness::ConformanceAssetManifest::load(sample_manifest_path())
+        .expect("load manifest");
+    for asset in &manifest.assets {
+        let hash = &asset.expected_output_hash;
+        assert_eq!(
+            hash.len(),
+            64,
+            "asset {} expected_output_hash length should be 64, got {}",
+            asset.asset_id,
+            hash.len()
+        );
+        assert!(
+            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "asset {} expected_output_hash contains non-hex chars",
+            asset.asset_id
+        );
+    }
+}
+
+#[test]
+fn manifest_fixture_hashes_are_valid_sha256_hex() {
+    let manifest = conformance_harness::ConformanceAssetManifest::load(sample_manifest_path())
+        .expect("load manifest");
+    for asset in &manifest.assets {
+        let hash = &asset.fixture_hash;
+        assert_eq!(
+            hash.len(),
+            64,
+            "asset {} fixture_hash length should be 64, got {}",
+            asset.asset_id,
+            hash.len()
+        );
+        assert!(
+            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "asset {} fixture_hash contains non-hex chars",
+            asset.asset_id
+        );
+    }
+}
+
+#[test]
+fn copy_tree_reproduces_directory_structure() {
+    let src = test_temp_dir("copy-src");
+    let dst = test_temp_dir("copy-dst");
+
+    // Create a nested structure in src
+    let sub = src.join("sub");
+    fs::create_dir_all(&sub).expect("create subdir");
+    fs::write(src.join("root.txt"), "root-content").expect("write root");
+    fs::write(sub.join("nested.txt"), "nested-content").expect("write nested");
+
+    copy_tree(&src, &dst);
+
+    assert_eq!(
+        fs::read_to_string(dst.join("root.txt")).expect("read root copy"),
+        "root-content"
+    );
+    assert_eq!(
+        fs::read_to_string(dst.join("sub/nested.txt")).expect("read nested copy"),
+        "nested-content"
+    );
+}
+
+#[test]
+fn harness_adapter_preserves_non_donor_code() {
+    let adapter = DonorHarnessAdapter;
+    let source = "let x = 42;\nconsole.log(x);";
+    let adapted = adapter.adapt_source(source);
+    // No donor-specific patterns, so output should be identical
+    assert_eq!(adapted, source);
+}
+
+#[test]
+fn manifest_asset_records_have_nonempty_source_donor() {
+    let manifest = conformance_harness::ConformanceAssetManifest::load(sample_manifest_path())
+        .expect("load manifest");
+    for asset in &manifest.assets {
+        assert!(
+            !asset.source_donor.trim().is_empty(),
+            "asset {} has empty source_donor",
+            asset.asset_id
+        );
+    }
+}
+
+#[test]
+fn manifest_serde_roundtrip_preserves_all_fields() {
+    let manifest = conformance_harness::ConformanceAssetManifest::load(sample_manifest_path())
+        .expect("load manifest");
+    let json = serde_json::to_string(&manifest).expect("serialize");
+    let recovered: conformance_harness::ConformanceAssetManifest =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(manifest.schema_version, recovered.schema_version);
+    assert_eq!(manifest.assets.len(), recovered.assets.len());
+    for (orig, recov) in manifest.assets.iter().zip(recovered.assets.iter()) {
+        assert_eq!(orig.asset_id, recov.asset_id);
+        assert_eq!(orig.semantic_domain, recov.semantic_domain);
+        assert_eq!(orig.fixture_hash, recov.fixture_hash);
+        assert_eq!(orig.expected_output_hash, recov.expected_output_hash);
+    }
+}
+
+#[test]
+fn conformance_run_summary_total_equals_passed_plus_failed_plus_waived() {
+    let runner = ConformanceRunner::default();
+    let waivers = ConformanceWaiverSet::load_toml(sample_waiver_path()).expect("waiver load");
+    let run = runner
+        .run(sample_manifest_path(), &waivers)
+        .expect("conformance run");
+    assert_eq!(
+        run.summary.total_assets,
+        run.summary.passed + run.summary.failed + run.summary.waived + run.summary.errored,
+        "total_assets must equal passed + failed + waived + errored"
+    );
+}

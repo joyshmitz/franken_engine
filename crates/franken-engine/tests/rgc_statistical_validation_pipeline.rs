@@ -416,3 +416,53 @@ fn statistical_validation_policy_default_is_constructible() {
     let policy = StatisticalValidationPolicy::default();
     assert!(policy.min_samples_after_filter > 0 || policy.warmup_drop_samples == 0 || true);
 }
+
+#[test]
+fn contract_required_log_keys_include_trace_and_decision() {
+    let contract = parse_contract();
+    assert!(contract.required_log_keys.contains(&"trace_id".to_string()));
+    assert!(contract.required_log_keys.contains(&"decision_id".to_string()));
+}
+
+#[test]
+fn contract_policy_id_is_nonempty() {
+    let contract = parse_contract();
+    assert!(!contract.policy_id.trim().is_empty());
+}
+
+#[test]
+fn contract_version_is_1_0_0() {
+    let contract = parse_contract();
+    assert_eq!(contract.contract_version, "1.0.0");
+}
+
+#[test]
+fn sample_workload_has_both_baseline_and_candidate_samples() {
+    let workload = sample_workload();
+    assert!(!workload.baseline_samples_ns.is_empty());
+    assert!(!workload.candidate_samples_ns.is_empty());
+}
+
+#[test]
+fn pipeline_report_logs_are_nonempty_for_regression() {
+    let mut policy = StatisticalValidationPolicy::default();
+    policy.warmup_drop_samples = 0;
+    policy.min_samples_after_filter = 5;
+    policy.outlier_policy.min_retained_samples = 5;
+
+    let input = StatisticalValidationInput::new(
+        "trace-log-check",
+        "decision-log-check",
+        "policy-log-check",
+        vec![sample_workload()],
+    );
+
+    let report = evaluate_statistical_validation(&input, &policy);
+    assert!(!report.logs.is_empty(), "pipeline should emit at least one log event");
+}
+
+#[test]
+fn contract_thresholds_max_cv_is_positive() {
+    let contract = parse_contract();
+    assert!(contract.thresholds.max_cv_millionths > 0);
+}

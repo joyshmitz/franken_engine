@@ -673,3 +673,122 @@ fn build_commit_scores_deterministic() {
     let b = build_commit_scores(&fixture);
     assert_eq!(a.len(), b.len());
 }
+
+// ---------- metric_score_millionths edge cases ----------
+
+#[test]
+fn metric_score_higher_is_better_below_baseline_returns_fraction() {
+    let def = MetricDefinition {
+        metric_id: "regressed".to_string(),
+        direction: MetricDirection::HigherIsBetter,
+        weight_millionths: 500_000,
+    };
+    // candidate 50, baseline 100 → 500_000 (0.5x)
+    let score = metric_score_millionths(&def, 100, 50);
+    assert_eq!(score, 500_000);
+}
+
+#[test]
+fn metric_score_lower_is_better_above_baseline_returns_fraction() {
+    let def = MetricDefinition {
+        metric_id: "latency_regressed".to_string(),
+        direction: MetricDirection::LowerIsBetter,
+        weight_millionths: 500_000,
+    };
+    // baseline 100, current 200 → 100/200 * 1_000_000 = 500_000
+    let score = metric_score_millionths(&def, 100, 200);
+    assert_eq!(score, 500_000);
+}
+
+#[test]
+fn metric_score_zero_baseline_clamps_to_one() {
+    let def = MetricDefinition {
+        metric_id: "zero_base".to_string(),
+        direction: MetricDirection::HigherIsBetter,
+        weight_millionths: 1_000_000,
+    };
+    // baseline 0 → clamped to 1; current 100 → 100_000_000
+    let score = metric_score_millionths(&def, 0, 100);
+    assert_eq!(score, 100_000_000);
+}
+
+// ---------- bisect search_path is ordered ----------
+
+#[test]
+fn bisect_search_path_entries_are_valid_commits() {
+    let fixture = load_fixture();
+    let bisect = run_bisect(&fixture);
+    let all_commits: BTreeSet<_> = fixture.history.iter().map(|e| e.commit.as_str()).collect();
+    for path_commit in &bisect.search_path {
+        assert!(
+            all_commits.contains(path_commit.as_str()),
+            "search path commit `{path_commit}` not found in history"
+        );
+    }
+}
+
+// ---------- commit scores carry provenance ----------
+
+#[test]
+fn commit_scores_carry_replay_command_and_artifact_provenance() {
+    let fixture = load_fixture();
+    let scores = build_commit_scores(&fixture);
+    for score in &scores {
+        assert!(
+            !score.replay_command.trim().is_empty(),
+            "commit {} missing replay_command",
+            score.commit
+        );
+        assert!(
+            !score.artifact_manifest.trim().is_empty(),
+            "commit {} missing artifact_manifest",
+            score.commit
+        );
+        assert!(
+            !score.artifact_report.trim().is_empty(),
+            "commit {} missing artifact_report",
+            score.commit
+        );
+    }
+}
+
+// ---------- structured events carry error_code for regressions ----------
+
+#[test]
+fn structured_events_regression_rows_have_error_code() {
+    let fixture = load_fixture();
+    let scores = build_commit_scores(&fixture);
+    let bisect = run_bisect(&fixture);
+    let events = emit_structured_events(&fixture, &scores, &bisect);
+    for event in &events {
+        if event.get("event").and_then(|v| v.as_str()) == Some("scoreboard_row") {
+            if event.get("outcome").and_then(|v| v.as_str()) == Some("regression") {
+                assert_eq!(
+                    event["error_code"].as_str(),
+                    Some("FE-PARSER-REGRESSION-0001"),
+                    "regression row must carry error_code"
+                );
+            } else {
+                assert!(
+                    event["error_code"].is_null(),
+                    "within_budget row must have null error_code"
+                );
+            }
+        }
+    }
+}
+
+// ---------- incident replay drill ids are unique ----------
+
+#[test]
+fn incident_replay_drill_ids_are_unique() {
+    let fixture = load_fixture();
+    let mut ids = BTreeSet::new();
+    for drill in &fixture.incident_replay_drills {
+        assert!(
+            ids.insert(&drill.drill_id),
+            "duplicate incident drill id: {}",
+            drill.drill_id
+        );
+    }
+}

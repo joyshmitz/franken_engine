@@ -668,3 +668,96 @@ fn adversarial_receipt_has_expected_fields() {
     assert!(receipt.observed_diagnostic_code.is_some());
     assert!(receipt.observed_hash.is_none());
 }
+
+#[test]
+fn hash_bytes_empty_input_is_deterministic() {
+    let a = hash_bytes(b"");
+    let b = hash_bytes(b"");
+    assert_eq!(a, b);
+    assert!(a.starts_with("sha256:"));
+    assert_eq!(a.len(), 7 + 64);
+}
+
+#[test]
+fn normative_catalog_fixture_ids_are_unique() {
+    let catalog = load_normative_catalog();
+    let mut seen = std::collections::BTreeSet::new();
+    for fixture in &catalog.fixtures {
+        assert!(
+            seen.insert(&fixture.id),
+            "duplicate normative fixture id: {}",
+            fixture.id
+        );
+    }
+}
+
+#[test]
+fn adversarial_catalog_fixture_ids_are_unique() {
+    let catalog = load_adversarial_catalog();
+    let mut seen = std::collections::BTreeSet::new();
+    for fixture in &catalog.fixtures {
+        assert!(
+            seen.insert(&fixture.id),
+            "duplicate adversarial fixture id: {}",
+            fixture.id
+        );
+    }
+}
+
+#[test]
+fn promotion_receipt_serde_roundtrip() {
+    let policy = load_promotion_policy();
+    let normative = load_normative_catalog();
+    let parser = CanonicalEs2020Parser;
+    let fixture = normative.fixtures.first().expect("fixture");
+    let receipt = evaluate_normative(&policy, fixture, &parser);
+    let json = serde_json::to_vec(&receipt).expect("serialize receipt");
+    assert!(!json.is_empty(), "serialized receipt must not be empty");
+    // Receipt is Serialize but not Deserialize, so just check JSON validity
+    let value: serde_json::Value =
+        serde_json::from_slice(&json).expect("receipt json must be valid");
+    assert_eq!(
+        value["corpus"].as_str().unwrap_or(""),
+        "normative"
+    );
+    assert_eq!(
+        value["promotion_outcome"].as_str().unwrap_or(""),
+        "promote"
+    );
+}
+
+#[test]
+fn receipt_hash_differs_for_different_fixtures() {
+    let policy = load_promotion_policy();
+    let normative = load_normative_catalog();
+    let parser = CanonicalEs2020Parser;
+    assert!(
+        normative.fixtures.len() >= 2,
+        "need at least 2 normative fixtures"
+    );
+    let receipt_a = evaluate_normative(&policy, &normative.fixtures[0], &parser);
+    let receipt_b = evaluate_normative(&policy, &normative.fixtures[1], &parser);
+    assert_ne!(
+        receipt_hash(&receipt_a),
+        receipt_hash(&receipt_b),
+        "distinct fixtures should produce distinct receipt hashes"
+    );
+}
+
+#[test]
+fn auto_promote_config_max_source_bytes_is_positive() {
+    let policy = load_promotion_policy();
+    assert!(
+        policy.auto_promote.max_source_bytes > 0,
+        "auto_promote max_source_bytes must be positive"
+    );
+}
+
+#[test]
+fn stable_replay_command_contains_test_name() {
+    let cmd = stable_replay_command("normative", "fix-123");
+    assert!(
+        cmd.contains("parser_corpus_promotion_policy"),
+        "replay command must reference this test file"
+    );
+}
