@@ -1350,6 +1350,36 @@ Artifacts are written under:
 - `artifacts/rgc_runtime_semantics_verification_pack/<timestamp>/runtime_semantics_verification_report.json`
 - `artifacts/rgc_runtime_semantics_verification_pack/<timestamp>/step_logs/step_*.log`
 
+## RGC Exception and Diagnostic Semantics Gate
+
+`bd-1lsy.4.5` adds a deterministic exception/diagnostics gate for runtime
+boundary propagation (`sync_callframe` / `async_job` / `hostcall`), machine-stable
+error metadata, and lane-differential classification with explicit remediation
+guidance for intentional metadata-only divergences.
+
+```bash
+# RGC exception/diagnostics semantics gate (rch-backed check + test + clippy)
+./scripts/run_rgc_exception_diagnostics_semantics.sh ci
+
+# deterministic replay wrapper
+./scripts/e2e/rgc_exception_diagnostics_semantics_replay.sh ci
+```
+
+Contract and vectors:
+
+- [`docs/RGC_EXCEPTION_DIAGNOSTICS_SEMANTICS_V1.md`](./docs/RGC_EXCEPTION_DIAGNOSTICS_SEMANTICS_V1.md)
+- `docs/rgc_exception_diagnostics_semantics_v1.json`
+- `docs/rgc_exception_diagnostics_semantics_vectors_v1.json`
+- `crates/franken-engine/tests/rgc_exception_diagnostics_semantics.rs`
+
+Artifacts are written under:
+
+- `artifacts/rgc_exception_diagnostics_semantics/<timestamp>/run_manifest.json`
+- `artifacts/rgc_exception_diagnostics_semantics/<timestamp>/events.jsonl`
+- `artifacts/rgc_exception_diagnostics_semantics/<timestamp>/commands.txt`
+- `artifacts/rgc_exception_diagnostics_semantics/<timestamp>/diagnostic_trace.json`
+- `artifacts/rgc_exception_diagnostics_semantics/<timestamp>/step_logs/step_*.log`
+
 ## RGC Performance and Regression Verification Pack
 
 `bd-1lsy.11.10` adds deterministic performance/regression verification for

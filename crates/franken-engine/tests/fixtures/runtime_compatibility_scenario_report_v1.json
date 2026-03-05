@@ -1,0 +1,43 @@
+{
+  "schema_version": "franken-engine.module-interop-scenario-report.v1",
+  "scenario_id": "scenario-fixture-001",
+  "trace_id": "trace-fixture-001",
+  "decision_id": "decision-fixture-001",
+  "policy_id": "policy-fixture-001",
+  "generated_at_unix_ms": 1730940000000,
+  "total_observations": 1,
+  "matched_observations": 0,
+  "divergence_category_counts": {
+    "engine_bug": 1
+  },
+  "actionable_guidance": {
+    "case-engine-bug": "patch runtime lane semantics and replay matrix"
+  },
+  "outcomes": [
+    {
+      "case_id": "case-engine-bug",
+      "runtime": "franken_engine",
+      "mode": "native",
+      "observed_behavior": "franken_behavior",
+      "expected_behavior": "reference_behavior",
+      "matched": false,
+      "divergence": null,
+      "divergence_category": "engine_bug",
+      "actionable_guidance": "patch runtime lane semantics and replay matrix",
+      "event": {
+        "seq": 1,
+        "trace_id": "trace-fixture-001",
+        "decision_id": "decision-fixture-001",
+        "policy_id": "policy-fixture-001",
+        "component": "module_compatibility_matrix",
+        "event": "compatibility_observation",
+        "outcome": "deny",
+        "error_code": "FE-MODCOMP-0008",
+        "case_id": "case-engine-bug",
+        "runtime": "franken_engine",
+        "mode": "native",
+        "detail": "deterministic synthetic divergence"
+      }
+    }
+  ]
+}
