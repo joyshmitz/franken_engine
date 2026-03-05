@@ -544,7 +544,9 @@ fn gate_rejects_no_extensions() {
     let (mut input, trust_anchors) = base_gate_fixture();
     input.extensions.clear();
     let err = evaluate_plas_release_gate(&input, &trust_anchors).expect_err("should fail");
-    assert!(matches!(err, PlasReleaseGateError::InvalidInput { ref detail } if detail.contains("extension")));
+    assert!(
+        matches!(err, PlasReleaseGateError::InvalidInput { ref detail } if detail.contains("extension"))
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -656,7 +658,11 @@ fn failure_code_error_code_strings_are_unique() {
         PlasReleaseGateFailureCode::AmbientAuthorityDetected,
     ];
     let unique: BTreeSet<&str> = codes.iter().map(|c| c.error_code()).collect();
-    assert_eq!(unique.len(), codes.len(), "all error codes should be unique");
+    assert_eq!(
+        unique.len(),
+        codes.len(),
+        "all error codes should be unique"
+    );
 }
 
 #[test]
@@ -745,7 +751,10 @@ fn gate_passes_when_manifest_has_extra_inactive_capability() {
         .insert(Capability::new("net.outbound"));
 
     let artifact = evaluate_plas_release_gate(&input, &trust_anchors).expect("gate evaluation");
-    assert!(artifact.pass, "extra inactive manifest capability should not cause failure");
+    assert!(
+        artifact.pass,
+        "extra inactive manifest capability should not cause failure"
+    );
 }
 
 // ────────────────────────────────────────────────────────────

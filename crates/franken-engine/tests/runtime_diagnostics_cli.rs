@@ -15,8 +15,16 @@ use frankenengine_engine::hostcall_telemetry::{
     ResourceDelta, TelemetryRecorder,
 };
 use frankenengine_engine::runtime_diagnostics_cli::{
-    ContainmentReceiptEnvelope, GcPressureSample, HostcallTelemetryEnvelope, ReplayArtifactRecord,
-    RuntimeDiagnosticsCliInput, RuntimeExtensionState, RuntimeStateInput, SchedulerLaneSample,
+    ContainmentReceiptEnvelope, EvidenceExportFilter, EvidenceSeverity, GcPressureSample,
+    HostcallTelemetryEnvelope, OnboardingReadinessClass, OnboardingRemediationEffort,
+    OnboardingScorecardInput, OnboardingScorecardSignal, PreflightVerdict, ReplayArtifactRecord,
+    RolloutDecisionArtifactInput, RolloutRecommendation, RuntimeDiagnosticsCliInput,
+    RuntimeExtensionState, RuntimeStateInput, SchedulerLaneSample, SupportBundleRedactionPolicy,
+    build_onboarding_scorecard, build_rollout_decision_artifact, collect_runtime_diagnostics,
+    export_evidence_bundle, export_support_bundle, parse_decision_type, parse_evidence_severity,
+    render_diagnostics_summary, render_evidence_summary, render_onboarding_scorecard_summary,
+    render_preflight_summary, render_rollout_decision_artifact_summary,
+    render_support_bundle_summary, run_preflight_doctor,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 
@@ -530,4 +538,971 @@ fn doctor_command_writes_support_bundle_and_preflight_report() {
 
     let _ = fs::remove_file(input_path);
     let _ = fs::remove_dir_all(out_dir);
+}
+
+// ── Library API tests (not CLI binary) ──────────────────────────────────
+
+fn clean_input() -> RuntimeDiagnosticsCliInput {
+    let mut input = build_sample_input();
+    input.evidence_entries.clear();
+    input.containment_receipts.clear();
+    input
+        .hostcall_records
+        .retain(|rec| matches!(rec.record.result_status, HostcallResult::Success));
+    for sample in &mut input.runtime_state.gc_pressure {
+        sample.used_bytes = sample.used_bytes.min(sample.budget_bytes);
+    }
+    for lane in &mut input.runtime_state.scheduler_lanes {
+        lane.tasks_timed_out = 0;
+        lane.queue_depth = 0;
+    }
+    input
+}
+
+// ── collect_runtime_diagnostics ─────────────────────────────────────────
+
+#[test]
+fn lib_diagnostics_sorts_extensions_alphabetically() {
+    let input = build_sample_input();
+    let out = collect_runtime_diagnostics(
+        &input.runtime_state,
+        &input.trace_id,
+        &input.decision_id,
+        &input.policy_id,
+    );
+    assert_eq!(out.loaded_extensions[0].extension_id, "ext-a");
+    assert_eq!(out.loaded_extensions[1].extension_id, "ext-b");
+}
+
+#[test]
+fn lib_diagnostics_deduplicates_active_policies() {
+    let input = build_sample_input();
+    let out = collect_runtime_diagnostics(
+        &input.runtime_state,
+        &input.trace_id,
+        &input.decision_id,
+        &input.policy_id,
+    );
+    assert_eq!(out.active_policies, vec!["policy-main"]);
+}
+
+#[test]
+fn lib_diagnostics_is_deterministic() {
+    let input = build_sample_input();
+    let left = collect_runtime_diagnostics(
+        &input.runtime_state,
+        &input.trace_id,
+        &input.decision_id,
+        &input.policy_id,
+    );
+    let right = collect_runtime_diagnostics(
+        &input.runtime_state,
+        &input.trace_id,
+        &input.decision_id,
+        &input.policy_id,
+    );
+    assert_eq!(left, right);
+}
+
+#[test]
+fn lib_diagnostics_computes_gc_over_budget_flag() {
+    let mut input = build_sample_input();
+    input.runtime_state.gc_pressure = vec![
+        GcPressureSample {
+            extension_id: "over".to_string(),
+            used_bytes: 2000,
+            budget_bytes: 500,
+        },
+        GcPressureSample {
+            extension_id: "under".to_string(),
+            used_bytes: 100,
+            budget_bytes: 500,
+        },
+    ];
+    let out = collect_runtime_diagnostics(
+        &input.runtime_state,
+        &input.trace_id,
+        &input.decision_id,
+        &input.policy_id,
+    );
+    let over = out
+        .gc_pressure
+        .iter()
+        .find(|g| g.extension_id == "over")
+        .unwrap();
+    let under = out
+        .gc_pressure
+        .iter()
+        .find(|g| g.extension_id == "under")
+        .unwrap();
+    assert!(over.over_budget);
+    assert!(!under.over_budget);
+}
+
+// ── render_diagnostics_summary ──────────────────────────────────────────
+
+#[test]
+fn lib_render_diagnostics_summary_contains_key_fields() {
+    let input = build_sample_input();
+    let out = collect_runtime_diagnostics(
+        &input.runtime_state,
+        &input.trace_id,
+        &input.decision_id,
+        &input.policy_id,
+    );
+    let rendered = render_diagnostics_summary(&out);
+    assert!(rendered.contains("security_epoch: 11"));
+    assert!(rendered.contains("loaded_extensions: 2"));
+    assert!(rendered.contains("active_policies: 1"));
+    assert!(rendered.contains("gc_pressure_rows:"));
+    assert!(rendered.contains("scheduler_lanes:"));
+}
+
+// ── export_evidence_bundle ──────────────────────────────────────────────
+
+#[test]
+fn lib_export_evidence_bundle_default_filter_returns_all() {
+    let input = build_sample_input();
+    let output = export_evidence_bundle(&input, EvidenceExportFilter::default());
+    assert!(output.summary.total_records >= 5);
+    assert!(!output.records.is_empty());
+}
+
+#[test]
+fn lib_export_evidence_bundle_filter_by_extension() {
+    let input = build_sample_input();
+    let filter = EvidenceExportFilter {
+        extension_id: Some("ext-a".to_string()),
+        ..EvidenceExportFilter::default()
+    };
+    let output = export_evidence_bundle(&input, filter);
+    assert!(
+        output
+            .records
+            .iter()
+            .all(|r| r.extension_id.as_deref() == Some("ext-a"))
+    );
+}
+
+#[test]
+fn lib_export_evidence_bundle_filter_by_severity() {
+    let input = build_sample_input();
+    let filter = EvidenceExportFilter {
+        severity: Some(EvidenceSeverity::Critical),
+        ..EvidenceExportFilter::default()
+    };
+    let output = export_evidence_bundle(&input, filter);
+    assert!(
+        output
+            .records
+            .iter()
+            .all(|r| r.severity >= EvidenceSeverity::Critical)
+    );
+}
+
+#[test]
+fn lib_export_evidence_bundle_is_sorted_by_timestamp() {
+    let input = build_sample_input();
+    let output = export_evidence_bundle(&input, EvidenceExportFilter::default());
+    for window in output.records.windows(2) {
+        assert!(window[0].timestamp_ns <= window[1].timestamp_ns);
+    }
+}
+
+// ── render_evidence_summary ─────────────────────────────────────────────
+
+#[test]
+fn lib_render_evidence_summary_nonempty() {
+    let input = build_sample_input();
+    let output = export_evidence_bundle(&input, EvidenceExportFilter::default());
+    let rendered = render_evidence_summary(&output);
+    assert!(rendered.contains("total_records:"));
+    assert!(rendered.contains("counts_by_kind:"));
+}
+
+#[test]
+fn lib_render_evidence_summary_empty_filter() {
+    let input = build_sample_input();
+    let filter = EvidenceExportFilter {
+        extension_id: Some("nonexistent-ext".to_string()),
+        ..EvidenceExportFilter::default()
+    };
+    let output = export_evidence_bundle(&input, filter);
+    let rendered = render_evidence_summary(&output);
+    assert!(rendered.contains("No evidence entries found"));
+}
+
+// ── export_support_bundle ───────────────────────────────────────────────
+
+#[test]
+fn lib_export_support_bundle_produces_required_files() {
+    let input = build_sample_input();
+    let output = export_support_bundle(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let paths: std::collections::BTreeSet<String> =
+        output.files.iter().map(|f| f.path.clone()).collect();
+    for required in [
+        "support_bundle/run_manifest.json",
+        "support_bundle/events.jsonl",
+        "support_bundle/commands.txt",
+        "support_bundle/runtime_diagnostics.json",
+        "support_bundle/evidence_records.jsonl",
+        "support_bundle/summary.md",
+        "support_bundle/index.json",
+    ] {
+        assert!(paths.contains(required), "missing file: {required}");
+    }
+}
+
+#[test]
+fn lib_export_support_bundle_is_deterministic() {
+    let input = build_sample_input();
+    let left = export_support_bundle(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let right = export_support_bundle(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    assert_eq!(left, right);
+    assert_eq!(left.index.bundle_id, right.index.bundle_id);
+}
+
+#[test]
+fn lib_export_support_bundle_redacts_custom_fragments() {
+    let mut input = build_sample_input();
+    input.evidence_entries[0]
+        .metadata
+        .insert("api_token".to_string(), "secret-val".to_string());
+    let policy =
+        SupportBundleRedactionPolicy::with_additional_fragments(vec!["custom_key".to_string()]);
+    let output = export_support_bundle(&input, EvidenceExportFilter::default(), policy);
+    assert!(output.index.total_redacted_fields >= 1);
+}
+
+// ── render_support_bundle_summary ───────────────────────────────────────
+
+#[test]
+fn lib_render_support_bundle_summary_has_bundle_id() {
+    let input = build_sample_input();
+    let output = export_support_bundle(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let rendered = render_support_bundle_summary(&output);
+    assert!(rendered.contains("bundle_id: bundle-"));
+    assert!(rendered.contains("reproducible_commands:"));
+}
+
+// ── run_preflight_doctor ────────────────────────────────────────────────
+
+#[test]
+fn lib_preflight_doctor_green_for_clean_input() {
+    let input = clean_input();
+    let output = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    assert_eq!(output.verdict, PreflightVerdict::Green);
+    assert!(output.mandatory_field_status.valid);
+}
+
+#[test]
+fn lib_preflight_doctor_yellow_for_timed_out_tasks() {
+    let mut input = clean_input();
+    input.runtime_state.scheduler_lanes[0].tasks_timed_out = 1;
+    let output = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    assert_eq!(output.verdict, PreflightVerdict::Yellow);
+    assert!(
+        output
+            .blockers
+            .iter()
+            .any(|b| b.blocker_id.contains("scheduler_timeouts"))
+    );
+}
+
+#[test]
+fn lib_preflight_doctor_red_for_gc_over_budget() {
+    let mut input = build_sample_input();
+    input.runtime_state.gc_pressure = vec![GcPressureSample {
+        extension_id: "ext-oom".to_string(),
+        used_bytes: 5000,
+        budget_bytes: 1000,
+    }];
+    let output = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    assert_eq!(output.verdict, PreflightVerdict::Red);
+    assert!(
+        output
+            .blockers
+            .iter()
+            .any(|b| b.blocker_id.contains("gc_over_budget"))
+    );
+}
+
+// ── render_preflight_summary ────────────────────────────────────────────
+
+#[test]
+fn lib_render_preflight_summary_contains_verdict() {
+    let input = build_sample_input();
+    let output = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let rendered = render_preflight_summary(&output);
+    assert!(rendered.contains("verdict:"));
+    assert!(rendered.contains("mandatory_fields_valid: true"));
+    assert!(rendered.contains("support_bundle_id: bundle-"));
+}
+
+// ── build_onboarding_scorecard ──────────────────────────────────────────
+
+#[test]
+fn lib_onboarding_scorecard_ready_for_clean_workload() {
+    let input = clean_input();
+    let preflight = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let scorecard = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/clean".to_string(),
+        package_name: "clean".to_string(),
+        target_platforms: vec!["linux-x64".to_string()],
+        preflight,
+        external_signals: Vec::new(),
+    });
+    assert_eq!(scorecard.readiness, OnboardingReadinessClass::Ready);
+    assert_eq!(
+        scorecard.remediation_effort,
+        OnboardingRemediationEffort::Low
+    );
+    assert_eq!(scorecard.score.critical_signals, 0);
+}
+
+#[test]
+fn lib_onboarding_scorecard_blocked_with_critical_external_signal() {
+    let input = clean_input();
+    let preflight = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let scorecard = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/blocked".to_string(),
+        package_name: "blocked".to_string(),
+        target_platforms: vec!["linux-x64".to_string()],
+        preflight,
+        external_signals: vec![OnboardingScorecardSignal {
+            signal_id: "critical-signal".to_string(),
+            source: "external".to_string(),
+            severity: EvidenceSeverity::Critical,
+            summary: "critical issue found".to_string(),
+            remediation: "fix it".to_string(),
+            reproducible_command: "run-check".to_string(),
+            evidence_links: vec!["link.json".to_string()],
+            owner_hint: None,
+        }],
+    });
+    assert_eq!(scorecard.readiness, OnboardingReadinessClass::Blocked);
+    assert!(scorecard.score.critical_signals >= 1);
+}
+
+#[test]
+fn lib_onboarding_scorecard_deduplicates_platforms() {
+    let input = clean_input();
+    let preflight = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let scorecard = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/dedup".to_string(),
+        package_name: "dedup".to_string(),
+        target_platforms: vec![
+            "linux-x64".to_string(),
+            "linux-x64".to_string(),
+            "macos-arm64".to_string(),
+        ],
+        preflight,
+        external_signals: Vec::new(),
+    });
+    assert_eq!(
+        scorecard.target_platforms,
+        vec!["linux-x64".to_string(), "macos-arm64".to_string()]
+    );
+}
+
+#[test]
+fn lib_onboarding_scorecard_is_deterministic() {
+    let input = clean_input();
+    let preflight = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let sc_input = OnboardingScorecardInput {
+        workload_id: "pkg/det".to_string(),
+        package_name: "det".to_string(),
+        target_platforms: vec!["linux-x64".to_string()],
+        preflight,
+        external_signals: Vec::new(),
+    };
+    let left = build_onboarding_scorecard(&sc_input);
+    let right = build_onboarding_scorecard(&sc_input);
+    assert_eq!(left, right);
+}
+
+// ── render_onboarding_scorecard_summary ─────────────────────────────────
+
+#[test]
+fn lib_render_onboarding_scorecard_summary_contains_key_fields() {
+    let input = clean_input();
+    let preflight = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let scorecard = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/render".to_string(),
+        package_name: "render".to_string(),
+        target_platforms: vec!["linux-x64".to_string()],
+        preflight,
+        external_signals: Vec::new(),
+    });
+    let rendered = render_onboarding_scorecard_summary(&scorecard);
+    assert!(rendered.contains("schema_version:"));
+    assert!(rendered.contains("readiness:"));
+    assert!(rendered.contains("reproducible_commands:"));
+}
+
+// ── build_rollout_decision_artifact ─────────────────────────────────────
+
+#[test]
+fn lib_rollout_artifact_promotes_clean_workload() {
+    let input = clean_input();
+    let preflight = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let onboarding = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/promote".to_string(),
+        package_name: "promote".to_string(),
+        target_platforms: vec!["linux-x64".to_string()],
+        preflight,
+        external_signals: Vec::new(),
+    });
+    let artifact = build_rollout_decision_artifact(&RolloutDecisionArtifactInput {
+        onboarding_scorecard: onboarding,
+        compatibility_advisories: Vec::new(),
+        platform_matrix_signals: Vec::new(),
+    });
+    assert_eq!(artifact.recommendation, RolloutRecommendation::Promote);
+    assert!(artifact.mandatory_field_status.valid);
+    assert!(artifact.ga_gate_consumable);
+}
+
+#[test]
+fn lib_rollout_artifact_rollback_for_platform_critical() {
+    let input = clean_input();
+    let preflight = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let onboarding = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/rollback".to_string(),
+        package_name: "rollback".to_string(),
+        target_platforms: vec!["linux-x64".to_string()],
+        preflight,
+        external_signals: Vec::new(),
+    });
+    let artifact = build_rollout_decision_artifact(&RolloutDecisionArtifactInput {
+        onboarding_scorecard: onboarding,
+        compatibility_advisories: Vec::new(),
+        platform_matrix_signals: vec![OnboardingScorecardSignal {
+            signal_id: "plat:crit".to_string(),
+            source: "platform_matrix".to_string(),
+            severity: EvidenceSeverity::Critical,
+            summary: "critical platform gap".to_string(),
+            remediation: "fix platform".to_string(),
+            reproducible_command: "run-check".to_string(),
+            evidence_links: vec!["plat.json".to_string()],
+            owner_hint: None,
+        }],
+    });
+    assert_eq!(artifact.recommendation, RolloutRecommendation::Rollback);
+}
+
+#[test]
+fn lib_rollout_artifact_defers_on_missing_mandatory_fields() {
+    let input = clean_input();
+    let preflight = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let mut onboarding = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/defer".to_string(),
+        package_name: "defer".to_string(),
+        target_platforms: vec!["linux-x64".to_string()],
+        preflight,
+        external_signals: Vec::new(),
+    });
+    onboarding.workload_id.clear();
+    onboarding.logs.clear();
+    let artifact = build_rollout_decision_artifact(&RolloutDecisionArtifactInput {
+        onboarding_scorecard: onboarding,
+        compatibility_advisories: Vec::new(),
+        platform_matrix_signals: Vec::new(),
+    });
+    assert_eq!(artifact.recommendation, RolloutRecommendation::Defer);
+    assert!(!artifact.mandatory_field_status.valid);
+    assert!(!artifact.ga_gate_consumable);
+}
+
+// ── render_rollout_decision_artifact_summary ────────────────────────────
+
+#[test]
+fn lib_render_rollout_decision_artifact_summary_contains_key_fields() {
+    let input = clean_input();
+    let preflight = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let onboarding = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/render-art".to_string(),
+        package_name: "render-art".to_string(),
+        target_platforms: vec!["linux-x64".to_string()],
+        preflight,
+        external_signals: Vec::new(),
+    });
+    let artifact = build_rollout_decision_artifact(&RolloutDecisionArtifactInput {
+        onboarding_scorecard: onboarding,
+        compatibility_advisories: Vec::new(),
+        platform_matrix_signals: Vec::new(),
+    });
+    let rendered = render_rollout_decision_artifact_summary(&artifact);
+    assert!(rendered.contains("schema_version:"));
+    assert!(rendered.contains("recommendation: promote"));
+    assert!(rendered.contains("ga_gate_consumable: true"));
+    assert!(rendered.contains("reproducible_commands:"));
+}
+
+// ── parse_evidence_severity / parse_decision_type ───────────────────────
+
+#[test]
+fn lib_parse_evidence_severity_all_variants() {
+    assert_eq!(
+        parse_evidence_severity("info"),
+        Some(EvidenceSeverity::Info)
+    );
+    assert_eq!(
+        parse_evidence_severity("warning"),
+        Some(EvidenceSeverity::Warning)
+    );
+    assert_eq!(
+        parse_evidence_severity("critical"),
+        Some(EvidenceSeverity::Critical)
+    );
+    assert_eq!(
+        parse_evidence_severity("INFO"),
+        Some(EvidenceSeverity::Info)
+    );
+    assert_eq!(
+        parse_evidence_severity("  Warning  "),
+        Some(EvidenceSeverity::Warning)
+    );
+    assert_eq!(parse_evidence_severity("unknown"), None);
+    assert_eq!(parse_evidence_severity(""), None);
+}
+
+#[test]
+fn lib_parse_decision_type_all_variants() {
+    assert_eq!(
+        parse_decision_type("security_action"),
+        Some(DecisionType::SecurityAction)
+    );
+    assert_eq!(
+        parse_decision_type("policy_update"),
+        Some(DecisionType::PolicyUpdate)
+    );
+    assert_eq!(
+        parse_decision_type("epoch_transition"),
+        Some(DecisionType::EpochTransition)
+    );
+    assert_eq!(
+        parse_decision_type("revocation"),
+        Some(DecisionType::Revocation)
+    );
+    assert_eq!(
+        parse_decision_type("EXTENSION_LIFECYCLE"),
+        Some(DecisionType::ExtensionLifecycle)
+    );
+    assert_eq!(parse_decision_type("unknown"), None);
+}
+
+// ── SupportBundleRedactionPolicy ────────────────────────────────────────
+
+#[test]
+fn lib_redaction_policy_default_contains_standard_fragments() {
+    let policy = SupportBundleRedactionPolicy::default();
+    assert!(policy.key_fragments.contains(&"secret".to_string()));
+    assert!(policy.key_fragments.contains(&"token".to_string()));
+    assert!(policy.key_fragments.contains(&"password".to_string()));
+}
+
+#[test]
+fn lib_redaction_policy_with_additional_fragments() {
+    let policy =
+        SupportBundleRedactionPolicy::with_additional_fragments(vec!["custom_field".to_string()]);
+    assert!(policy.key_fragments.contains(&"custom_field".to_string()));
+    assert!(policy.key_fragments.contains(&"secret".to_string()));
+}
+
+#[test]
+fn lib_redaction_policy_extend_deduplicates_and_sorts() {
+    let mut policy = SupportBundleRedactionPolicy::default();
+    policy.extend_fragments(vec![
+        "secret".to_string(),
+        "SECRET".to_string(),
+        "new_frag".to_string(),
+    ]);
+    let count = policy
+        .key_fragments
+        .iter()
+        .filter(|f| *f == "secret")
+        .count();
+    assert_eq!(count, 1);
+    assert!(policy.key_fragments.contains(&"new_frag".to_string()));
+    for window in policy.key_fragments.windows(2) {
+        assert!(window[0] <= window[1], "fragments should be sorted");
+    }
+}
+
+// ── Enum Display and serde roundtrips ───────────────────────────────────
+
+#[test]
+fn lib_preflight_verdict_display() {
+    assert_eq!(PreflightVerdict::Green.to_string(), "green");
+    assert_eq!(PreflightVerdict::Yellow.to_string(), "yellow");
+    assert_eq!(PreflightVerdict::Red.to_string(), "red");
+}
+
+#[test]
+fn lib_preflight_verdict_serde_roundtrip() {
+    for v in [
+        PreflightVerdict::Green,
+        PreflightVerdict::Yellow,
+        PreflightVerdict::Red,
+    ] {
+        let json = serde_json::to_string(&v).unwrap();
+        let back: PreflightVerdict = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+}
+
+#[test]
+fn lib_onboarding_readiness_class_display() {
+    assert_eq!(OnboardingReadinessClass::Ready.to_string(), "ready");
+    assert_eq!(
+        OnboardingReadinessClass::Conditional.to_string(),
+        "conditional"
+    );
+    assert_eq!(OnboardingReadinessClass::Blocked.to_string(), "blocked");
+}
+
+#[test]
+fn lib_onboarding_readiness_class_serde_roundtrip() {
+    for v in [
+        OnboardingReadinessClass::Ready,
+        OnboardingReadinessClass::Conditional,
+        OnboardingReadinessClass::Blocked,
+    ] {
+        let json = serde_json::to_string(&v).unwrap();
+        let back: OnboardingReadinessClass = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+}
+
+#[test]
+fn lib_onboarding_remediation_effort_display() {
+    assert_eq!(OnboardingRemediationEffort::Low.to_string(), "low");
+    assert_eq!(OnboardingRemediationEffort::Medium.to_string(), "medium");
+    assert_eq!(OnboardingRemediationEffort::High.to_string(), "high");
+}
+
+#[test]
+fn lib_onboarding_remediation_effort_serde_roundtrip() {
+    for v in [
+        OnboardingRemediationEffort::Low,
+        OnboardingRemediationEffort::Medium,
+        OnboardingRemediationEffort::High,
+    ] {
+        let json = serde_json::to_string(&v).unwrap();
+        let back: OnboardingRemediationEffort = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+}
+
+#[test]
+fn lib_rollout_recommendation_display() {
+    assert_eq!(RolloutRecommendation::Promote.to_string(), "promote");
+    assert_eq!(RolloutRecommendation::CanaryHold.to_string(), "canary_hold");
+    assert_eq!(RolloutRecommendation::Rollback.to_string(), "rollback");
+    assert_eq!(RolloutRecommendation::Defer.to_string(), "defer");
+}
+
+#[test]
+fn lib_rollout_recommendation_serde_roundtrip() {
+    for v in [
+        RolloutRecommendation::Promote,
+        RolloutRecommendation::CanaryHold,
+        RolloutRecommendation::Rollback,
+        RolloutRecommendation::Defer,
+    ] {
+        let json = serde_json::to_string(&v).unwrap();
+        let back: RolloutRecommendation = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+}
+
+// ── Serde roundtrips for complex output types ───────────────────────────
+
+#[test]
+fn lib_runtime_diagnostics_output_serde_roundtrip() {
+    let input = build_sample_input();
+    let out = collect_runtime_diagnostics(
+        &input.runtime_state,
+        &input.trace_id,
+        &input.decision_id,
+        &input.policy_id,
+    );
+    let json = serde_json::to_string(&out).unwrap();
+    let back: frankenengine_engine::runtime_diagnostics_cli::RuntimeDiagnosticsOutput =
+        serde_json::from_str(&json).unwrap();
+    assert_eq!(out, back);
+}
+
+#[test]
+fn lib_evidence_export_output_serde_roundtrip() {
+    let input = build_sample_input();
+    let output = export_evidence_bundle(&input, EvidenceExportFilter::default());
+    let json = serde_json::to_string(&output).unwrap();
+    let back: frankenengine_engine::runtime_diagnostics_cli::EvidenceExportOutput =
+        serde_json::from_str(&json).unwrap();
+    assert_eq!(output, back);
+}
+
+#[test]
+fn lib_support_bundle_output_serde_roundtrip() {
+    let input = build_sample_input();
+    let output = export_support_bundle(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let json = serde_json::to_string(&output).unwrap();
+    let back: frankenengine_engine::runtime_diagnostics_cli::SupportBundleOutput =
+        serde_json::from_str(&json).unwrap();
+    assert_eq!(output, back);
+}
+
+#[test]
+fn lib_preflight_doctor_output_serde_roundtrip() {
+    let input = build_sample_input();
+    let output = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let json = serde_json::to_string(&output).unwrap();
+    let back: frankenengine_engine::runtime_diagnostics_cli::PreflightDoctorOutput =
+        serde_json::from_str(&json).unwrap();
+    assert_eq!(output, back);
+}
+
+#[test]
+fn lib_onboarding_scorecard_output_serde_roundtrip() {
+    let input = clean_input();
+    let preflight = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let scorecard = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/serde".to_string(),
+        package_name: "serde".to_string(),
+        target_platforms: vec!["linux-x64".to_string()],
+        preflight,
+        external_signals: Vec::new(),
+    });
+    let json = serde_json::to_string(&scorecard).unwrap();
+    let back: frankenengine_engine::runtime_diagnostics_cli::OnboardingScorecardOutput =
+        serde_json::from_str(&json).unwrap();
+    assert_eq!(scorecard, back);
+}
+
+#[test]
+fn lib_rollout_decision_artifact_output_serde_roundtrip() {
+    let input = clean_input();
+    let preflight = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let onboarding = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/serde-art".to_string(),
+        package_name: "serde-art".to_string(),
+        target_platforms: vec!["linux-x64".to_string()],
+        preflight,
+        external_signals: Vec::new(),
+    });
+    let artifact = build_rollout_decision_artifact(&RolloutDecisionArtifactInput {
+        onboarding_scorecard: onboarding,
+        compatibility_advisories: Vec::new(),
+        platform_matrix_signals: Vec::new(),
+    });
+    let json = serde_json::to_string(&artifact).unwrap();
+    let back: frankenengine_engine::runtime_diagnostics_cli::RolloutDecisionArtifactOutput =
+        serde_json::from_str(&json).unwrap();
+    assert_eq!(artifact, back);
+}
+
+// ── Clone independence ──────────────────────────────────────────────────
+
+#[test]
+fn lib_diagnostics_output_clone_independence() {
+    let input = build_sample_input();
+    let out = collect_runtime_diagnostics(
+        &input.runtime_state,
+        &input.trace_id,
+        &input.decision_id,
+        &input.policy_id,
+    );
+    let mut cloned = out.clone();
+    cloned.active_policies.push("extra".to_string());
+    assert_ne!(out.active_policies.len(), cloned.active_policies.len());
+}
+
+#[test]
+fn lib_evidence_export_output_clone_independence() {
+    let input = build_sample_input();
+    let output = export_evidence_bundle(&input, EvidenceExportFilter::default());
+    let mut cloned = output.clone();
+    cloned.records.clear();
+    assert!(!output.records.is_empty());
+}
+
+// ── JSON field name contracts ───────────────────────────────────────────
+
+#[test]
+fn lib_preflight_doctor_output_json_field_contract() {
+    let input = build_sample_input();
+    let output = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let json = serde_json::to_string(&output).unwrap();
+    for field in [
+        "\"trace_id\"",
+        "\"decision_id\"",
+        "\"policy_id\"",
+        "\"verdict\"",
+        "\"rationale\"",
+        "\"blockers\"",
+        "\"mandatory_field_status\"",
+        "\"diagnostics\"",
+        "\"evidence_summary\"",
+        "\"support_bundle\"",
+        "\"logs\"",
+    ] {
+        assert!(json.contains(field), "missing JSON field: {field}");
+    }
+}
+
+#[test]
+fn lib_onboarding_scorecard_output_json_field_contract() {
+    let input = clean_input();
+    let preflight = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let scorecard = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/json".to_string(),
+        package_name: "json".to_string(),
+        target_platforms: vec!["linux-x64".to_string()],
+        preflight,
+        external_signals: Vec::new(),
+    });
+    let json = serde_json::to_string(&scorecard).unwrap();
+    for field in [
+        "\"schema_version\"",
+        "\"workload_id\"",
+        "\"package_name\"",
+        "\"readiness\"",
+        "\"remediation_effort\"",
+        "\"score\"",
+        "\"unresolved_signals\"",
+        "\"next_steps\"",
+        "\"reproducible_commands\"",
+        "\"logs\"",
+    ] {
+        assert!(json.contains(field), "missing JSON field: {field}");
+    }
+}
+
+#[test]
+fn lib_rollout_decision_artifact_json_field_contract() {
+    let input = clean_input();
+    let preflight = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let onboarding = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/json-art".to_string(),
+        package_name: "json-art".to_string(),
+        target_platforms: vec!["linux-x64".to_string()],
+        preflight,
+        external_signals: Vec::new(),
+    });
+    let artifact = build_rollout_decision_artifact(&RolloutDecisionArtifactInput {
+        onboarding_scorecard: onboarding,
+        compatibility_advisories: Vec::new(),
+        platform_matrix_signals: Vec::new(),
+    });
+    let json = serde_json::to_string(&artifact).unwrap();
+    for field in [
+        "\"schema_version\"",
+        "\"recommendation\"",
+        "\"mandatory_field_status\"",
+        "\"ga_gate_consumable\"",
+        "\"pilot_gate_consumable\"",
+        "\"rationale\"",
+        "\"merged_signals\"",
+        "\"evidence_links\"",
+    ] {
+        assert!(json.contains(field), "missing JSON field: {field}");
+    }
 }

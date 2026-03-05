@@ -762,7 +762,8 @@ fn global_is_nan_undefined_returns_true() {
 
 #[test]
 fn global_is_nan_number_returns_false() {
-    let result = exec_global_function(BuiltinId::GlobalIsNaN, &[JsValue::Int(42 * FP_SCALE)]).unwrap();
+    let result =
+        exec_global_function(BuiltinId::GlobalIsNaN, &[JsValue::Int(42 * FP_SCALE)]).unwrap();
     assert_eq!(result, JsValue::Bool(false));
 }
 
@@ -789,18 +790,14 @@ fn global_is_finite_number_returns_true() {
 
 #[test]
 fn global_is_finite_undefined_returns_false() {
-    let result =
-        exec_global_function(BuiltinId::GlobalIsFinite, &[JsValue::Undefined]).unwrap();
+    let result = exec_global_function(BuiltinId::GlobalIsFinite, &[JsValue::Undefined]).unwrap();
     assert_eq!(result, JsValue::Bool(false));
 }
 
 #[test]
 fn global_parse_int_decimal() {
-    let result = exec_global_function(
-        BuiltinId::GlobalParseInt,
-        &[JsValue::Str("42".into())],
-    )
-    .unwrap();
+    let result =
+        exec_global_function(BuiltinId::GlobalParseInt, &[JsValue::Str("42".into())]).unwrap();
     assert_eq!(result, JsValue::Int(42 * FP_SCALE));
 }
 
@@ -816,11 +813,8 @@ fn global_parse_int_with_radix() {
 
 #[test]
 fn global_parse_int_negative() {
-    let result = exec_global_function(
-        BuiltinId::GlobalParseInt,
-        &[JsValue::Str("-10".into())],
-    )
-    .unwrap();
+    let result =
+        exec_global_function(BuiltinId::GlobalParseInt, &[JsValue::Str("-10".into())]).unwrap();
     assert_eq!(result, JsValue::Int(-10 * FP_SCALE));
 }
 
@@ -836,11 +830,8 @@ fn global_parse_int_invalid_returns_zero() {
 
 #[test]
 fn global_parse_float_integer() {
-    let result = exec_global_function(
-        BuiltinId::GlobalParseFloat,
-        &[JsValue::Str("99".into())],
-    )
-    .unwrap();
+    let result =
+        exec_global_function(BuiltinId::GlobalParseFloat, &[JsValue::Str("99".into())]).unwrap();
     assert_eq!(result, JsValue::Int(99 * FP_SCALE));
 }
 
@@ -867,7 +858,10 @@ fn global_encode_uri_component_encodes_special_chars() {
     )
     .unwrap();
     if let JsValue::Str(s) = &result {
-        assert!(s.contains("%20") || s.contains("+"), "space should be encoded: {s}");
+        assert!(
+            s.contains("%20") || s.contains("+"),
+            "space should be encoded: {s}"
+        );
     } else {
         panic!("expected string result");
     }
@@ -930,31 +924,21 @@ fn boolean_method_wrong_builtin_returns_error() {
 
 #[test]
 fn object_is_same_value_ints() {
-    let result = exec_object_static(
-        BuiltinId::ObjectIs,
-        &[JsValue::Int(42), JsValue::Int(42)],
-    )
-    .unwrap();
+    let result =
+        exec_object_static(BuiltinId::ObjectIs, &[JsValue::Int(42), JsValue::Int(42)]).unwrap();
     assert_eq!(result, JsValue::Bool(true));
 }
 
 #[test]
 fn object_is_different_values() {
-    let result = exec_object_static(
-        BuiltinId::ObjectIs,
-        &[JsValue::Int(1), JsValue::Int(2)],
-    )
-    .unwrap();
+    let result =
+        exec_object_static(BuiltinId::ObjectIs, &[JsValue::Int(1), JsValue::Int(2)]).unwrap();
     assert_eq!(result, JsValue::Bool(false));
 }
 
 #[test]
 fn object_is_null_null() {
-    let result = exec_object_static(
-        BuiltinId::ObjectIs,
-        &[JsValue::Null, JsValue::Null],
-    )
-    .unwrap();
+    let result = exec_object_static(BuiltinId::ObjectIs, &[JsValue::Null, JsValue::Null]).unwrap();
     assert_eq!(result, JsValue::Bool(true));
 }
 
@@ -970,11 +954,8 @@ fn object_is_undefined_undefined() {
 
 #[test]
 fn object_is_null_vs_undefined() {
-    let result = exec_object_static(
-        BuiltinId::ObjectIs,
-        &[JsValue::Null, JsValue::Undefined],
-    )
-    .unwrap();
+    let result =
+        exec_object_static(BuiltinId::ObjectIs, &[JsValue::Null, JsValue::Undefined]).unwrap();
     assert_eq!(result, JsValue::Bool(false));
 }
 
@@ -1002,10 +983,7 @@ fn string_from_char_code_single() {
 fn string_from_char_code_multiple() {
     let result = exec_string_static(
         BuiltinId::StringFromCharCode,
-        &[
-            JsValue::Int(72 * FP_SCALE),
-            JsValue::Int(105 * FP_SCALE),
-        ],
+        &[JsValue::Int(72 * FP_SCALE), JsValue::Int(105 * FP_SCALE)],
     )
     .unwrap();
     assert_eq!(result, JsValue::Str("Hi".into()));
@@ -1091,7 +1069,10 @@ fn array_includes_true() {
         &[JsValue::Int(20 * FP_SCALE)],
     )
     .unwrap();
-    assert!(matches!(result, ArrayMethodResult::Value(JsValue::Bool(true))));
+    assert!(matches!(
+        result,
+        ArrayMethodResult::Value(JsValue::Bool(true))
+    ));
 }
 
 #[test]
@@ -1103,7 +1084,10 @@ fn array_includes_false() {
         &[JsValue::Int(99 * FP_SCALE)],
     )
     .unwrap();
-    assert!(matches!(result, ArrayMethodResult::Value(JsValue::Bool(false))));
+    assert!(matches!(
+        result,
+        ArrayMethodResult::Value(JsValue::Bool(false))
+    ));
 }
 
 #[test]
@@ -1191,11 +1175,7 @@ fn array_concat() {
 
 #[test]
 fn array_fill() {
-    let elements = vec![
-        JsValue::Int(0),
-        JsValue::Int(0),
-        JsValue::Int(0),
-    ];
+    let elements = vec![JsValue::Int(0), JsValue::Int(0), JsValue::Int(0)];
     let result = exec_array_method(
         BuiltinId::ArrayPrototypeFill,
         &elements,
@@ -1250,8 +1230,7 @@ fn date_value_of_returns_timestamp() {
 
 #[test]
 fn date_to_string_contains_date_prefix() {
-    let result =
-        exec_date_method(BuiltinId::DatePrototypeToString, Some(1000 * FP_SCALE)).unwrap();
+    let result = exec_date_method(BuiltinId::DatePrototypeToString, Some(1000 * FP_SCALE)).unwrap();
     if let JsValue::Str(s) = &result {
         assert!(s.starts_with("Date("), "should start with Date(: {s}");
     } else {
@@ -1261,8 +1240,11 @@ fn date_to_string_contains_date_prefix() {
 
 #[test]
 fn date_to_iso_string_contains_t_and_z() {
-    let result =
-        exec_date_method(BuiltinId::DatePrototypeToISOString, Some(86400000 * FP_SCALE)).unwrap();
+    let result = exec_date_method(
+        BuiltinId::DatePrototypeToISOString,
+        Some(86400000 * FP_SCALE),
+    )
+    .unwrap();
     if let JsValue::Str(s) = &result {
         assert!(s.contains('T'), "ISO string should contain T: {s}");
         assert!(s.ends_with('Z'), "ISO string should end with Z: {s}");
@@ -1290,7 +1272,10 @@ fn error_constructor_with_message() {
     .unwrap();
     if let JsValue::Str(s) = &result {
         assert!(s.contains("Error"), "should contain Error: {s}");
-        assert!(s.contains("something went wrong"), "should contain message: {s}");
+        assert!(
+            s.contains("something went wrong"),
+            "should contain message: {s}"
+        );
     } else {
         panic!("expected string");
     }
@@ -1304,7 +1289,10 @@ fn type_error_constructor() {
     )
     .unwrap();
     if let JsValue::Str(s) = &result {
-        assert!(s.starts_with("TypeError:"), "should start with TypeError: {s}");
+        assert!(
+            s.starts_with("TypeError:"),
+            "should start with TypeError: {s}"
+        );
     } else {
         panic!("expected string");
     }
@@ -1374,26 +1362,21 @@ fn error_constructor_wrong_builtin_returns_error() {
 
 #[test]
 fn symbol_for_returns_symbol() {
-    let result =
-        exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("myKey".into())]).unwrap();
+    let result = exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("myKey".into())]).unwrap();
     assert!(matches!(result, JsValue::Symbol(_)));
 }
 
 #[test]
 fn symbol_for_deterministic_same_key() {
-    let r1 =
-        exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("key".into())]).unwrap();
-    let r2 =
-        exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("key".into())]).unwrap();
+    let r1 = exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("key".into())]).unwrap();
+    let r2 = exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("key".into())]).unwrap();
     assert_eq!(r1, r2, "same key should produce same symbol");
 }
 
 #[test]
 fn symbol_for_different_keys_produce_different_symbols() {
-    let r1 =
-        exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("key1".into())]).unwrap();
-    let r2 =
-        exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("key2".into())]).unwrap();
+    let r1 = exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("key1".into())]).unwrap();
+    let r2 = exec_symbol_static(BuiltinId::SymbolFor, &[JsValue::Str("key2".into())]).unwrap();
     assert_ne!(r1, r2, "different keys should produce different symbols");
 }
 
@@ -1422,9 +1405,12 @@ fn number_is_safe_integer_false_for_fractional() {
 
 #[test]
 fn number_to_fixed_zero_digits() {
-    let result =
-        exec_number_method(BuiltinId::NumberPrototypeToFixed, 3_141_593, &[JsValue::Int(0)])
-            .unwrap();
+    let result = exec_number_method(
+        BuiltinId::NumberPrototypeToFixed,
+        3_141_593,
+        &[JsValue::Int(0)],
+    )
+    .unwrap();
     assert_eq!(result, JsValue::Str("3".into()));
 }
 
@@ -1460,8 +1446,7 @@ fn number_to_string_integer() {
 
 #[test]
 fn number_to_string_fractional() {
-    let result =
-        exec_number_method(BuiltinId::NumberPrototypeToString, 3_500_000, &[]).unwrap();
+    let result = exec_number_method(BuiltinId::NumberPrototypeToString, 3_500_000, &[]).unwrap();
     if let JsValue::Str(s) = &result {
         assert!(s.contains('.'), "should contain decimal point: {s}");
     }
@@ -1469,8 +1454,7 @@ fn number_to_string_fractional() {
 
 #[test]
 fn number_value_of() {
-    let result =
-        exec_number_method(BuiltinId::NumberPrototypeValueOf, 42 * FP_SCALE, &[]).unwrap();
+    let result = exec_number_method(BuiltinId::NumberPrototypeValueOf, 42 * FP_SCALE, &[]).unwrap();
     assert_eq!(result, JsValue::Int(42 * FP_SCALE));
 }
 
@@ -1498,7 +1482,10 @@ fn math_pow_zero_exponent() {
 fn math_max_no_args() {
     let result = exec_math(BuiltinId::MathMax, &[]).unwrap();
     if let JsValue::Int(v) = result {
-        assert!(v < 0, "Math.max() with no args should return -Infinity equivalent");
+        assert!(
+            v < 0,
+            "Math.max() with no args should return -Infinity equivalent"
+        );
     }
 }
 
@@ -1506,7 +1493,10 @@ fn math_max_no_args() {
 fn math_min_no_args() {
     let result = exec_math(BuiltinId::MathMin, &[]).unwrap();
     if let JsValue::Int(v) = result {
-        assert!(v > 0, "Math.min() with no args should return +Infinity equivalent");
+        assert!(
+            v > 0,
+            "Math.min() with no args should return +Infinity equivalent"
+        );
     }
 }
 
@@ -1581,23 +1571,14 @@ fn string_char_code_at() {
 
 #[test]
 fn string_repeat_zero() {
-    let result = exec_string_method(
-        BuiltinId::StringPrototypeRepeat,
-        "x",
-        &[JsValue::Int(0)],
-    )
-    .unwrap();
+    let result =
+        exec_string_method(BuiltinId::StringPrototypeRepeat, "x", &[JsValue::Int(0)]).unwrap();
     assert_eq!(result, JsValue::Str(String::new()));
 }
 
 #[test]
 fn string_normalize_ascii() {
-    let result = exec_string_method(
-        BuiltinId::StringPrototypeNormalize,
-        "hello",
-        &[],
-    )
-    .unwrap();
+    let result = exec_string_method(BuiltinId::StringPrototypeNormalize, "hello", &[]).unwrap();
     assert_eq!(result, JsValue::Str("hello".into()));
 }
 
@@ -1681,9 +1662,7 @@ fn type_error_prototype_inherits_from_error_prototype() {
 fn map_prototype_inherits_from_object_prototype() {
     let mut heap = ObjectHeap::new();
     let env = install_stdlib(&mut heap);
-    let parent = heap
-        .get_prototype_of(env.prototypes.map_prototype)
-        .unwrap();
+    let parent = heap.get_prototype_of(env.prototypes.map_prototype).unwrap();
     assert_eq!(parent, Some(env.prototypes.object_prototype));
 }
 
@@ -1691,9 +1670,7 @@ fn map_prototype_inherits_from_object_prototype() {
 fn set_prototype_inherits_from_object_prototype() {
     let mut heap = ObjectHeap::new();
     let env = install_stdlib(&mut heap);
-    let parent = heap
-        .get_prototype_of(env.prototypes.set_prototype)
-        .unwrap();
+    let parent = heap.get_prototype_of(env.prototypes.set_prototype).unwrap();
     assert_eq!(parent, Some(env.prototypes.object_prototype));
 }
 
@@ -1713,6 +1690,9 @@ fn registry_entries_all_have_valid_names() {
     let mut heap = ObjectHeap::new();
     let env = install_stdlib(&mut heap);
     for (_slot, id) in env.registry.entries() {
-        assert!(!id.name().is_empty(), "builtin {id:?} should have a non-empty name");
+        assert!(
+            !id.name().is_empty(),
+            "builtin {id:?} should have a non-empty name"
+        );
     }
 }

@@ -15,10 +15,9 @@ mod wave_handoff_contract;
 
 use wave_handoff_contract::{
     CriterionAttestation, HandoffEvent, HandoffPackage, HandoffValidationErrorCode,
-    HandoffValidationFailure, HandoffValidationReport, RequiredBeadStatus,
-    WAVE_HANDOFF_COMPONENT, WAVE_HANDOFF_CONTRACT_VERSION, WAVE_HANDOFF_FAILURE_CODE,
-    WAVE_HANDOFF_PACKET_SCHEMA_VERSION, WaveCriterion, WaveId, WaveTransitionContract,
-    simulate_wave_transition, validate_handoff,
+    HandoffValidationFailure, HandoffValidationReport, RequiredBeadStatus, WAVE_HANDOFF_COMPONENT,
+    WAVE_HANDOFF_CONTRACT_VERSION, WAVE_HANDOFF_FAILURE_CODE, WAVE_HANDOFF_PACKET_SCHEMA_VERSION,
+    WaveCriterion, WaveId, WaveTransitionContract, simulate_wave_transition, validate_handoff,
 };
 
 fn repo_root() -> PathBuf {
@@ -153,7 +152,13 @@ fn validation_pass_report_has_correct_metadata() {
     let contract = WaveTransitionContract::baseline(WaveId::Wave1);
     let package = HandoffPackage::baseline();
 
-    let report = validate_handoff("trace-meta", "decision-meta", "policy-meta", &contract, &package);
+    let report = validate_handoff(
+        "trace-meta",
+        "decision-meta",
+        "policy-meta",
+        &contract,
+        &package,
+    );
     assert!(report.valid);
     assert_eq!(report.trace_id, "trace-meta");
     assert_eq!(report.decision_id, "decision-meta");
@@ -300,9 +305,12 @@ fn validation_rejects_weak_completeness_score() {
     pkg.completeness_score_milli = 100;
     let report = validate_handoff("t", "d", "p", &contract, &pkg);
     assert!(!report.valid);
-    assert!(report.failures.iter().any(|f| {
-        f.code == HandoffValidationErrorCode::WeakHandoffPackage
-    }));
+    assert!(
+        report
+            .failures
+            .iter()
+            .any(|f| { f.code == HandoffValidationErrorCode::WeakHandoffPackage })
+    );
 }
 
 #[test]
@@ -312,7 +320,10 @@ fn validation_accepts_score_at_exact_threshold() {
     pkg.completeness_score_milli = contract.minimum_handoff_score_milli;
     let report = validate_handoff("t", "d", "p", &contract, &pkg);
     assert!(
-        !report.failures.iter().any(|f| f.code == HandoffValidationErrorCode::WeakHandoffPackage),
+        !report
+            .failures
+            .iter()
+            .any(|f| f.code == HandoffValidationErrorCode::WeakHandoffPackage),
         "score at exact threshold should not trigger weak package error"
     );
 }
@@ -323,9 +334,12 @@ fn validation_rejects_score_one_below_threshold() {
     let mut pkg = HandoffPackage::baseline();
     pkg.completeness_score_milli = contract.minimum_handoff_score_milli - 1;
     let report = validate_handoff("t", "d", "p", &contract, &pkg);
-    assert!(report.failures.iter().any(|f| {
-        f.code == HandoffValidationErrorCode::WeakHandoffPackage
-    }));
+    assert!(
+        report
+            .failures
+            .iter()
+            .any(|f| { f.code == HandoffValidationErrorCode::WeakHandoffPackage })
+    );
 }
 
 #[test]
@@ -335,7 +349,10 @@ fn validation_accepts_score_one_above_threshold() {
     pkg.completeness_score_milli = contract.minimum_handoff_score_milli + 1;
     let report = validate_handoff("t", "d", "p", &contract, &pkg);
     assert!(
-        !report.failures.iter().any(|f| f.code == HandoffValidationErrorCode::WeakHandoffPackage),
+        !report
+            .failures
+            .iter()
+            .any(|f| f.code == HandoffValidationErrorCode::WeakHandoffPackage),
         "score above threshold should not trigger weak package error"
     );
 }
@@ -489,8 +506,18 @@ fn validation_accumulates_multiple_failures() {
         "expected at least 4 failures, got {}",
         report.failures.len()
     );
-    assert!(report.failures.iter().any(|f| f.code == HandoffValidationErrorCode::MissingRequiredField));
-    assert!(report.failures.iter().any(|f| f.code == HandoffValidationErrorCode::WeakHandoffPackage));
+    assert!(
+        report
+            .failures
+            .iter()
+            .any(|f| f.code == HandoffValidationErrorCode::MissingRequiredField)
+    );
+    assert!(
+        report
+            .failures
+            .iter()
+            .any(|f| f.code == HandoffValidationErrorCode::WeakHandoffPackage)
+    );
 }
 
 // ─── Validation: optional criteria skipped ───
@@ -528,7 +555,11 @@ fn validation_passes_with_empty_contract_criteria() {
     };
     let pkg = HandoffPackage::baseline();
     let report = validate_handoff("t", "d", "p", &contract, &pkg);
-    assert!(report.valid, "empty criteria contract should pass: {:?}", report.failures);
+    assert!(
+        report.valid,
+        "empty criteria contract should pass: {:?}",
+        report.failures
+    );
 }
 
 // ─── simulate_wave_transition: happy path ───
@@ -719,7 +750,11 @@ fn custom_contract_with_strict_entry_and_exit_criteria() {
     };
 
     let report = validate_handoff("t", "d", "p", &contract, &pkg);
-    assert!(report.valid, "custom package should pass: {:?}", report.failures);
+    assert!(
+        report.valid,
+        "custom package should pass: {:?}",
+        report.failures
+    );
 }
 
 #[test]
@@ -1093,7 +1128,10 @@ fn validation_zero_threshold_accepts_zero_score() {
     pkg.completeness_score_milli = 0;
     let report = validate_handoff("t", "d", "p", &contract, &pkg);
     assert!(
-        !report.failures.iter().any(|f| f.code == HandoffValidationErrorCode::WeakHandoffPackage),
+        !report
+            .failures
+            .iter()
+            .any(|f| f.code == HandoffValidationErrorCode::WeakHandoffPackage),
         "zero threshold should accept zero score"
     );
 }
@@ -1113,9 +1151,12 @@ fn validation_max_threshold_rejects_lower_score() {
     let mut pkg = HandoffPackage::baseline();
     pkg.completeness_score_milli = 999;
     let report = validate_handoff("t", "d", "p", &contract, &pkg);
-    assert!(report.failures.iter().any(|f| {
-        f.code == HandoffValidationErrorCode::WeakHandoffPackage
-    }));
+    assert!(
+        report
+            .failures
+            .iter()
+            .any(|f| { f.code == HandoffValidationErrorCode::WeakHandoffPackage })
+    );
 }
 
 #[test]
@@ -1132,7 +1173,10 @@ fn validation_max_threshold_accepts_max_score() {
     pkg.completeness_score_milli = 1000;
     let report = validate_handoff("t", "d", "p", &contract, &pkg);
     assert!(
-        !report.failures.iter().any(|f| f.code == HandoffValidationErrorCode::WeakHandoffPackage),
+        !report
+            .failures
+            .iter()
+            .any(|f| f.code == HandoffValidationErrorCode::WeakHandoffPackage),
         "max score should satisfy max threshold"
     );
 }

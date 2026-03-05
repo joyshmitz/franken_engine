@@ -15,13 +15,13 @@ use frankenengine_engine::proof_schema::{
     proof_schema_version_current,
 };
 use frankenengine_engine::receipt_verifier_pipeline::{
-    AttestationLayerInput, ConsistencyProofInput, LayerCheck, LayerResult, LogOperatorKey,
+    AttestationLayerInput, ConsistencyProofInput, EXIT_CODE_ATTESTATION_FAILURE,
+    EXIT_CODE_SIGNATURE_FAILURE, EXIT_CODE_STALE_DATA, EXIT_CODE_SUCCESS,
+    EXIT_CODE_TRANSPARENCY_FAILURE, LayerCheck, LayerResult, LogOperatorKey,
     ReceiptVerifierCliInput, ReceiptVerifierPipelineError, SignatureLayerInput,
     SignedLogCheckpoint, SignerRevocationCache, TransparencyLayerInput,
-    UnifiedReceiptVerificationRequest, UnifiedReceiptVerificationVerdict,
-    VerificationFailureClass, VerifierLogEvent, render_verdict_summary, verify_receipt_by_id,
-    verify_receipt_request, EXIT_CODE_ATTESTATION_FAILURE, EXIT_CODE_SIGNATURE_FAILURE,
-    EXIT_CODE_STALE_DATA, EXIT_CODE_SUCCESS, EXIT_CODE_TRANSPARENCY_FAILURE,
+    UnifiedReceiptVerificationRequest, UnifiedReceiptVerificationVerdict, VerificationFailureClass,
+    VerifierLogEvent, render_verdict_summary, verify_receipt_by_id, verify_receipt_request,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::signature_preimage::{Signature, SigningKey, sign_preimage};
@@ -493,8 +493,7 @@ fn build_valid_request() -> (String, UnifiedReceiptVerificationRequest) {
     preimage.extend_from_slice(&checkpoint_stub.timestamp_ns.to_be_bytes());
     preimage.push(0xff);
     preimage.extend_from_slice(checkpoint_stub.operator_key_id.as_bytes());
-    checkpoint.signature =
-        sign_preimage(&operator_signing_key, &preimage).expect("checkpoint sig");
+    checkpoint.signature = sign_preimage(&operator_signing_key, &preimage).expect("checkpoint sig");
 
     let measurement_digest_hex = measurement.composite_hash().to_hex();
     let policy = sample_policy(SecurityEpoch::from_raw(5), measurement_digest_hex, "root-1");

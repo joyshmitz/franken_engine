@@ -8,15 +8,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use frankenengine_engine::rgc_test_harness::{
     ArtifactBundleCorrelationSignature, ArtifactBundleValidationErrorCode,
     ArtifactBundleValidationFinding, ArtifactBundleValidationReport, ArtifactValidationErrorCode,
-    ArtifactValidationFinding, ArtifactValidationReport, ArtifactWriteError,
-    BaselineE2eScenario, BaselineScenarioDomain, BaselineScenarioOutcome,
-    DeterministicTestContext, EventInput, FixtureLoadError, HarnessLane, HarnessLogEvent,
-    HarnessRunManifest, RGC_ARTIFACT_BUNDLE_VALIDATOR_SCHEMA_VERSION,
-    RGC_ARTIFACT_VALIDATOR_SCHEMA_VERSION, RGC_BASELINE_E2E_SCENARIO_SCHEMA_VERSION,
-    RGC_TEST_HARNESS_EVENT_SCHEMA_VERSION, RGC_TEST_HARNESS_MANIFEST_SCHEMA_VERSION,
-    RGC_TEST_HARNESS_SCHEMA_VERSION, baseline_e2e_scenario_registry, load_json_fixture,
-    select_baseline_e2e_scenarios, validate_artifact_bundle, validate_artifact_triad,
-    write_artifact_triad,
+    ArtifactValidationFinding, ArtifactValidationReport, ArtifactWriteError, BaselineE2eScenario,
+    BaselineScenarioDomain, BaselineScenarioOutcome, DeterministicTestContext, EventInput,
+    FixtureLoadError, HarnessLane, HarnessLogEvent, HarnessRunManifest,
+    RGC_ARTIFACT_BUNDLE_VALIDATOR_SCHEMA_VERSION, RGC_ARTIFACT_VALIDATOR_SCHEMA_VERSION,
+    RGC_BASELINE_E2E_SCENARIO_SCHEMA_VERSION, RGC_TEST_HARNESS_EVENT_SCHEMA_VERSION,
+    RGC_TEST_HARNESS_MANIFEST_SCHEMA_VERSION, RGC_TEST_HARNESS_SCHEMA_VERSION,
+    baseline_e2e_scenario_registry, load_json_fixture, select_baseline_e2e_scenarios,
+    validate_artifact_bundle, validate_artifact_triad, write_artifact_triad,
 };
 use serde::{Deserialize, Serialize};
 
@@ -875,18 +874,24 @@ fn validate_triad_malformed_manifest_and_events_reports_all_issues() {
 
     let report = validate_artifact_triad(&run_dir);
     assert!(!report.valid);
-    assert!(report
-        .findings
-        .iter()
-        .any(|f| f.error_code == ArtifactValidationErrorCode::MissingRequiredField));
-    assert!(report
-        .findings
-        .iter()
-        .any(|f| f.error_code == ArtifactValidationErrorCode::InvalidEventJson));
-    assert!(report
-        .findings
-        .iter()
-        .any(|f| f.error_code == ArtifactValidationErrorCode::EmptyCommands));
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.error_code == ArtifactValidationErrorCode::MissingRequiredField)
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.error_code == ArtifactValidationErrorCode::InvalidEventJson)
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.error_code == ArtifactValidationErrorCode::EmptyCommands)
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -929,9 +934,12 @@ fn bundle_validator_rejects_nonexistent_directory() {
     let root = PathBuf::from("/tmp/franken_engine_nonexistent_bundle_integration");
     let report = validate_artifact_bundle(&root, &[HarnessLane::Runtime]);
     assert!(!report.valid);
-    assert!(report.findings.iter().any(
-        |f| f.error_code == ArtifactBundleValidationErrorCode::MissingBundleDirectory
-    ));
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.error_code == ArtifactBundleValidationErrorCode::MissingBundleDirectory)
+    );
 }
 
 #[test]
@@ -940,10 +948,12 @@ fn bundle_validator_rejects_empty_directory() {
     fs::create_dir_all(&root).expect("create dir");
     let report = validate_artifact_bundle(&root, &[HarnessLane::Runtime]);
     assert!(!report.valid);
-    assert!(report
-        .findings
-        .iter()
-        .any(|f| f.error_code == ArtifactBundleValidationErrorCode::MissingRunDirectory));
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.error_code == ArtifactBundleValidationErrorCode::MissingRunDirectory)
+    );
 }
 
 #[test]
@@ -954,9 +964,12 @@ fn bundle_validator_rejects_file_path_instead_of_directory() {
     fs::write(&file_path, "data").expect("write file");
     let report = validate_artifact_bundle(&file_path, &[]);
     assert!(!report.valid);
-    assert!(report.findings.iter().any(
-        |f| f.error_code == ArtifactBundleValidationErrorCode::MissingBundleDirectory
-    ));
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.error_code == ArtifactBundleValidationErrorCode::MissingBundleDirectory)
+    );
 }
 
 #[test]
@@ -964,8 +977,20 @@ fn bundle_validator_detects_cross_lane_seed_mismatch() {
     let root = temp_dir("bundle_seed_mismatch");
     let bundle_dir = root.join("bundle");
     fs::create_dir_all(&bundle_dir).expect("create dir");
-    write_lane_triad(&bundle_dir, "rgc-seed-test", "fix-shared", HarnessLane::Runtime, 100);
-    write_lane_triad(&bundle_dir, "rgc-seed-test", "fix-shared", HarnessLane::Security, 200);
+    write_lane_triad(
+        &bundle_dir,
+        "rgc-seed-test",
+        "fix-shared",
+        HarnessLane::Runtime,
+        100,
+    );
+    write_lane_triad(
+        &bundle_dir,
+        "rgc-seed-test",
+        "fix-shared",
+        HarnessLane::Security,
+        200,
+    );
     let report =
         validate_artifact_bundle(&bundle_dir, &[HarnessLane::Runtime, HarnessLane::Security]);
     assert!(!report.valid);
@@ -980,8 +1005,20 @@ fn bundle_validator_detects_cross_lane_scenario_mismatch() {
     let root = temp_dir("bundle_scenario_mismatch");
     let bundle_dir = root.join("bundle");
     fs::create_dir_all(&bundle_dir).expect("create dir");
-    write_lane_triad(&bundle_dir, "scenario-alpha", "fix-shared", HarnessLane::Runtime, 42);
-    write_lane_triad(&bundle_dir, "scenario-beta", "fix-shared", HarnessLane::Security, 42);
+    write_lane_triad(
+        &bundle_dir,
+        "scenario-alpha",
+        "fix-shared",
+        HarnessLane::Runtime,
+        42,
+    );
+    write_lane_triad(
+        &bundle_dir,
+        "scenario-beta",
+        "fix-shared",
+        HarnessLane::Security,
+        42,
+    );
     let report =
         validate_artifact_bundle(&bundle_dir, &[HarnessLane::Runtime, HarnessLane::Security]);
     assert!(!report.valid);
@@ -996,12 +1033,20 @@ fn bundle_validator_accepts_valid_multi_lane_bundle() {
     let root = temp_dir("bundle_valid_multi_lane");
     let bundle_dir = root.join("bundle");
     fs::create_dir_all(&bundle_dir).expect("create dir");
-    for lane in [HarnessLane::Runtime, HarnessLane::Security, HarnessLane::E2e] {
+    for lane in [
+        HarnessLane::Runtime,
+        HarnessLane::Security,
+        HarnessLane::E2e,
+    ] {
         write_lane_triad(&bundle_dir, "rgc-happy", "fix-shared", lane, 6202);
     }
     let report = validate_artifact_bundle(
         &bundle_dir,
-        &[HarnessLane::Runtime, HarnessLane::Security, HarnessLane::E2e],
+        &[
+            HarnessLane::Runtime,
+            HarnessLane::Security,
+            HarnessLane::E2e,
+        ],
     );
     assert!(
         report.valid,
@@ -1009,7 +1054,9 @@ fn bundle_validator_accepts_valid_multi_lane_bundle() {
         report.findings
     );
     assert_eq!(report.lane_reports.len(), 3);
-    let sig = report.correlation_signature.expect("signature should be present");
+    let sig = report
+        .correlation_signature
+        .expect("signature should be present");
     assert_eq!(sig.scenario_id, "rgc-happy");
     assert_eq!(sig.seed, 6202);
     assert_eq!(sig.lanes.len(), 3);
@@ -1020,7 +1067,13 @@ fn bundle_validator_no_required_lanes_accepts_any_present() {
     let root = temp_dir("bundle_no_req_lanes");
     let bundle_dir = root.join("bundle");
     fs::create_dir_all(&bundle_dir).expect("create dir");
-    write_lane_triad(&bundle_dir, "rgc-no-req", "fix-shared", HarnessLane::Runtime, 1);
+    write_lane_triad(
+        &bundle_dir,
+        "rgc-no-req",
+        "fix-shared",
+        HarnessLane::Runtime,
+        1,
+    );
     let report = validate_artifact_bundle(&bundle_dir, &[]);
     assert!(
         report.valid,

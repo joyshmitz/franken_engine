@@ -6,8 +6,8 @@ use frankenengine_engine::parser_multi_engine_harness::{
     AstNormalizationAdapter, DiagnosticNormalizationAdapter, DriftCategory, DriftSeverity,
     EngineOutcomeKind, GovernanceActionKind, HarnessEngineKind, HarnessEngineSpec,
     MultiEngineHarnessConfig, MultiEngineHarnessError, build_drift_governance_action_report,
-    derive_drift_governance_actions, derive_engine_seed, has_critical_drift,
-    load_fixture_catalog, run_multi_engine_harness,
+    derive_drift_governance_actions, derive_engine_seed, has_critical_drift, load_fixture_catalog,
+    run_multi_engine_harness,
 };
 
 type EngineSignature = (String, String, bool, bool);
@@ -449,7 +449,10 @@ fn derive_engine_seed_varies_with_master_seed() {
 fn derive_engine_seed_swap_fixture_engine_yields_different_seed() {
     let a = derive_engine_seed(42, "alpha", "beta");
     let b = derive_engine_seed(42, "beta", "alpha");
-    assert_ne!(a, b, "swapping fixture_id and engine_id should produce different seeds");
+    assert_ne!(
+        a, b,
+        "swapping fixture_id and engine_id should produce different seeds"
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -462,7 +465,10 @@ fn load_fixture_catalog_succeeds_for_default_catalog() {
         .join("tests/fixtures/parser_phase0_semantic_fixtures.json");
     let catalog = load_fixture_catalog(&path).expect("load should succeed");
     assert!(!catalog.fixtures.is_empty());
-    assert_eq!(catalog.schema_version, "franken-engine.parser-phase0.semantic-fixtures.v1");
+    assert_eq!(
+        catalog.schema_version,
+        "franken-engine.parser-phase0.semantic-fixtures.v1"
+    );
     assert_eq!(catalog.parser_mode, "scalar_reference");
 }
 
@@ -510,7 +516,10 @@ fn load_fixture_catalog_rejects_wrong_parser_mode() {
     });
     fs::write(&path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
     let err = load_fixture_catalog(&path).expect_err("wrong parser mode should fail");
-    assert!(matches!(err, MultiEngineHarnessError::InvalidCatalogParserMode { .. }));
+    assert!(matches!(
+        err,
+        MultiEngineHarnessError::InvalidCatalogParserMode { .. }
+    ));
     let _ = fs::remove_file(&path);
 }
 
@@ -625,7 +634,10 @@ fn harness_report_contains_all_required_fields() {
     let config = test_config(99);
     let report = run_multi_engine_harness(&config).expect("run should succeed");
 
-    assert_eq!(report.schema_version, "franken-engine.parser-multi-engine.report.v2");
+    assert_eq!(
+        report.schema_version,
+        "franken-engine.parser-multi-engine.report.v2"
+    );
     assert!(report.run_id.starts_with("sha256:"));
     assert!(!report.generated_at_utc.is_empty());
     assert_eq!(report.trace_id, config.trace_id);
@@ -704,8 +716,14 @@ fn harness_canonical_engine_outcomes_have_ast_normalization_artifacts() {
         if engine_result.engine_id == "franken_canonical" {
             let first = &engine_result.first_run;
             if first.kind == EngineOutcomeKind::Hash {
-                let ast = first.normalized_ast.as_ref().expect("canonical should have normalized_ast");
-                assert_eq!(ast.adapter, AstNormalizationAdapter::CanonicalHashPassthroughV1);
+                let ast = first
+                    .normalized_ast
+                    .as_ref()
+                    .expect("canonical should have normalized_ast");
+                assert_eq!(
+                    ast.adapter,
+                    AstNormalizationAdapter::CanonicalHashPassthroughV1
+                );
                 assert!(ast.canonical_hash.starts_with("sha256:"));
             }
         }
@@ -739,8 +757,10 @@ fn harness_engine_results_are_deterministic_for_canonical_parser() {
 fn engine_outcome_kind_is_comparable_and_distinct() {
     assert_ne!(EngineOutcomeKind::Hash, EngineOutcomeKind::Error);
     // Derive(Ord) means variants are ordered by declaration order
-    assert!(EngineOutcomeKind::Hash <= EngineOutcomeKind::Error
-        || EngineOutcomeKind::Error <= EngineOutcomeKind::Hash);
+    assert!(
+        EngineOutcomeKind::Hash <= EngineOutcomeKind::Error
+            || EngineOutcomeKind::Error <= EngineOutcomeKind::Hash
+    );
 }
 
 #[test]
@@ -755,7 +775,8 @@ fn ast_normalization_adapter_serde_round_trip() {
 fn diagnostic_normalization_adapter_serde_round_trip() {
     let adapter = DiagnosticNormalizationAdapter::ParserDiagnosticsTaxonomyV1;
     let json = serde_json::to_string(&adapter).expect("serialize");
-    let recovered: DiagnosticNormalizationAdapter = serde_json::from_str(&json).expect("deserialize");
+    let recovered: DiagnosticNormalizationAdapter =
+        serde_json::from_str(&json).expect("deserialize");
     assert_eq!(adapter, recovered);
 }
 
@@ -912,9 +933,20 @@ fn harness_multi_fixture_summary_aggregates_correctly() {
     config.fixture_limit = Some(4);
     let report = run_multi_engine_harness(&config).expect("run should succeed");
 
-    assert_eq!(report.summary.total_fixtures, report.fixture_results.len() as u64);
-    let equivalent_count = report.fixture_results.iter().filter(|f| f.equivalent_across_engines).count() as u64;
-    let divergent_count = report.fixture_results.iter().filter(|f| !f.equivalent_across_engines).count() as u64;
+    assert_eq!(
+        report.summary.total_fixtures,
+        report.fixture_results.len() as u64
+    );
+    let equivalent_count = report
+        .fixture_results
+        .iter()
+        .filter(|f| f.equivalent_across_engines)
+        .count() as u64;
+    let divergent_count = report
+        .fixture_results
+        .iter()
+        .filter(|f| !f.equivalent_across_engines)
+        .count() as u64;
     assert_eq!(report.summary.equivalent_fixtures, equivalent_count);
     assert_eq!(report.summary.divergent_fixtures, divergent_count);
 }
@@ -996,7 +1028,10 @@ fn harness_diagnostic_normalization_artifacts_have_taxonomy_version() {
     let fixture = &report.fixture_results[0];
     for engine_result in &fixture.engine_results {
         if let Some(diag) = &engine_result.first_run.normalized_diagnostic {
-            assert_eq!(diag.adapter, DiagnosticNormalizationAdapter::ParserDiagnosticsTaxonomyV1);
+            assert_eq!(
+                diag.adapter,
+                DiagnosticNormalizationAdapter::ParserDiagnosticsTaxonomyV1
+            );
             assert!(!diag.diagnostic_code.is_empty());
             assert!(diag.canonical_hash.starts_with("sha256:"));
         }
@@ -1032,7 +1067,10 @@ fn default_config_has_two_engines() {
     let config = MultiEngineHarnessConfig::with_defaults(1);
     assert_eq!(config.engines.len(), 2);
     assert_eq!(config.engines[0].kind, HarnessEngineKind::FrankenCanonical);
-    assert_eq!(config.engines[1].kind, HarnessEngineKind::FixtureExpectedHash);
+    assert_eq!(
+        config.engines[1].kind,
+        HarnessEngineKind::FixtureExpectedHash
+    );
 }
 
 #[test]
@@ -1080,7 +1118,10 @@ fn repro_pack_contains_minimization_stats() {
 
     let report = run_multi_engine_harness(&config).expect("run should succeed");
     let fixture = &report.fixture_results[0];
-    let repro = fixture.repro_pack.as_ref().expect("repro pack should exist");
+    let repro = fixture
+        .repro_pack
+        .as_ref()
+        .expect("repro pack should exist");
 
     assert!(!repro.minimized_source.is_empty() || repro.minimization.minimized_bytes == 0);
     assert!(repro.minimization.original_bytes > 0);

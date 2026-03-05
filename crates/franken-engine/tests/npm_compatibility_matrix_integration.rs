@@ -7,11 +7,11 @@
 use std::collections::BTreeSet;
 
 use frankenengine_engine::npm_compatibility_matrix::{
-    CohortTier, IncompatibilityRecord, IncompatibilityRootCause,
-    IncompatibilitySeverity, MatrixVerdict, ModuleSystemReq, NpmCompatibilityError,
-    NpmCompatibilityMatrix, PackageCategory, PackageRecord, PackageTestOutcome,
-    PackageTestResult, RemediationState, BEAD_ID, COMPONENT, MAX_INCOMPATIBILITIES_PER_PACKAGE,
-    SCHEMA_VERSION, seed_tier1_critical_packages, seed_tier2_popular_packages,
+    BEAD_ID, COMPONENT, CohortTier, IncompatibilityRecord, IncompatibilityRootCause,
+    IncompatibilitySeverity, MAX_INCOMPATIBILITIES_PER_PACKAGE, MatrixVerdict, ModuleSystemReq,
+    NpmCompatibilityError, NpmCompatibilityMatrix, PackageCategory, PackageRecord,
+    PackageTestOutcome, PackageTestResult, RemediationState, SCHEMA_VERSION,
+    seed_tier1_critical_packages, seed_tier2_popular_packages,
 };
 
 // ---------------------------------------------------------------------------
@@ -32,7 +32,12 @@ fn make_package(name: &str, tier: CohortTier) -> PackageRecord {
     }
 }
 
-fn make_test_result(name: &str, outcome: PackageTestOutcome, total: u32, passed: u32) -> PackageTestResult {
+fn make_test_result(
+    name: &str,
+    outcome: PackageTestOutcome,
+    total: u32,
+    passed: u32,
+) -> PackageTestResult {
     PackageTestResult {
         package_name: name.to_string(),
         version: "1.0.0".to_string(),
@@ -94,7 +99,10 @@ fn empty_matrix_properties() {
 
 #[test]
 fn default_equals_new() {
-    assert_eq!(NpmCompatibilityMatrix::default(), NpmCompatibilityMatrix::new());
+    assert_eq!(
+        NpmCompatibilityMatrix::default(),
+        NpmCompatibilityMatrix::new()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -104,9 +112,12 @@ fn default_equals_new() {
 #[test]
 fn add_packages_across_tiers() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_package(make_package("a", CohortTier::Tier1Critical)).unwrap();
-    m.add_package(make_package("b", CohortTier::Tier2Popular)).unwrap();
-    m.add_package(make_package("c", CohortTier::Tier3LongTail)).unwrap();
+    m.add_package(make_package("a", CohortTier::Tier1Critical))
+        .unwrap();
+    m.add_package(make_package("b", CohortTier::Tier2Popular))
+        .unwrap();
+    m.add_package(make_package("c", CohortTier::Tier3LongTail))
+        .unwrap();
     assert_eq!(m.total_packages(), 3);
     assert_eq!(m.packages_in_tier(CohortTier::Tier1Critical).len(), 1);
     assert_eq!(m.packages_in_tier(CohortTier::Tier2Popular).len(), 1);
@@ -116,9 +127,12 @@ fn add_packages_across_tiers() {
 #[test]
 fn packages_stored_sorted_by_name() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_package(make_package("zlib", CohortTier::Tier1Critical)).unwrap();
-    m.add_package(make_package("axios", CohortTier::Tier1Critical)).unwrap();
-    m.add_package(make_package("lodash", CohortTier::Tier1Critical)).unwrap();
+    m.add_package(make_package("zlib", CohortTier::Tier1Critical))
+        .unwrap();
+    m.add_package(make_package("axios", CohortTier::Tier1Critical))
+        .unwrap();
+    m.add_package(make_package("lodash", CohortTier::Tier1Critical))
+        .unwrap();
     let names: Vec<&str> = m.packages.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(names, vec!["axios", "lodash", "zlib"]);
 }
@@ -126,9 +140,14 @@ fn packages_stored_sorted_by_name() {
 #[test]
 fn duplicate_package_name_rejected() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_package(make_package("express", CohortTier::Tier1Critical)).unwrap();
-    let err = m.add_package(make_package("express", CohortTier::Tier2Popular)).unwrap_err();
-    assert!(matches!(*err, NpmCompatibilityError::DuplicatePackage { ref name } if name == "express"));
+    m.add_package(make_package("express", CohortTier::Tier1Critical))
+        .unwrap();
+    let err = m
+        .add_package(make_package("express", CohortTier::Tier2Popular))
+        .unwrap_err();
+    assert!(
+        matches!(*err, NpmCompatibilityError::DuplicatePackage { ref name } if name == "express")
+    );
 }
 
 #[test]
@@ -157,8 +176,15 @@ fn types_only_package_flag() {
 #[test]
 fn record_test_result_for_known_package() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_package(make_package("lodash", CohortTier::Tier1Critical)).unwrap();
-    m.record_test_result(make_test_result("lodash", PackageTestOutcome::Compatible, 100, 100)).unwrap();
+    m.add_package(make_package("lodash", CohortTier::Tier1Critical))
+        .unwrap();
+    m.record_test_result(make_test_result(
+        "lodash",
+        PackageTestOutcome::Compatible,
+        100,
+        100,
+    ))
+    .unwrap();
     let r = m.get_test_result("lodash").unwrap();
     assert_eq!(r.outcome, PackageTestOutcome::Compatible);
     assert_eq!(r.pass_rate_millionths(), 1_000_000);
@@ -167,18 +193,44 @@ fn record_test_result_for_known_package() {
 #[test]
 fn test_result_for_unknown_package_rejected() {
     let mut m = NpmCompatibilityMatrix::new();
-    let err = m.record_test_result(make_test_result("ghost", PackageTestOutcome::Compatible, 10, 10)).unwrap_err();
-    assert!(matches!(*err, NpmCompatibilityError::PackageNotFound { .. }));
+    let err = m
+        .record_test_result(make_test_result(
+            "ghost",
+            PackageTestOutcome::Compatible,
+            10,
+            10,
+        ))
+        .unwrap_err();
+    assert!(matches!(
+        *err,
+        NpmCompatibilityError::PackageNotFound { .. }
+    ));
 }
 
 #[test]
 fn test_result_replaces_previous() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_package(make_package("lodash", CohortTier::Tier1Critical)).unwrap();
-    m.record_test_result(make_test_result("lodash", PackageTestOutcome::Incompatible, 10, 0)).unwrap();
-    m.record_test_result(make_test_result("lodash", PackageTestOutcome::Compatible, 10, 10)).unwrap();
+    m.add_package(make_package("lodash", CohortTier::Tier1Critical))
+        .unwrap();
+    m.record_test_result(make_test_result(
+        "lodash",
+        PackageTestOutcome::Incompatible,
+        10,
+        0,
+    ))
+    .unwrap();
+    m.record_test_result(make_test_result(
+        "lodash",
+        PackageTestOutcome::Compatible,
+        10,
+        10,
+    ))
+    .unwrap();
     assert_eq!(m.test_results.len(), 1);
-    assert_eq!(m.get_test_result("lodash").unwrap().outcome, PackageTestOutcome::Compatible);
+    assert_eq!(
+        m.get_test_result("lodash").unwrap().outcome,
+        PackageTestOutcome::Compatible
+    );
 }
 
 #[test]
@@ -200,8 +252,14 @@ fn pass_rate_zero_when_no_tests() {
 #[test]
 fn add_incompatibility_and_query() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_package(make_package("express", CohortTier::Tier1Critical)).unwrap();
-    m.add_incompatibility(make_incompat("INC-001", "express", IncompatibilitySeverity::Blocker)).unwrap();
+    m.add_package(make_package("express", CohortTier::Tier1Critical))
+        .unwrap();
+    m.add_incompatibility(make_incompat(
+        "INC-001",
+        "express",
+        IncompatibilitySeverity::Blocker,
+    ))
+    .unwrap();
     assert_eq!(m.total_incompatibilities(), 1);
     assert_eq!(m.incompatibilities_for_package("express").len(), 1);
     assert_eq!(m.incompatibilities_for_package("lodash").len(), 0);
@@ -211,9 +269,23 @@ fn add_incompatibility_and_query() {
 #[test]
 fn duplicate_incompatibility_id_rejected() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_incompatibility(make_incompat("INC-001", "a", IncompatibilitySeverity::Minor)).unwrap();
-    let err = m.add_incompatibility(make_incompat("INC-001", "b", IncompatibilitySeverity::Major)).unwrap_err();
-    assert!(matches!(*err, NpmCompatibilityError::DuplicateIncompatibility { .. }));
+    m.add_incompatibility(make_incompat(
+        "INC-001",
+        "a",
+        IncompatibilitySeverity::Minor,
+    ))
+    .unwrap();
+    let err = m
+        .add_incompatibility(make_incompat(
+            "INC-001",
+            "b",
+            IncompatibilitySeverity::Major,
+        ))
+        .unwrap_err();
+    assert!(matches!(
+        *err,
+        NpmCompatibilityError::DuplicateIncompatibility { .. }
+    ));
 }
 
 #[test]
@@ -224,14 +296,20 @@ fn incompatibility_overflow_guard() {
             &format!("INC-{i:04}"),
             "pkg",
             IncompatibilitySeverity::Minor,
-        )).unwrap();
+        ))
+        .unwrap();
     }
-    let err = m.add_incompatibility(make_incompat(
-        "INC-OVERFLOW",
-        "pkg",
-        IncompatibilitySeverity::Minor,
-    )).unwrap_err();
-    assert!(matches!(*err, NpmCompatibilityError::IncompatibilityOverflow { .. }));
+    let err = m
+        .add_incompatibility(make_incompat(
+            "INC-OVERFLOW",
+            "pkg",
+            IncompatibilitySeverity::Minor,
+        ))
+        .unwrap_err();
+    assert!(matches!(
+        *err,
+        NpmCompatibilityError::IncompatibilityOverflow { .. }
+    ));
 }
 
 #[test]
@@ -249,9 +327,21 @@ fn incompatibilities_by_root_cause() {
     inc3.root_cause = IncompatibilityRootCause::V8SpecificApi;
     m.add_incompatibility(inc3).unwrap();
 
-    assert_eq!(m.incompatibilities_by_root_cause(IncompatibilityRootCause::NativeAddon).len(), 2);
-    assert_eq!(m.incompatibilities_by_root_cause(IncompatibilityRootCause::V8SpecificApi).len(), 1);
-    assert_eq!(m.incompatibilities_by_root_cause(IncompatibilityRootCause::CjsRequireDivergence).len(), 0);
+    assert_eq!(
+        m.incompatibilities_by_root_cause(IncompatibilityRootCause::NativeAddon)
+            .len(),
+        2
+    );
+    assert_eq!(
+        m.incompatibilities_by_root_cause(IncompatibilityRootCause::V8SpecificApi)
+            .len(),
+        1
+    );
+    assert_eq!(
+        m.incompatibilities_by_root_cause(IncompatibilityRootCause::CjsRequireDivergence)
+            .len(),
+        0
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -261,13 +351,22 @@ fn incompatibilities_by_root_cause() {
 #[test]
 fn full_remediation_lifecycle() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_incompatibility(make_incompat("INC-001", "a", IncompatibilitySeverity::Blocker)).unwrap();
+    m.add_incompatibility(make_incompat(
+        "INC-001",
+        "a",
+        IncompatibilitySeverity::Blocker,
+    ))
+    .unwrap();
 
     // Discovered -> Triaged -> InProgress -> FixLanded -> Verified
-    m.transition_remediation("INC-001", RemediationState::Triaged, 2).unwrap();
-    m.transition_remediation("INC-001", RemediationState::InProgress, 3).unwrap();
-    m.transition_remediation("INC-001", RemediationState::FixLanded, 4).unwrap();
-    m.transition_remediation("INC-001", RemediationState::Verified, 5).unwrap();
+    m.transition_remediation("INC-001", RemediationState::Triaged, 2)
+        .unwrap();
+    m.transition_remediation("INC-001", RemediationState::InProgress, 3)
+        .unwrap();
+    m.transition_remediation("INC-001", RemediationState::FixLanded, 4)
+        .unwrap();
+    m.transition_remediation("INC-001", RemediationState::Verified, 5)
+        .unwrap();
 
     assert!(m.open_incompatibilities().is_empty());
     let inc = &m.incompatibilities[0];
@@ -278,54 +377,103 @@ fn full_remediation_lifecycle() {
 #[test]
 fn wont_fix_from_triaged() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_incompatibility(make_incompat("INC-001", "a", IncompatibilitySeverity::Minor)).unwrap();
-    m.transition_remediation("INC-001", RemediationState::Triaged, 2).unwrap();
-    m.transition_remediation("INC-001", RemediationState::WontFix, 3).unwrap();
+    m.add_incompatibility(make_incompat(
+        "INC-001",
+        "a",
+        IncompatibilitySeverity::Minor,
+    ))
+    .unwrap();
+    m.transition_remediation("INC-001", RemediationState::Triaged, 2)
+        .unwrap();
+    m.transition_remediation("INC-001", RemediationState::WontFix, 3)
+        .unwrap();
     assert!(m.open_incompatibilities().is_empty());
 }
 
 #[test]
 fn wont_fix_from_in_progress() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_incompatibility(make_incompat("INC-001", "a", IncompatibilitySeverity::Minor)).unwrap();
-    m.transition_remediation("INC-001", RemediationState::Triaged, 2).unwrap();
-    m.transition_remediation("INC-001", RemediationState::InProgress, 3).unwrap();
-    m.transition_remediation("INC-001", RemediationState::WontFix, 4).unwrap();
+    m.add_incompatibility(make_incompat(
+        "INC-001",
+        "a",
+        IncompatibilitySeverity::Minor,
+    ))
+    .unwrap();
+    m.transition_remediation("INC-001", RemediationState::Triaged, 2)
+        .unwrap();
+    m.transition_remediation("INC-001", RemediationState::InProgress, 3)
+        .unwrap();
+    m.transition_remediation("INC-001", RemediationState::WontFix, 4)
+        .unwrap();
     assert!(m.open_incompatibilities().is_empty());
 }
 
 #[test]
 fn regression_fix_landed_back_to_in_progress() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_incompatibility(make_incompat("INC-001", "a", IncompatibilitySeverity::Major)).unwrap();
-    m.transition_remediation("INC-001", RemediationState::Triaged, 2).unwrap();
-    m.transition_remediation("INC-001", RemediationState::InProgress, 3).unwrap();
-    m.transition_remediation("INC-001", RemediationState::FixLanded, 4).unwrap();
-    m.transition_remediation("INC-001", RemediationState::InProgress, 5).unwrap();
+    m.add_incompatibility(make_incompat(
+        "INC-001",
+        "a",
+        IncompatibilitySeverity::Major,
+    ))
+    .unwrap();
+    m.transition_remediation("INC-001", RemediationState::Triaged, 2)
+        .unwrap();
+    m.transition_remediation("INC-001", RemediationState::InProgress, 3)
+        .unwrap();
+    m.transition_remediation("INC-001", RemediationState::FixLanded, 4)
+        .unwrap();
+    m.transition_remediation("INC-001", RemediationState::InProgress, 5)
+        .unwrap();
     assert_eq!(m.open_incompatibilities().len(), 1);
 }
 
 #[test]
 fn invalid_transition_discovered_to_verified() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_incompatibility(make_incompat("INC-001", "a", IncompatibilitySeverity::Minor)).unwrap();
-    let err = m.transition_remediation("INC-001", RemediationState::Verified, 2).unwrap_err();
-    assert!(matches!(*err, NpmCompatibilityError::InvalidStateTransition { .. }));
+    m.add_incompatibility(make_incompat(
+        "INC-001",
+        "a",
+        IncompatibilitySeverity::Minor,
+    ))
+    .unwrap();
+    let err = m
+        .transition_remediation("INC-001", RemediationState::Verified, 2)
+        .unwrap_err();
+    assert!(matches!(
+        *err,
+        NpmCompatibilityError::InvalidStateTransition { .. }
+    ));
 }
 
 #[test]
 fn invalid_transition_discovered_to_in_progress() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_incompatibility(make_incompat("INC-001", "a", IncompatibilitySeverity::Minor)).unwrap();
-    let err = m.transition_remediation("INC-001", RemediationState::InProgress, 2).unwrap_err();
-    assert!(matches!(*err, NpmCompatibilityError::InvalidStateTransition { .. }));
+    m.add_incompatibility(make_incompat(
+        "INC-001",
+        "a",
+        IncompatibilitySeverity::Minor,
+    ))
+    .unwrap();
+    let err = m
+        .transition_remediation("INC-001", RemediationState::InProgress, 2)
+        .unwrap_err();
+    assert!(matches!(
+        *err,
+        NpmCompatibilityError::InvalidStateTransition { .. }
+    ));
 }
 
 #[test]
 fn transition_nonexistent_incompatibility() {
     let mut m = NpmCompatibilityMatrix::new();
-    let err = m.transition_remediation("INC-999", RemediationState::Triaged, 1).unwrap_err();
-    assert!(matches!(*err, NpmCompatibilityError::IncompatibilityNotFound { .. }));
+    let err = m
+        .transition_remediation("INC-999", RemediationState::Triaged, 1)
+        .unwrap_err();
+    assert!(matches!(
+        *err,
+        NpmCompatibilityError::IncompatibilityNotFound { .. }
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -336,13 +484,15 @@ fn transition_nonexistent_incompatibility() {
 fn cohort_summary_all_compatible() {
     let mut m = NpmCompatibilityMatrix::new();
     for i in 0..5 {
-        m.add_package(make_package(&format!("pkg-{i}"), CohortTier::Tier1Critical)).unwrap();
+        m.add_package(make_package(&format!("pkg-{i}"), CohortTier::Tier1Critical))
+            .unwrap();
         m.record_test_result(make_test_result(
             &format!("pkg-{i}"),
             PackageTestOutcome::Compatible,
             10,
             10,
-        )).unwrap();
+        ))
+        .unwrap();
     }
     let s = m.cohort_summary(CohortTier::Tier1Critical);
     assert_eq!(s.compatible_count, 5);
@@ -354,7 +504,8 @@ fn cohort_summary_all_compatible() {
 fn cohort_summary_below_threshold() {
     let mut m = NpmCompatibilityMatrix::new();
     for i in 0..10 {
-        m.add_package(make_package(&format!("pkg-{i}"), CohortTier::Tier1Critical)).unwrap();
+        m.add_package(make_package(&format!("pkg-{i}"), CohortTier::Tier1Critical))
+            .unwrap();
     }
     // Only 5/10 compatible = 50% < 95% threshold
     for i in 0..5 {
@@ -363,7 +514,8 @@ fn cohort_summary_below_threshold() {
             PackageTestOutcome::Compatible,
             10,
             10,
-        )).unwrap();
+        ))
+        .unwrap();
     }
     for i in 5..10 {
         m.record_test_result(make_test_result(
@@ -371,7 +523,8 @@ fn cohort_summary_below_threshold() {
             PackageTestOutcome::Incompatible,
             10,
             0,
-        )).unwrap();
+        ))
+        .unwrap();
     }
     let s = m.cohort_summary(CohortTier::Tier1Critical);
     assert!(!s.unblocked);
@@ -381,10 +534,19 @@ fn cohort_summary_below_threshold() {
 #[test]
 fn cohort_summary_skipped_excluded_from_denominator() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_package(make_package("a", CohortTier::Tier2Popular)).unwrap();
-    m.add_package(make_package("b", CohortTier::Tier2Popular)).unwrap();
-    m.record_test_result(make_test_result("a", PackageTestOutcome::Compatible, 10, 10)).unwrap();
-    m.record_test_result(make_test_result("b", PackageTestOutcome::Skipped, 0, 0)).unwrap();
+    m.add_package(make_package("a", CohortTier::Tier2Popular))
+        .unwrap();
+    m.add_package(make_package("b", CohortTier::Tier2Popular))
+        .unwrap();
+    m.record_test_result(make_test_result(
+        "a",
+        PackageTestOutcome::Compatible,
+        10,
+        10,
+    ))
+    .unwrap();
+    m.record_test_result(make_test_result("b", PackageTestOutcome::Skipped, 0, 0))
+        .unwrap();
     let s = m.cohort_summary(CohortTier::Tier2Popular);
     assert_eq!(s.compatibility_rate_millionths, 1_000_000); // 1/1 testable
 }
@@ -400,9 +562,20 @@ fn cohort_summary_empty_tier() {
 #[test]
 fn cohort_summary_tracks_blockers() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_package(make_package("a", CohortTier::Tier1Critical)).unwrap();
-    m.add_incompatibility(make_incompat("INC-001", "a", IncompatibilitySeverity::Blocker)).unwrap();
-    m.add_incompatibility(make_incompat("INC-002", "a", IncompatibilitySeverity::Minor)).unwrap();
+    m.add_package(make_package("a", CohortTier::Tier1Critical))
+        .unwrap();
+    m.add_incompatibility(make_incompat(
+        "INC-001",
+        "a",
+        IncompatibilitySeverity::Blocker,
+    ))
+    .unwrap();
+    m.add_incompatibility(make_incompat(
+        "INC-002",
+        "a",
+        IncompatibilitySeverity::Minor,
+    ))
+    .unwrap();
     let s = m.cohort_summary(CohortTier::Tier1Critical);
     assert_eq!(s.open_incompatibilities, 2);
     assert_eq!(s.blocker_count, 1);
@@ -416,7 +589,8 @@ fn cohort_summary_tracks_blockers() {
 fn verdict_insufficient_when_mostly_untested() {
     let mut m = NpmCompatibilityMatrix::new();
     for i in 0..10 {
-        m.add_package(make_package(&format!("pkg-{i}"), CohortTier::Tier1Critical)).unwrap();
+        m.add_package(make_package(&format!("pkg-{i}"), CohortTier::Tier1Critical))
+            .unwrap();
     }
     // Only 4 tested
     for i in 0..4 {
@@ -425,7 +599,8 @@ fn verdict_insufficient_when_mostly_untested() {
             PackageTestOutcome::Compatible,
             10,
             10,
-        )).unwrap();
+        ))
+        .unwrap();
     }
     assert_eq!(m.verdict(), MatrixVerdict::InsufficientData);
 }
@@ -434,20 +609,44 @@ fn verdict_insufficient_when_mostly_untested() {
 fn verdict_partially_unblocked() {
     let mut m = NpmCompatibilityMatrix::new();
     // Tier 1: 100% compatible
-    m.add_package(make_package("a", CohortTier::Tier1Critical)).unwrap();
-    m.record_test_result(make_test_result("a", PackageTestOutcome::Compatible, 10, 10)).unwrap();
+    m.add_package(make_package("a", CohortTier::Tier1Critical))
+        .unwrap();
+    m.record_test_result(make_test_result(
+        "a",
+        PackageTestOutcome::Compatible,
+        10,
+        10,
+    ))
+    .unwrap();
     // Tier 2: 0% compatible
-    m.add_package(make_package("b", CohortTier::Tier2Popular)).unwrap();
-    m.record_test_result(make_test_result("b", PackageTestOutcome::Incompatible, 10, 0)).unwrap();
+    m.add_package(make_package("b", CohortTier::Tier2Popular))
+        .unwrap();
+    m.record_test_result(make_test_result(
+        "b",
+        PackageTestOutcome::Incompatible,
+        10,
+        0,
+    ))
+    .unwrap();
     assert_eq!(m.verdict(), MatrixVerdict::PartiallyUnblocked);
 }
 
 #[test]
 fn verdict_all_unblocked_multi_tier() {
     let mut m = NpmCompatibilityMatrix::new();
-    for (name, tier) in [("a", CohortTier::Tier1Critical), ("b", CohortTier::Tier2Popular), ("c", CohortTier::Tier3LongTail)] {
+    for (name, tier) in [
+        ("a", CohortTier::Tier1Critical),
+        ("b", CohortTier::Tier2Popular),
+        ("c", CohortTier::Tier3LongTail),
+    ] {
         m.add_package(make_package(name, tier)).unwrap();
-        m.record_test_result(make_test_result(name, PackageTestOutcome::Compatible, 10, 10)).unwrap();
+        m.record_test_result(make_test_result(
+            name,
+            PackageTestOutcome::Compatible,
+            10,
+            10,
+        ))
+        .unwrap();
     }
     assert_eq!(m.verdict(), MatrixVerdict::AllCohortsUnblocked);
 }
@@ -459,11 +658,23 @@ fn verdict_all_unblocked_multi_tier() {
 #[test]
 fn root_cause_distribution_with_resolved() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_incompatibility(make_incompat("INC-001", "a", IncompatibilitySeverity::Blocker)).unwrap();
-    m.add_incompatibility(make_incompat("INC-002", "b", IncompatibilitySeverity::Minor)).unwrap();
+    m.add_incompatibility(make_incompat(
+        "INC-001",
+        "a",
+        IncompatibilitySeverity::Blocker,
+    ))
+    .unwrap();
+    m.add_incompatibility(make_incompat(
+        "INC-002",
+        "b",
+        IncompatibilitySeverity::Minor,
+    ))
+    .unwrap();
     // Resolve INC-001
-    m.transition_remediation("INC-001", RemediationState::Triaged, 2).unwrap();
-    m.transition_remediation("INC-001", RemediationState::WontFix, 3).unwrap();
+    m.transition_remediation("INC-001", RemediationState::Triaged, 2)
+        .unwrap();
+    m.transition_remediation("INC-001", RemediationState::WontFix, 3)
+        .unwrap();
     let dist = m.root_cause_distribution();
     // Only INC-002 still open
     assert_eq!(dist.len(), 1);
@@ -473,9 +684,24 @@ fn root_cause_distribution_with_resolved() {
 #[test]
 fn top_blockers_sorted_by_weighted_score() {
     let mut m = NpmCompatibilityMatrix::new();
-    m.add_incompatibility(make_incompat("INC-001", "heavy", IncompatibilitySeverity::Blocker)).unwrap();
-    m.add_incompatibility(make_incompat("INC-002", "heavy", IncompatibilitySeverity::Major)).unwrap();
-    m.add_incompatibility(make_incompat("INC-003", "light", IncompatibilitySeverity::Cosmetic)).unwrap();
+    m.add_incompatibility(make_incompat(
+        "INC-001",
+        "heavy",
+        IncompatibilitySeverity::Blocker,
+    ))
+    .unwrap();
+    m.add_incompatibility(make_incompat(
+        "INC-002",
+        "heavy",
+        IncompatibilitySeverity::Major,
+    ))
+    .unwrap();
+    m.add_incompatibility(make_incompat(
+        "INC-003",
+        "light",
+        IncompatibilitySeverity::Cosmetic,
+    ))
+    .unwrap();
     let top = m.top_blockers(10);
     assert_eq!(top[0].0, "heavy");
     assert!(top[0].1 > top[1].1);
@@ -489,7 +715,8 @@ fn top_blockers_respects_limit() {
             &format!("INC-{i:03}"),
             &format!("pkg-{i}"),
             IncompatibilitySeverity::Minor,
-        )).unwrap();
+        ))
+        .unwrap();
     }
     assert_eq!(m.top_blockers(5).len(), 5);
 }
@@ -500,15 +727,18 @@ fn packages_by_downloads_ordering() {
     m.add_package(PackageRecord {
         weekly_downloads: 100,
         ..make_package("low", CohortTier::Tier3LongTail)
-    }).unwrap();
+    })
+    .unwrap();
     m.add_package(PackageRecord {
         weekly_downloads: 50_000_000,
         ..make_package("high", CohortTier::Tier1Critical)
-    }).unwrap();
+    })
+    .unwrap();
     m.add_package(PackageRecord {
         weekly_downloads: 5_000_000,
         ..make_package("mid", CohortTier::Tier2Popular)
-    }).unwrap();
+    })
+    .unwrap();
     let sorted = m.packages_by_downloads();
     assert_eq!(sorted[0].name, "high");
     assert_eq!(sorted[1].name, "mid");
@@ -565,7 +795,11 @@ fn seed_cohorts_no_name_collision() {
     let t2 = seed_tier2_popular_packages();
     let mut names = BTreeSet::new();
     for pkg in t1.iter().chain(t2.iter()) {
-        assert!(names.insert(&pkg.name), "duplicate package name: {}", pkg.name);
+        assert!(
+            names.insert(&pkg.name),
+            "duplicate package name: {}",
+            pkg.name
+        );
     }
 }
 
@@ -588,16 +822,32 @@ fn seed_packages_can_be_added_to_matrix() {
 #[test]
 fn hash_deterministic_across_insertion_order() {
     let mut m1 = NpmCompatibilityMatrix::new();
-    m1.add_package(make_package("z", CohortTier::Tier1Critical)).unwrap();
-    m1.add_package(make_package("a", CohortTier::Tier1Critical)).unwrap();
-    m1.add_incompatibility(make_incompat("INC-B", "z", IncompatibilitySeverity::Minor)).unwrap();
-    m1.add_incompatibility(make_incompat("INC-A", "a", IncompatibilitySeverity::Blocker)).unwrap();
+    m1.add_package(make_package("z", CohortTier::Tier1Critical))
+        .unwrap();
+    m1.add_package(make_package("a", CohortTier::Tier1Critical))
+        .unwrap();
+    m1.add_incompatibility(make_incompat("INC-B", "z", IncompatibilitySeverity::Minor))
+        .unwrap();
+    m1.add_incompatibility(make_incompat(
+        "INC-A",
+        "a",
+        IncompatibilitySeverity::Blocker,
+    ))
+    .unwrap();
 
     let mut m2 = NpmCompatibilityMatrix::new();
-    m2.add_package(make_package("a", CohortTier::Tier1Critical)).unwrap();
-    m2.add_package(make_package("z", CohortTier::Tier1Critical)).unwrap();
-    m2.add_incompatibility(make_incompat("INC-A", "a", IncompatibilitySeverity::Blocker)).unwrap();
-    m2.add_incompatibility(make_incompat("INC-B", "z", IncompatibilitySeverity::Minor)).unwrap();
+    m2.add_package(make_package("a", CohortTier::Tier1Critical))
+        .unwrap();
+    m2.add_package(make_package("z", CohortTier::Tier1Critical))
+        .unwrap();
+    m2.add_incompatibility(make_incompat(
+        "INC-A",
+        "a",
+        IncompatibilitySeverity::Blocker,
+    ))
+    .unwrap();
+    m2.add_incompatibility(make_incompat("INC-B", "z", IncompatibilitySeverity::Minor))
+        .unwrap();
 
     let h1 = m1.normalize_and_hash();
     let h2 = m2.normalize_and_hash();
@@ -607,11 +857,13 @@ fn hash_deterministic_across_insertion_order() {
 #[test]
 fn hash_changes_with_data() {
     let mut m1 = NpmCompatibilityMatrix::new();
-    m1.add_package(make_package("a", CohortTier::Tier1Critical)).unwrap();
+    m1.add_package(make_package("a", CohortTier::Tier1Critical))
+        .unwrap();
     let h1 = m1.normalize_and_hash();
 
     let mut m2 = NpmCompatibilityMatrix::new();
-    m2.add_package(make_package("b", CohortTier::Tier1Critical)).unwrap();
+    m2.add_package(make_package("b", CohortTier::Tier1Critical))
+        .unwrap();
     let h2 = m2.normalize_and_hash();
 
     assert_ne!(h1, h2);
@@ -627,8 +879,19 @@ fn serde_round_trip_full_matrix() {
     for pkg in seed_tier1_critical_packages() {
         m.add_package(pkg).unwrap();
     }
-    m.add_incompatibility(make_incompat("INC-001", "express", IncompatibilitySeverity::Blocker)).unwrap();
-    m.record_test_result(make_test_result("lodash", PackageTestOutcome::Compatible, 500, 500)).unwrap();
+    m.add_incompatibility(make_incompat(
+        "INC-001",
+        "express",
+        IncompatibilitySeverity::Blocker,
+    ))
+    .unwrap();
+    m.record_test_result(make_test_result(
+        "lodash",
+        PackageTestOutcome::Compatible,
+        500,
+        500,
+    ))
+    .unwrap();
 
     let json = serde_json::to_string_pretty(&m).unwrap();
     let deserialized: NpmCompatibilityMatrix = serde_json::from_str(&json).unwrap();
@@ -717,13 +980,34 @@ fn all_as_str_methods_nonempty() {
 
 #[test]
 fn display_matches_as_str_for_all_types() {
-    assert_eq!(format!("{}", CohortTier::Tier1Critical), CohortTier::Tier1Critical.as_str());
-    assert_eq!(format!("{}", PackageCategory::Framework), PackageCategory::Framework.as_str());
-    assert_eq!(format!("{}", IncompatibilitySeverity::Major), IncompatibilitySeverity::Major.as_str());
-    assert_eq!(format!("{}", IncompatibilityRootCause::NativeAddon), IncompatibilityRootCause::NativeAddon.as_str());
-    assert_eq!(format!("{}", RemediationState::FixLanded), RemediationState::FixLanded.as_str());
-    assert_eq!(format!("{}", PackageTestOutcome::PartiallyCompatible), PackageTestOutcome::PartiallyCompatible.as_str());
-    assert_eq!(format!("{}", MatrixVerdict::PartiallyUnblocked), MatrixVerdict::PartiallyUnblocked.as_str());
+    assert_eq!(
+        format!("{}", CohortTier::Tier1Critical),
+        CohortTier::Tier1Critical.as_str()
+    );
+    assert_eq!(
+        format!("{}", PackageCategory::Framework),
+        PackageCategory::Framework.as_str()
+    );
+    assert_eq!(
+        format!("{}", IncompatibilitySeverity::Major),
+        IncompatibilitySeverity::Major.as_str()
+    );
+    assert_eq!(
+        format!("{}", IncompatibilityRootCause::NativeAddon),
+        IncompatibilityRootCause::NativeAddon.as_str()
+    );
+    assert_eq!(
+        format!("{}", RemediationState::FixLanded),
+        RemediationState::FixLanded.as_str()
+    );
+    assert_eq!(
+        format!("{}", PackageTestOutcome::PartiallyCompatible),
+        PackageTestOutcome::PartiallyCompatible.as_str()
+    );
+    assert_eq!(
+        format!("{}", MatrixVerdict::PartiallyUnblocked),
+        MatrixVerdict::PartiallyUnblocked.as_str()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -732,10 +1016,14 @@ fn display_matches_as_str_for_all_types() {
 
 #[test]
 fn tier_thresholds_ordered() {
-    assert!(CohortTier::Tier1Critical.unblock_threshold_millionths()
-        > CohortTier::Tier2Popular.unblock_threshold_millionths());
-    assert!(CohortTier::Tier2Popular.unblock_threshold_millionths()
-        > CohortTier::Tier3LongTail.unblock_threshold_millionths());
+    assert!(
+        CohortTier::Tier1Critical.unblock_threshold_millionths()
+            > CohortTier::Tier2Popular.unblock_threshold_millionths()
+    );
+    assert!(
+        CohortTier::Tier2Popular.unblock_threshold_millionths()
+            > CohortTier::Tier3LongTail.unblock_threshold_millionths()
+    );
 }
 
 #[test]
@@ -758,8 +1046,14 @@ fn error_display_messages_nonempty() {
         NpmCompatibilityError::DuplicateIncompatibility { id: "INC-1".into() },
         NpmCompatibilityError::PackageNotFound { name: "y".into() },
         NpmCompatibilityError::IncompatibilityNotFound { id: "INC-2".into() },
-        NpmCompatibilityError::CohortOverflow { tier: CohortTier::Tier1Critical, count: 501 },
-        NpmCompatibilityError::IncompatibilityOverflow { package: "z".into(), count: 101 },
+        NpmCompatibilityError::CohortOverflow {
+            tier: CohortTier::Tier1Critical,
+            count: 501,
+        },
+        NpmCompatibilityError::IncompatibilityOverflow {
+            package: "z".into(),
+            count: 101,
+        },
         NpmCompatibilityError::InvalidStateTransition {
             id: "INC-3".into(),
             from: RemediationState::Discovered,
@@ -772,6 +1066,9 @@ fn error_display_messages_nonempty() {
     ];
     for err in &errors {
         let msg = format!("{err}");
-        assert!(!msg.is_empty(), "error display should not be empty: {err:?}");
+        assert!(
+            !msg.is_empty(),
+            "error display should not be empty: {err:?}"
+        );
     }
 }

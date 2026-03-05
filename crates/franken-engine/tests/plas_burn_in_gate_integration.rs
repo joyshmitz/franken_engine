@@ -1,7 +1,8 @@
 use frankenengine_engine::capability_witness::RollbackToken;
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::plas_burn_in_gate::{
-    BurnInFailureCode, BurnInLifecycleState, BurnInSession, BurnInSessionConfig, BurnInThresholds,
+    BurnInDecisionArtifact, BurnInError, BurnInFailureCode, BurnInLifecycleState, BurnInLogEvent,
+    BurnInMetrics, BurnInScorecardMetrics, BurnInSession, BurnInSessionConfig, BurnInThresholds,
     ExtensionRiskClass, RollbackProofArtifacts, ShadowObservation,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
@@ -308,4 +309,348 @@ fn burn_in_session_config_serde_round_trip() {
     let json = serde_json::to_string(&config).expect("serialize");
     let recovered: BurnInSessionConfig = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(config, recovered);
+}
+
+// ────────────────────────────────────────────────────────────
+// Lifecycle state transitions
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn lifecycle_state_is_terminal_classification() {
+    assert!(!BurnInLifecycleState::ShadowStart.is_terminal());
+    assert!(!BurnInLifecycleState::ShadowEvaluation.is_terminal());
+    assert!(!BurnInLifecycleState::PromotionGate.is_terminal());
+    assert!(BurnInLifecycleState::AutoEnforcement.is_terminal());
+    assert!(BurnInLifecycleState::Rejection.is_terminal());
+}
+
+#[test]
+fn begin_shadow_evaluation_requires_shadow_start() {
+    let mut session = BurnInSession::new(session_config(), complete_rollback_artifacts()).unwrap();
+    session.begin_shadow_evaluation().unwrap();
+    // Calling again from ShadowEvaluation should fail
+    let err = session.begin_shadow_evaluation().expect_err("should fail");
+    assert!(!err.to_string().is_empty());
+}
+
+#[test]
+fn evaluate_promotion_gate_requires_shadow_evaluation() {
+    let session = BurnInSession::new(session_config(), complete_rollback_artifacts()).unwrap();
+    // Cannot evaluate gate before beginning shadow evaluation
+    // Create a mutable binding and try - the session doesn't support it from ShadowStart
+    let mut session = session;
+    let err = session
+        .evaluate_promotion_gate(1_002_000)
+        .expect_err("should fail");
+    assert!(!err.to_string().is_empty());
+}
+
+// ────────────────────────────────────────────────────────────
+// Metrics
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn metrics_track_observations_correctly() {
+    let mut session = BurnInSession::new(session_config(), complete_rollback_artifacts()).unwrap();
+    session.begin_shadow_evaluation().unwrap();
+
+    session
+        .record_shadow_observation(observation("obs-1", 1_000_100, true, false))
+        .unwrap();
+    session
+        .record_shadow_observation(observation("obs-2", 1_000_200, false, false))
+        .unwrap();
+    session
+        .record_shadow_observation(observation("obs-3", 1_000_300, true, true))
+        .unwrap();
+
+    let metrics = session.metrics();
+    assert!(metrics.shadow_success_rate_millionths() > 0);
+    assert!(metrics.elapsed_ns() > 0);
+}
+
+#[test]
+fn metrics_serde_round_trip() {
+    let mut session = BurnInSession::new(session_config(), complete_rollback_artifacts()).unwrap();
+    session.begin_shadow_evaluation().unwrap();
+    session
+        .record_shadow_observation(observation("obs-1", 1_000_100, true, false))
+        .unwrap();
+    let metrics = session.metrics().clone();
+    let json = serde_json::to_string(&metrics).expect("serialize");
+    let recovered: BurnInMetrics = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(metrics, recovered);
+}
+
+// ────────────────────────────────────────────────────────────
+// Scorecard metrics
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn scorecard_metrics_reflect_session_state() {
+    let mut session = BurnInSession::new(session_config(), complete_rollback_artifacts()).unwrap();
+    session.begin_shadow_evaluation().unwrap();
+
+    for idx in 0..5 {
+        session
+            .record_shadow_observation(observation(
+                &format!("obs-{idx}"),
+                1_000_100 + (idx as u64) * 100,
+                true,
+                false,
+            ))
+            .unwrap();
+    }
+
+    let scorecard = session.scorecard_metrics();
+    let json = serde_json::to_string(&scorecard).expect("serialize");
+    let recovered: BurnInScorecardMetrics = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(scorecard, recovered);
+}
+
+// ────────────────────────────────────────────────────────────
+// Decision artifact
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn decision_artifact_none_before_gate_evaluation() {
+    let mut session = BurnInSession::new(session_config(), complete_rollback_artifacts()).unwrap();
+    assert!(session.decision_artifact().is_none());
+    session.begin_shadow_evaluation().unwrap();
+    assert!(session.decision_artifact().is_none());
+}
+
+#[test]
+fn decision_artifact_serde_round_trip() {
+    let mut session = BurnInSession::new(session_config(), complete_rollback_artifacts()).unwrap();
+    session.begin_shadow_evaluation().unwrap();
+    for idx in 0..5 {
+        session
+            .record_shadow_observation(observation(
+                &format!("obs-{idx}"),
+                1_000_100 + (idx as u64) * 100,
+                true,
+                false,
+            ))
+            .unwrap();
+    }
+    let artifact = session.evaluate_promotion_gate(1_002_000).unwrap();
+    let json = serde_json::to_string(&artifact).expect("serialize");
+    let recovered: BurnInDecisionArtifact = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(artifact.outcome, recovered.outcome);
+    assert_eq!(artifact.decision_hash, recovered.decision_hash);
+}
+
+#[test]
+fn decision_artifact_is_deterministic() {
+    let mut s1 = BurnInSession::new(session_config(), complete_rollback_artifacts()).unwrap();
+    let mut s2 = BurnInSession::new(session_config(), complete_rollback_artifacts()).unwrap();
+
+    for session in [&mut s1, &mut s2] {
+        session.begin_shadow_evaluation().unwrap();
+        for idx in 0..5 {
+            session
+                .record_shadow_observation(observation(
+                    &format!("obs-{idx}"),
+                    1_000_100 + (idx as u64) * 100,
+                    true,
+                    false,
+                ))
+                .unwrap();
+        }
+    }
+
+    let a1 = s1.evaluate_promotion_gate(1_002_000).unwrap();
+    let a2 = s2.evaluate_promotion_gate(1_002_000).unwrap();
+    assert_eq!(a1.decision_hash, a2.decision_hash);
+    assert_eq!(a1.outcome, a2.outcome);
+}
+
+// ────────────────────────────────────────────────────────────
+// Log events
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn logs_accumulate_during_lifecycle() {
+    let mut session = BurnInSession::new(session_config(), complete_rollback_artifacts()).unwrap();
+    let initial_log_count = session.logs().len();
+    session.begin_shadow_evaluation().unwrap();
+    session
+        .record_shadow_observation(observation("obs-1", 1_000_100, true, false))
+        .unwrap();
+    assert!(session.logs().len() > initial_log_count);
+}
+
+#[test]
+fn log_event_serde_round_trip() {
+    let mut session = BurnInSession::new(session_config(), complete_rollback_artifacts()).unwrap();
+    session.begin_shadow_evaluation().unwrap();
+    session
+        .record_shadow_observation(observation("obs-1", 1_000_100, true, false))
+        .unwrap();
+    let log = session.logs().last().unwrap().clone();
+    let json = serde_json::to_string(&log).expect("serialize");
+    let recovered: BurnInLogEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(log, recovered);
+}
+
+// ────────────────────────────────────────────────────────────
+// Rollback proof artifacts
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn rollback_artifacts_complete_is_valid() {
+    let artifacts = complete_rollback_artifacts();
+    assert!(artifacts.is_complete());
+}
+
+#[test]
+fn rollback_artifacts_incomplete_missing_receipt() {
+    let mut artifacts = complete_rollback_artifacts();
+    artifacts.transition_receipt_ref = None;
+    assert!(!artifacts.is_complete());
+}
+
+#[test]
+fn rollback_artifacts_incomplete_missing_rollback_command() {
+    let mut artifacts = complete_rollback_artifacts();
+    artifacts.rollback_command_tested = false;
+    assert!(!artifacts.is_complete());
+}
+
+#[test]
+fn rollback_artifacts_serde_round_trip() {
+    let artifacts = complete_rollback_artifacts();
+    let json = serde_json::to_string(&artifacts).expect("serialize");
+    let recovered: RollbackProofArtifacts = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(artifacts, recovered);
+}
+
+// ────────────────────────────────────────────────────────────
+// BurnInThresholds
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn burn_in_thresholds_serde_round_trip() {
+    let thresholds = BurnInThresholds::for_risk_class(ExtensionRiskClass::High);
+    let json = serde_json::to_string(&thresholds).expect("serialize");
+    let recovered: BurnInThresholds = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(thresholds, recovered);
+}
+
+#[test]
+fn burn_in_thresholds_for_risk_class_all_valid() {
+    for risk_class in [
+        ExtensionRiskClass::Low,
+        ExtensionRiskClass::Standard,
+        ExtensionRiskClass::High,
+    ] {
+        let t = BurnInThresholds::for_risk_class(risk_class);
+        assert!(t.min_shadow_success_millionths <= 1_000_000);
+        assert!(t.max_false_deny_millionths <= 1_000_000);
+        assert!(t.min_shadow_observations > 0);
+    }
+}
+
+// ────────────────────────────────────────────────────────────
+// BurnInError
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn burn_in_error_serde_round_trip() {
+    let errors = vec![
+        BurnInError::InvalidConfig {
+            detail: "bad threshold".to_string(),
+        },
+        BurnInError::InvalidObservation {
+            detail: "non-monotonic".to_string(),
+        },
+    ];
+    for err in &errors {
+        let json = serde_json::to_string(&err).expect("serialize");
+        let recovered: BurnInError = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(err, &recovered);
+        assert!(!err.to_string().is_empty());
+    }
+}
+
+// ────────────────────────────────────────────────────────────
+// Promotion gate: insufficient observations
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn promotion_gate_rejects_insufficient_observations() {
+    let mut session = BurnInSession::new(session_config(), complete_rollback_artifacts()).unwrap();
+    session.begin_shadow_evaluation().unwrap();
+
+    // Only 3 observations, need 5
+    for idx in 0..3 {
+        session
+            .record_shadow_observation(observation(
+                &format!("obs-{idx}"),
+                1_000_100 + (idx as u64) * 100,
+                true,
+                false,
+            ))
+            .unwrap();
+    }
+
+    let artifact = session.evaluate_promotion_gate(1_002_000).unwrap();
+    assert_eq!(session.lifecycle_state(), BurnInLifecycleState::Rejection);
+    assert!(
+        artifact
+            .failure_codes
+            .contains(&BurnInFailureCode::InsufficientShadowObservations)
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// Promotion gate: insufficient duration
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn promotion_gate_rejects_insufficient_duration() {
+    let mut cfg = session_config();
+    cfg.thresholds.min_shadow_duration_ns = 1_000_000;
+
+    let mut session = BurnInSession::new(cfg, complete_rollback_artifacts()).unwrap();
+    session.begin_shadow_evaluation().unwrap();
+
+    // All observations within a very short window
+    for idx in 0..5 {
+        session
+            .record_shadow_observation(observation(
+                &format!("obs-{idx}"),
+                1_000_001 + idx as u64,
+                true,
+                false,
+            ))
+            .unwrap();
+    }
+
+    let artifact = session.evaluate_promotion_gate(1_000_010).unwrap();
+    assert_eq!(session.lifecycle_state(), BurnInLifecycleState::Rejection);
+    assert!(
+        artifact
+            .failure_codes
+            .contains(&BurnInFailureCode::InsufficientShadowDuration)
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// Failure code error_code uniqueness
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn failure_code_error_codes_are_unique() {
+    let codes = [
+        BurnInFailureCode::EarlyTerminationFalseDeny,
+        BurnInFailureCode::InsufficientShadowDuration,
+        BurnInFailureCode::InsufficientShadowObservations,
+        BurnInFailureCode::ShadowSuccessRateBelowThreshold,
+        BurnInFailureCode::FalseDenyEnvelopeExceeded,
+        BurnInFailureCode::RollbackProofArtifactsMissing,
+    ];
+    let unique: std::collections::BTreeSet<&str> = codes.iter().map(|c| c.error_code()).collect();
+    assert_eq!(unique.len(), codes.len());
 }

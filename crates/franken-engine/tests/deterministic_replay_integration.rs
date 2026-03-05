@@ -1423,18 +1423,8 @@ fn failover_records_all_reason_types() {
 #[test]
 fn replay_multi_event_mixed_divergences() {
     let mut trace = NondeterminismTrace::new("mixed");
-    trace.capture(
-        NondeterminismSource::TimerRead,
-        vec![1],
-        100,
-        "clk",
-    );
-    trace.capture(
-        NondeterminismSource::ThreadSchedule,
-        vec![2],
-        200,
-        "sched",
-    );
+    trace.capture(NondeterminismSource::TimerRead, vec![1], 100, "clk");
+    trace.capture(NondeterminismSource::ThreadSchedule, vec![2], 200, "sched");
     trace.capture(
         NondeterminismSource::LaneSelectionRandom,
         vec![3],

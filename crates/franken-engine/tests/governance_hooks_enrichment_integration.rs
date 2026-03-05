@@ -30,10 +30,6 @@ fn toml_bytes() -> &'static [u8] {
     b"[runtime]\nmax_fuel = 1000000\nallow_network = false"
 }
 
-fn json_bytes() -> &'static [u8] {
-    b"{\"runtime\":{\"max_fuel\":1000000}}"
-}
-
 fn compile_toml(name: &str, version: u64) -> PolicyCompilationResult {
     compile_policy(
         PolicySource::InlineToml {

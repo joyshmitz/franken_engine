@@ -4,8 +4,8 @@ use frankenengine_engine::hook_effect_contract::{
     ComponentPhaseTracker, DepToken, DepsChange, EffectScheduler, EffectTiming,
     FallbackExecutionRoute, HookEffectContract, HookKind, HookManifest, HookManifestError,
     HookRuleViolation, HookSlot, HookSlotIndex, LegalTransformation, PendingEffect,
-    PhaseTransition, PhaseTransitionError, RenderPhase, SchedulingBoundary,
-    TransformationReceipt, UnsupportedSemanticsTrigger, build_unsupported_semantics_diagnostic,
+    PhaseTransition, PhaseTransitionError, RenderPhase, SchedulingBoundary, TransformationReceipt,
+    UnsupportedSemanticsTrigger, build_unsupported_semantics_diagnostic,
     classify_unsupported_semantics, compare_deps, fallback_route_for_trigger,
     validate_hook_consistency,
 };
@@ -420,7 +420,10 @@ fn compare_deps_empty_is_mount_only() {
 #[test]
 fn compare_deps_same_tokens_is_unchanged() {
     let deps = [DepToken(1), DepToken(2)];
-    assert_eq!(compare_deps(Some(&deps), Some(&deps)), DepsChange::Unchanged);
+    assert_eq!(
+        compare_deps(Some(&deps), Some(&deps)),
+        DepsChange::Unchanged
+    );
 }
 
 #[test]
@@ -664,10 +667,7 @@ fn hook_manifest_validate_deps_on_non_dep_hook_returns_error() {
 
 #[test]
 fn hook_manifest_derive_id_is_deterministic() {
-    let manifest = HookManifest::new(
-        "StableComp",
-        vec![make_slot(0, HookKind::State, None)],
-    );
+    let manifest = HookManifest::new("StableComp", vec![make_slot(0, HookKind::State, None)]);
     let id1 = manifest.derive_id();
     let id2 = manifest.derive_id();
     assert_eq!(id1, id2);
@@ -717,7 +717,11 @@ fn validate_hook_consistency_deps_length_mismatch() {
     );
     let curr = HookManifest::new(
         "App",
-        vec![make_slot(0, HookKind::Effect, Some(vec![DepToken(1), DepToken(2)]))],
+        vec![make_slot(
+            0,
+            HookKind::Effect,
+            Some(vec![DepToken(1), DepToken(2)]),
+        )],
     );
     let violations = validate_hook_consistency(&prev, &curr);
     assert!(
@@ -1024,7 +1028,10 @@ fn phase_transition_validate_illegal() {
         sequence_number: 0,
     };
     let err = transition.validate().expect_err("illegal transition");
-    assert!(matches!(err, PhaseTransitionError::IllegalTransition { .. }));
+    assert!(matches!(
+        err,
+        PhaseTransitionError::IllegalTransition { .. }
+    ));
 }
 
 #[test]

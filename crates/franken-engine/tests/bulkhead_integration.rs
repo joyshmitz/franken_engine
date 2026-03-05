@@ -1003,7 +1003,11 @@ fn config_json_field_names() {
     };
     let json = serde_json::to_value(&cfg).unwrap();
     let obj = json.as_object().unwrap();
-    for key in ["max_concurrent", "max_queue_depth", "pressure_threshold_pct"] {
+    for key in [
+        "max_concurrent",
+        "max_queue_depth",
+        "pressure_threshold_pct",
+    ] {
         assert!(obj.contains_key(key), "missing key: {key}");
     }
     assert_eq!(obj.len(), 3);

@@ -10,8 +10,8 @@
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::ir_contract::{Ir3Module, Ir4Module, WitnessEventKind};
 use frankenengine_engine::proof_specialization_linkage::{
-    ExecutionRecord, InvalidationCause, LinkageEngine, LinkageError, LinkageEvent, LinkageId,
-    LinkageRecord, PerformanceDelta, ProofInputRef, RollbackState, error_code,
+    error_code, ExecutionRecord, InvalidationCause, LinkageEngine, LinkageError, LinkageEvent,
+    LinkageId, LinkageRecord, PerformanceDelta, ProofInputRef, RollbackState,
 };
 use frankenengine_engine::proof_specialization_receipt::{OptimizationClass, ProofType};
 use frankenengine_engine::security_epoch::SecurityEpoch;
@@ -249,6 +249,59 @@ fn attach_to_ir3_epoch_mismatch_error() {
     }
 }
 
+#[test]
+fn attach_to_ir3_at_tick_expired_window_fail_closed() {
+    let mut eng = engine(5);
+    let mut rec = linkage_record("lnk-expire", 5, &["p1"]);
+    rec.rollback.activation_tick = 200;
+    rec.proof_inputs[0].validity_window_ticks = 25; // expires at 225
+    eng.register(rec, "t1").unwrap();
+
+    let mut module = ir3();
+    let lid = LinkageId::new("lnk-expire");
+    let err = eng
+        .attach_to_ir3_at_tick(&lid, &mut module, 225, "t2")
+        .unwrap_err();
+
+    assert_eq!(
+        err,
+        LinkageError::AlreadyInactive {
+            id: "lnk-expire".to_string()
+        }
+    );
+    assert!(module.specialization.is_none());
+    assert!(!eng.get(&lid).unwrap().active);
+
+    let cause = &eng.invalidations()[0].1;
+    match cause {
+        InvalidationCause::PolicyChange { reason } => {
+            assert!(reason.contains("proof_window_expired"));
+            assert!(reason.contains("proof_id=p1"));
+            assert!(reason.contains("expiry_tick=225"));
+            assert!(reason.contains("observed_tick=225"));
+        }
+        other => panic!("expected PolicyChange, got {other:?}"),
+    }
+}
+
+#[test]
+fn attach_to_ir3_at_tick_before_expiry_succeeds() {
+    let mut eng = engine(5);
+    let mut rec = linkage_record("lnk-ok", 5, &["p1"]);
+    rec.rollback.activation_tick = 200;
+    rec.proof_inputs[0].validity_window_ticks = 25; // expires at 225
+    eng.register(rec, "t1").unwrap();
+
+    let mut module = ir3();
+    let lid = LinkageId::new("lnk-ok");
+    eng.attach_to_ir3_at_tick(&lid, &mut module, 224, "t2")
+        .unwrap();
+
+    assert!(module.specialization.is_some());
+    assert!(eng.invalidations().is_empty());
+    assert!(eng.get(&lid).unwrap().active);
+}
+
 // =========================================================================
 // 4. record_execution
 // =========================================================================
@@ -278,11 +331,9 @@ fn record_execution_success_updates_counters_and_ir4() {
     assert_eq!(exec.duration_ticks, 80);
 
     // IR4 updated with specialization id
-    assert!(
-        module
-            .active_specialization_ids
-            .contains(&"lnk-1".to_string())
-    );
+    assert!(module
+        .active_specialization_ids
+        .contains(&"lnk-1".to_string()));
 
     // Engine internal counters
     let stored = eng.get(&lid).unwrap();
@@ -347,6 +398,91 @@ fn record_execution_not_found_error() {
             id: "lnk-missing".to_string()
         }
     );
+}
+
+#[test]
+fn record_execution_inactive_linkage_error() {
+    let mut eng = engine(5);
+    let mut rec = linkage_record("lnk-inactive", 5, &["p1"]);
+    rec.active = false;
+    eng.register(rec, "t1").unwrap();
+
+    let mut module = ir4();
+    let lid = LinkageId::new("lnk-inactive");
+    let err = eng
+        .record_execution(&lid, &mut module, PerformanceDelta::NEUTRAL, "t2")
+        .unwrap_err();
+    assert_eq!(
+        err,
+        LinkageError::AlreadyInactive {
+            id: "lnk-inactive".to_string()
+        }
+    );
+}
+
+#[test]
+fn record_execution_at_tick_expired_window_fail_closed() {
+    let mut eng = engine(5);
+    let mut rec = linkage_record("lnk-expire-exec", 5, &["p1"]);
+    rec.rollback.activation_tick = 200;
+    rec.proof_inputs[0].validity_window_ticks = 25; // expires at 225
+    eng.register(rec, "t1").unwrap();
+
+    let mut module = ir4();
+    let lid = LinkageId::new("lnk-expire-exec");
+    let err = eng
+        .record_execution_at_tick(&lid, &mut module, PerformanceDelta::NEUTRAL, 225, "t2")
+        .unwrap_err();
+
+    assert_eq!(
+        err,
+        LinkageError::AlreadyInactive {
+            id: "lnk-expire-exec".to_string()
+        }
+    );
+    assert!(!eng.get(&lid).unwrap().active);
+
+    let cause = &eng.invalidations()[0].1;
+    match cause {
+        InvalidationCause::PolicyChange { reason } => {
+            assert!(reason.contains("proof_window_expired"));
+            assert!(reason.contains("proof_id=p1"));
+            assert!(reason.contains("expiry_tick=225"));
+            assert!(reason.contains("observed_tick=225"));
+        }
+        other => panic!("expected PolicyChange, got {other:?}"),
+    }
+}
+
+#[test]
+fn record_execution_at_tick_before_expiry_succeeds() {
+    let mut eng = engine(5);
+    let mut rec = linkage_record("lnk-ok-exec", 5, &["p1"]);
+    rec.rollback.activation_tick = 200;
+    rec.proof_inputs[0].validity_window_ticks = 25; // expires at 225
+    eng.register(rec, "t1").unwrap();
+
+    let mut module = ir4();
+    module.instructions_executed = 144;
+    module.duration_ticks = 9;
+    let lid = LinkageId::new("lnk-ok-exec");
+
+    let exec = eng
+        .record_execution_at_tick(
+            &lid,
+            &mut module,
+            PerformanceDelta {
+                speedup_millionths: 1_250_000,
+                instruction_ratio_millionths: 850_000,
+            },
+            224,
+            "t2",
+        )
+        .unwrap();
+
+    assert_eq!(exec.instructions_executed, 144);
+    assert_eq!(exec.duration_ticks, 9);
+    assert_eq!(eng.get(&lid).unwrap().execution_count, 1);
 }
 
 // =========================================================================

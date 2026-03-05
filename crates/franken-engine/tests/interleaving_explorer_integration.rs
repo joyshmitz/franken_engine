@@ -1190,7 +1190,10 @@ fn race_surface_json_field_names() {
     };
     let json = serde_json::to_string(&surface).unwrap();
     for field in &["race_id", "operations", "invariant", "severity"] {
-        assert!(json.contains(field), "RaceSurface JSON missing field: {field}");
+        assert!(
+            json.contains(field),
+            "RaceSurface JSON missing field: {field}"
+        );
     }
 }
 

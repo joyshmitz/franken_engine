@@ -203,3 +203,56 @@ fn runtime_lattice_rejects_denied_receipt_and_keeps_obligation_unused() {
         Some(0)
     );
 }
+
+#[test]
+fn runtime_lattice_rejects_tampered_allow_receipt_signature() {
+    let mut lattice = Ir2FlowLattice::new("policy-ifc-runtime");
+    lattice
+        .register_obligation(DeclassificationObligation {
+            obligation_id: "obl-secret-egress".to_string(),
+            source_label: LabelClass::Secret,
+            target_clearance: Clearance::NeverSink,
+            decision_contract_id: "decision-contract-ifc".to_string(),
+            requires_operator_approval: true,
+            max_uses: 1,
+            use_count: 0,
+        })
+        .expect("register obligation");
+
+    let mut pipeline = DeclassificationPipeline::default();
+    let signing_key = SigningKey::from_bytes([7u8; 32]);
+    let mut tampered_receipt = pipeline
+        .process(
+            &make_request("declass-secret-internal"),
+            &make_policy(),
+            &low_loss(),
+            &signing_key,
+        )
+        .expect("allow receipt");
+    tampered_receipt.policy_evaluation_summary = "tampered summary".to_string();
+
+    let event_count_before = lattice.events().len();
+    let err = lattice
+        .use_declassification_with_receipt(
+            "obl-secret-egress",
+            &tampered_receipt,
+            "trace-ifc-runtime",
+        )
+        .expect_err("tampered receipt must fail closed");
+    match err {
+        FlowLatticeError::FlowBlocked { detail } => {
+            assert!(
+                detail.contains("failed signature verification"),
+                "unexpected error detail: {detail}"
+            );
+        }
+        other => panic!("expected FlowBlocked for tampered receipt, got {other:?}"),
+    }
+    assert_eq!(lattice.events().len(), event_count_before);
+    assert_eq!(
+        lattice
+            .obligation("obl-secret-egress")
+            .map(|ob| ob.use_count),
+        Some(0)
+    );
+}

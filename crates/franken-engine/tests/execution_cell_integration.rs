@@ -840,7 +840,7 @@ fn close_with_pending_obligations_still_finalizes() {
     cell.register_obligation("never-resolved", "will stay pending");
 
     // Even with unresolved obligations, close completes (the region handles draining)
-    let result = cell
+    let _ = cell
         .close(
             &mut cx,
             CancelReason::OperatorShutdown,

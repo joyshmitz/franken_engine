@@ -931,12 +931,8 @@ fn determinism_check_single_returns_true() {
 fn evidence_artifact_is_passed_when_no_divergences() {
     let ep = epoch(5);
     let engine = SpecializationConformanceEngine::new("policy-pass", ep);
-    let artifact = engine.produce_evidence(
-        "pass-run",
-        ContentHash::compute(b"reg"),
-        "test",
-        1_000_000,
-    );
+    let artifact =
+        engine.produce_evidence("pass-run", ContentHash::compute(b"reg"), "test", 1_000_000);
     assert!(artifact.is_passed());
     assert_eq!(artifact.failed_specialization_count(), 0);
 }
@@ -945,12 +941,8 @@ fn evidence_artifact_is_passed_when_no_divergences() {
 fn evidence_artifact_to_jsonl_is_valid_json() {
     let ep = epoch(5);
     let engine = SpecializationConformanceEngine::new("policy-jsonl", ep);
-    let artifact = engine.produce_evidence(
-        "jsonl-run",
-        ContentHash::compute(b"reg"),
-        "test",
-        1_000_000,
-    );
+    let artifact =
+        engine.produce_evidence("jsonl-run", ContentHash::compute(b"reg"), "test", 1_000_000);
     let jsonl = artifact.to_jsonl();
     let _: serde_json::Value = serde_json::from_str(&jsonl).expect("should be valid JSON");
 }
@@ -963,8 +955,7 @@ fn evidence_artifact_to_jsonl_is_valid_json() {
 fn inventory_entry_serde_round_trip() {
     let entry = inventory_entry("serde-test", epoch(3), TransformationType::PathRemoval);
     let json = serde_json::to_string(&entry).expect("serialize");
-    let recovered: SpecializationInventoryEntry =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: SpecializationInventoryEntry = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(entry, recovered);
 }
 

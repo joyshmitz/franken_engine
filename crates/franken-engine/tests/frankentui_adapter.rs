@@ -2,24 +2,35 @@ use std::collections::BTreeMap;
 
 use frankenengine_engine::frankentui_adapter::{
     ActionCandidateView, ActiveSpecializationRowView, AdapterEnvelope, AdapterStream,
-    BenchmarkTrendPointView, BlockedFlowView, CancellationEventView, CancellationKind,
-    CapabilityDeltaDashboardView, CapabilityDeltaReplayJoinPartial, ConfinementProofView,
-    ConfinementStatus, ControlDashboardPartial, ControlDashboardView,
-    ControlPlaneInvariantsDashboardView, ControlPlaneInvariantsPartial, DashboardAlertMetric,
-    DashboardAlertRule, DashboardMetricView, DashboardRefreshPolicy, DashboardSeverity,
-    DecisionOutcomeKind, DeclassificationDecisionView, DeclassificationOutcome, DriverView,
-    EvidenceStreamEntryView, FlowDecisionDashboardView, FlowDecisionPartial, FlowProofCoverageView,
-    FlowSensitivityLevel, FrankentuiViewPayload, IncidentReplayView, LabelMapEdgeView,
-    LabelMapNodeView, LabelMapView, ObligationState, ObligationStatusRowView,
-    PolicyExplanationCardView, PolicyExplanationPartial, ProofInventoryKind, ProofInventoryRowView,
+    BenchmarkTrendPointView, BlockedFlowView, CancellationEventView,
+    CancellationKind, CapabilityDeltaDashboardFilter,
+    CapabilityDeltaDashboardView, CapabilityDeltaPartial,
+    CapabilityDeltaReplayJoinPartial,
+    ConfinementProofView, ConfinementStatus,
+    ControlDashboardPartial, ControlDashboardView, ControlPlaneDashboardFilter,
+    ControlPlaneInvariantsDashboardView, ControlPlaneInvariantsPartial, CoverageTrendPoint,
+    CurrentCapabilityDeltaRowView, DashboardAlertMetric, DashboardAlertRule, DashboardMetricView,
+    DashboardRefreshPolicy, DashboardSeverity, DecisionOutcomeKind, DecisionOutcomesPanelView,
+    DeclassificationDecisionView, DeclassificationOutcome, DriverView, EvidenceStreamEntryView,
+    FlowDecisionDashboardFilter, FlowDecisionDashboardView, FlowDecisionPartial,
+    FlowProofCoverageView, FlowSensitivityLevel, FrankentuiViewPayload, GrantExpiryStatus,
+    IncidentReplayView, LabelMapEdgeView, LabelMapNodeView, LabelMapView,
+    ObligationState, ObligationStatusPanelView, ObligationStatusRowView,
+    OverrideReviewStatus, PolicyExplanationCardView,
+    PolicyExplanationPartial, ProofInventoryKind, ProofInventoryRowView,
+    ProofSpecializationDashboardFilter,
     ProofSpecializationInvalidationReason, ProofSpecializationLineageDashboardView,
-    ProofSpecializationLineagePartial, ProofValidityStatus, RecoveryStatus, RegionLifecycleRowView,
-    ReplacementOpportunityInput, ReplacementProgressDashboardView, ReplacementProgressPartial,
-    ReplacementRiskLevel, ReplayEventView, ReplayHealthPanelView, ReplayHealthStatus,
-    RollbackEventView, RollbackStatus, SafeModeActivationView, SchemaCompatibilityStatus,
-    SchemaVersionPanelView, SlotStatusOverviewRow, SpecializationFallbackEventView,
-    SpecializationFallbackReason, SpecializationInvalidationRowView, ThresholdComparator,
-    UpdateKind,
+    ProofSpecializationLineagePartial, ProofValidityStatus,
+    RecoveryStatus, RegionLifecyclePanelView, RegionLifecycleRowView,
+    ReplacementDashboardFilter, ReplacementOpportunityInput,
+    ReplacementProgressDashboardView, ReplacementProgressPartial, ReplacementRiskLevel,
+    ReplayEventView, ReplayHealthPanelView, ReplayHealthStatus, ReplayStatus, RollbackEventView,
+    RollbackStatus, SafeModeActivationView, SchemaCompatibilityStatus, SchemaVersionPanelView,
+    SlotStatusOverviewRow, SpecializationFallbackEventView, SpecializationFallbackReason,
+    SpecializationInvalidationRowView, ThresholdComparator,
+    UpdateKind, FRANKENTUI_ADAPTER_SCHEMA_VERSION,
+    build_native_coverage_meter, build_specialization_performance_impact,
+    rank_replacement_opportunities,
 };
 
 #[test]
@@ -688,4 +699,1390 @@ fn proof_specialization_lineage_dashboard_round_trips_with_alert_views() {
         }
         other => panic!("expected proof specialization payload, got {other:?}"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: enum serde roundtrips
+// ---------------------------------------------------------------------------
+
+#[test]
+fn adapter_stream_serde_roundtrip_all_variants() {
+    for variant in [
+        AdapterStream::IncidentReplay,
+        AdapterStream::PolicyExplanation,
+        AdapterStream::ControlDashboard,
+        AdapterStream::ControlPlaneInvariantsDashboard,
+        AdapterStream::FlowDecisionDashboard,
+        AdapterStream::CapabilityDeltaDashboard,
+        AdapterStream::ReplacementProgressDashboard,
+        AdapterStream::ProofSpecializationLineageDashboard,
+    ] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: AdapterStream = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+    }
+}
+
+#[test]
+fn update_kind_serde_roundtrip_all_variants() {
+    for variant in [UpdateKind::Snapshot, UpdateKind::Delta, UpdateKind::Heartbeat] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: UpdateKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+    }
+}
+
+#[test]
+fn replay_status_serde_roundtrip_all_variants() {
+    for variant in [
+        ReplayStatus::Running,
+        ReplayStatus::Complete,
+        ReplayStatus::Failed,
+        ReplayStatus::NoEvents,
+    ] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: ReplayStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+    }
+}
+
+#[test]
+fn dashboard_severity_serde_roundtrip_all_variants() {
+    for variant in [
+        DashboardSeverity::Info,
+        DashboardSeverity::Warning,
+        DashboardSeverity::Critical,
+    ] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: DashboardSeverity = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+    }
+}
+
+#[test]
+fn decision_outcome_kind_serde_roundtrip_all_variants() {
+    for variant in [
+        DecisionOutcomeKind::Allow,
+        DecisionOutcomeKind::Deny,
+        DecisionOutcomeKind::Fallback,
+    ] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: DecisionOutcomeKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+    }
+}
+
+#[test]
+fn obligation_state_serde_roundtrip_all_variants() {
+    for variant in [
+        ObligationState::Open,
+        ObligationState::Fulfilled,
+        ObligationState::Failed,
+    ] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: ObligationState = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+    }
+}
+
+#[test]
+fn cancellation_kind_serde_roundtrip_all_variants() {
+    for variant in [
+        CancellationKind::Unload,
+        CancellationKind::Quarantine,
+        CancellationKind::Suspend,
+        CancellationKind::Terminate,
+        CancellationKind::Revocation,
+    ] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: CancellationKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+    }
+}
+
+#[test]
+fn flow_sensitivity_level_serde_roundtrip_all_variants() {
+    for variant in [
+        FlowSensitivityLevel::Low,
+        FlowSensitivityLevel::Medium,
+        FlowSensitivityLevel::High,
+        FlowSensitivityLevel::Critical,
+    ] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: FlowSensitivityLevel = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+    }
+}
+
+#[test]
+fn declassification_outcome_serde_roundtrip_all_variants() {
+    for variant in [DeclassificationOutcome::Approved, DeclassificationOutcome::Denied] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: DeclassificationOutcome = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+    }
+}
+
+#[test]
+fn confinement_status_serde_roundtrip_all_variants() {
+    for variant in [
+        ConfinementStatus::Full,
+        ConfinementStatus::Partial,
+        ConfinementStatus::Degraded,
+    ] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: ConfinementStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+    }
+}
+
+#[test]
+fn replacement_risk_level_serde_roundtrip_all_variants() {
+    for variant in [
+        ReplacementRiskLevel::Low,
+        ReplacementRiskLevel::Medium,
+        ReplacementRiskLevel::High,
+    ] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: ReplacementRiskLevel = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+    }
+}
+
+#[test]
+fn rollback_status_serde_roundtrip_all_variants() {
+    for variant in [
+        RollbackStatus::Investigating,
+        RollbackStatus::Resolved,
+        RollbackStatus::Waived,
+    ] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: RollbackStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+    }
+}
+
+#[test]
+fn proof_inventory_kind_serde_roundtrip_all_variants() {
+    for variant in [
+        ProofInventoryKind::CapabilityWitness,
+        ProofInventoryKind::FlowProof,
+        ProofInventoryKind::ReplayMotif,
+    ] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: ProofInventoryKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+    }
+}
+
+#[test]
+fn proof_validity_status_serde_roundtrip_all_variants() {
+    for variant in [
+        ProofValidityStatus::Valid,
+        ProofValidityStatus::ExpiringSoon,
+        ProofValidityStatus::Expired,
+        ProofValidityStatus::Revoked,
+    ] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: ProofValidityStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+    }
+}
+
+#[test]
+fn override_review_status_serde_roundtrip_all_variants() {
+    for variant in [
+        OverrideReviewStatus::Pending,
+        OverrideReviewStatus::Approved,
+        OverrideReviewStatus::Rejected,
+        OverrideReviewStatus::Waived,
+    ] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: OverrideReviewStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+    }
+}
+
+#[test]
+fn grant_expiry_status_serde_roundtrip_all_variants() {
+    for variant in [
+        GrantExpiryStatus::Active,
+        GrantExpiryStatus::ExpiringSoon,
+        GrantExpiryStatus::Expired,
+        GrantExpiryStatus::NotApplicable,
+    ] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: GrantExpiryStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+    }
+}
+
+#[test]
+fn dashboard_alert_metric_serde_roundtrip_unique_json_names() {
+    let mut names = std::collections::BTreeSet::new();
+    for variant in [
+        DashboardAlertMetric::ObligationFailureRateMillionths,
+        DashboardAlertMetric::ReplayDivergenceCount,
+        DashboardAlertMetric::SafeModeActivationCount,
+        DashboardAlertMetric::CancellationEventCount,
+        DashboardAlertMetric::FallbackActivationCount,
+    ] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: DashboardAlertMetric = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+        names.insert(json);
+    }
+    assert_eq!(names.len(), 5, "all metric variants must have unique JSON names");
+}
+
+#[test]
+fn threshold_comparator_serde_roundtrip_unique_json_names() {
+    let mut names = std::collections::BTreeSet::new();
+    for variant in [
+        ThresholdComparator::GreaterThan,
+        ThresholdComparator::GreaterOrEqual,
+        ThresholdComparator::LessThan,
+        ThresholdComparator::LessOrEqual,
+        ThresholdComparator::Equal,
+    ] {
+        let json = serde_json::to_string(&variant).unwrap();
+        let back: ThresholdComparator = serde_json::from_str(&json).unwrap();
+        assert_eq!(variant, back);
+        names.insert(json);
+    }
+    assert_eq!(names.len(), 5, "all comparator variants must have unique JSON names");
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: from_partial with blank/missing fields
+// ---------------------------------------------------------------------------
+
+#[test]
+fn control_dashboard_from_partial_blank_fields_become_unknown() {
+    let view = ControlDashboardView::from_partial(ControlDashboardPartial {
+        cluster: "   ".to_string(),
+        zone: "".to_string(),
+        security_epoch: None,
+        runtime_mode: " ".to_string(),
+        metrics: Vec::new(),
+        extension_rows: Vec::new(),
+        incident_counts: BTreeMap::new(),
+    });
+    assert_eq!(view.cluster, "unknown");
+    assert_eq!(view.zone, "unknown");
+    assert_eq!(view.runtime_mode, "unknown");
+    assert_eq!(view.security_epoch, 0);
+}
+
+#[test]
+fn policy_explanation_from_partial_blank_ids_become_unknown() {
+    let card = PolicyExplanationCardView::from_partial(PolicyExplanationPartial {
+        decision_id: "  ".to_string(),
+        policy_id: "".to_string(),
+        selected_action: "   ".to_string(),
+        confidence_millionths: None,
+        expected_loss_millionths: None,
+        action_candidates: vec![],
+        key_drivers: vec![],
+    });
+    assert_eq!(card.decision_id, "unknown");
+    assert_eq!(card.policy_id, "unknown");
+    assert_eq!(card.selected_action, "unknown");
+    assert_eq!(card.confidence_millionths, 0);
+    assert_eq!(card.expected_loss_millionths, 0);
+}
+
+#[test]
+fn incident_replay_snapshot_blank_fields_become_unknown() {
+    let replay = IncidentReplayView::snapshot("  ", "  ", vec![]);
+    assert_eq!(replay.trace_id, "unknown");
+    assert_eq!(replay.scenario_name, "unknown");
+    assert_eq!(replay.replay_status, ReplayStatus::NoEvents);
+}
+
+#[test]
+fn incident_replay_snapshot_with_events_is_complete() {
+    let events = vec![ReplayEventView::new(1, "comp", "evt", "ok", 100)];
+    let replay = IncidentReplayView::snapshot("trace-1", "scenario-1", events);
+    assert_eq!(replay.replay_status, ReplayStatus::Complete);
+    assert!(replay.deterministic);
+    assert_eq!(replay.events.len(), 1);
+}
+
+#[test]
+fn replay_event_view_new_blank_fields_become_unknown() {
+    let event = ReplayEventView::new(0, "", "   ", " ", 999);
+    assert_eq!(event.component, "unknown");
+    assert_eq!(event.event, "unknown");
+    assert_eq!(event.outcome, "unknown");
+    assert_eq!(event.timestamp_unix_ms, 999);
+    assert!(event.error_code.is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: ControlPlaneInvariantsDashboardView
+// ---------------------------------------------------------------------------
+
+#[test]
+fn control_plane_invariants_empty_partial_defaults_all_panels() {
+    let view =
+        ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial::default());
+    assert_eq!(view.cluster, "unknown");
+    assert_eq!(view.zone, "unknown");
+    assert!(view.evidence_stream.is_empty());
+    assert!(view.obligation_rows.is_empty());
+    assert!(view.region_rows.is_empty());
+    assert!(view.cancellation_events.is_empty());
+    assert!(view.safe_mode_activations.is_empty());
+    assert_eq!(view.decision_outcomes, DecisionOutcomesPanelView::default());
+    assert_eq!(view.obligation_status, ObligationStatusPanelView::default());
+    assert_eq!(view.region_lifecycle, RegionLifecyclePanelView::default());
+    assert!(view.meets_refresh_sla());
+    assert!(view.triggered_alerts().is_empty());
+}
+
+#[test]
+fn control_plane_invariants_refresh_sla_breach_detected() {
+    let view =
+        ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+            cluster: "prod".to_string(),
+            zone: "us-east-1".to_string(),
+            runtime_mode: "secure".to_string(),
+            generated_at_unix_ms: Some(1_700_000_100_000),
+            refresh_policy: Some(DashboardRefreshPolicy {
+                evidence_stream_refresh_secs: 5,
+                aggregate_refresh_secs: 60,
+            }),
+            evidence_stream_last_updated_unix_ms: Some(1_700_000_093_000),
+            aggregates_last_updated_unix_ms: Some(1_700_000_030_000),
+            ..Default::default()
+        });
+    assert!(!view.meets_refresh_sla());
+}
+
+#[test]
+fn control_plane_invariants_filtered_narrows_by_extension() {
+    let view =
+        ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+            cluster: "prod".to_string(),
+            zone: "us-east-1".to_string(),
+            runtime_mode: "secure".to_string(),
+            generated_at_unix_ms: Some(1_700_000_000_600),
+            evidence_stream: vec![
+                EvidenceStreamEntryView {
+                    trace_id: "t1".to_string(),
+                    decision_id: "d1".to_string(),
+                    policy_id: "p1".to_string(),
+                    action_type: "allow".to_string(),
+                    decision_outcome: DecisionOutcomeKind::Allow,
+                    expected_loss_millionths: 100_000,
+                    extension_id: "ext-a".to_string(),
+                    region_id: "region-1".to_string(),
+                    severity: DashboardSeverity::Info,
+                    component: "guardplane".to_string(),
+                    event: "evaluated".to_string(),
+                    outcome: "allow".to_string(),
+                    error_code: None,
+                    timestamp_unix_ms: 1_700_000_000_550,
+                },
+                EvidenceStreamEntryView {
+                    trace_id: "t2".to_string(),
+                    decision_id: "d2".to_string(),
+                    policy_id: "p2".to_string(),
+                    action_type: "deny".to_string(),
+                    decision_outcome: DecisionOutcomeKind::Deny,
+                    expected_loss_millionths: 500_000,
+                    extension_id: "ext-b".to_string(),
+                    region_id: "region-2".to_string(),
+                    severity: DashboardSeverity::Critical,
+                    component: "guardplane".to_string(),
+                    event: "blocked".to_string(),
+                    outcome: "deny".to_string(),
+                    error_code: Some("FE-001".to_string()),
+                    timestamp_unix_ms: 1_700_000_000_560,
+                },
+            ],
+            ..Default::default()
+        });
+
+    let filtered = view.filtered(&ControlPlaneDashboardFilter {
+        extension_id: Some("ext-a".to_string()),
+        ..Default::default()
+    });
+    assert_eq!(filtered.evidence_stream.len(), 1);
+    assert_eq!(filtered.evidence_stream[0].extension_id, "ext-a");
+}
+
+#[test]
+fn control_plane_invariants_triggered_alerts_fire_on_failure() {
+    let view =
+        ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+            cluster: "prod".to_string(),
+            zone: "us-east-1".to_string(),
+            runtime_mode: "secure".to_string(),
+            generated_at_unix_ms: Some(1_700_000_120_000),
+            obligation_rows: vec![ObligationStatusRowView {
+                obligation_id: "obl-fail".to_string(),
+                extension_id: "ext-a".to_string(),
+                region_id: "region-a".to_string(),
+                state: ObligationState::Failed,
+                severity: DashboardSeverity::Critical,
+                due_at_unix_ms: 1_700_000_121_000,
+                updated_at_unix_ms: 1_700_000_120_100,
+                detail: "timeout".to_string(),
+            }],
+            alert_rules: vec![DashboardAlertRule {
+                rule_id: "alert-failure-rate".to_string(),
+                description: "obligation failure rate > 0".to_string(),
+                metric: DashboardAlertMetric::ObligationFailureRateMillionths,
+                comparator: ThresholdComparator::GreaterThan,
+                threshold: 0,
+                severity: DashboardSeverity::Critical,
+            }],
+            ..Default::default()
+        });
+
+    let alerts = view.triggered_alerts();
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].rule_id, "alert-failure-rate");
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: FlowDecisionDashboardView
+// ---------------------------------------------------------------------------
+
+#[test]
+fn flow_decision_dashboard_filtered_by_sensitivity() {
+    let view = FlowDecisionDashboardView::from_partial(FlowDecisionPartial {
+        cluster: "prod".to_string(),
+        zone: "us-west-1".to_string(),
+        security_epoch: Some(10),
+        generated_at_unix_ms: Some(1_700_000_000_800),
+        label_map: LabelMapView {
+            nodes: vec![LabelMapNodeView {
+                label_id: "pii".to_string(),
+                sensitivity: FlowSensitivityLevel::High,
+                description: "user pii".to_string(),
+                extension_overlays: vec!["ext-a".to_string()],
+            }],
+            edges: vec![],
+        },
+        blocked_flows: vec![
+            BlockedFlowView {
+                flow_id: "f-high".to_string(),
+                extension_id: "ext-a".to_string(),
+                source_label: "pii".to_string(),
+                sink_clearance: "ext".to_string(),
+                sensitivity: FlowSensitivityLevel::High,
+                blocked_reason: "no clearance".to_string(),
+                attempted_exfiltration: false,
+                code_path_ref: "src/a.ts:1".to_string(),
+                extension_context_ref: "ctx-a".to_string(),
+                trace_id: "t1".to_string(),
+                decision_id: "d1".to_string(),
+                policy_id: "p1".to_string(),
+                error_code: None,
+                occurred_at_unix_ms: 1_700_000_000_750,
+            },
+            BlockedFlowView {
+                flow_id: "f-low".to_string(),
+                extension_id: "ext-b".to_string(),
+                source_label: "pub".to_string(),
+                sink_clearance: "ext".to_string(),
+                sensitivity: FlowSensitivityLevel::Low,
+                blocked_reason: "test".to_string(),
+                attempted_exfiltration: false,
+                code_path_ref: "src/b.ts:1".to_string(),
+                extension_context_ref: "ctx-b".to_string(),
+                trace_id: "t2".to_string(),
+                decision_id: "d2".to_string(),
+                policy_id: "p2".to_string(),
+                error_code: None,
+                occurred_at_unix_ms: 1_700_000_000_760,
+            },
+        ],
+        ..Default::default()
+    });
+
+    let filtered = view.filtered(&FlowDecisionDashboardFilter {
+        sensitivity: Some(FlowSensitivityLevel::High),
+        ..Default::default()
+    });
+    assert_eq!(filtered.blocked_flows.len(), 1);
+    assert_eq!(filtered.blocked_flows[0].flow_id, "f-high");
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: CapabilityDeltaDashboardView from_partial
+// ---------------------------------------------------------------------------
+
+#[test]
+fn capability_delta_dashboard_from_partial_computes_over_privilege_ratio() {
+    let view = CapabilityDeltaDashboardView::from_partial(CapabilityDeltaPartial {
+        cluster: "prod".to_string(),
+        zone: "us-east-1".to_string(),
+        security_epoch: Some(44),
+        generated_at_unix_ms: Some(1_700_000_005_000),
+        current_capability_rows: vec![CurrentCapabilityDeltaRowView {
+            extension_id: "ext-a".to_string(),
+            witness_id: "w-a".to_string(),
+            policy_id: "p-a".to_string(),
+            witness_epoch: 44,
+            lifecycle_state: "active".to_string(),
+            active_witness_capabilities: vec!["fs.read".to_string(), "net.fetch".to_string()],
+            manifest_declared_capabilities: vec!["fs.read".to_string()],
+            over_privileged_capabilities: vec!["net.fetch".to_string()],
+            over_privilege_ratio_millionths: 500_000,
+            over_privilege_replay_ref: "ref-a".to_string(),
+            latest_receipt_timestamp_ns: None,
+        }],
+        ..Default::default()
+    });
+
+    assert_eq!(view.current_capability_rows.len(), 1);
+    assert_eq!(
+        view.current_capability_rows[0].over_privilege_ratio_millionths,
+        500_000
+    );
+}
+
+#[test]
+fn capability_delta_dashboard_filtered_by_extension() {
+    let view = CapabilityDeltaDashboardView::from_partial(CapabilityDeltaPartial {
+        cluster: "prod".to_string(),
+        zone: "us-east-1".to_string(),
+        security_epoch: Some(44),
+        generated_at_unix_ms: Some(5000),
+        current_capability_rows: vec![
+            CurrentCapabilityDeltaRowView {
+                extension_id: "ext-a".to_string(),
+                witness_id: "w-a".to_string(),
+                policy_id: "p-a".to_string(),
+                witness_epoch: 44,
+                lifecycle_state: "active".to_string(),
+                active_witness_capabilities: vec!["fs.read".to_string()],
+                manifest_declared_capabilities: vec!["fs.read".to_string()],
+                over_privileged_capabilities: vec![],
+                over_privilege_ratio_millionths: 0,
+                over_privilege_replay_ref: "ref-a".to_string(),
+                latest_receipt_timestamp_ns: None,
+            },
+            CurrentCapabilityDeltaRowView {
+                extension_id: "ext-b".to_string(),
+                witness_id: "w-b".to_string(),
+                policy_id: "p-b".to_string(),
+                witness_epoch: 44,
+                lifecycle_state: "active".to_string(),
+                active_witness_capabilities: vec![],
+                manifest_declared_capabilities: vec![],
+                over_privileged_capabilities: vec![],
+                over_privilege_ratio_millionths: 0,
+                over_privilege_replay_ref: "ref-b".to_string(),
+                latest_receipt_timestamp_ns: None,
+            },
+        ],
+        ..Default::default()
+    });
+
+    let filtered = view.filtered(&CapabilityDeltaDashboardFilter {
+        extension_id: Some("ext-a".to_string()),
+        ..Default::default()
+    });
+    assert_eq!(filtered.current_capability_rows.len(), 1);
+    assert_eq!(filtered.current_capability_rows[0].extension_id, "ext-a");
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: ReplacementProgressDashboardView
+// ---------------------------------------------------------------------------
+
+#[test]
+fn replacement_progress_filtered_by_risk_level() {
+    let view = ReplacementProgressDashboardView::from_partial(ReplacementProgressPartial {
+        cluster: "prod".to_string(),
+        zone: "us-west-2".to_string(),
+        slot_status_overview: vec![
+            SlotStatusOverviewRow {
+                slot_id: "parser".to_string(),
+                slot_kind: "parser".to_string(),
+                implementation_kind: "delegate".to_string(),
+                promotion_status: "candidate".to_string(),
+                risk_level: ReplacementRiskLevel::High,
+                last_transition_unix_ms: 10,
+                health: "blocked".to_string(),
+                lineage_ref: "lr-parser".to_string(),
+            },
+            SlotStatusOverviewRow {
+                slot_id: "gc".to_string(),
+                slot_kind: "garbage_collector".to_string(),
+                implementation_kind: "native".to_string(),
+                promotion_status: "promoted".to_string(),
+                risk_level: ReplacementRiskLevel::Low,
+                last_transition_unix_ms: 11,
+                health: "healthy".to_string(),
+                lineage_ref: "lr-gc".to_string(),
+            },
+        ],
+        ..Default::default()
+    });
+
+    let filtered = view.filtered(&ReplacementDashboardFilter {
+        risk_level: Some(ReplacementRiskLevel::High),
+        ..Default::default()
+    });
+    assert_eq!(filtered.slot_status_overview.len(), 1);
+    assert_eq!(filtered.slot_status_overview[0].slot_id, "parser");
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: ProofSpecializationLineageDashboardView
+// ---------------------------------------------------------------------------
+
+#[test]
+fn proof_specialization_filtered_by_target_id() {
+    let view = ProofSpecializationLineageDashboardView::from_partial(
+        ProofSpecializationLineagePartial {
+            cluster: "prod".to_string(),
+            zone: "us-east-1".to_string(),
+            security_epoch: Some(31),
+            generated_at_unix_ms: Some(2000),
+            active_specializations: vec![
+                ActiveSpecializationRowView {
+                    specialization_id: "sp-a".to_string(),
+                    target_id: "ext-a".to_string(),
+                    target_kind: "extension".to_string(),
+                    optimization_class: "elision".to_string(),
+                    latency_reduction_millionths: 100_000,
+                    throughput_increase_millionths: 200_000,
+                    proof_input_ids: vec!["p1".to_string()],
+                    transformation_ref: "tr-a".to_string(),
+                    receipt_ref: "rr-a".to_string(),
+                    activated_at_unix_ms: 1900,
+                },
+                ActiveSpecializationRowView {
+                    specialization_id: "sp-b".to_string(),
+                    target_id: "ext-b".to_string(),
+                    target_kind: "extension".to_string(),
+                    optimization_class: "dispatch".to_string(),
+                    latency_reduction_millionths: 50_000,
+                    throughput_increase_millionths: 80_000,
+                    proof_input_ids: vec!["p2".to_string()],
+                    transformation_ref: "tr-b".to_string(),
+                    receipt_ref: "rr-b".to_string(),
+                    activated_at_unix_ms: 1950,
+                },
+            ],
+            ..Default::default()
+        },
+    );
+
+    let filtered = view.filtered(&ProofSpecializationDashboardFilter {
+        target_id: Some("ext-a".to_string()),
+        ..Default::default()
+    });
+    assert_eq!(filtered.active_specializations.len(), 1);
+    assert_eq!(filtered.active_specializations[0].specialization_id, "sp-a");
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: public helper functions
+// ---------------------------------------------------------------------------
+
+#[test]
+fn build_native_coverage_meter_empty_slots() {
+    let meter = build_native_coverage_meter(&[], vec![]);
+    assert_eq!(meter.native_slots, 0);
+    assert_eq!(meter.delegate_slots, 0);
+    assert_eq!(meter.native_coverage_millionths, 0);
+}
+
+#[test]
+fn build_native_coverage_meter_all_native() {
+    let rows = vec![
+        SlotStatusOverviewRow {
+            slot_id: "s1".to_string(),
+            slot_kind: "parser".to_string(),
+            implementation_kind: "native".to_string(),
+            promotion_status: "promoted".to_string(),
+            risk_level: ReplacementRiskLevel::Low,
+            last_transition_unix_ms: 1000,
+            health: "healthy".to_string(),
+            lineage_ref: "lr1".to_string(),
+        },
+        SlotStatusOverviewRow {
+            slot_id: "s2".to_string(),
+            slot_kind: "gc".to_string(),
+            implementation_kind: "NATIVE".to_string(),
+            promotion_status: "promoted".to_string(),
+            risk_level: ReplacementRiskLevel::Low,
+            last_transition_unix_ms: 2000,
+            health: "healthy".to_string(),
+            lineage_ref: "lr2".to_string(),
+        },
+    ];
+    let meter = build_native_coverage_meter(&rows, vec![]);
+    assert_eq!(meter.native_slots, 2);
+    assert_eq!(meter.delegate_slots, 0);
+    assert_eq!(meter.native_coverage_millionths, 1_000_000);
+}
+
+#[test]
+fn build_native_coverage_meter_mixed_with_trend() {
+    let rows = vec![
+        SlotStatusOverviewRow {
+            slot_id: "s1".to_string(),
+            slot_kind: "a".to_string(),
+            implementation_kind: "native".to_string(),
+            promotion_status: "p".to_string(),
+            risk_level: ReplacementRiskLevel::Low,
+            last_transition_unix_ms: 0,
+            health: "ok".to_string(),
+            lineage_ref: String::new(),
+        },
+        SlotStatusOverviewRow {
+            slot_id: "s2".to_string(),
+            slot_kind: "b".to_string(),
+            implementation_kind: "delegate".to_string(),
+            promotion_status: "p".to_string(),
+            risk_level: ReplacementRiskLevel::Medium,
+            last_transition_unix_ms: 0,
+            health: "ok".to_string(),
+            lineage_ref: String::new(),
+        },
+    ];
+    let trend = vec![CoverageTrendPoint {
+        timestamp_unix_ms: 1000,
+        native_coverage_millionths: 400_000,
+    }];
+    let meter = build_native_coverage_meter(&rows, trend);
+    assert_eq!(meter.native_slots, 1);
+    assert_eq!(meter.delegate_slots, 1);
+    assert_eq!(meter.native_coverage_millionths, 500_000);
+    assert_eq!(meter.trend.len(), 1);
+}
+
+#[test]
+fn rank_replacement_opportunities_empty_input() {
+    let ranked = rank_replacement_opportunities(vec![]);
+    assert!(ranked.is_empty());
+}
+
+#[test]
+fn rank_replacement_opportunities_sorts_by_ev_desc() {
+    let inputs = vec![
+        ReplacementOpportunityInput {
+            slot_id: "low".to_string(),
+            slot_kind: "a".to_string(),
+            performance_uplift_millionths: 100_000,
+            invocation_frequency_per_minute: 1,
+            risk_reduction_millionths: 0,
+        },
+        ReplacementOpportunityInput {
+            slot_id: "high".to_string(),
+            slot_kind: "b".to_string(),
+            performance_uplift_millionths: 500_000,
+            invocation_frequency_per_minute: 10,
+            risk_reduction_millionths: 100_000,
+        },
+    ];
+    let ranked = rank_replacement_opportunities(inputs);
+    assert_eq!(ranked.len(), 2);
+    assert_eq!(ranked[0].slot_id, "high");
+    assert_eq!(ranked[1].slot_id, "low");
+    assert!(ranked[0].expected_value_score_millionths > ranked[1].expected_value_score_millionths);
+}
+
+#[test]
+fn build_specialization_performance_impact_empty_inputs() {
+    let impact = build_specialization_performance_impact(&[], &[]);
+    assert_eq!(impact.active_specialization_count, 0);
+    assert_eq!(impact.aggregate_latency_reduction_millionths, 0);
+    assert_eq!(impact.aggregate_throughput_increase_millionths, 0);
+    assert_eq!(impact.specialization_coverage_millionths, 1_000_000);
+}
+
+#[test]
+fn build_specialization_performance_impact_aggregates() {
+    let specs = vec![
+        ActiveSpecializationRowView {
+            specialization_id: "sp1".to_string(),
+            target_id: "t1".to_string(),
+            target_kind: "fn".to_string(),
+            optimization_class: "oc".to_string(),
+            proof_input_ids: vec!["p1".to_string()],
+            latency_reduction_millionths: 100_000,
+            throughput_increase_millionths: 200_000,
+            transformation_ref: "tr1".to_string(),
+            receipt_ref: "r1".to_string(),
+            activated_at_unix_ms: 1000,
+        },
+        ActiveSpecializationRowView {
+            specialization_id: "sp2".to_string(),
+            target_id: "t2".to_string(),
+            target_kind: "fn".to_string(),
+            optimization_class: "oc".to_string(),
+            proof_input_ids: vec!["p2".to_string()],
+            latency_reduction_millionths: 50_000,
+            throughput_increase_millionths: 80_000,
+            transformation_ref: "tr2".to_string(),
+            receipt_ref: "r2".to_string(),
+            activated_at_unix_ms: 2000,
+        },
+    ];
+    let impact = build_specialization_performance_impact(&specs, &[]);
+    assert_eq!(impact.active_specialization_count, 2);
+    assert_eq!(impact.aggregate_latency_reduction_millionths, 150_000);
+    assert_eq!(impact.aggregate_throughput_increase_millionths, 280_000);
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: AdapterEnvelope determinism
+// ---------------------------------------------------------------------------
+
+#[test]
+fn adapter_envelope_encode_json_is_deterministic() {
+    let replay = IncidentReplayView::snapshot("trace-1", "scenario-1", vec![]);
+    let env = AdapterEnvelope::new(
+        "trace-1",
+        1000,
+        AdapterStream::IncidentReplay,
+        UpdateKind::Snapshot,
+        FrankentuiViewPayload::IncidentReplay(replay),
+    );
+    let enc1 = env.encode_json().unwrap();
+    let enc2 = env.encode_json().unwrap();
+    assert_eq!(enc1, enc2);
+}
+
+#[test]
+fn adapter_envelope_schema_version_matches_constant() {
+    let replay = IncidentReplayView::snapshot("t", "s", vec![]);
+    let env = AdapterEnvelope::new(
+        "t",
+        0,
+        AdapterStream::IncidentReplay,
+        UpdateKind::Snapshot,
+        FrankentuiViewPayload::IncidentReplay(replay),
+    );
+    assert_eq!(env.schema_version, FRANKENTUI_ADAPTER_SCHEMA_VERSION);
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: JSON field-name contracts
+// ---------------------------------------------------------------------------
+
+#[test]
+fn adapter_envelope_json_field_names_stable() {
+    let replay = IncidentReplayView::snapshot("t", "s", vec![]);
+    let env = AdapterEnvelope::new(
+        "t",
+        42,
+        AdapterStream::IncidentReplay,
+        UpdateKind::Snapshot,
+        FrankentuiViewPayload::IncidentReplay(replay),
+    );
+    let json = String::from_utf8(env.encode_json().unwrap()).unwrap();
+    assert!(json.contains("\"schema_version\""));
+    assert!(json.contains("\"trace_id\""));
+    assert!(json.contains("\"generated_at_unix_ms\""));
+    assert!(json.contains("\"stream\""));
+    assert!(json.contains("\"update_kind\""));
+    assert!(json.contains("\"payload\""));
+}
+
+#[test]
+fn control_plane_invariants_json_field_names_stable() {
+    let view =
+        ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+            cluster: "prod".to_string(),
+            zone: "z1".to_string(),
+            runtime_mode: "secure".to_string(),
+            generated_at_unix_ms: Some(1000),
+            ..Default::default()
+        });
+    let json = serde_json::to_string(&view).unwrap();
+    for field in [
+        "\"cluster\"",
+        "\"zone\"",
+        "\"runtime_mode\"",
+        "\"generated_at_unix_ms\"",
+        "\"evidence_stream\"",
+        "\"obligation_rows\"",
+        "\"region_rows\"",
+        "\"decision_outcomes\"",
+        "\"obligation_status\"",
+        "\"region_lifecycle\"",
+        "\"replay_health\"",
+        "\"benchmark_trends\"",
+        "\"safe_mode_activations\"",
+        "\"cancellation_events\"",
+        "\"schema_version\"",
+    ] {
+        assert!(json.contains(field), "missing field: {field}");
+    }
+}
+
+#[test]
+fn flow_decision_dashboard_json_field_names_stable() {
+    let view = FlowDecisionDashboardView::from_partial(FlowDecisionPartial {
+        cluster: "c".to_string(),
+        zone: "z".to_string(),
+        security_epoch: Some(1),
+        generated_at_unix_ms: Some(100),
+        ..Default::default()
+    });
+    let json = serde_json::to_string(&view).unwrap();
+    for field in [
+        "\"cluster\"",
+        "\"zone\"",
+        "\"security_epoch\"",
+        "\"generated_at_unix_ms\"",
+        "\"label_map\"",
+        "\"blocked_flows\"",
+        "\"declassification_history\"",
+        "\"confinement_proofs\"",
+        "\"alert_indicators\"",
+    ] {
+        assert!(json.contains(field), "missing field: {field}");
+    }
+}
+
+#[test]
+fn capability_delta_dashboard_json_field_names_stable() {
+    let view = CapabilityDeltaDashboardView::from_partial(CapabilityDeltaPartial {
+        cluster: "c".to_string(),
+        zone: "z".to_string(),
+        security_epoch: Some(1),
+        generated_at_unix_ms: Some(100),
+        ..Default::default()
+    });
+    let json = serde_json::to_string(&view).unwrap();
+    for field in [
+        "\"cluster\"",
+        "\"zone\"",
+        "\"security_epoch\"",
+        "\"current_capability_rows\"",
+        "\"proposed_minimal_rows\"",
+        "\"escrow_event_feed\"",
+        "\"override_rationale_rows\"",
+        "\"batch_review_queue\"",
+        "\"alert_indicators\"",
+    ] {
+        assert!(json.contains(field), "missing field: {field}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: clone independence
+// ---------------------------------------------------------------------------
+
+#[test]
+fn control_plane_invariants_clone_independence() {
+    let original =
+        ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+            cluster: "prod".to_string(),
+            zone: "us-east-1".to_string(),
+            runtime_mode: "secure".to_string(),
+            generated_at_unix_ms: Some(1000),
+            evidence_stream: vec![EvidenceStreamEntryView {
+                trace_id: "t1".to_string(),
+                decision_id: "d1".to_string(),
+                policy_id: "p1".to_string(),
+                action_type: "allow".to_string(),
+                decision_outcome: DecisionOutcomeKind::Allow,
+                expected_loss_millionths: 100_000,
+                extension_id: "ext-a".to_string(),
+                region_id: "r-1".to_string(),
+                severity: DashboardSeverity::Info,
+                component: "comp".to_string(),
+                event: "ev".to_string(),
+                outcome: "ok".to_string(),
+                error_code: None,
+                timestamp_unix_ms: 900,
+            }],
+            ..Default::default()
+        });
+
+    let cloned = original.clone();
+    assert_eq!(original, cloned);
+    // Modify original's first evidence entry via filter — cloned should remain unchanged
+    let filtered = original.filtered(&ControlPlaneDashboardFilter {
+        extension_id: Some("nonexistent".to_string()),
+        ..Default::default()
+    });
+    assert!(filtered.evidence_stream.is_empty());
+    assert_eq!(cloned.evidence_stream.len(), 1);
+}
+
+#[test]
+fn flow_decision_dashboard_clone_independence() {
+    let original = FlowDecisionDashboardView::from_partial(FlowDecisionPartial {
+        cluster: "c".to_string(),
+        zone: "z".to_string(),
+        security_epoch: Some(1),
+        generated_at_unix_ms: Some(100),
+        blocked_flows: vec![BlockedFlowView {
+            flow_id: "f1".to_string(),
+            extension_id: "ext-a".to_string(),
+            source_label: "secret".to_string(),
+            sink_clearance: "public".to_string(),
+            sensitivity: FlowSensitivityLevel::High,
+            blocked_reason: "blocked".to_string(),
+            attempted_exfiltration: false,
+            code_path_ref: "cp".to_string(),
+            extension_context_ref: "ec".to_string(),
+            trace_id: "t1".to_string(),
+            decision_id: "d1".to_string(),
+            policy_id: "p1".to_string(),
+            error_code: None,
+            occurred_at_unix_ms: 50,
+        }],
+        ..Default::default()
+    });
+
+    let cloned = original.clone();
+    assert_eq!(original, cloned);
+    let filtered = original.filtered(&FlowDecisionDashboardFilter {
+        extension_id: Some("nonexistent".to_string()),
+        ..Default::default()
+    });
+    assert!(filtered.blocked_flows.is_empty());
+    assert_eq!(cloned.blocked_flows.len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: complex struct serde roundtrips
+// ---------------------------------------------------------------------------
+
+#[test]
+fn control_plane_invariants_serde_roundtrip() {
+    let view =
+        ControlPlaneInvariantsDashboardView::from_partial(ControlPlaneInvariantsPartial {
+            cluster: "prod".to_string(),
+            zone: "us-east-1".to_string(),
+            runtime_mode: "secure".to_string(),
+            generated_at_unix_ms: Some(1_700_000_000_100),
+            ..Default::default()
+        });
+    let json = serde_json::to_string(&view).unwrap();
+    let back: ControlPlaneInvariantsDashboardView = serde_json::from_str(&json).unwrap();
+    assert_eq!(view, back);
+}
+
+#[test]
+fn flow_decision_dashboard_serde_roundtrip() {
+    let view = FlowDecisionDashboardView::from_partial(FlowDecisionPartial {
+        cluster: "prod".to_string(),
+        zone: "us-east-1".to_string(),
+        security_epoch: Some(5),
+        generated_at_unix_ms: Some(1_000),
+        ..Default::default()
+    });
+    let json = serde_json::to_string(&view).unwrap();
+    let back: FlowDecisionDashboardView = serde_json::from_str(&json).unwrap();
+    assert_eq!(view, back);
+}
+
+#[test]
+fn capability_delta_dashboard_serde_roundtrip() {
+    let view = CapabilityDeltaDashboardView::from_partial(CapabilityDeltaPartial {
+        cluster: "prod".to_string(),
+        zone: "us-east-1".to_string(),
+        security_epoch: Some(44),
+        generated_at_unix_ms: Some(5000),
+        ..Default::default()
+    });
+    let json = serde_json::to_string(&view).unwrap();
+    let back: CapabilityDeltaDashboardView = serde_json::from_str(&json).unwrap();
+    assert_eq!(view, back);
+}
+
+#[test]
+fn replacement_progress_dashboard_serde_roundtrip() {
+    let view = ReplacementProgressDashboardView::from_partial(ReplacementProgressPartial {
+        cluster: "prod".to_string(),
+        zone: "us-east-1".to_string(),
+        security_epoch: Some(10),
+        generated_at_unix_ms: Some(3000),
+        ..Default::default()
+    });
+    let json = serde_json::to_string(&view).unwrap();
+    let back: ReplacementProgressDashboardView = serde_json::from_str(&json).unwrap();
+    assert_eq!(view, back);
+}
+
+#[test]
+fn proof_specialization_lineage_dashboard_serde_roundtrip() {
+    let view = ProofSpecializationLineageDashboardView::from_partial(
+        ProofSpecializationLineagePartial {
+            cluster: "prod".to_string(),
+            zone: "us-east-1".to_string(),
+            security_epoch: Some(31),
+            generated_at_unix_ms: Some(2000),
+            ..Default::default()
+        },
+    );
+    let json = serde_json::to_string(&view).unwrap();
+    let back: ProofSpecializationLineageDashboardView = serde_json::from_str(&json).unwrap();
+    assert_eq!(view, back);
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: all FrankentuiViewPayload variants round-trip
+// ---------------------------------------------------------------------------
+
+#[test]
+fn all_payload_variants_envelope_round_trip() {
+    let payloads: Vec<(AdapterStream, FrankentuiViewPayload)> = vec![
+        (
+            AdapterStream::IncidentReplay,
+            FrankentuiViewPayload::IncidentReplay(IncidentReplayView::snapshot(
+                "t", "s", vec![],
+            )),
+        ),
+        (
+            AdapterStream::PolicyExplanation,
+            FrankentuiViewPayload::PolicyExplanation(
+                PolicyExplanationCardView::from_partial(PolicyExplanationPartial {
+                    decision_id: "d".to_string(),
+                    policy_id: "p".to_string(),
+                    selected_action: "allow".to_string(),
+                    confidence_millionths: Some(500_000),
+                    expected_loss_millionths: Some(100_000),
+                    action_candidates: vec![],
+                    key_drivers: vec![],
+                }),
+            ),
+        ),
+        (
+            AdapterStream::ControlDashboard,
+            FrankentuiViewPayload::ControlDashboard(ControlDashboardView::from_partial(
+                ControlDashboardPartial::default(),
+            )),
+        ),
+        (
+            AdapterStream::ControlPlaneInvariantsDashboard,
+            FrankentuiViewPayload::ControlPlaneInvariantsDashboard(Box::new(
+                ControlPlaneInvariantsDashboardView::from_partial(
+                    ControlPlaneInvariantsPartial::default(),
+                ),
+            )),
+        ),
+        (
+            AdapterStream::FlowDecisionDashboard,
+            FrankentuiViewPayload::FlowDecisionDashboard(
+                FlowDecisionDashboardView::from_partial(FlowDecisionPartial {
+                    cluster: "c".to_string(),
+                    zone: "z".to_string(),
+                    ..Default::default()
+                }),
+            ),
+        ),
+        (
+            AdapterStream::CapabilityDeltaDashboard,
+            FrankentuiViewPayload::CapabilityDeltaDashboard(
+                CapabilityDeltaDashboardView::from_partial(CapabilityDeltaPartial {
+                    cluster: "c".to_string(),
+                    zone: "z".to_string(),
+                    ..Default::default()
+                }),
+            ),
+        ),
+        (
+            AdapterStream::ReplacementProgressDashboard,
+            FrankentuiViewPayload::ReplacementProgressDashboard(
+                ReplacementProgressDashboardView::from_partial(ReplacementProgressPartial {
+                    cluster: "c".to_string(),
+                    zone: "z".to_string(),
+                    ..Default::default()
+                }),
+            ),
+        ),
+        (
+            AdapterStream::ProofSpecializationLineageDashboard,
+            FrankentuiViewPayload::ProofSpecializationLineageDashboard(
+                ProofSpecializationLineageDashboardView::from_partial(
+                    ProofSpecializationLineagePartial {
+                        cluster: "c".to_string(),
+                        zone: "z".to_string(),
+                        ..Default::default()
+                    },
+                ),
+            ),
+        ),
+    ];
+
+    for (stream, payload) in payloads {
+        let env = AdapterEnvelope::new(
+            "trace-all",
+            1000,
+            stream.clone(),
+            UpdateKind::Snapshot,
+            payload,
+        );
+        let encoded = env.encode_json().unwrap();
+        let decoded: AdapterEnvelope = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.stream, stream);
+        assert_eq!(decoded, env);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: default value assertions
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dashboard_severity_default_is_info() {
+    assert_eq!(DashboardSeverity::default(), DashboardSeverity::Info);
+}
+
+#[test]
+fn replay_health_status_default_is_unknown() {
+    assert_eq!(ReplayHealthStatus::default(), ReplayHealthStatus::Unknown);
+}
+
+#[test]
+fn recovery_status_default_is_recovering() {
+    assert_eq!(RecoveryStatus::default(), RecoveryStatus::Recovering);
+}
+
+#[test]
+fn schema_compatibility_default_is_unknown() {
+    assert_eq!(
+        SchemaCompatibilityStatus::default(),
+        SchemaCompatibilityStatus::Unknown
+    );
+}
+
+#[test]
+fn flow_sensitivity_level_default_is_low() {
+    assert_eq!(FlowSensitivityLevel::default(), FlowSensitivityLevel::Low);
+}
+
+#[test]
+fn proof_validity_status_default_is_valid() {
+    assert_eq!(ProofValidityStatus::default(), ProofValidityStatus::Valid);
+}
+
+#[test]
+fn override_review_status_default_is_pending() {
+    assert_eq!(OverrideReviewStatus::default(), OverrideReviewStatus::Pending);
+}
+
+#[test]
+fn grant_expiry_status_default_is_active() {
+    assert_eq!(GrantExpiryStatus::default(), GrantExpiryStatus::Active);
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: DashboardRefreshPolicy normalization
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dashboard_refresh_policy_default_values() {
+    let rp = DashboardRefreshPolicy::default();
+    assert_eq!(rp.evidence_stream_refresh_secs, 5);
+    assert_eq!(rp.aggregate_refresh_secs, 60);
+}
+
+#[test]
+fn dashboard_refresh_policy_serde_roundtrip_with_zeros() {
+    let rp = DashboardRefreshPolicy {
+        evidence_stream_refresh_secs: 0,
+        aggregate_refresh_secs: 0,
+    };
+    let json = serde_json::to_string(&rp).unwrap();
+    let back: DashboardRefreshPolicy = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.evidence_stream_refresh_secs, 0);
+    assert_eq!(back.aggregate_refresh_secs, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: Display uniqueness for Debug-derived enums
+// ---------------------------------------------------------------------------
+
+#[test]
+fn adapter_stream_debug_names_unique() {
+    let variants = [
+        AdapterStream::IncidentReplay,
+        AdapterStream::PolicyExplanation,
+        AdapterStream::ControlDashboard,
+        AdapterStream::ControlPlaneInvariantsDashboard,
+        AdapterStream::FlowDecisionDashboard,
+        AdapterStream::CapabilityDeltaDashboard,
+        AdapterStream::ReplacementProgressDashboard,
+        AdapterStream::ProofSpecializationLineageDashboard,
+    ];
+    let mut names = std::collections::BTreeSet::new();
+    for v in &variants {
+        names.insert(format!("{v:?}"));
+    }
+    assert_eq!(names.len(), variants.len());
+}
+
+#[test]
+fn cancellation_kind_debug_names_unique() {
+    let variants = [
+        CancellationKind::Unload,
+        CancellationKind::Quarantine,
+        CancellationKind::Suspend,
+        CancellationKind::Terminate,
+        CancellationKind::Revocation,
+    ];
+    let mut names = std::collections::BTreeSet::new();
+    for v in &variants {
+        names.insert(format!("{v:?}"));
+    }
+    assert_eq!(names.len(), variants.len());
+}
+
+// ---------------------------------------------------------------------------
+// Integration enrichment: filter default assertions
+// ---------------------------------------------------------------------------
+
+#[test]
+fn control_plane_dashboard_filter_default_all_none() {
+    let f = ControlPlaneDashboardFilter::default();
+    assert!(f.extension_id.is_none());
+    assert!(f.region_id.is_none());
+    assert!(f.severity.is_none());
+    assert!(f.start_unix_ms.is_none());
+    assert!(f.end_unix_ms.is_none());
+}
+
+#[test]
+fn flow_decision_dashboard_filter_default_all_none() {
+    let f = FlowDecisionDashboardFilter::default();
+    assert!(f.extension_id.is_none());
+    assert!(f.source_label.is_none());
+    assert!(f.sink_clearance.is_none());
+    assert!(f.sensitivity.is_none());
+    assert!(f.start_unix_ms.is_none());
+    assert!(f.end_unix_ms.is_none());
+}
+
+#[test]
+fn capability_delta_dashboard_filter_default_all_none() {
+    let f = CapabilityDeltaDashboardFilter::default();
+    assert!(f.extension_id.is_none());
+    assert!(f.capability.is_none());
+    assert!(f.outcome.is_none());
+}
+
+#[test]
+fn replacement_dashboard_filter_default_all_none() {
+    let f = ReplacementDashboardFilter::default();
+    assert!(f.slot_kind.is_none());
+    assert!(f.risk_level.is_none());
+    assert!(f.promotion_status.is_none());
+}
+
+#[test]
+fn proof_specialization_dashboard_filter_default_all_none() {
+    let f = ProofSpecializationDashboardFilter::default();
+    assert!(f.target_id.is_none());
+    assert!(f.optimization_class.is_none());
+    assert!(f.proof_id.is_none());
+    assert!(f.start_unix_ms.is_none());
+    assert!(f.end_unix_ms.is_none());
 }

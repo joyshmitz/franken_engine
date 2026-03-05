@@ -19,8 +19,8 @@ use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::plas_release_gate::{
     PlasActivationMode, PlasCohortExtension, PlasEscrowReplayEvidence, PlasGrantCheckRecord,
     PlasReleaseGateDecisionArtifact, PlasReleaseGateError, PlasReleaseGateFailureCode,
-    PlasReleaseGateFinding, PlasReleaseGateInput, PlasReleaseGateLogEvent,
-    PlasReleaseGateTrustAnchors, PlasRevocationCheckRecord, evaluate_plas_release_gate,
+    PlasReleaseGateInput, PlasReleaseGateTrustAnchors, PlasRevocationCheckRecord,
+    evaluate_plas_release_gate,
 };
 use frankenengine_engine::policy_theorem_compiler::Capability;
 use frankenengine_engine::security_epoch::SecurityEpoch;

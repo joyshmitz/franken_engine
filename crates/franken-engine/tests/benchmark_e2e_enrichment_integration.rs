@@ -8,9 +8,12 @@
 use std::collections::BTreeSet;
 
 use frankenengine_engine::benchmark_e2e::{
-    BENCHMARK_E2E_COMPONENT, BENCHMARK_E2E_SCHEMA_VERSION, BenchmarkFamily, BenchmarkSuiteConfig,
+    BENCHMARK_E2E_COMPONENT, BENCHMARK_E2E_SCHEMA_VERSION, BENCHMARK_ENV_SCHEMA_VERSION,
+    BenchmarkFamily, BenchmarkFairnessPolicy, BenchmarkHarnessContract,
+    BenchmarkHarnessContractError, BenchmarkRuntimePins, BenchmarkSuiteConfig,
     LatencyDistribution, MIN_START_BUDGET_MILLIONTHS, RegressionThresholds, ScaleProfile,
-    Xorshift64, detect_regression, run_benchmark, run_benchmark_suite,
+    Xorshift64, detect_regression, run_benchmark,
+    run_benchmark_suite, run_benchmark_suite_with_regression, validate_harness_contract,
 };
 
 // ===========================================================================
@@ -241,4 +244,295 @@ fn run_suite_default_config() {
     assert!(!result.measurements.is_empty());
     assert!(result.total_operations > 0);
     assert!(!result.events.is_empty());
+}
+
+// ===========================================================================
+// 12) Harness contract validation
+// ===========================================================================
+
+#[test]
+fn validate_harness_contract_default_passes() {
+    let contract = BenchmarkHarnessContract::default();
+    validate_harness_contract(&contract).expect("default contract must validate");
+}
+
+#[test]
+fn validate_harness_contract_rejects_empty_runtime_pin() {
+    let mut contract = BenchmarkHarnessContract::default();
+    contract.runtime_pins.franken_engine = String::new();
+    let err = validate_harness_contract(&contract).expect_err("should reject");
+    assert!(matches!(err, BenchmarkHarnessContractError::EmptyRuntimePin { .. }));
+}
+
+#[test]
+fn validate_harness_contract_rejects_empty_node_pin() {
+    let mut contract = BenchmarkHarnessContract::default();
+    contract.runtime_pins.node_lts = String::new();
+    let err = validate_harness_contract(&contract).expect_err("should reject");
+    assert!(matches!(err, BenchmarkHarnessContractError::EmptyRuntimePin { .. }));
+}
+
+#[test]
+fn validate_harness_contract_rejects_empty_bun_pin() {
+    let mut contract = BenchmarkHarnessContract::default();
+    contract.runtime_pins.bun_stable = String::new();
+    let err = validate_harness_contract(&contract).expect_err("should reject");
+    assert!(matches!(err, BenchmarkHarnessContractError::EmptyRuntimePin { .. }));
+}
+
+#[test]
+fn validate_harness_contract_rejects_zero_warmup_runs() {
+    let mut contract = BenchmarkHarnessContract::default();
+    contract.fairness_policy.warmup_runs = 0;
+    let err = validate_harness_contract(&contract).expect_err("should reject");
+    assert!(matches!(err, BenchmarkHarnessContractError::InvalidWarmupRuns { .. }));
+}
+
+#[test]
+fn validate_harness_contract_rejects_low_sample_count() {
+    let mut contract = BenchmarkHarnessContract::default();
+    contract.fairness_policy.sample_count = 2;
+    let err = validate_harness_contract(&contract).expect_err("should reject");
+    assert!(matches!(err, BenchmarkHarnessContractError::InvalidSampleCount { .. }));
+}
+
+#[test]
+fn validate_harness_contract_rejects_zero_timeout() {
+    let mut contract = BenchmarkHarnessContract::default();
+    contract.fairness_policy.case_timeout_ms = 0;
+    let err = validate_harness_contract(&contract).expect_err("should reject");
+    assert!(matches!(err, BenchmarkHarnessContractError::InvalidCaseTimeoutMs { .. }));
+}
+
+#[test]
+fn harness_contract_error_display_non_empty() {
+    let errors: Vec<BenchmarkHarnessContractError> = vec![
+        BenchmarkHarnessContractError::EmptyRuntimePin {
+            runtime: "franken_engine",
+        },
+        BenchmarkHarnessContractError::InvalidWarmupRuns { min: 1, actual: 0 },
+        BenchmarkHarnessContractError::InvalidSampleCount { min: 3, actual: 1 },
+        BenchmarkHarnessContractError::InvalidCaseTimeoutMs {
+            min: 1000,
+            actual: 50,
+        },
+    ];
+    for err in &errors {
+        assert!(!err.to_string().is_empty(), "display empty: {err:?}");
+    }
+}
+
+#[test]
+fn harness_contract_error_is_std_error() {
+    let err = BenchmarkHarnessContractError::EmptyRuntimePin {
+        runtime: "node_lts",
+    };
+    let std_err: &dyn std::error::Error = &err;
+    assert!(!std_err.to_string().is_empty());
+}
+
+// ===========================================================================
+// 13) Serde round-trips for harness types
+// ===========================================================================
+
+#[test]
+fn runtime_pins_serde_round_trip() {
+    let pins = BenchmarkRuntimePins::default();
+    let json = serde_json::to_string(&pins).expect("serialize");
+    let recovered: BenchmarkRuntimePins = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(pins, recovered);
+}
+
+#[test]
+fn fairness_policy_serde_round_trip() {
+    let policy = BenchmarkFairnessPolicy::default();
+    let json = serde_json::to_string(&policy).expect("serialize");
+    let recovered: BenchmarkFairnessPolicy = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(policy, recovered);
+}
+
+#[test]
+fn harness_contract_serde_round_trip() {
+    let contract = BenchmarkHarnessContract::default();
+    let json = serde_json::to_string(&contract).expect("serialize");
+    let recovered: BenchmarkHarnessContract = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(contract, recovered);
+}
+
+// ===========================================================================
+// 14) Run each benchmark family individually
+// ===========================================================================
+
+#[test]
+fn run_each_family_small() {
+    for family in BenchmarkFamily::all() {
+        let m = run_benchmark(*family, ScaleProfile::Small, 99);
+        assert_eq!(m.family, *family);
+        assert_eq!(m.profile, ScaleProfile::Small);
+        assert!(m.total_operations > 0);
+        assert!(!m.correctness_digest.is_empty());
+    }
+}
+
+#[test]
+fn run_benchmark_medium_profile() {
+    let m = run_benchmark(BenchmarkFamily::MixedCpuIoAgentMesh, ScaleProfile::Medium, 42);
+    assert_eq!(m.profile, ScaleProfile::Medium);
+    assert!(m.total_operations > 0);
+}
+
+// ===========================================================================
+// 15) Regression detection edge cases
+// ===========================================================================
+
+#[test]
+fn detect_regression_throughput_drop_is_blocked() {
+    let baseline = run_benchmark(BenchmarkFamily::BootStorm, ScaleProfile::Small, 42);
+    let mut current = baseline.clone();
+    // Simulate severe throughput regression
+    current.throughput_ops_per_sec = baseline.throughput_ops_per_sec * 0.5;
+    let result = detect_regression(&current, &baseline, &RegressionThresholds::default());
+    assert!(result.blocked);
+    assert!(!result.blockers.is_empty());
+}
+
+#[test]
+fn detect_regression_p95_spike_is_blocked() {
+    let baseline = run_benchmark(BenchmarkFamily::BootStorm, ScaleProfile::Small, 42);
+    let mut current = baseline.clone();
+    // Simulate p95 latency spike
+    current.latency.p95_us = baseline.latency.p95_us * 3;
+    let result = detect_regression(&current, &baseline, &RegressionThresholds::default());
+    assert!(result.blocked);
+}
+
+#[test]
+fn detect_regression_p99_spike_is_blocked() {
+    let baseline = run_benchmark(BenchmarkFamily::BootStorm, ScaleProfile::Small, 42);
+    let mut current = baseline.clone();
+    current.latency.p99_us = baseline.latency.p99_us * 3;
+    let result = detect_regression(&current, &baseline, &RegressionThresholds::default());
+    assert!(result.blocked);
+}
+
+#[test]
+fn detect_regression_result_family_and_profile_match() {
+    let m = run_benchmark(BenchmarkFamily::ReloadRevokeChurn, ScaleProfile::Small, 42);
+    let result = detect_regression(&m, &m, &RegressionThresholds::default());
+    assert_eq!(result.family, BenchmarkFamily::ReloadRevokeChurn);
+    assert_eq!(result.profile, ScaleProfile::Small);
+}
+
+// ===========================================================================
+// 16) Suite with regression baselines
+// ===========================================================================
+
+#[test]
+fn suite_with_regression_no_blockers_when_identical() {
+    let config = BenchmarkSuiteConfig {
+        profiles: vec![ScaleProfile::Small],
+        families: vec![BenchmarkFamily::BootStorm],
+        ..BenchmarkSuiteConfig::default()
+    };
+    let baseline_result = run_benchmark_suite(&config);
+    let result = run_benchmark_suite_with_regression(&config, &baseline_result.measurements);
+    assert!(!result.blocked);
+}
+
+#[test]
+fn suite_events_have_component_field() {
+    let config = BenchmarkSuiteConfig {
+        profiles: vec![ScaleProfile::Small],
+        families: vec![BenchmarkFamily::BootStorm],
+        ..BenchmarkSuiteConfig::default()
+    };
+    let result = run_benchmark_suite(&config);
+    for event in &result.events {
+        assert_eq!(event.component, BENCHMARK_E2E_COMPONENT);
+    }
+}
+
+#[test]
+fn suite_events_contain_case_completed() {
+    let config = BenchmarkSuiteConfig {
+        profiles: vec![ScaleProfile::Small],
+        families: vec![BenchmarkFamily::BootStorm],
+        ..BenchmarkSuiteConfig::default()
+    };
+    let result = run_benchmark_suite(&config);
+    assert!(result.events.iter().any(|e| e.event == "benchmark_case_completed"));
+}
+
+// ===========================================================================
+// 17) Constants and schema stability
+// ===========================================================================
+
+#[test]
+fn benchmark_env_schema_version_stable() {
+    assert_eq!(
+        BENCHMARK_ENV_SCHEMA_VERSION,
+        "franken-engine.benchmark-env-manifest.v1"
+    );
+}
+
+// ===========================================================================
+// 18) PRNG edge cases
+// ===========================================================================
+
+#[test]
+fn xorshift64_next_bool_at_boundary() {
+    let mut rng = Xorshift64::new(42);
+    // 0% should always be false
+    for _ in 0..20 {
+        assert!(!rng.next_bool(0));
+    }
+    // 100% should always be true
+    for _ in 0..20 {
+        assert!(rng.next_bool(100));
+    }
+}
+
+// ===========================================================================
+// 19) LatencyDistribution edge cases
+// ===========================================================================
+
+#[test]
+fn latency_distribution_percentiles_ordered() {
+    let mut samples: Vec<u64> = (1..=100).collect();
+    let dist = LatencyDistribution::from_samples(&mut samples);
+    assert!(dist.p50_us <= dist.p95_us);
+    assert!(dist.p95_us <= dist.p99_us);
+    assert!(dist.min_us <= dist.p50_us);
+    assert!(dist.p99_us <= dist.max_us);
+}
+
+#[test]
+fn latency_distribution_identical_samples() {
+    let mut samples = vec![500; 50];
+    let dist = LatencyDistribution::from_samples(&mut samples);
+    assert_eq!(dist.min_us, 500);
+    assert_eq!(dist.max_us, 500);
+    assert_eq!(dist.p50_us, 500);
+    assert_eq!(dist.p95_us, 500);
+    assert_eq!(dist.p99_us, 500);
+}
+
+// ===========================================================================
+// 20) Suite determinism
+// ===========================================================================
+
+#[test]
+fn suite_deterministic_same_config() {
+    let config = BenchmarkSuiteConfig {
+        profiles: vec![ScaleProfile::Small],
+        families: vec![BenchmarkFamily::BootStorm],
+        ..BenchmarkSuiteConfig::default()
+    };
+    let r1 = run_benchmark_suite(&config);
+    let r2 = run_benchmark_suite(&config);
+    assert_eq!(r1.total_operations, r2.total_operations);
+    assert_eq!(r1.measurements.len(), r2.measurements.len());
+    for (m1, m2) in r1.measurements.iter().zip(r2.measurements.iter()) {
+        assert_eq!(m1.correctness_digest, m2.correctness_digest);
+    }
 }

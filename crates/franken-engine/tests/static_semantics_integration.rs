@@ -1518,10 +1518,7 @@ fn return_inside_function_is_valid() {
 
 #[test]
 fn event_canonical_value_is_deterministic() {
-    let tree = make_tree(
-        ParseGoal::Module,
-        vec![import_stmt(Some("x"), "./x.js", 1)],
-    );
+    let tree = make_tree(ParseGoal::Module, vec![import_stmt(Some("x"), "./x.js", 1)]);
     let result = analyze(&tree);
     let e1 = StaticSemanticsEvent::from_result(&result);
     let e2 = StaticSemanticsEvent::from_result(&result);
@@ -1680,10 +1677,7 @@ fn const_then_var_same_name_collides() {
 
 #[test]
 fn parse_multiple_declarations_then_analyze() {
-    let result = parse_and_analyze(
-        "var a = 1; let b = 2; const c = 3;",
-        ParseGoal::Script,
-    );
+    let result = parse_and_analyze("var a = 1; let b = 2; const c = 3;", ParseGoal::Script);
     assert!(result.passed());
     assert!(result.bindings.len() >= 3);
 }

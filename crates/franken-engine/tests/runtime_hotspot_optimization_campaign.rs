@@ -754,7 +754,10 @@ fn emit_events_uses_schema_constants() {
         gain_millionths: 0,
     }];
     let events = emit_structured_events(&results);
-    assert_eq!(events[0].schema_version, RUNTIME_HOTSPOT_EVENT_SCHEMA_VERSION);
+    assert_eq!(
+        events[0].schema_version,
+        RUNTIME_HOTSPOT_EVENT_SCHEMA_VERSION
+    );
     assert_eq!(events[0].trace_id, RUNTIME_HOTSPOT_TRACE_ID);
     assert_eq!(events[0].policy_id, RUNTIME_HOTSPOT_POLICY_ID);
     assert_eq!(events[0].component, RUNTIME_HOTSPOT_COMPONENT);

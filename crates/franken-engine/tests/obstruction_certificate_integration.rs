@@ -8,17 +8,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::global_coherence_checker::{
-    CoherenceCheckInput, CoherenceCheckResult, CoherenceOutcome, CoherenceViolationKind,
-    CompositionEdge, CompositionEdgeKind, CompositionGraph, GLOBAL_COHERENCE_BEAD_ID,
-    GLOBAL_COHERENCE_SCHEMA_VERSION, GlobalCoherenceChecker, SeverityScore,
+    CoherenceCheckInput, CoherenceCheckResult, CoherenceOutcome, CompositionEdge,
+    CompositionEdgeKind, CompositionGraph, GlobalCoherenceChecker,
 };
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::obstruction_certificate::{
     CertificationOutcome, CertificationResult, DEBT_BUDGET_EXHAUSTED, DEBT_FALLBACK_INFEASIBLE,
-    DEBT_OBSTRUCTION_UNRESOLVED, DEBT_PLAN_CYCLE, DEBT_WITNESS_INCOMPLETE, FallbackAction,
-    FallbackActionKind, FallbackPlan, OBSTRUCTION_CERT_BEAD_ID, OBSTRUCTION_CERT_SCHEMA_VERSION,
-    ObstructionCertificate, ObstructionCertifier, ObstructionCertifierConfig, ObstructionError,
-    WitnessFragment, collect_debt_codes, render_certification_report, should_block_gate,
+    DEBT_OBSTRUCTION_UNRESOLVED, DEBT_PLAN_CYCLE, DEBT_WITNESS_INCOMPLETE, FallbackActionKind,
+    OBSTRUCTION_CERT_BEAD_ID, OBSTRUCTION_CERT_SCHEMA_VERSION, ObstructionCertifier,
+    ObstructionCertifierConfig, ObstructionError, WitnessFragment, collect_debt_codes,
+    render_certification_report, should_block_gate,
 };
 use frankenengine_engine::semantic_contract_baseline::{
     LocalSemanticAtlas, LocalSemanticAtlasEntry, SemanticContractVersion,

@@ -391,8 +391,8 @@ fn render_and_parse_security_logs_jsonl_roundtrip() {
 }
 
 use frankenengine_engine::runtime_observability::{
-    RuntimeSecurityMetrics, SecurityEventType, SecurityOutcome, StructuredSecurityLogEvent,
-    redact_sensitive_value, render_security_logs_jsonl,
+    SecurityEventType, SecurityOutcome, StructuredSecurityLogEvent, redact_sensitive_value,
+    render_security_logs_jsonl,
 };
 
 #[test]

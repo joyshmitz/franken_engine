@@ -1,15 +1,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use frankenengine_engine::engine_object_id::EngineObjectId;
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::shadow_ablation_engine::{
-    AblationFailureClass, AblationSearchStage, AblationSearchStrategy, ShadowAblationCandidateRequest,
-    ShadowAblationConfig, ShadowAblationEngine, ShadowAblationError, ShadowAblationEvaluationRecord,
-    ShadowAblationLogEvent, ShadowAblationObservation, ShadowAblationRunResult,
-    ShadowAblationTranscriptInput, SignedShadowAblationTranscript,
+    AblationFailureClass, AblationSearchStage, AblationSearchStrategy,
+    ShadowAblationCandidateRequest, ShadowAblationConfig, ShadowAblationEngine,
+    ShadowAblationError, ShadowAblationEvaluationRecord, ShadowAblationLogEvent,
+    ShadowAblationObservation, ShadowAblationRunResult, ShadowAblationTranscriptInput,
+    SignedShadowAblationTranscript,
 };
 use frankenengine_engine::signature_preimage::SigningKey;
-use frankenengine_engine::engine_object_id::EngineObjectId;
 use frankenengine_engine::static_authority_analyzer::{
     AnalysisConfig, Capability, EffectEdge, EffectGraph, EffectNode, EffectNodeKind,
     ManifestIntents, StaticAnalysisReport, StaticAuthorityAnalyzer,
@@ -443,12 +444,17 @@ fn oracle_error_records_oracle_error_failure_class() {
         })
         .expect("run should succeed even when oracle fails");
 
-    assert!(result
-        .evaluations
-        .iter()
-        .all(|e| e.failure_class == Some(AblationFailureClass::OracleError)));
+    assert!(
+        result
+            .evaluations
+            .iter()
+            .all(|e| e.failure_class == Some(AblationFailureClass::OracleError))
+    );
     assert_eq!(result.minimal_capabilities, result.initial_capabilities);
-    result.transcript.verify_signature().expect("valid signature");
+    result
+        .transcript
+        .verify_signature()
+        .expect("valid signature");
 }
 
 #[test]
@@ -482,10 +488,12 @@ fn invalid_observation_negative_threshold_records_invalid_oracle_result() {
         })
         .expect("run completes");
 
-    assert!(result
-        .evaluations
-        .iter()
-        .all(|e| e.failure_class == Some(AblationFailureClass::InvalidOracleResult)));
+    assert!(
+        result
+            .evaluations
+            .iter()
+            .all(|e| e.failure_class == Some(AblationFailureClass::InvalidOracleResult))
+    );
     assert_eq!(result.minimal_capabilities, result.initial_capabilities);
 }
 
@@ -521,10 +529,12 @@ fn correctness_regression_retains_all_capabilities() {
         .expect("run completes");
 
     assert_eq!(result.minimal_capabilities, result.initial_capabilities);
-    assert!(result
-        .evaluations
-        .iter()
-        .any(|e| e.failure_class == Some(AblationFailureClass::CorrectnessRegression)));
+    assert!(
+        result
+            .evaluations
+            .iter()
+            .any(|e| e.failure_class == Some(AblationFailureClass::CorrectnessRegression))
+    );
 }
 
 #[test]
@@ -559,10 +569,12 @@ fn risk_budget_exceeded_retains_all_capabilities() {
         .expect("run completes");
 
     assert_eq!(result.minimal_capabilities, result.initial_capabilities);
-    assert!(result
-        .evaluations
-        .iter()
-        .any(|e| e.failure_class == Some(AblationFailureClass::RiskBudgetExceeded)));
+    assert!(
+        result
+            .evaluations
+            .iter()
+            .any(|e| e.failure_class == Some(AblationFailureClass::RiskBudgetExceeded))
+    );
 }
 
 #[test]
@@ -597,10 +609,12 @@ fn execution_failure_with_detail_retains_capabilities() {
         .expect("run completes");
 
     assert_eq!(result.minimal_capabilities.len(), 1);
-    assert!(result
-        .evaluations
-        .iter()
-        .any(|e| e.failure_class == Some(AblationFailureClass::ExecutionFailure)));
+    assert!(
+        result
+            .evaluations
+            .iter()
+            .any(|e| e.failure_class == Some(AblationFailureClass::ExecutionFailure))
+    );
 }
 
 // ── Strategy variants ────────────────────────────────────────────────
@@ -608,10 +622,7 @@ fn execution_failure_with_detail_retains_capabilities() {
 #[test]
 fn binary_guided_strategy_uses_block_removal() {
     let extension_id = "ext-binary-guided";
-    let report = make_static_report(
-        extension_id,
-        &["a", "b", "c", "d", "e", "f", "g", "h"],
-    );
+    let report = make_static_report(extension_id, &["a", "b", "c", "d", "e", "f", "g", "h"]);
     let mut config = base_config(extension_id, 42);
     config.strategy = AblationSearchStrategy::BinaryGuided;
     config.max_pair_trials = 10;
@@ -645,12 +656,17 @@ fn binary_guided_strategy_uses_block_removal() {
         .expect("run completes");
 
     assert_eq!(result.search_strategy, AblationSearchStrategy::BinaryGuided);
-    assert!(result
-        .evaluations
-        .iter()
-        .any(|e| e.search_stage == AblationSearchStage::BinaryBlock));
+    assert!(
+        result
+            .evaluations
+            .iter()
+            .any(|e| e.search_stage == AblationSearchStage::BinaryBlock)
+    );
     assert!(!result.budget_exhausted);
-    result.transcript.verify_signature().expect("valid signature");
+    result
+        .transcript
+        .verify_signature()
+        .expect("valid signature");
 }
 
 #[test]
@@ -666,9 +682,7 @@ fn binary_guided_with_two_caps_skips_block_phase() {
         .expect("engine construction");
 
     let result = engine
-        .run(&report, &signing_key(), |req| {
-            Ok(failing_observation(req))
-        })
+        .run(&report, &signing_key(), |req| Ok(failing_observation(req)))
         .expect("run completes");
 
     // With only 2 caps, highest_power_of_two_leq(2/2)=1, block_size < 2 => no block phase
@@ -720,10 +734,12 @@ fn pair_removal_discovers_correlated_dependency() {
         })
         .expect("run completes");
 
-    assert!(result
-        .evaluations
-        .iter()
-        .any(|e| e.search_stage == AblationSearchStage::CorrelatedPair));
+    assert!(
+        result
+            .evaluations
+            .iter()
+            .any(|e| e.search_stage == AblationSearchStage::CorrelatedPair)
+    );
 }
 
 #[test]
@@ -767,9 +783,7 @@ fn single_capability_retained_when_oracle_rejects() {
         .expect("engine construction");
 
     let result = engine
-        .run(&report, &signing_key(), |req| {
-            Ok(failing_observation(req))
-        })
+        .run(&report, &signing_key(), |req| Ok(failing_observation(req)))
         .expect("run completes");
 
     assert_eq!(result.minimal_capabilities.len(), 1);
@@ -787,9 +801,7 @@ fn single_capability_removed_when_oracle_accepts() {
         .expect("engine construction");
 
     let result = engine
-        .run(&report, &signing_key(), |req| {
-            Ok(passing_observation(req))
-        })
+        .run(&report, &signing_key(), |req| Ok(passing_observation(req)))
         .expect("run completes");
 
     assert!(
@@ -809,9 +821,7 @@ fn all_capabilities_removable_reduces_to_empty_set() {
         .expect("engine construction");
 
     let result = engine
-        .run(&report, &signing_key(), |req| {
-            Ok(passing_observation(req))
-        })
+        .run(&report, &signing_key(), |req| Ok(passing_observation(req)))
         .expect("run completes");
 
     assert!(
@@ -819,7 +829,10 @@ fn all_capabilities_removable_reduces_to_empty_set() {
         "all caps should be removed when oracle always accepts"
     );
     assert!(!result.budget_exhausted);
-    result.transcript.verify_signature().expect("valid signature");
+    result
+        .transcript
+        .verify_signature()
+        .expect("valid signature");
 }
 
 #[test]
@@ -898,9 +911,11 @@ fn required_invariant_absent_from_observation_causes_violation() {
         .expect("run completes");
 
     assert_eq!(result.minimal_capabilities.len(), 1);
-    assert!(result.evaluations.iter().any(|e| e.failure_class
-        == Some(AblationFailureClass::InvariantViolation)
-        && e.invariant_failures.contains(&"missing_invariant".to_string())));
+    assert!(result.evaluations.iter().any(|e| {
+        e.failure_class == Some(AblationFailureClass::InvariantViolation)
+            && e.invariant_failures
+                .contains(&"missing_invariant".to_string())
+    }));
 }
 
 #[test]
@@ -1012,14 +1027,15 @@ fn transcript_tamper_detection_catches_modified_trace_id() {
         .expect("engine construction");
 
     let mut result = engine
-        .run(&report, &signing_key(), |req| {
-            Ok(passing_observation(req))
-        })
+        .run(&report, &signing_key(), |req| Ok(passing_observation(req)))
         .expect("run completes");
 
     // Tamper with the transcript
     result.transcript.trace_id = "tampered-trace".to_string();
-    let err = result.transcript.verify_signature().expect_err("tampered must fail");
+    let err = result
+        .transcript
+        .verify_signature()
+        .expect_err("tampered must fail");
     assert!(
         matches!(err, ShadowAblationError::SignatureInvalid { .. })
             || matches!(err, ShadowAblationError::IntegrityFailure { .. })
@@ -1037,13 +1053,19 @@ fn transcript_verify_signature_succeeds_for_valid_run() {
         .expect("engine construction");
 
     let result = engine
-        .run(&report, &signing_key(), |req| {
-            Ok(passing_observation(req))
-        })
+        .run(&report, &signing_key(), |req| Ok(passing_observation(req)))
         .expect("run completes");
 
-    result.transcript.verify_signature().expect("valid signature");
-    assert!(result.transcript.transcript_id.starts_with("shadow-ablation-"));
+    result
+        .transcript
+        .verify_signature()
+        .expect("valid signature");
+    assert!(
+        result
+            .transcript
+            .transcript_id
+            .starts_with("shadow-ablation-")
+    );
 }
 
 // ── Run result structure ─────────────────────────────────────────────
@@ -1059,14 +1081,27 @@ fn run_result_contains_start_and_completed_log_events() {
         .expect("engine construction");
 
     let result = engine
-        .run(&report, &signing_key(), |req| {
-            Ok(passing_observation(req))
-        })
+        .run(&report, &signing_key(), |req| Ok(passing_observation(req)))
         .expect("run completes");
 
-    assert!(result.logs.iter().any(|l| l.event == "shadow_ablation_started"));
-    assert!(result.logs.iter().any(|l| l.event == "shadow_ablation_completed"));
-    assert!(result.logs.iter().all(|l| l.component == "shadow_ablation_engine"));
+    assert!(
+        result
+            .logs
+            .iter()
+            .any(|l| l.event == "shadow_ablation_started")
+    );
+    assert!(
+        result
+            .logs
+            .iter()
+            .any(|l| l.event == "shadow_ablation_completed")
+    );
+    assert!(
+        result
+            .logs
+            .iter()
+            .all(|l| l.component == "shadow_ablation_engine")
+    );
     assert!(result.logs.iter().all(|l| l.trace_id == config.trace_id));
 }
 
@@ -1081,9 +1116,7 @@ fn run_result_evaluation_ids_start_with_ablate_prefix() {
         .expect("engine construction");
 
     let result = engine
-        .run(&report, &signing_key(), |req| {
-            Ok(failing_observation(req))
-        })
+        .run(&report, &signing_key(), |req| Ok(failing_observation(req)))
         .expect("run completes");
 
     assert!(!result.evaluations.is_empty());
@@ -1105,9 +1138,7 @@ fn run_result_trace_ids_match_config() {
         .expect("engine construction");
 
     let result = engine
-        .run(&report, &signing_key(), |req| {
-            Ok(passing_observation(req))
-        })
+        .run(&report, &signing_key(), |req| Ok(passing_observation(req)))
         .expect("run completes");
 
     assert_eq!(result.trace_id, config.trace_id);
@@ -1131,9 +1162,7 @@ fn run_result_serde_roundtrip() {
         .expect("engine construction");
 
     let result = engine
-        .run(&report, &signing_key(), |req| {
-            Ok(passing_observation(req))
-        })
+        .run(&report, &signing_key(), |req| Ok(passing_observation(req)))
         .expect("run completes");
 
     let json = serde_json::to_string(&result).expect("serialize");
@@ -1296,9 +1325,7 @@ fn run_result_clone_independence() {
         .expect("engine construction");
 
     let result = engine
-        .run(&report, &signing_key(), |req| {
-            Ok(passing_observation(req))
-        })
+        .run(&report, &signing_key(), |req| Ok(passing_observation(req)))
         .expect("run completes");
 
     let mut cloned = result.clone();
@@ -1336,7 +1363,10 @@ fn observation_clone_independence() {
     };
     let mut cloned = obs.clone();
     cloned.correctness_score_millionths = 0;
-    assert_ne!(obs.correctness_score_millionths, cloned.correctness_score_millionths);
+    assert_ne!(
+        obs.correctness_score_millionths,
+        cloned.correctness_score_millionths
+    );
 }
 
 // ── Display uniqueness ───────────────────────────────────────────────
@@ -1406,9 +1436,7 @@ fn run_result_json_field_names() {
         .expect("engine construction");
 
     let result = engine
-        .run(&report, &signing_key(), |req| {
-            Ok(passing_observation(req))
-        })
+        .run(&report, &signing_key(), |req| Ok(passing_observation(req)))
         .expect("run completes");
 
     let json: serde_json::Value = serde_json::to_value(&result).expect("to_value");
@@ -1578,20 +1606,32 @@ fn same_seed_same_config_produces_identical_transcripts() {
         let engine = ShadowAblationEngine::new(cfg, SynthesisBudgetContract::default())
             .expect("engine construction");
         engine
-            .run(&report, &signing_key(), |req| {
-                Ok(failing_observation(req))
-            })
+            .run(&report, &signing_key(), |req| Ok(failing_observation(req)))
             .expect("run completes")
     };
 
     let first = run_once(config.clone());
     let second = run_once(config.clone());
 
-    assert_eq!(first.transcript.transcript_hash, second.transcript.transcript_hash);
-    assert_eq!(first.transcript.unsigned_bytes(), second.transcript.unsigned_bytes());
     assert_eq!(
-        first.evaluations.iter().map(|e| &e.candidate_id).collect::<Vec<_>>(),
-        second.evaluations.iter().map(|e| &e.candidate_id).collect::<Vec<_>>()
+        first.transcript.transcript_hash,
+        second.transcript.transcript_hash
+    );
+    assert_eq!(
+        first.transcript.unsigned_bytes(),
+        second.transcript.unsigned_bytes()
+    );
+    assert_eq!(
+        first
+            .evaluations
+            .iter()
+            .map(|e| &e.candidate_id)
+            .collect::<Vec<_>>(),
+        second
+            .evaluations
+            .iter()
+            .map(|e| &e.candidate_id)
+            .collect::<Vec<_>>()
     );
 }
 
@@ -1609,9 +1649,7 @@ fn different_seed_produces_different_evaluation_order() {
         let engine = ShadowAblationEngine::new(cfg, SynthesisBudgetContract::default())
             .expect("engine construction");
         engine
-            .run(&report, &signing_key(), |req| {
-                Ok(failing_observation(req))
-            })
+            .run(&report, &signing_key(), |req| Ok(failing_observation(req)))
             .expect("run completes")
     };
 
@@ -1636,9 +1674,7 @@ fn evaluation_sequence_numbers_are_monotonically_increasing() {
         .expect("engine construction");
 
     let result = engine
-        .run(&report, &signing_key(), |req| {
-            Ok(failing_observation(req))
-        })
+        .run(&report, &signing_key(), |req| Ok(failing_observation(req)))
         .expect("run completes");
 
     for window in result.evaluations.windows(2) {
@@ -1664,9 +1700,7 @@ fn log_events_for_evaluated_candidates_have_search_stage() {
         .expect("engine construction");
 
     let result = engine
-        .run(&report, &signing_key(), |req| {
-            Ok(failing_observation(req))
-        })
+        .run(&report, &signing_key(), |req| Ok(failing_observation(req)))
         .expect("run completes");
 
     let eval_logs: Vec<_> = result
@@ -1676,8 +1710,14 @@ fn log_events_for_evaluated_candidates_have_search_stage() {
         .collect();
     assert!(!eval_logs.is_empty());
     for log in &eval_logs {
-        assert!(log.search_stage.is_some(), "eval log must have search_stage");
-        assert!(log.candidate_id.is_some(), "eval log must have candidate_id");
+        assert!(
+            log.search_stage.is_some(),
+            "eval log must have search_stage"
+        );
+        assert!(
+            log.candidate_id.is_some(),
+            "eval log must have candidate_id"
+        );
     }
 }
 
@@ -1702,8 +1742,7 @@ fn transcript_input_serde_roundtrip() {
         budget_utilization: BTreeMap::new(),
     };
     let json = serde_json::to_string(&input).expect("serialize");
-    let restored: ShadowAblationTranscriptInput =
-        serde_json::from_str(&json).expect("deserialize");
+    let restored: ShadowAblationTranscriptInput = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(input, restored);
 }
 
@@ -1720,9 +1759,7 @@ fn signed_transcript_serde_roundtrip() {
         .expect("engine construction");
 
     let result = engine
-        .run(&report, &signing_key(), |req| {
-            Ok(passing_observation(req))
-        })
+        .run(&report, &signing_key(), |req| Ok(passing_observation(req)))
         .expect("run completes");
 
     let json = serde_json::to_string(&result.transcript).expect("serialize");
