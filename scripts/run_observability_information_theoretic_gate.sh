@@ -72,6 +72,26 @@ rch_reject_local_fallback() {
   fi
 }
 
+rch_recovered_success() {
+  local log_path="$1"
+
+  if rch_strip_ansi "$log_path" | rg -q "Remote command finished: exit=0"; then
+    return 0
+  fi
+
+  if rch_strip_ansi "$log_path" | rg -q "Finished .* profile" \
+    && ! rch_strip_ansi "$log_path" | rg -q "error\\[|error:|FAILED"; then
+    return 0
+  fi
+
+  if rch_strip_ansi "$log_path" | rg -q "test result: ok\\." \
+    && ! rch_strip_ansi "$log_path" | rg -q "FAILED"; then
+    return 0
+  fi
+
+  return 1
+}
+
 declare -a commands_run=()
 failed_command=""
 manifest_written=false
@@ -86,7 +106,7 @@ run_step() {
 
   log_path="$(mktemp)"
   if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
-    if rch_strip_ansi "$log_path" | rg -q "Remote command finished: exit=0"; then
+    if rch_recovered_success "$log_path"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" \
         | tee -a "$log_path"
     else
@@ -109,12 +129,18 @@ run_step() {
 
   remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
   if [[ -n "$remote_exit_code" && "$remote_exit_code" != "0" ]]; then
+    if rch_recovered_success "$log_path"; then
+      echo "==> recovered: remote exit=${remote_exit_code} with successful build markers" \
+        | tee -a "$log_path"
+    else
     rm -f "$log_path"
     failed_command="${command_text} (remote-exit=${remote_exit_code})"
     return 1
+    fi
   fi
 
   rm -f "$log_path"
+  failed_command=""
 }
 
 run_mode() {
@@ -158,6 +184,7 @@ write_manifest() {
   if [[ "$exit_code" -eq 0 ]]; then
     outcome="pass"
     error_code_json="null"
+    failed_command=""
   else
     outcome="fail"
     error_code_json='"FE-OBSERVABILITY-CHANNEL-0001"'

@@ -106,23 +106,23 @@ run_mode() {
   case "$mode" in
     check)
       run_step "cargo check -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint" \
-        cargo check -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint
+        cargo check -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint || return 1
       ;;
     test)
       run_step "cargo test -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint" \
-        cargo test -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint
+        cargo test -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint || return 1
       ;;
     clippy)
       run_step "cargo clippy -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint -- -D warnings
+        cargo clippy -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint -- -D warnings || return 1
       ;;
     ci)
       run_step "cargo check -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint" \
-        cargo check -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint
+        cargo check -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint || return 1
       run_step "cargo test -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint" \
-        cargo test -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint
+        cargo test -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint || return 1
       run_step "cargo clippy -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint -- -D warnings
+        cargo clippy -p frankenengine-engine --test frx_frankenbrowser_integration_blueprint -- -D warnings || return 1
       ;;
     *)
       echo "usage: $0 [check|test|clippy|ci]" >&2
@@ -143,6 +143,7 @@ write_manifest() {
   if [[ "$exit_code" -eq 0 ]]; then
     outcome="pass"
     error_code_json="null"
+    failed_command=""
   else
     outcome="fail"
     error_code_json='"FE-FRX-09-3-GATE-0001"'

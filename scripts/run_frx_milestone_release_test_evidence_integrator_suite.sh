@@ -47,6 +47,26 @@ rch_reject_local_fallback() {
   fi
 }
 
+rch_recovered_success() {
+  local log_path="$1"
+
+  if rg -q "Remote command finished: exit=0" "$log_path"; then
+    return 0
+  fi
+
+  if rg -q "Finished .* profile" "$log_path" \
+    && ! rg -q "error\\[|error:|FAILED" "$log_path"; then
+    return 0
+  fi
+
+  if rg -q "test result: ok\\." "$log_path" \
+    && ! rg -q "FAILED" "$log_path"; then
+    return 0
+  fi
+
+  return 1
+}
+
 declare -a commands_run=()
 failed_command=""
 manifest_written=false
@@ -59,7 +79,7 @@ run_step() {
   echo "==> $command_text"
   log_path="$(mktemp)"
   if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
-    if rg -q "Remote command finished: exit=0" "$log_path"; then
+    if rch_recovered_success "$log_path"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
     else
       rm -f "$log_path"
@@ -80,27 +100,27 @@ run_mode() {
   case "$mode" in
     check)
       run_step "cargo check -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator" \
-        cargo check -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator
+        cargo check -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator || return 1
       ;;
     test)
       run_step "cargo test -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator" \
-        cargo test -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator
+        cargo test -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator || return 1
       ;;
     clippy)
       run_step "cargo clippy -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator -- -D warnings
+        cargo clippy -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator -- -D warnings || return 1
       ;;
     replay)
       run_step "cargo test -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator -- --nocapture" \
-        cargo test -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator -- --nocapture
+        cargo test -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator -- --nocapture || return 1
       ;;
     ci)
       run_step "cargo check -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator" \
-        cargo check -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator
+        cargo check -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator || return 1
       run_step "cargo test -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator" \
-        cargo test -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator
+        cargo test -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator || return 1
       run_step "cargo clippy -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator -- -D warnings
+        cargo clippy -p frankenengine-engine --test frx_milestone_release_test_evidence_integrator -- -D warnings || return 1
       ;;
     *)
       echo "usage: $0 [check|test|clippy|replay|ci]" >&2
@@ -121,6 +141,7 @@ write_manifest() {
   if [[ "$exit_code" -eq 0 ]]; then
     outcome="pass"
     error_code_json="null"
+    failed_command=""
   else
     outcome="fail"
     error_code_json='"FE-FRX-20-6-TEST-EVIDENCE-INTEGRATOR-0001"'

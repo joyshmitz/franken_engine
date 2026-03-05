@@ -74,6 +74,8 @@ manifest_written=false
 run_step() {
   local command_text="$1"
   local log_path
+  local remote_success_marker='Remote command finished: exit=0'
+  local remote_failure_marker='Remote command finished: exit=[1-9][0-9]*'
   shift
 
   commands_run+=("$command_text")
@@ -81,13 +83,29 @@ run_step() {
   log_path="$(mktemp)"
 
   if ! run_rch "$@" > >(tee "$log_path") 2>&1; then
-    if rg -q "Remote command finished: exit=0" "$log_path"; then
+    if rg -q "$remote_success_marker" "$log_path"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
     else
       rm -f "$log_path"
       failed_command="$command_text"
       return 1
     fi
+  fi
+
+  # Fail closed if rch reports a non-zero remote exit but still returns success.
+  if rg -q "$remote_failure_marker" "$log_path"; then
+    echo "rch reported non-zero remote exit for step: ${command_text}" >&2
+    rm -f "$log_path"
+    failed_command="${command_text} (rch-remote-exit-nonzero)"
+    return 1
+  fi
+
+  # Require explicit remote success marker to avoid ambiguous pass states.
+  if ! rg -q "$remote_success_marker" "$log_path"; then
+    echo "rch did not emit a remote success marker for step: ${command_text}" >&2
+    rm -f "$log_path"
+    failed_command="${command_text} (rch-remote-success-marker-missing)"
+    return 1
   fi
 
   if ! rch_reject_local_fallback "$log_path"; then
@@ -107,7 +125,7 @@ run_test_scenario() {
         cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- \
           --skip parser_event_ast_equivalence_failure_case_has_replayable_error_codes \
           --skip parser_event_ast_equivalence_tamper_detection_is_deterministic \
-          --skip parser_event_ast_equivalence_replay_scenarios_are_deterministic
+          --skip parser_event_ast_equivalence_replay_scenarios_are_deterministic || return $?
       ;;
     malformed)
       run_step \
@@ -115,7 +133,7 @@ run_test_scenario() {
         cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- \
           --skip parser_event_ast_equivalence_success_cases_have_hash_parity_and_stable_witnesses \
           --skip parser_event_ast_equivalence_tamper_detection_is_deterministic \
-          --skip parser_event_ast_equivalence_replay_scenarios_are_deterministic
+          --skip parser_event_ast_equivalence_replay_scenarios_are_deterministic || return $?
       ;;
     tamper)
       run_step \
@@ -123,7 +141,7 @@ run_test_scenario() {
         cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- \
           --skip parser_event_ast_equivalence_success_cases_have_hash_parity_and_stable_witnesses \
           --skip parser_event_ast_equivalence_failure_case_has_replayable_error_codes \
-          --skip parser_event_ast_equivalence_replay_scenarios_are_deterministic
+          --skip parser_event_ast_equivalence_replay_scenarios_are_deterministic || return $?
       ;;
     replay)
       run_step \
@@ -131,19 +149,19 @@ run_test_scenario() {
         cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- \
           --skip parser_event_ast_equivalence_success_cases_have_hash_parity_and_stable_witnesses \
           --skip parser_event_ast_equivalence_failure_case_has_replayable_error_codes \
-          --skip parser_event_ast_equivalence_tamper_detection_is_deterministic
+          --skip parser_event_ast_equivalence_tamper_detection_is_deterministic || return $?
       ;;
     full)
       run_step "cargo test -p frankenengine-engine --test parser_event_ast_equivalence" \
-        cargo test -p frankenengine-engine --test parser_event_ast_equivalence
+        cargo test -p frankenengine-engine --test parser_event_ast_equivalence || return $?
       ;;
     matrix)
       run_step \
         "cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --exact parser_event_ast_equivalence_matrix_dimensions_contract_is_complete" \
-        cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --exact parser_event_ast_equivalence_matrix_dimensions_contract_is_complete
+        cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --exact parser_event_ast_equivalence_matrix_dimensions_contract_is_complete || return $?
       run_step \
         "cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --exact parser_event_ast_equivalence_cases_cover_required_matrix_tiers" \
-        cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --exact parser_event_ast_equivalence_cases_cover_required_matrix_tiers
+        cargo test -p frankenengine-engine --test parser_event_ast_equivalence -- --exact parser_event_ast_equivalence_cases_cover_required_matrix_tiers || return $?
       ;;
   esac
 }
@@ -152,21 +170,21 @@ run_mode() {
   case "${mode}" in
     check)
       run_step "cargo check -p frankenengine-engine --test parser_event_ast_equivalence" \
-        cargo check -p frankenengine-engine --test parser_event_ast_equivalence
+        cargo check -p frankenengine-engine --test parser_event_ast_equivalence || return $?
       ;;
     test)
-      run_test_scenario
+      run_test_scenario || return $?
       ;;
     clippy)
       run_step "cargo clippy -p frankenengine-engine --test parser_event_ast_equivalence -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test parser_event_ast_equivalence -- -D warnings
+        cargo clippy -p frankenengine-engine --test parser_event_ast_equivalence -- -D warnings || return $?
       ;;
     ci)
       run_step "cargo check -p frankenengine-engine --test parser_event_ast_equivalence" \
-        cargo check -p frankenengine-engine --test parser_event_ast_equivalence
-      run_test_scenario
+        cargo check -p frankenengine-engine --test parser_event_ast_equivalence || return $?
+      run_test_scenario || return $?
       run_step "cargo clippy -p frankenengine-engine --test parser_event_ast_equivalence -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test parser_event_ast_equivalence -- -D warnings
+        cargo clippy -p frankenengine-engine --test parser_event_ast_equivalence -- -D warnings || return $?
       ;;
     *)
       echo "usage: $0 [check|test|clippy|ci]" >&2

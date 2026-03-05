@@ -38,6 +38,8 @@ declare -a commands_run=()
 declare -a step_logs=()
 failed_command=""
 failed_step_log_path=""
+observed_rch_timeout_seconds=""
+timeout_policy_drift_detected=false
 step_counter=0
 manifest_written=false
 
@@ -87,6 +89,37 @@ rch_reject_artifact_retrieval_failure() {
   fi
 }
 
+rch_extract_wrapped_timeout_seconds() {
+  local log_path="$1"
+  local wrapped_timeout
+  wrapped_timeout="$(
+    sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' "$log_path" \
+      | grep -Eo 'timeout_secs:[[:space:]]*[0-9]+' \
+      | tail -n 1 \
+      | grep -Eo '[0-9]+$' || true
+  )"
+  echo "$wrapped_timeout"
+}
+
+rch_reject_timeout_policy_drift() {
+  local log_path="$1"
+  local wrapped_timeout
+
+  wrapped_timeout="$(rch_extract_wrapped_timeout_seconds "$log_path")"
+  if [[ -z "$wrapped_timeout" ]]; then
+    return 0
+  fi
+
+  observed_rch_timeout_seconds="$wrapped_timeout"
+  if [[ "$wrapped_timeout" =~ ^[0-9]+$ ]] && [[ "$rch_build_timeout_sec" =~ ^[0-9]+$ ]]; then
+    if (( wrapped_timeout < rch_build_timeout_sec )); then
+      timeout_policy_drift_detected=true
+      echo "rch timeout policy drift: wrapped timeout ${wrapped_timeout}s is below requested ${rch_build_timeout_sec}s" >&2
+      return 1
+    fi
+  fi
+}
+
 run_step() {
   local command_text="$1"
   local log_path run_rc remote_exit_code
@@ -103,6 +136,13 @@ run_step() {
   else
     run_rc=$?
     remote_exit_code="$(rch_last_remote_exit_code "$log_path")"
+    if [[ "$run_rc" -eq 124 || "$remote_exit_code" == "137" ]]; then
+      if ! rch_reject_timeout_policy_drift "$log_path"; then
+        failed_command="${command_text} (rch-timeout-policy-drift-${observed_rch_timeout_seconds:-unknown}<${rch_build_timeout_sec})"
+        failed_step_log_path="$log_path"
+        return 1
+      fi
+    fi
     if [[ "$remote_exit_code" == "0" ]] && rch_has_recoverable_artifact_timeout "$log_path"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
     else
@@ -130,6 +170,12 @@ run_step() {
     return 1
   fi
 
+  if ! rch_reject_timeout_policy_drift "$log_path"; then
+    failed_command="${command_text} (rch-timeout-policy-drift-${observed_rch_timeout_seconds:-unknown}<${rch_build_timeout_sec})"
+    failed_step_log_path="$log_path"
+    return 1
+  fi
+
   remote_exit_code="$(rch_last_remote_exit_code "$log_path")"
   if [[ "$remote_exit_code" != "0" ]]; then
     if [[ -z "$remote_exit_code" ]]; then
@@ -150,6 +196,11 @@ fragmentation_ratio_exceeds_threshold() {
 resolve_failure_code() {
   if [[ "${failed_command}" == fragmentation_threshold_check* ]]; then
     echo "FE-PARSER-PHASE1-ARENA-FRAG-0001"
+    return
+  fi
+
+  if [[ "${failed_command}" == *rch-timeout-policy-drift* ]]; then
+    echo "FE-PARSER-PHASE1-ARENA-TIMEOUT-0001"
     return
   fi
 
@@ -214,19 +265,19 @@ run_mode() {
   case "$mode" in
     check)
       run_step "cargo check -p frankenengine-engine --test parser_arena_phase1" \
-        cargo check -p frankenengine-engine --test parser_arena_phase1
+        cargo check -p frankenengine-engine --test parser_arena_phase1 || return 1
       ;;
     test)
-      run_test_scenario
+      run_test_scenario || return 1
       ;;
     clippy)
       run_step "cargo clippy -p frankenengine-engine --test parser_arena_phase1 -- -D warnings" \
-        cargo clippy -p frankenengine-engine --test parser_arena_phase1 -- -D warnings
+        cargo clippy -p frankenengine-engine --test parser_arena_phase1 -- -D warnings || return 1
       ;;
     ci)
       run_step "cargo check -p frankenengine-engine --test parser_arena_phase1" \
-        cargo check -p frankenengine-engine --test parser_arena_phase1
-      run_test_scenario
+        cargo check -p frankenengine-engine --test parser_arena_phase1 || return 1
+      run_test_scenario || return 1
       ;;
     *)
       echo "usage: $0 [check|test|clippy|ci]" >&2
@@ -237,7 +288,7 @@ run_mode() {
 
 write_manifest() {
   local exit_code="${1:-0}"
-  local git_commit dirty_worktree idx comma outcome error_code_json error_code
+  local git_commit dirty_worktree idx comma outcome error_code_json error_code observed_timeout_json
 
   if [[ "$manifest_written" == true ]]; then
     return
@@ -253,6 +304,12 @@ write_manifest() {
     error_code_json="\"${error_code}\""
   fi
 
+  if [[ -n "$observed_rch_timeout_seconds" ]]; then
+    observed_timeout_json="${observed_rch_timeout_seconds}"
+  else
+    observed_timeout_json="null"
+  fi
+
   git_commit="$(git rev-parse HEAD 2>/dev/null || echo "unknown")"
   if git diff --quiet --ignore-submodules HEAD -- >/dev/null 2>&1; then
     dirty_worktree=false
@@ -266,7 +323,7 @@ write_manifest() {
   replay_command="PARSER_PHASE1_ARENA_SCENARIO=${scenario} ${0} ${mode}"
 
   {
-    echo "{\"schema_version\":\"franken-engine.parser-phase1-arena-suite.event.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"${component}\",\"event\":\"suite_completed\",\"allocator_epoch\":\"${allocator_epoch}\",\"handle_kind\":\"mixed\",\"arena_fragmentation_ratio\":${arena_fragmentation_ratio},\"arena_fragmentation_threshold\":${arena_fragmentation_threshold},\"rollback_token\":\"${rollback_token}\",\"replay_command\":\"${replay_command}\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
+    echo "{\"schema_version\":\"franken-engine.parser-phase1-arena-suite.event.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"${component}\",\"event\":\"suite_completed\",\"allocator_epoch\":\"${allocator_epoch}\",\"handle_kind\":\"mixed\",\"arena_fragmentation_ratio\":${arena_fragmentation_ratio},\"arena_fragmentation_threshold\":${arena_fragmentation_threshold},\"rollback_token\":\"${rollback_token}\",\"rch_observed_timeout_seconds\":${observed_timeout_json},\"rch_timeout_policy_drift_detected\":${timeout_policy_drift_detected},\"replay_command\":\"${replay_command}\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json}}"
   } >"$events_path"
 
   {
@@ -283,6 +340,8 @@ write_manifest() {
     echo "  \"rch_build_timeout_seconds\": ${rch_build_timeout_sec},"
     echo "  \"rch_artifact_grace_seconds\": ${rch_artifact_grace_seconds},"
     echo "  \"rch_wrapper_timeout_seconds\": ${rch_wrapper_timeout_seconds},"
+    echo "  \"rch_observed_timeout_seconds\": ${observed_timeout_json},"
+    echo "  \"rch_timeout_policy_drift_detected\": ${timeout_policy_drift_detected},"
     echo "  \"cargo_build_jobs\": ${cargo_build_jobs},"
     echo "  \"trace_id\": \"${trace_id}\","
     echo "  \"decision_id\": \"${decision_id}\","
@@ -345,7 +404,8 @@ write_manifest() {
     echo '    "budget_failure": "FE-PARSER-PHASE1-ARENA-BUDGET-0001",'
     echo '    "handle_integrity": "FE-PARSER-PHASE1-ARENA-HANDLE-0001",'
     echo '    "parity_or_replay": "FE-PARSER-PHASE1-ARENA-PARITY-0001",'
-    echo '    "fragmentation_threshold": "FE-PARSER-PHASE1-ARENA-FRAG-0001"'
+    echo '    "fragmentation_threshold": "FE-PARSER-PHASE1-ARENA-FRAG-0001",'
+    echo '    "timeout_policy_drift": "FE-PARSER-PHASE1-ARENA-TIMEOUT-0001"'
     echo "  },"
     echo '  "operator_verification": ['
     echo "    \"cat ${manifest_path}\","
@@ -368,6 +428,11 @@ if [[ "$main_exit" -eq 0 ]] && fragmentation_ratio_exceeds_threshold; then
   failed_command="fragmentation_threshold_check(${arena_fragmentation_ratio}>${arena_fragmentation_threshold})"
   echo "fragmentation threshold violated: ratio=${arena_fragmentation_ratio} threshold=${arena_fragmentation_threshold}" >&2
   main_exit=3
+fi
+
+if [[ "$main_exit" -eq 0 ]]; then
+  failed_command=""
+  failed_step_log_path=""
 fi
 
 write_manifest "$main_exit"
