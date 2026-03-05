@@ -501,3 +501,33 @@ fn attestation_action_request_serde_round_trip() {
     assert_eq!(req.decision_id, recovered.decision_id);
     assert_eq!(req.tier, recovered.tier);
 }
+
+#[test]
+fn attestation_fallback_state_debug_is_nonempty() {
+    for state in [
+        AttestationFallbackState::Normal,
+        AttestationFallbackState::Degraded,
+        AttestationFallbackState::Restoring,
+    ] {
+        assert!(!format!("{state:?}").is_empty());
+    }
+}
+
+#[test]
+fn attestation_health_debug_is_nonempty() {
+    for health in [
+        AttestationHealth::Valid,
+        AttestationHealth::EvidenceExpired,
+        AttestationHealth::EvidenceUnavailable,
+        AttestationHealth::VerificationFailed,
+    ] {
+        assert!(!format!("{health:?}").is_empty());
+    }
+}
+
+#[test]
+fn action_tier_debug_is_nonempty() {
+    for tier in [ActionTier::LowImpact, ActionTier::Standard, ActionTier::HighImpact] {
+        assert!(!format!("{tier:?}").is_empty());
+    }
+}
