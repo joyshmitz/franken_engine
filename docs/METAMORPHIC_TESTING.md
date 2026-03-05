@@ -1,4 +1,4 @@
-# Metamorphic Testing (bd-mjh3.5.2)
+# Metamorphic Testing (bd-1lsy.9.3)
 
 This document defines the metamorphic test framework for parser, IR, and execution invariants.
 
@@ -68,10 +68,12 @@ Each run writes deterministic metadata under:
 - `artifacts/metamorphic/<timestamp>/relation_events.jsonl`
 - `artifacts/metamorphic/<timestamp>/metamorphic_evidence.jsonl`
 - `artifacts/metamorphic/<timestamp>/seed_transcript.jsonl`
+- `artifacts/metamorphic/<timestamp>/seed_manifest.json`
+- `artifacts/metamorphic/<timestamp>/triage_report.json`
 - `artifacts/metamorphic/<timestamp>/failures/`
 - `artifacts/metamorphic/<timestamp>/commands.txt`
 
-`run_manifest.json` pins `bead_id=bd-mjh3.5.2` and includes a deterministic
+`run_manifest.json` pins `bead_id=bd-1lsy.9.3` and includes a deterministic
 `replay_command` field for operator reruns.
 
 Evidence rows include stable governance fields:
@@ -110,6 +112,23 @@ Seed transcript rows capture deterministic pair-seed replay metadata:
 - `outcome`
 - `error_code`
 
+Seed manifest rows capture deterministic campaign scheduling metadata:
+- `schema_version`
+- `relation_catalog_hash`
+- `corpus_version`
+- `base_seed`
+- `relation_seed_schedule[]` (`relation_id`, `pairs_tested`, `start_seed`, `end_seed`, `schedule_policy`)
+
+Triage report rows capture severity-classified and owner-routed findings:
+- `counterexample_id`
+- `finding_class` (`correctness|security|determinism`)
+- `severity` (`medium|high|critical`)
+- `priority` (`p2|p1|p0`)
+- `owner_assignment` (`owner_track`, `owner_hint`, `escalation_required`)
+- `minimized_reproduction_id`
+- `deterministic_evidence_link`
+- `replay_command`
+
 ## Meta-Tests
 
 The crate includes infrastructure self-tests for:
@@ -135,6 +154,8 @@ cat artifacts/metamorphic/<timestamp>/events.jsonl
 cat artifacts/metamorphic/<timestamp>/relation_events.jsonl
 cat artifacts/metamorphic/<timestamp>/metamorphic_evidence.jsonl
 cat artifacts/metamorphic/<timestamp>/seed_transcript.jsonl
+cat artifacts/metamorphic/<timestamp>/seed_manifest.json
+cat artifacts/metamorphic/<timestamp>/triage_report.json
 ls artifacts/metamorphic/<timestamp>/failures
 ./scripts/e2e/metamorphic_suite_replay.sh ci
 ```

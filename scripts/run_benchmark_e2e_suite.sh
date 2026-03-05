@@ -49,6 +49,57 @@ benchmark_artifacts_complete() {
   return 0
 }
 
+pull_remote_file_if_missing() {
+  local path="$1"
+  local tmp_path
+
+  if [[ -f "$path" ]]; then
+    return 0
+  fi
+
+  if ! RCH_LOG_LEVEL=error run_rch test -f "$path" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$path")"
+  tmp_path="${path}.remote.$$"
+  if ! RCH_LOG_LEVEL=error run_rch cat "$path" >"$tmp_path"; then
+    rm -f "$tmp_path"
+    return 1
+  fi
+
+  mv "$tmp_path" "$path"
+}
+
+sync_benchmark_artifacts_from_remote() {
+  local required
+  local missing_any=false
+  for required in \
+    "$benchmark_manifest_path" \
+    "$benchmark_events_path" \
+    "$benchmark_commands_path" \
+    "$benchmark_env_manifest_path" \
+    "$raw_results_archive_path"; do
+    if [[ -f "$required" ]]; then
+      continue
+    fi
+    if ! pull_remote_file_if_missing "$required"; then
+      missing_any=true
+    fi
+  done
+
+  [[ "$missing_any" == false ]]
+}
+
+ensure_benchmark_artifacts_complete() {
+  if benchmark_artifacts_complete; then
+    return 0
+  fi
+
+  sync_benchmark_artifacts_from_remote || true
+  benchmark_artifacts_complete
+}
+
 reject_local_fallback() {
   local log_path="$1"
   if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|running locally|Failed to query daemon:.*running locally|RCH-E326' "$log_path"; then
@@ -113,7 +164,7 @@ run_test() {
   run_step "FRANKEN_BENCH_E2E_OUTPUT_DIR=${run_dir} cargo test -p frankenengine-engine --test benchmark_e2e --test benchmark_e2e_integration" \
     env FRANKEN_BENCH_E2E_OUTPUT_DIR="${run_dir}" \
     cargo test -p frankenengine-engine --test benchmark_e2e --test benchmark_e2e_integration
-  if ! benchmark_artifacts_complete; then
+  if ! ensure_benchmark_artifacts_complete; then
     echo "error: benchmark artifact contract missing after test mode" >&2
     failed_command="test_artifact_validation"
     return 1
@@ -131,7 +182,7 @@ run_report() {
     cargo test -p frankenengine-engine --test benchmark_e2e_integration \
     benchmark_e2e_script_emits_artifacts_to_env_dir -- --exact --nocapture
 
-  if ! benchmark_artifacts_complete; then
+  if ! ensure_benchmark_artifacts_complete; then
     echo "error: benchmark artifact contract missing after report mode" >&2
     failed_command="report_artifact_validation"
     return 1

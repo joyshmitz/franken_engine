@@ -18,6 +18,8 @@ events_path="$run_dir/events.jsonl"
 relation_events_path="$run_dir/relation_events.jsonl"
 evidence_path="$run_dir/metamorphic_evidence.jsonl"
 seed_transcript_path="$run_dir/seed_transcript.jsonl"
+seed_manifest_path="$run_dir/seed_manifest.json"
+triage_report_path="$run_dir/triage_report.json"
 failures_dir="$run_dir/failures"
 trace_id="trace-metamorphic-$timestamp"
 decision_id="decision-metamorphic-$timestamp"
@@ -130,11 +132,12 @@ run_mode() {
     test)
       run_step "cargo test -p frankenengine-metamorphic" \
         cargo test -p frankenengine-metamorphic
-      run_step "cargo run -p frankenengine-metamorphic --bin run_metamorphic_suite -- --pairs=$pairs --seed=$seed --trace-id=$trace_id --decision-id=$decision_id --policy-id=$policy_id --evidence=$evidence_path --events=$relation_events_path --seed-transcript=$seed_transcript_path --failures-dir=$failures_dir${relation_command_suffix}" \
+      run_step "cargo run -p frankenengine-metamorphic --bin run_metamorphic_suite -- --pairs=$pairs --seed=$seed --trace-id=$trace_id --decision-id=$decision_id --policy-id=$policy_id --evidence=$evidence_path --events=$relation_events_path --seed-transcript=$seed_transcript_path --seed-manifest=$seed_manifest_path --triage-report=$triage_report_path --failures-dir=$failures_dir${relation_command_suffix}" \
         cargo run -p frankenengine-metamorphic --bin run_metamorphic_suite -- \
         --pairs "$pairs" --seed "$seed" --trace-id "$trace_id" --decision-id "$decision_id" \
         --policy-id "$policy_id" --evidence "$evidence_path" --events "$relation_events_path" \
-        --seed-transcript "$seed_transcript_path" \
+        --seed-transcript "$seed_transcript_path" --seed-manifest "$seed_manifest_path" \
+        --triage-report "$triage_report_path" \
         --failures-dir "$failures_dir" "${relation_args[@]}"
       ;;
     ci)
@@ -142,11 +145,12 @@ run_mode() {
         cargo check -p frankenengine-metamorphic --all-targets
       run_step "cargo test -p frankenengine-metamorphic" \
         cargo test -p frankenengine-metamorphic
-      run_step "cargo run -p frankenengine-metamorphic --bin run_metamorphic_suite -- --pairs=$pairs --seed=$seed --trace-id=$trace_id --decision-id=$decision_id --policy-id=$policy_id --evidence=$evidence_path --events=$relation_events_path --seed-transcript=$seed_transcript_path --failures-dir=$failures_dir${relation_command_suffix}" \
+      run_step "cargo run -p frankenengine-metamorphic --bin run_metamorphic_suite -- --pairs=$pairs --seed=$seed --trace-id=$trace_id --decision-id=$decision_id --policy-id=$policy_id --evidence=$evidence_path --events=$relation_events_path --seed-transcript=$seed_transcript_path --seed-manifest=$seed_manifest_path --triage-report=$triage_report_path --failures-dir=$failures_dir${relation_command_suffix}" \
         cargo run -p frankenengine-metamorphic --bin run_metamorphic_suite -- \
         --pairs "$pairs" --seed "$seed" --trace-id "$trace_id" --decision-id "$decision_id" \
         --policy-id "$policy_id" --evidence "$evidence_path" --events "$relation_events_path" \
-        --seed-transcript "$seed_transcript_path" \
+        --seed-transcript "$seed_transcript_path" --seed-manifest "$seed_manifest_path" \
+        --triage-report "$triage_report_path" \
         --failures-dir "$failures_dir" "${relation_args[@]}"
       ;;
     *)
@@ -192,7 +196,7 @@ write_manifest() {
   {
     echo "{"
     echo '  "component": "metamorphic_suite",'
-    echo '  "bead_id": "bd-mjh3.5.2",'
+    echo '  "bead_id": "bd-1lsy.9.3",'
     echo "  \"mode\": \"${mode}\"," 
     echo "  \"toolchain\": \"${toolchain}\"," 
     echo "  \"cargo_target_dir\": \"${target_dir}\"," 
@@ -230,6 +234,8 @@ write_manifest() {
     echo "    \"relation_events\": \"${relation_events_path}\"," 
     echo "    \"evidence\": \"${evidence_path}\"," 
     echo "    \"seed_transcript\": \"${seed_transcript_path}\"," 
+    echo "    \"seed_manifest\": \"${seed_manifest_path}\"," 
+    echo "    \"triage_report\": \"${triage_report_path}\"," 
     echo "    \"failures_dir\": \"${failures_dir}\"," 
     echo "    \"command_log\": \"${run_dir}/commands.txt\""
     echo '  },'
@@ -239,6 +245,8 @@ write_manifest() {
     echo "    \"cat ${relation_events_path}\"," 
     echo "    \"cat ${evidence_path}\"," 
     echo "    \"cat ${seed_transcript_path}\"," 
+    echo "    \"cat ${seed_manifest_path}\"," 
+    echo "    \"cat ${triage_report_path}\"," 
     echo "    \"${replay_command}\""
     echo '  ]'
     echo "}"
