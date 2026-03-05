@@ -9,9 +9,10 @@ use frankenengine_metamorphic::relation::MetamorphicRelation;
 use frankenengine_metamorphic::relations::CatalogBackedRelation;
 use frankenengine_metamorphic::runner::{
     MinimizerConfig, RunContext, campaign_triage_report_for_suite, evidence_entries_for_suite,
-    relation_log_events_for_suite, run_suite, seed_manifest_for_suite,
-    seed_transcript_entries_for_suite, write_campaign_triage_report_json, write_evidence_jsonl,
-    write_seed_manifest_json, write_seed_transcript_jsonl,
+    relation_log_events_for_suite, repro_governance_actions_from_triage, run_suite,
+    seed_manifest_for_suite, seed_transcript_entries_for_suite, write_campaign_triage_report_json,
+    write_evidence_jsonl, write_repro_governance_actions_json, write_seed_manifest_json,
+    write_seed_transcript_jsonl,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -25,6 +26,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut seed_transcript_path = PathBuf::from("artifacts/metamorphic/seed_transcript.jsonl");
     let mut seed_manifest_path = PathBuf::from("artifacts/metamorphic/seed_manifest.json");
     let mut triage_report_path = PathBuf::from("artifacts/metamorphic/triage_report.json");
+    let mut governance_actions_path =
+        PathBuf::from("artifacts/metamorphic/repro_governance_actions.json");
     let mut failures_dir = PathBuf::from("artifacts/metamorphic/failures");
     let mut replay_command = String::from("./scripts/e2e/metamorphic_suite_replay.sh ci");
     let mut relation_filters = Vec::<String>::new();
@@ -98,6 +101,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
                 replay_command = value;
             }
+            "--governance-actions" => {
+                let Some(value) = args.next() else {
+                    return Err("missing value for --governance-actions".into());
+                };
+                governance_actions_path = PathBuf::from(value);
+            }
             "--failures-dir" => {
                 let Some(value) = args.next() else {
                     return Err("missing value for --failures-dir".into());
@@ -141,6 +150,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Some(parent) = triage_report_path.parent() {
         fs::create_dir_all(parent)?;
     }
+    if let Some(parent) = governance_actions_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     fs::create_dir_all(&failures_dir)?;
 
     let context = RunContext::new(
@@ -176,9 +188,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     write_seed_manifest_json(&seed_manifest_path, &seed_manifest)?;
     let triage_report = campaign_triage_report_for_suite(&suite, &replay_command);
     write_campaign_triage_report_json(&triage_report_path, &triage_report)?;
+    let governance_actions = repro_governance_actions_from_triage(&triage_report);
+    write_repro_governance_actions_json(&governance_actions_path, &governance_actions)?;
 
     println!(
-        "metamorphic suite relations={} total_pairs={} violations={} evidence={} events={} seed_transcript={} seed_manifest={} triage_report={} failures_dir={}",
+        "metamorphic suite relations={} total_pairs={} violations={} evidence={} events={} seed_transcript={} seed_manifest={} triage_report={} governance_actions={} failures_dir={}",
         suite.relation_executions.len(),
         suite.total_pairs,
         suite.total_violations,
@@ -187,6 +201,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         seed_transcript_path.display(),
         seed_manifest_path.display(),
         triage_report_path.display(),
+        governance_actions_path.display(),
         failures_dir.display()
     );
 

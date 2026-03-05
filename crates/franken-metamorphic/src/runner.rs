@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -223,6 +224,38 @@ pub struct CampaignTriageReport {
     pub priority_policy: Vec<PriorityPolicyRule>,
     pub summary: CampaignTriageSummary,
     pub findings: Vec<CampaignFinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReproGovernanceAction {
+    pub schema_version: String,
+    pub action: String,
+    pub bead_id: String,
+    pub fingerprint: String,
+    pub counterexample_id: String,
+    pub relation_id: String,
+    pub finding_class: FindingClass,
+    pub severity: FindingSeverity,
+    pub priority: String,
+    pub owner_track: String,
+    pub owner_hint: String,
+    pub deterministic_evidence_link: String,
+    pub replay_command: String,
+    pub minimized_reproduction_id: Option<String>,
+    pub divergence_detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReproGovernanceActionsReport {
+    pub schema_version: String,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub component: String,
+    pub relation_catalog_hash: String,
+    pub generated_from: String,
+    pub action_count: usize,
+    pub actions: Vec<ReproGovernanceAction>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -784,6 +817,61 @@ pub fn write_campaign_triage_report_json(
     fs::write(path, payload)
 }
 
+pub fn repro_governance_actions_from_triage(
+    report: &CampaignTriageReport,
+) -> ReproGovernanceActionsReport {
+    let mut deduplicated_actions = BTreeMap::<String, ReproGovernanceAction>::new();
+
+    for finding in &report.findings {
+        let fingerprint = stable_governance_fingerprint(finding);
+        let bead_suffix = fingerprint.strip_prefix("sha256:").unwrap_or(&fingerprint);
+        let bead_prefix_len = bead_suffix.len().min(8);
+        let bead_id = format!("bd-auto-{}", &bead_suffix[..bead_prefix_len]);
+        deduplicated_actions
+            .entry(fingerprint.clone())
+            .or_insert_with(|| ReproGovernanceAction {
+                schema_version: "franken-engine.metamorphic.repro-governance-action.v1".to_string(),
+                action: "create".to_string(),
+                bead_id,
+                fingerprint,
+                counterexample_id: finding.counterexample_id.clone(),
+                relation_id: finding.relation_id.clone(),
+                finding_class: finding.finding_class,
+                severity: finding.severity,
+                priority: finding.priority.clone(),
+                owner_track: finding.owner_assignment.owner_track.clone(),
+                owner_hint: finding.owner_assignment.owner_hint.clone(),
+                deterministic_evidence_link: finding.deterministic_evidence_link.clone(),
+                replay_command: finding.replay_command.clone(),
+                minimized_reproduction_id: finding.minimized_reproduction_id.clone(),
+                divergence_detail: finding.divergence_detail.clone(),
+            });
+    }
+
+    let actions = deduplicated_actions.into_values().collect::<Vec<_>>();
+
+    ReproGovernanceActionsReport {
+        schema_version: "franken-engine.metamorphic.repro-governance-actions.v1".to_string(),
+        trace_id: report.trace_id.clone(),
+        decision_id: report.decision_id.clone(),
+        policy_id: report.policy_id.clone(),
+        component: report.component.clone(),
+        relation_catalog_hash: report.relation_catalog_hash.clone(),
+        generated_from: report.schema_version.clone(),
+        action_count: actions.len(),
+        actions,
+    }
+}
+
+pub fn write_repro_governance_actions_json(
+    path: &Path,
+    report: &ReproGovernanceActionsReport,
+) -> std::io::Result<()> {
+    let payload = serde_json::to_vec_pretty(report)
+        .expect("repro governance actions serialization should succeed");
+    fs::write(path, payload)
+}
+
 pub fn minimize_failure_pair(
     relation: &dyn MetamorphicRelation,
     pair: &GeneratedPair,
@@ -1297,6 +1385,17 @@ fn stable_counterexample_id(
     format!("cex-{}", &digest[..16])
 }
 
+fn stable_governance_fingerprint(finding: &CampaignFinding) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(finding.counterexample_id.as_bytes());
+    hasher.update(finding.relation_id.as_bytes());
+    hasher.update(finding.run_seed.to_le_bytes());
+    hasher.update(finding.pair_index.to_le_bytes());
+    hasher.update(finding.divergence_detail.as_bytes());
+    let digest = hex::encode(hasher.finalize());
+    format!("sha256:{digest}")
+}
+
 pub fn environment_fingerprint() -> String {
     let toolchain = std::env::var("RUSTUP_TOOLCHAIN").unwrap_or_else(|_| "unknown".to_string());
     let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "default".to_string());
@@ -1326,8 +1425,9 @@ mod tests {
     use super::{
         FindingClass, FindingSeverity, MinimizerConfig, RelationEvidenceEntry, RunContext,
         campaign_triage_report_for_suite, evidence_entries_for_suite, minimize_failure_pair,
-        relation_log_events_for_suite, run_relation_with_budget, run_suite,
-        seed_manifest_for_suite, seed_transcript_entries_for_suite,
+        relation_log_events_for_suite, repro_governance_actions_from_triage,
+        run_relation_with_budget, run_suite, seed_manifest_for_suite,
+        seed_transcript_entries_for_suite,
     };
 
     struct AlwaysPassRelation {
@@ -2099,5 +2199,92 @@ mod tests {
             "./scripts/e2e/metamorphic_suite_replay.sh ci",
         );
         assert_eq!(first_report, second_report);
+    }
+
+    #[test]
+    fn repro_governance_actions_are_stable_for_identical_triage_inputs() {
+        let relation = SyntheticViolationRelation {
+            spec: RelationSpec {
+                id: "stable_governance_relation".to_string(),
+                subsystem: Subsystem::Parser,
+                description: "stable governance".to_string(),
+                oracle: OracleKind::AstEquality,
+                budget_pairs: 1,
+                enabled: true,
+            },
+        };
+        let context = test_context();
+        let relation_refs: Vec<&dyn MetamorphicRelation> = vec![&relation];
+        let suite = run_suite(
+            &relation_refs,
+            &context,
+            Some(1),
+            None,
+            MinimizerConfig::default(),
+        )
+        .expect("suite should run");
+        let triage = campaign_triage_report_for_suite(
+            &suite,
+            "./scripts/e2e/metamorphic_suite_replay.sh ci",
+        );
+
+        let first = repro_governance_actions_from_triage(&triage);
+        let second = repro_governance_actions_from_triage(&triage);
+
+        assert_eq!(first, second);
+        assert_eq!(first.action_count, triage.findings.len());
+        assert!(!first.actions.is_empty());
+        assert!(
+            first
+                .actions
+                .iter()
+                .all(|action| action.bead_id.starts_with("bd-auto-"))
+        );
+        assert!(
+            first
+                .actions
+                .iter()
+                .all(|action| action.fingerprint.starts_with("sha256:"))
+        );
+    }
+
+    #[test]
+    fn repro_governance_actions_deduplicate_by_fingerprint() {
+        let relation = SyntheticViolationRelation {
+            spec: RelationSpec {
+                id: "dedupe_governance_relation".to_string(),
+                subsystem: Subsystem::Parser,
+                description: "dedupe governance".to_string(),
+                oracle: OracleKind::AstEquality,
+                budget_pairs: 1,
+                enabled: true,
+            },
+        };
+        let context = test_context();
+        let relation_refs: Vec<&dyn MetamorphicRelation> = vec![&relation];
+        let suite = run_suite(
+            &relation_refs,
+            &context,
+            Some(1),
+            None,
+            MinimizerConfig::default(),
+        )
+        .expect("suite should run");
+        let mut triage = campaign_triage_report_for_suite(
+            &suite,
+            "./scripts/e2e/metamorphic_suite_replay.sh ci",
+        );
+        triage.findings.push(
+            triage
+                .findings
+                .first()
+                .expect("triage should contain at least one finding")
+                .clone(),
+        );
+
+        let actions = repro_governance_actions_from_triage(&triage);
+        assert_eq!(triage.findings.len(), 2);
+        assert_eq!(actions.action_count, 1);
+        assert_eq!(actions.actions.len(), 1);
     }
 }

@@ -1391,9 +1391,10 @@ mod tests {
         assert_eq!(exec.performance_delta.speedup_millionths, 1_200_000);
 
         // IR4 updated
-        assert!(ir4
-            .active_specialization_ids
-            .contains(&"link-1".to_string()));
+        assert!(
+            ir4.active_specialization_ids
+                .contains(&"link-1".to_string())
+        );
 
         // Engine updated
         let stored = engine.get(&lid).unwrap();
@@ -1844,9 +1845,10 @@ mod tests {
         };
         let exec = engine.record_execution(&lid, &mut ir4, perf, "t3").unwrap();
         assert_eq!(exec.instructions_executed, 1000);
-        assert!(ir4
-            .active_specialization_ids
-            .contains(&"link-1".to_string()));
+        assert!(
+            ir4.active_specialization_ids
+                .contains(&"link-1".to_string())
+        );
 
         // 4. Epoch change → invalidate
         let rollbacks = engine.on_epoch_change(test_epoch(6), "t4");
