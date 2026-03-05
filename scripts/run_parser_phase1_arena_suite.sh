@@ -17,6 +17,10 @@ run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
 events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
+step_logs_dir="${run_dir}/step_logs"
+rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
+rch_build_timeout_sec="${RCH_BUILD_TIMEOUT_SEC:-${RCH_BUILD_TIMEOUT_SECONDS:-${rch_timeout_seconds}}}"
+cargo_build_jobs="${CARGO_BUILD_JOBS:-2}"
 trace_id="trace-parser-phase1-arena-${scenario}-${timestamp}"
 decision_id="decision-parser-phase1-arena-${scenario}-${timestamp}"
 policy_id="policy-parser-phase1-arena-v1"
@@ -26,10 +30,13 @@ arena_fragmentation_ratio="${PARSER_PHASE1_ARENA_FRAGMENTATION_RATIO:-0.0}"
 arena_fragmentation_threshold="${PARSER_PHASE1_ARENA_FRAGMENTATION_THRESHOLD:-0.15}"
 rollback_token="${PARSER_PHASE1_ARENA_ROLLBACK_TOKEN:-parser-phase1-arena-rollback-disabled}"
 
-mkdir -p "$run_dir"
+mkdir -p "$run_dir" "$step_logs_dir"
 
 declare -a commands_run=()
+declare -a step_logs=()
 failed_command=""
+failed_step_log_path=""
+step_counter=0
 manifest_written=false
 
 run_rch() {
@@ -37,16 +44,99 @@ run_rch() {
     echo "error: rch is required for parser phase1 arena suite runs" >&2
     return 127
   fi
-  rch exec -- env "RUSTUP_TOOLCHAIN=${toolchain}" "CARGO_TARGET_DIR=${target_dir}" "$@"
+  RCH_BUILD_TIMEOUT_SEC="${rch_build_timeout_sec}" \
+    timeout "${rch_timeout_seconds}" \
+    rch exec -- env \
+    "RUSTUP_TOOLCHAIN=${toolchain}" \
+    "CARGO_TARGET_DIR=${target_dir}" \
+    "CARGO_BUILD_JOBS=${cargo_build_jobs}" \
+    "$@"
+}
+
+rch_reject_local_fallback() {
+  local log_path="$1"
+  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|\[RCH\] local \(|Remote execution failed.*running locally|running locally|Dependency preflight blocked remote execution|RCH-E326' "$log_path"; then
+    echo "rch reported local fallback; refusing local execution for heavy command" >&2
+    return 1
+  fi
+}
+
+rch_last_remote_exit_code() {
+  local log_path="$1"
+  local exit_line
+  exit_line="$(grep -Eo 'Remote command finished: exit=[0-9]+' "$log_path" | tail -n 1 || true)"
+  if [[ -z "$exit_line" ]]; then
+    echo ""
+    return
+  fi
+  echo "${exit_line##*=}"
+}
+
+rch_has_recoverable_artifact_timeout() {
+  local log_path="$1"
+  grep -Eiq 'artifact retrieval timed out|artifact transfer timed out|timed out waiting for artifacts|failed to retrieve artifacts|failed to download artifacts' "$log_path"
+}
+
+rch_reject_artifact_retrieval_failure() {
+  local log_path="$1"
+  if grep -Eiq 'Artifact retrieval failed|Failed to retrieve artifacts:|rsync artifact retrieval failed|rsync error: .*code 23' "$log_path"; then
+    echo "rch artifact retrieval failed; refusing to mark heavy command as successful" >&2
+    return 1
+  fi
 }
 
 run_step() {
   local command_text="$1"
+  local log_path run_rc remote_exit_code
   shift
+
+  step_counter=$((step_counter + 1))
+  log_path="${step_logs_dir}/step_${step_counter}.log"
   commands_run+=("$command_text")
+  step_logs+=("$log_path")
   echo "==> $command_text"
-  if ! run_rch "$@"; then
-    failed_command="$command_text"
+
+  if run_rch "$@" > >(tee "$log_path") 2>&1; then
+    run_rc=0
+  else
+    run_rc=$?
+    remote_exit_code="$(rch_last_remote_exit_code "$log_path")"
+    if [[ "$remote_exit_code" == "0" ]] && rch_has_recoverable_artifact_timeout "$log_path"; then
+      echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
+    else
+      if [[ "$run_rc" -eq 124 ]]; then
+        failed_command="${command_text} (timeout-${rch_timeout_seconds}s)"
+      elif [[ -n "$remote_exit_code" ]]; then
+        failed_command="${command_text} (remote-exit-${remote_exit_code})"
+      else
+        failed_command="${command_text} (rch-exit-${run_rc})"
+      fi
+      failed_step_log_path="$log_path"
+      return 1
+    fi
+  fi
+
+  if ! rch_reject_local_fallback "$log_path"; then
+    failed_command="${command_text} (rch-local-fallback-detected)"
+    failed_step_log_path="$log_path"
+    return 1
+  fi
+
+  if ! rch_reject_artifact_retrieval_failure "$log_path"; then
+    failed_command="${command_text} (rch-artifact-retrieval-failed)"
+    failed_step_log_path="$log_path"
+    return 1
+  fi
+
+  remote_exit_code="$(rch_last_remote_exit_code "$log_path")"
+  if [[ "$remote_exit_code" != "0" ]]; then
+    if [[ -z "$remote_exit_code" ]]; then
+      echo "rch output missing remote exit marker; failing closed" | tee -a "$log_path"
+      failed_command="${command_text} (missing-remote-exit-marker)"
+    else
+      failed_command="${command_text} (remote-exit-${remote_exit_code})"
+    fi
+    failed_step_log_path="$log_path"
     return 1
   fi
 }
@@ -187,6 +277,9 @@ write_manifest() {
     echo "  \"scenario\": \"${scenario}\","
     echo "  \"toolchain\": \"${toolchain}\","
     echo "  \"cargo_target_dir\": \"${target_dir}\","
+    echo "  \"rch_exec_timeout_seconds\": ${rch_timeout_seconds},"
+    echo "  \"rch_build_timeout_seconds\": ${rch_build_timeout_sec},"
+    echo "  \"cargo_build_jobs\": ${cargo_build_jobs},"
     echo "  \"trace_id\": \"${trace_id}\","
     echo "  \"decision_id\": \"${decision_id}\","
     echo "  \"policy_id\": \"${policy_id}\","
@@ -201,6 +294,9 @@ write_manifest() {
     echo "  \"error_code\": ${error_code_json},"
     if [[ -n "$failed_command" ]]; then
       echo "  \"failed_command\": \"${failed_command}\","
+    fi
+    if [[ -n "$failed_step_log_path" ]]; then
+      echo "  \"failed_step_log\": \"${failed_step_log_path}\","
     fi
     echo '  "deterministic_environment": {'
     echo "    \"timezone\": \"${TZ}\","
@@ -228,8 +324,18 @@ write_manifest() {
     echo '  "artifacts": {'
     echo "    \"manifest\": \"${manifest_path}\","
     echo "    \"events\": \"${events_path}\","
-    echo "    \"commands\": \"${commands_path}\""
+    echo "    \"commands\": \"${commands_path}\","
+    echo "    \"step_logs_dir\": \"${step_logs_dir}\""
     echo "  },"
+    echo '  "step_logs": ['
+    for idx in "${!step_logs[@]}"; do
+      comma=","
+      if [[ "$idx" == "$(( ${#step_logs[@]} - 1 ))" ]]; then
+        comma=""
+      fi
+      echo "    \"${step_logs[$idx]}\"${comma}"
+    done
+    echo "  ],"
     echo '  "failure_code_mapping": {'
     echo '    "generic": "FE-PARSER-PHASE1-ARENA-0001",'
     echo '    "budget_failure": "FE-PARSER-PHASE1-ARENA-BUDGET-0001",'
@@ -241,6 +347,7 @@ write_manifest() {
     echo "    \"cat ${manifest_path}\","
     echo "    \"cat ${events_path}\","
     echo "    \"cat ${commands_path}\","
+    echo "    \"ls -1 ${step_logs_dir}\","
     echo "    \"${replay_command}\""
     echo "  ]"
     echo "}"

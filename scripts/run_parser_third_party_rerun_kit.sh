@@ -42,7 +42,8 @@ fi
 
 run_rch() {
   RCH_BUILD_TIMEOUT_SEC="${rch_build_timeout_sec}" \
-    timeout "${rch_timeout_seconds}" \
+    RCH_BUILD_TIMEOUT_SECONDS="${rch_build_timeout_sec}" \
+    timeout --kill-after=30 "${rch_timeout_seconds}" \
     rch exec -- env \
     "RUSTUP_TOOLCHAIN=${toolchain}" \
     "CARGO_TARGET_DIR=${target_dir}" \
@@ -50,9 +51,14 @@ run_rch() {
     "$@"
 }
 
+rch_strip_ansi() {
+  local input="$1"
+  sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' "$input"
+}
+
 rch_reject_local_fallback() {
   local log_path="$1"
-  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|\[RCH\] local \(|Remote execution failed.*running locally|running locally|Dependency preflight blocked remote execution|RCH-E326' "$log_path"; then
+  if rch_strip_ansi "$log_path" | grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|\[RCH\] local \(|Remote execution failed.*running locally|running locally|Dependency preflight blocked remote execution|RCH-E326'; then
     echo "rch reported local fallback; refusing local execution for heavy command" >&2
     return 1
   fi
@@ -61,7 +67,7 @@ rch_reject_local_fallback() {
 rch_last_remote_exit_code() {
   local log_path="$1"
   local exit_line
-  exit_line="$(grep -Eo 'Remote command finished: exit=[0-9]+' "$log_path" | tail -n 1 || true)"
+  exit_line="$(rch_strip_ansi "$log_path" | grep -Eo 'Remote command finished: exit=[0-9]+' | tail -n 1 || true)"
   if [[ -z "$exit_line" ]]; then
     echo ""
     return
@@ -69,14 +75,27 @@ rch_last_remote_exit_code() {
   echo "${exit_line##*=}"
 }
 
+rch_reported_timeout_seconds() {
+  local log_path="$1"
+  local timeout_value
+  timeout_value="$(
+    rch_strip_ansi "$log_path" | sed -nE 's/.*timeout_secs: ([0-9]+).*/\1/p' | tail -n 1
+  )"
+  if [[ -z "$timeout_value" ]]; then
+    echo ""
+    return
+  fi
+  echo "$timeout_value"
+}
+
 rch_has_recoverable_artifact_timeout() {
   local log_path="$1"
-  grep -Eiq 'artifact retrieval timed out|artifact transfer timed out|timed out waiting for artifacts|failed to retrieve artifacts|failed to download artifacts' "$log_path"
+  rch_strip_ansi "$log_path" | grep -Eiq 'artifact retrieval timed out|artifact transfer timed out|timed out waiting for artifacts|failed to retrieve artifacts|failed to download artifacts'
 }
 
 rch_reject_artifact_retrieval_failure() {
   local log_path="$1"
-  if grep -Eiq 'Artifact retrieval failed|Failed to retrieve artifacts:|rsync artifact retrieval failed|rsync error: .*code 23' "$log_path"; then
+  if rch_strip_ansi "$log_path" | grep -Eiq 'Artifact retrieval failed|Failed to retrieve artifacts:|rsync artifact retrieval failed|rsync error: .*code 23'; then
     echo "rch artifact retrieval failed; refusing to mark heavy command as successful" >&2
     return 1
   fi
@@ -95,7 +114,7 @@ matrix_eval_error=""
 
 run_step() {
   local command_text="$1"
-  local log_path run_rc remote_exit_code
+  local log_path run_rc remote_exit_code reported_timeout
   shift
 
   step_counter=$((step_counter + 1))
@@ -109,6 +128,14 @@ run_step() {
   else
     run_rc=$?
     remote_exit_code="$(rch_last_remote_exit_code "$log_path")"
+    reported_timeout="$(rch_reported_timeout_seconds "$log_path")"
+    if [[ "$rch_build_timeout_sec" =~ ^[0-9]+$ && "$reported_timeout" =~ ^[0-9]+$ ]] &&
+      (( reported_timeout < rch_build_timeout_sec )); then
+      echo "rch reported timeout_secs=${reported_timeout} but requested build timeout is ${rch_build_timeout_sec}" | tee -a "$log_path"
+      failed_command="${command_text} (rch-timeout-mismatch-${reported_timeout}-lt-${rch_build_timeout_sec})"
+      failed_step_log_path="$log_path"
+      return 1
+    fi
     if [[ "$remote_exit_code" == "0" ]] && rch_has_recoverable_artifact_timeout "$log_path"; then
       echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
     else
@@ -132,6 +159,15 @@ run_step() {
 
   if ! rch_reject_artifact_retrieval_failure "$log_path"; then
     failed_command="${command_text} (rch-artifact-retrieval-failed)"
+    failed_step_log_path="$log_path"
+    return 1
+  fi
+
+  reported_timeout="$(rch_reported_timeout_seconds "$log_path")"
+  if [[ "$rch_build_timeout_sec" =~ ^[0-9]+$ && "$reported_timeout" =~ ^[0-9]+$ ]] &&
+    (( reported_timeout < rch_build_timeout_sec )); then
+    echo "rch reported timeout_secs=${reported_timeout} but requested build timeout is ${rch_build_timeout_sec}" | tee -a "$log_path"
+    failed_command="${command_text} (rch-timeout-mismatch-${reported_timeout}-lt-${rch_build_timeout_sec})"
     failed_step_log_path="$log_path"
     return 1
   fi

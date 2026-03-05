@@ -103,7 +103,7 @@ draining. Set `CARGO_TARGET_DIR` explicitly if you need a fixed path.
 If remote builds exceed the `rch` default build wrapper timeout, set
 `RCH_BUILD_TIMEOUT_SEC` (or `RCH_BUILD_TIMEOUT_SECONDS`) so the remote lane
 does not fail early with timeout kill exits while the outer gate timeout is
-still larger.
+still larger. The gate now exports both env variants on every heavy step.
 
 If `rch` reports remote-preflight/local-fallback conditions (including
 `RCH-E326` or `running locally`), the gate must fail closed rather than
@@ -111,6 +111,11 @@ continuing on local execution.
 
 The gate also fails closed when the `rch` output does not include an explicit
 `Remote command finished: exit=0` marker for each heavy step.
+
+The gate additionally fails closed when `rch` reports a lower wrapped
+`timeout_secs` value than the requested `RCH_BUILD_TIMEOUT_*` value (for
+example, reported `300` while requested `900`) so timeout-policy mismatches are
+surfaced as explicit blocker evidence.
 
 ## Required Artifacts
 

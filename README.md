@@ -635,6 +635,9 @@ Artifacts are written under:
 third-party rerun bundle and fails closed unless
 `matrix_input_status == ready_for_external_rerun`, including fail-closed
 behavior when `rch` local fallback or missing remote-exit markers are detected.
+The gate also fails closed if `rch` reports a wrapped `timeout_secs` value
+below the requested `RCH_BUILD_TIMEOUT_*` value so timeout-policy drift is
+captured as blocker evidence.
 
 ```bash
 # third-party rerun kit contract/test gate (rch-backed check + test + clippy)
