@@ -527,3 +527,23 @@ fn fixture_required_log_keys_are_nonempty() {
         assert!(!key.trim().is_empty());
     }
 }
+
+#[test]
+fn fixture_has_nonempty_schema_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.trim().is_empty());
+}
+
+#[test]
+fn fixture_has_nonempty_contract_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.contract_version.trim().is_empty());
+}
+
+#[test]
+fn fixture_deterministic_double_load() {
+    let a = load_fixture();
+    let b = load_fixture();
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.contract_version, b.contract_version);
+}

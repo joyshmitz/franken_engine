@@ -496,3 +496,26 @@ fn all_generated_cases_have_deterministic_outcome() {
         }
     }
 }
+
+#[test]
+fn generate_case_deterministic_for_same_seed() {
+    let a = generate_case(42);
+    let b = generate_case(42);
+    assert_eq!(a.source, b.source);
+    assert_eq!(a.goal, b.goal);
+}
+
+#[test]
+fn generate_case_wide_seed_range_produces_different_sources() {
+    let a = generate_case(100);
+    let b = generate_case(200);
+    assert_ne!(a.source, b.source);
+}
+
+#[test]
+fn generate_case_source_is_nonempty() {
+    for seed in 0..10 {
+        let case = generate_case(seed);
+        assert!(!case.source.is_empty(), "seed {seed} must produce non-empty source");
+    }
+}

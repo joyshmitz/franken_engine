@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Deserialize)]
 struct GatingPolicy {
@@ -198,18 +199,6 @@ fn load_doc() -> String {
     fs::read_to_string(path).expect("read parser final readiness dossier doc")
 }
 
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const PRIME: u64 = 0x0100_0000_01b3;
-
-    let mut hash = OFFSET;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(PRIME);
-    }
-    hash
-}
-
 fn comparison_matches(raw: &str) -> bool {
     matches!(raw, ">" | ">=" | "<" | "<=")
 }
@@ -245,25 +234,36 @@ fn rank_open_risks(risks: &[ResidualRisk]) -> Vec<RankedRisk> {
 }
 
 fn compute_risk_register_hash(risks: &[ResidualRisk]) -> String {
+    #[derive(Serialize)]
+    struct RiskHashRow<'a> {
+        risk_id: &'a str,
+        severity: &'a str,
+        likelihood_millionths: u32,
+        impact_millionths: u32,
+        owner: &'a str,
+        status: &'a str,
+        rollback_trigger_id: &'a str,
+        trigger_threshold: &'a str,
+    }
+
     let mut rows = risks
         .iter()
-        .map(|risk| {
-            format!(
-                "{}|{}|{}|{}|{}|{}|{}|{}",
-                risk.risk_id,
-                risk.severity,
-                risk.likelihood_millionths,
-                risk.impact_millionths,
-                risk.owner,
-                risk.status,
-                risk.rollback_trigger_id,
-                risk.trigger_threshold
-            )
+        .map(|risk| RiskHashRow {
+            risk_id: risk.risk_id.as_str(),
+            severity: risk.severity.as_str(),
+            likelihood_millionths: risk.likelihood_millionths,
+            impact_millionths: risk.impact_millionths,
+            owner: risk.owner.as_str(),
+            status: risk.status.as_str(),
+            rollback_trigger_id: risk.rollback_trigger_id.as_str(),
+            trigger_threshold: risk.trigger_threshold.as_str(),
         })
         .collect::<Vec<_>>();
-    rows.sort();
-    let joined = rows.join("\n");
-    format!("fnv1a64:{:016x}", fnv1a64(joined.as_bytes()))
+    rows.sort_by(|a, b| a.risk_id.cmp(b.risk_id));
+
+    let canonical = serde_json::to_vec(&rows).expect("serialize canonical risk hash rows");
+    let digest = Sha256::digest(canonical);
+    format!("sha256:{digest:x}")
 }
 
 fn evaluate_dossier(fixture: &ParserFinalReadinessDossierFixture) -> GateEvaluation {
@@ -480,6 +480,8 @@ fn parser_final_readiness_doc_has_required_sections() {
         "## Rollback Posture Contract",
         "## Independent Verification Contract",
         "## Structured Log Contract",
+        "risk_register_hash is computed deterministically as `sha256`",
+        "step_logs/step_*.log",
         "./scripts/run_parser_final_readiness_dossier.sh ci",
     ] {
         assert!(
@@ -538,8 +540,14 @@ fn parser_final_readiness_fixture_is_well_formed() {
     }
 
     assert!(!fixture.evidence_artifacts.is_empty());
+    let mut evidence_ids = BTreeSet::new();
     for evidence in &fixture.evidence_artifacts {
         assert!(!evidence.evidence_id.trim().is_empty());
+        assert!(
+            evidence_ids.insert(evidence.evidence_id.clone()),
+            "duplicate evidence_id in fixture: {}",
+            evidence.evidence_id
+        );
         let _status = EvidenceStatus::parse(evidence.status.as_str());
         assert!(!evidence.manifest_path.trim().is_empty());
         assert!(!evidence.replay_command.trim().is_empty());
@@ -657,8 +665,8 @@ fn parser_final_readiness_structured_event_has_required_keys() {
             .get("risk_register_hash")
             .and_then(|value| value.as_str())
             .unwrap_or_default()
-            .starts_with("fnv1a64:"),
-        "risk register hash must be deterministic fnv1a64 fingerprint"
+            .starts_with("sha256:"),
+        "risk register hash must be deterministic sha256 fingerprint"
     );
 }
 
@@ -679,20 +687,6 @@ fn load_doc_returns_nonempty_string() {
     let doc = load_doc();
     assert!(!doc.is_empty());
     assert!(doc.contains("Readiness"));
-}
-
-// ---------- fnv1a64 ----------
-
-#[test]
-fn fnv1a64_is_deterministic() {
-    let a = fnv1a64(b"hello world");
-    let b = fnv1a64(b"hello world");
-    assert_eq!(a, b);
-}
-
-#[test]
-fn fnv1a64_differs_for_different_inputs() {
-    assert_ne!(fnv1a64(b"a"), fnv1a64(b"b"));
 }
 
 // ---------- comparison_matches ----------
@@ -762,7 +756,7 @@ fn risk_register_hash_is_deterministic() {
     let a = compute_risk_register_hash(&fixture.residual_risks);
     let b = compute_risk_register_hash(&fixture.residual_risks);
     assert_eq!(a, b);
-    assert!(a.starts_with("fnv1a64:"));
+    assert!(a.starts_with("sha256:"));
 }
 
 // ---------- evaluate_dossier ----------
@@ -785,4 +779,47 @@ fn emit_structured_event_has_correct_component() {
     assert_eq!(event.component, "parser_final_readiness_dossier_gate");
     assert_eq!(event.event, "final_readiness_dossier_evaluated");
     assert_eq!(event.dossier_id, fixture.dossier_id);
+}
+
+#[test]
+fn readiness_event_has_nonempty_trace_id() {
+    let fixture = load_fixture();
+    let evaluation = evaluate_dossier(&fixture);
+    let event = emit_structured_event(&fixture, &evaluation);
+    assert!(!event.trace_id.trim().is_empty());
+}
+
+#[test]
+fn severity_critical_has_highest_weight() {
+    assert!(Severity::Critical.weight() > 0);
+    assert!(Severity::Critical.weight() > Severity::Low.weight());
+}
+
+#[test]
+fn risk_register_hash_starts_with_sha256_prefix() {
+    let fixture = load_fixture();
+    let hash = compute_risk_register_hash(&fixture.residual_risks);
+    assert!(hash.starts_with("sha256:"), "hash must have sha256 prefix");
+}
+
+#[test]
+fn readiness_fixture_has_nonempty_dossier_id() {
+    let fixture = load_fixture();
+    assert!(!fixture.dossier_id.trim().is_empty());
+}
+
+#[test]
+fn readiness_fixture_deterministic_double_load() {
+    let a = load_fixture();
+    let b = load_fixture();
+    assert_eq!(a.dossier_id, b.dossier_id);
+    assert_eq!(a.schema_version, b.schema_version);
+}
+
+#[test]
+fn risk_register_hash_deterministic_for_same_risks() {
+    let fixture = load_fixture();
+    let a = compute_risk_register_hash(&fixture.residual_risks);
+    let b = compute_risk_register_hash(&fixture.residual_risks);
+    assert_eq!(a, b);
 }

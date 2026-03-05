@@ -94,6 +94,10 @@ Readiness-gate completion logs must include:
 - `risk_register_hash`
 - `replay_command`
 
+`risk_register_hash` is computed deterministically as `sha256` over canonical
+`residual_risks` rows sorted by `risk_id`, using fields:
+`risk_id|severity|likelihood_millionths|impact_millionths|owner|status|rollback_trigger_id|trigger_threshold`.
+
 ## Deterministic Execution Contract
 
 All heavy Rust checks/tests run through `rch`.
@@ -118,6 +122,7 @@ Each run must publish:
 - `artifacts/parser_final_readiness_dossier/<timestamp>/run_manifest.json`
 - `artifacts/parser_final_readiness_dossier/<timestamp>/events.jsonl`
 - `artifacts/parser_final_readiness_dossier/<timestamp>/commands.txt`
+- `artifacts/parser_final_readiness_dossier/<timestamp>/step_logs/step_*.log`
 
 `run_manifest.json` must include:
 
@@ -125,8 +130,9 @@ Each run must publish:
 - bead id, dossier version, mode, target-dir, git commit
 - deterministic environment fingerprint
 - blocked dependency inventory
+- deterministic risk-register hash
 - deterministic replay command
-- command transcript and outcome
+- command transcript, per-step logs, and outcome
 
 ## Operator Verification
 

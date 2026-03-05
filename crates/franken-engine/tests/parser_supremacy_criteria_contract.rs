@@ -520,6 +520,24 @@ fn verdict_as_str_roundtrips() {
     }
 }
 
+#[test]
+fn load_fixture_has_nonempty_artifact_bundles() {
+    let fixture = load_fixture();
+    assert!(!fixture.artifact_bundles.is_empty());
+}
+
+#[test]
+fn load_fixture_has_nonempty_rule_definitions() {
+    let fixture = load_fixture();
+    assert!(!fixture.rule_definitions.is_empty());
+}
+
+#[test]
+fn load_doc_mentions_supremacy() {
+    let doc = load_doc();
+    assert!(doc.contains("Supremacy"));
+}
+
 // ---------- metric_for_class ----------
 
 #[test]

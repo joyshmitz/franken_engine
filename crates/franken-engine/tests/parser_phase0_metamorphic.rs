@@ -280,3 +280,23 @@ fn canonical_hash_stable_across_multiple_calls() {
     let h2 = tree.canonical_hash();
     assert_eq!(h1, h2);
 }
+
+#[test]
+fn parse_hash_nonempty_for_valid_source() {
+    let hash = parse_hash("1 + 2", ParseGoal::Script);
+    assert!(!hash.is_empty());
+}
+
+#[test]
+fn semantic_signature_matches_body_length() {
+    let tree = parser().parse(";", ParseGoal::Script).unwrap();
+    let sig = semantic_signature(&tree);
+    assert_eq!(sig.len(), tree.body.len());
+}
+
+#[test]
+fn canonical_hash_different_sources_differ() {
+    let h1 = parse_hash("var a = 1;", ParseGoal::Script);
+    let h2 = parse_hash("var b = 2;", ParseGoal::Script);
+    assert_ne!(h1, h2);
+}

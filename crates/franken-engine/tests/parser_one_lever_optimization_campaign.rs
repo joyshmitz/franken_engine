@@ -474,3 +474,29 @@ fn weight_constants_sum_to_million() {
     let total = THROUGHPUT_WEIGHT + LATENCY_WEIGHT + NS_PER_TOKEN_WEIGHT + ALLOCS_PER_TOKEN_WEIGHT;
     assert_eq!(total, 1_000_000);
 }
+
+#[test]
+fn load_fixture_has_nonempty_schema_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.trim().is_empty());
+}
+
+#[test]
+fn scaled_delta_higher_symmetric_for_same_magnitude() {
+    let up = scaled_delta_higher_is_better(100, 200);
+    let down = scaled_delta_higher_is_better(200, 100);
+    assert!(up > 0);
+    assert!(down < 0);
+}
+
+#[test]
+fn ev_score_zero_effort_avoids_panic() {
+    let inputs = EvInputs {
+        impact: 10,
+        confidence: 10,
+        reuse: 10,
+        effort: 0,
+        friction: 0,
+    };
+    let _score = ev_score_millionths(&inputs);
+}

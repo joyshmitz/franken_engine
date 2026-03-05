@@ -287,3 +287,24 @@ fn env_contract_doc_references_deterministic_env_schema() {
         "env contract doc should reference env contract schema"
     );
 }
+
+#[test]
+fn fixture_has_nonempty_wrapper_id() {
+    let fixture = load_fixture();
+    assert!(!fixture.wrapper_id.trim().is_empty());
+}
+
+#[test]
+fn fixture_has_nonempty_bead_id() {
+    let fixture = load_fixture();
+    assert!(!fixture.bead_id.trim().is_empty());
+}
+
+#[test]
+fn fixture_required_event_keys_include_trace_id() {
+    let fixture = load_fixture();
+    assert!(
+        fixture.required_event_keys.iter().any(|k| k == "trace_id"),
+        "required_event_keys must include trace_id"
+    );
+}

@@ -348,3 +348,23 @@ fn parser_third_party_rerun_kit_fixture_has_policy_id() {
     let fixture = load_fixture();
     assert!(!fixture.policy_id.trim().is_empty(), "policy_id must not be empty");
 }
+
+#[test]
+fn parser_third_party_rerun_kit_fixture_has_contract_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.contract_version.trim().is_empty());
+}
+
+#[test]
+fn parser_third_party_rerun_kit_fixture_has_schema_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.trim().is_empty());
+}
+
+#[test]
+fn parser_third_party_rerun_kit_fixture_deterministic_double_load() {
+    let a = load_fixture();
+    let b = load_fixture();
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.bead_id, b.bead_id);
+}

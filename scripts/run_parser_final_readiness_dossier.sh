@@ -12,12 +12,15 @@ toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
 artifact_root="${PARSER_FINAL_READINESS_DOSSIER_ARTIFACT_ROOT:-artifacts/parser_final_readiness_dossier}"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_parser_final_readiness_dossier_${timestamp}}"
+target_dir="${CARGO_TARGET_DIR:-/tmp/rch_target_franken_engine_parser_final_readiness_dossier}"
+rch_build_timeout_sec="${RCH_BUILD_TIMEOUT_SEC:-${RCH_BUILD_TIMEOUT_SECONDS:-${rch_timeout_seconds}}}"
+cargo_build_jobs="${CARGO_BUILD_JOBS:-2}"
 fixture_path="crates/franken-engine/tests/fixtures/parser_final_readiness_dossier_v1.json"
 run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
 events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
+step_logs_dir="${run_dir}/step_logs"
 
 trace_id="trace-parser-final-readiness-dossier-${timestamp}"
 decision_id="decision-parser-final-readiness-dossier-${timestamp}"
@@ -25,7 +28,7 @@ policy_id="policy-parser-final-readiness-dossier-v1"
 component="parser_final_readiness_dossier_gate"
 replay_command="./scripts/e2e/parser_final_readiness_dossier_replay.sh ${mode}"
 
-mkdir -p "$run_dir"
+mkdir -p "$run_dir" "$step_logs_dir"
 
 if ! command -v rch >/dev/null 2>&1; then
   echo "rch is required for parser final readiness dossier heavy commands" >&2
@@ -38,10 +41,13 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 run_rch() {
-  timeout "${rch_timeout_seconds}" \
+  RCH_BUILD_TIMEOUT_SEC="${rch_build_timeout_sec}" \
+    RCH_BUILD_TIMEOUT_SECONDS="${rch_build_timeout_sec}" \
+    timeout --kill-after=30 "${rch_timeout_seconds}" \
     rch exec -- env \
     "RUSTUP_TOOLCHAIN=${toolchain}" \
     "CARGO_TARGET_DIR=${target_dir}" \
+    "CARGO_BUILD_JOBS=${cargo_build_jobs}" \
     "$@"
 }
 
@@ -49,7 +55,7 @@ rch_remote_exit_code() {
   local log_path="$1"
   local remote_exit_line remote_exit_code
 
-  remote_exit_line="$(rg -o 'Remote command finished: exit=[0-9]+' "$log_path" | tail -n 1 || true)"
+  remote_exit_line="$(rch_strip_ansi "$log_path" | rg -o 'Remote command finished: exit=[0-9]+' | tail -n 1 || true)"
   if [[ -z "$remote_exit_line" ]]; then
     return 1
   fi
@@ -62,58 +68,117 @@ rch_remote_exit_code() {
   printf '%s\n' "$remote_exit_code"
 }
 
+rch_strip_ansi() {
+  local log_path="$1"
+  perl -pe 's/\x1b\[[0-9;]*m//g' "$log_path"
+}
+
+rch_reported_timeout_seconds() {
+  local log_path="$1"
+  local timeout_value
+
+  timeout_value="$(
+    rch_strip_ansi "$log_path" | sed -nE 's/.*timeout_secs: ([0-9]+).*/\1/p' | tail -n 1
+  )"
+  if [[ -z "$timeout_value" ]]; then
+    echo ""
+    return
+  fi
+  echo "$timeout_value"
+}
+
+rch_has_recoverable_artifact_timeout() {
+  local log_path="$1"
+  rch_strip_ansi "$log_path" | grep -Eiq 'artifact retrieval timed out|artifact transfer timed out|timed out waiting for artifacts|failed to retrieve artifacts|failed to download artifacts'
+}
+
+rch_reject_artifact_retrieval_failure() {
+  local log_path="$1"
+  if rch_strip_ansi "$log_path" | grep -Eiq 'Artifact retrieval failed|Failed to retrieve artifacts:|rsync artifact retrieval failed|rsync error: .*code 23'; then
+    echo "rch artifact retrieval failed; refusing to mark heavy command as successful" >&2
+    return 1
+  fi
+}
+
 rch_reject_local_fallback() {
   local log_path="$1"
-  if grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|running locally|\[RCH\] local \(|Dependency preflight blocked remote execution|RCH-E326' "$log_path"; then
+  if rch_strip_ansi "$log_path" | grep -Eiq 'Remote toolchain failure, falling back to local|falling back to local|fallback to local|local fallback|running locally|\[RCH\] local \(|Dependency preflight blocked remote execution|RCH-E326'; then
     echo "rch reported local fallback; refusing local execution for heavy command" >&2
     return 1
   fi
 }
 
 declare -a commands_run=()
+declare -a step_logs=()
 failed_command=""
 manifest_written=false
+step_index=0
 
 run_step() {
   local command_text="$1"
-  local log_path remote_exit_code run_rc
+  local step_name step_log_path remote_exit_code reported_timeout run_rc
   shift
 
+  step_index=$((step_index + 1))
+  step_name="step_$(printf '%02d' "${step_index}").log"
+  step_log_path="${step_logs_dir}/${step_name}"
+
   commands_run+=("$command_text")
+  step_logs+=("step_logs/${step_name}")
   echo "==> $command_text"
-  log_path="$(mktemp)"
 
   run_rc=0
-  if run_rch "$@" > >(tee "$log_path") 2>&1; then
+  if run_rch "$@" > >(tee "$step_log_path") 2>&1; then
     run_rc=0
   else
     run_rc=$?
-  fi
-
-  if ! rch_reject_local_fallback "$log_path"; then
-    rm -f "$log_path"
-    failed_command="${command_text} (rch-local-fallback-detected)"
-    return 1
-  fi
-
-  if [[ "$run_rc" -ne 0 ]]; then
-    if rg -q "Remote command finished: exit=0" "$log_path"; then
-      echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
+    remote_exit_code="$(rch_remote_exit_code "$step_log_path" || true)"
+    reported_timeout="$(rch_reported_timeout_seconds "$step_log_path")"
+    if [[ "$rch_build_timeout_sec" =~ ^[0-9]+$ && "$reported_timeout" =~ ^[0-9]+$ ]] &&
+      (( reported_timeout < rch_build_timeout_sec )); then
+      failed_command="${command_text} (rch-timeout-mismatch-${reported_timeout}-lt-${rch_build_timeout_sec})"
+      return "$run_rc"
+    fi
+    if [[ "$remote_exit_code" == "0" ]] && rch_has_recoverable_artifact_timeout "$step_log_path"; then
+      echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$step_log_path"
     else
-      rm -f "$log_path"
-      failed_command="$command_text"
+      if [[ "$run_rc" -eq 124 ]]; then
+        failed_command="${command_text} (timeout-${rch_timeout_seconds}s)"
+      elif [[ -n "$remote_exit_code" ]]; then
+        failed_command="${command_text} (remote-exit=${remote_exit_code})"
+      else
+        failed_command="${command_text} (rch-exit=${run_rc})"
+      fi
       return "$run_rc"
     fi
   fi
 
-  remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
-  if [[ -n "$remote_exit_code" && "$remote_exit_code" != "0" ]]; then
-    rm -f "$log_path"
-    failed_command="${command_text} (remote-exit=${remote_exit_code})"
+  if ! rch_reject_local_fallback "$step_log_path"; then
+    failed_command="${command_text} (rch-local-fallback-detected)"
     return 1
   fi
 
-  rm -f "$log_path"
+  if ! rch_reject_artifact_retrieval_failure "$step_log_path"; then
+    failed_command="${command_text} (rch-artifact-retrieval-failed)"
+    return 1
+  fi
+
+  reported_timeout="$(rch_reported_timeout_seconds "$step_log_path")"
+  if [[ "$rch_build_timeout_sec" =~ ^[0-9]+$ && "$reported_timeout" =~ ^[0-9]+$ ]] &&
+    (( reported_timeout < rch_build_timeout_sec )); then
+    failed_command="${command_text} (rch-timeout-mismatch-${reported_timeout}-lt-${rch_build_timeout_sec})"
+    return 1
+  fi
+
+  remote_exit_code="$(rch_remote_exit_code "$step_log_path" || true)"
+  if [[ "$remote_exit_code" != "0" ]]; then
+    if [[ -z "$remote_exit_code" ]]; then
+      failed_command="${command_text} (missing-remote-exit-marker)"
+    else
+      failed_command="${command_text} (remote-exit=${remote_exit_code})"
+    fi
+    return 1
+  fi
 }
 
 run_mode() {
@@ -164,10 +229,38 @@ json_string_or_default() {
   fi
 }
 
+compute_risk_register_hash() {
+  local canonical_rows hash
+
+  if [[ ! -f "$fixture_path" ]]; then
+    echo "sha256:fixture-missing"
+    return
+  fi
+
+  canonical_rows="$(
+    jq -c '[
+      .residual_risks[]
+      | {
+          risk_id,
+          severity,
+          likelihood_millionths,
+          impact_millionths,
+          owner,
+          status,
+          rollback_trigger_id,
+          trigger_threshold
+        }
+    ] | sort_by(.risk_id)' "$fixture_path"
+  )"
+  hash="$(printf '%s' "$canonical_rows" | parser_frontier_sha256)"
+  echo "sha256:${hash}"
+}
+
 write_manifest() {
   local exit_code="${1:-0}"
   local outcome error_code_json git_commit dirty_worktree idx comma
   local blocked_dependencies risk_ids hold_reasons expected_outcome dossier_version dossier_id bead_id
+  local risk_register_hash
 
   if [[ "$manifest_written" == true ]]; then
     return
@@ -196,11 +289,12 @@ write_manifest() {
   dossier_version="$(json_string_or_default '.dossier_version' 'unknown')"
   dossier_id="$(json_string_or_default '.dossier_id' 'unknown')"
   bead_id="$(json_string_or_default '.bead_id' 'bd-2mds.1.8.4')"
+  risk_register_hash="$(compute_risk_register_hash)"
 
   printf '%s\n' "${commands_run[@]}" >"$commands_path"
 
   {
-    echo "{\"schema_version\":\"franken-engine.parser-log-event.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"${component}\",\"event\":\"final_readiness_dossier_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json},\"dossier_id\":\"${dossier_id}\",\"risk_register_hash\":\"fixture-hash-pending-eval\",\"replay_command\":\"${replay_command}\",\"blocked_dependency_ids\":${blocked_dependencies},\"expected_hold_reasons\":${hold_reasons}}"
+    echo "{\"schema_version\":\"franken-engine.parser-log-event.v1\",\"trace_id\":\"${trace_id}\",\"decision_id\":\"${decision_id}\",\"policy_id\":\"${policy_id}\",\"component\":\"${component}\",\"event\":\"final_readiness_dossier_completed\",\"outcome\":\"${outcome}\",\"error_code\":${error_code_json},\"dossier_id\":\"${dossier_id}\",\"risk_register_hash\":\"${risk_register_hash}\",\"replay_command\":\"${replay_command}\",\"blocked_dependency_ids\":${blocked_dependencies},\"expected_hold_reasons\":${hold_reasons}}"
   } >"$events_path"
 
   {
@@ -213,6 +307,8 @@ write_manifest() {
     echo "  \"toolchain\": \"${toolchain}\","
     echo "  \"cargo_target_dir\": \"${target_dir}\","
     echo "  \"rch_exec_timeout_seconds\": ${rch_timeout_seconds},"
+    echo "  \"rch_build_timeout_seconds\": ${rch_build_timeout_sec},"
+    echo "  \"cargo_build_jobs\": ${cargo_build_jobs},"
     echo "  \"trace_id\": \"${trace_id}\","
     echo "  \"decision_id\": \"${decision_id}\","
     echo "  \"policy_id\": \"${policy_id}\","
@@ -229,6 +325,7 @@ write_manifest() {
     parser_frontier_emit_manifest_environment_fields "    " "null"
     echo "  },"
     echo "  \"blocked_dependency_ids\": ${blocked_dependencies},"
+    echo "  \"risk_register_hash\": \"$(parser_frontier_json_escape "${risk_register_hash}")\","
     echo "  \"risk_ids\": ${risk_ids},"
     echo "  \"replay_command\": \"$(parser_frontier_json_escape "${replay_command}")\","
     echo '  "commands": ['
@@ -244,15 +341,26 @@ write_manifest() {
     echo "    \"manifest\": \"${manifest_path}\","
     echo "    \"events\": \"${events_path}\","
     echo "    \"commands\": \"${commands_path}\","
+    echo "    \"step_logs_dir\": \"${step_logs_dir}\","
     echo '    "contract_doc": "docs/PARSER_FINAL_READINESS_DOSSIER.md",'
     echo '    "fixture": "crates/franken-engine/tests/fixtures/parser_final_readiness_dossier_v1.json",'
     echo '    "tests": "crates/franken-engine/tests/parser_final_readiness_dossier.rs",'
     echo '    "replay_wrapper": "scripts/e2e/parser_final_readiness_dossier_replay.sh"'
     echo "  },"
+    echo '  "step_logs": ['
+    for idx in "${!step_logs[@]}"; do
+      comma=","
+      if [[ "$idx" == "$(( ${#step_logs[@]} - 1 ))" ]]; then
+        comma=""
+      fi
+      echo "    \"$(parser_frontier_json_escape "${step_logs[$idx]}")\"${comma}"
+    done
+    echo "  ],"
     echo '  "operator_verification": ['
     echo "    \"cat ${manifest_path}\","
     echo "    \"cat ${events_path}\","
     echo "    \"cat ${commands_path}\","
+    echo "    \"ls -1 ${step_logs_dir}\","
     echo "    \"${replay_command}\""
     echo "  ]"
     echo "}"

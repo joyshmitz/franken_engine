@@ -364,3 +364,24 @@ fn parser_operator_runbook_fixture_has_contract_version() {
     let fixture = load_fixture();
     assert!(!fixture.contract_version.trim().is_empty());
 }
+
+#[test]
+fn parser_operator_runbook_fixture_deterministic_double_load() {
+    let a = load_fixture();
+    let b = load_fixture();
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.bead_id, b.bead_id);
+}
+
+#[test]
+fn parser_operator_runbook_fixture_has_nonempty_schema_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.trim().is_empty());
+}
+
+#[test]
+fn parser_operator_runbook_fixture_incidents_have_unique_ids() {
+    let fixture = load_fixture();
+    let ids: BTreeSet<&str> = fixture.incident_matrix.iter().map(|s| s.scenario_id.as_str()).collect();
+    assert_eq!(ids.len(), fixture.incident_matrix.len());
+}

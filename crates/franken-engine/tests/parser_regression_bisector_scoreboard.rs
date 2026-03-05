@@ -640,3 +640,25 @@ fn emit_structured_events_count_matches_scores_plus_one() {
     let events = emit_structured_events(&fixture, &scores, &bisect);
     assert_eq!(events.len(), scores.len() + 1, "events = score rows + bisect event");
 }
+
+#[test]
+fn fixture_has_nonempty_schema_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.trim().is_empty());
+}
+
+#[test]
+fn fixture_deterministic_double_load() {
+    let a = load_fixture();
+    let b = load_fixture();
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.history.len(), b.history.len());
+}
+
+#[test]
+fn build_commit_scores_deterministic() {
+    let fixture = load_fixture();
+    let a = build_commit_scores(&fixture);
+    let b = build_commit_scores(&fixture);
+    assert_eq!(a.len(), b.len());
+}

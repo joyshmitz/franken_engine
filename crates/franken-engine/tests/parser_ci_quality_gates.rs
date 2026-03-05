@@ -709,3 +709,21 @@ fn parser_ci_quality_expected_flakes_have_nonempty_case_ids() {
         assert!(!flake.case_id.trim().is_empty());
     }
 }
+
+#[test]
+fn parser_ci_quality_fixture_has_positive_retention_days() {
+    let fixture = load_fixture();
+    assert!(fixture.min_retention_days > 0);
+}
+
+#[test]
+fn parser_ci_quality_fixture_has_positive_flake_threshold() {
+    let fixture = load_fixture();
+    assert!(fixture.high_flake_threshold_millionths > 0);
+}
+
+#[test]
+fn parser_ci_quality_fixture_has_runs() {
+    let fixture = load_fixture();
+    assert!(!fixture.runs.is_empty());
+}

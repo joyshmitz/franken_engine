@@ -682,3 +682,24 @@ fn structured_log_events_have_consistent_component() {
         );
     }
 }
+
+#[test]
+fn fixture_has_nonempty_schema_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.trim().is_empty());
+}
+
+#[test]
+fn fixture_deterministic_double_load() {
+    let a = load_fixture();
+    let b = load_fixture();
+    assert_eq!(a.schema_version, b.schema_version);
+}
+
+#[test]
+fn emit_structured_logs_deterministic() {
+    let fixture = load_fixture();
+    let a = emit_structured_logs(&fixture);
+    let b = emit_structured_logs(&fixture);
+    assert_eq!(a.len(), b.len());
+}

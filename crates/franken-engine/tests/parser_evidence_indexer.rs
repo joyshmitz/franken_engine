@@ -438,3 +438,49 @@ fn evidence_indexer_error_debug_is_non_empty() {
     let err = EvidenceIndexerError::MissingField("test_field");
     assert!(!format!("{err:?}").is_empty());
 }
+
+#[test]
+fn indexed_parser_event_serde_roundtrip() {
+    let event = IndexedParserEvent {
+        run_id: "run-1".to_string(),
+        sequence: 0,
+        schema_version: PARSER_EVIDENCE_INDEX_SCHEMA_V1.to_string(),
+        trace_id: "trace-1".to_string(),
+        decision_id: "decision-1".to_string(),
+        policy_id: "policy-1".to_string(),
+        component: "parser".to_string(),
+        event: "gate_completed".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+        replay_command: None,
+        scenario_id: Some("s1".to_string()),
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: IndexedParserEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.run_id, "run-1");
+}
+
+#[test]
+fn parser_run_artifact_ref_serde_roundtrip() {
+    let ref_ = ParserRunArtifactRef {
+        run_id: "run-1".to_string(),
+        manifest_schema_version: PARSER_EVIDENCE_INDEX_SCHEMA_V1.to_string(),
+        manifest_path: "path/to/manifest.json".to_string(),
+        events_path: "path/to/events.jsonl".to_string(),
+        commands_path: "path/to/commands.jsonl".to_string(),
+        replay_command: "./replay.sh".to_string(),
+        generated_at_utc: Some("2026-02-25T00:00:00Z".to_string()),
+        outcome: Some("pass".to_string()),
+    };
+    let json = serde_json::to_string(&ref_).expect("serialize");
+    let recovered: ParserRunArtifactRef = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.run_id, "run-1");
+}
+
+#[test]
+fn empty_builder_produces_empty_index() {
+    let builder = ParserEvidenceIndexBuilder::new();
+    let index = builder.build();
+    assert!(index.runs.is_empty());
+    assert!(index.events.is_empty());
+}

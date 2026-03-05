@@ -345,3 +345,25 @@ fn arena_to_syntax_tree_preserves_statement_count() {
     assert_eq!(recovered.body.len(), tree.body.len());
     assert_eq!(recovered.goal, tree.goal);
 }
+
+#[test]
+fn arena_budget_default_has_positive_max_expressions() {
+    let budget = ArenaBudget::default();
+    assert!(budget.max_expressions > 0);
+    assert!(budget.max_spans > 0);
+}
+
+#[test]
+fn node_handle_from_parts_deterministic() {
+    let a = NodeHandle::from_parts(5, 2);
+    let b = NodeHandle::from_parts(5, 2);
+    assert_eq!(a, b);
+}
+
+#[test]
+fn arena_roundtrip_preserves_parse_goal() {
+    let tree = fixture_tree();
+    let arena = ParserArena::from_syntax_tree(&tree, ArenaBudget::default()).expect("arena");
+    let recovered = arena.to_syntax_tree().expect("recover");
+    assert_eq!(recovered.goal, tree.goal);
+}

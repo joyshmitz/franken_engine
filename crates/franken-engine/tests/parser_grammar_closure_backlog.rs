@@ -422,3 +422,23 @@ fn grammar_closure_backlog_families_are_nonempty() {
         assert!(!family.family_id.trim().is_empty());
     }
 }
+
+#[test]
+fn grammar_closure_backlog_has_nonempty_schema_version() {
+    let backlog = load_grammar_closure_backlog();
+    assert!(!backlog.schema_version.trim().is_empty());
+}
+
+#[test]
+fn grammar_closure_backlog_coverage_target_is_positive() {
+    let backlog = load_grammar_closure_backlog();
+    assert!(backlog.coverage_target_family_count > 0);
+}
+
+#[test]
+fn semantic_fixture_catalog_fixtures_have_nonempty_ids() {
+    let catalog = load_semantic_fixture_catalog();
+    for fixture in &catalog.fixtures {
+        assert!(!fixture.id.trim().is_empty());
+    }
+}
