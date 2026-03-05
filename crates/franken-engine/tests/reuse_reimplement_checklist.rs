@@ -99,8 +99,14 @@ fn release_checklist_references_adr_documents() {
 fn pr_template_mentions_exception_and_justification() {
     let path = repo_root().join(".github/PULL_REQUEST_TEMPLATE.md");
     let content = fs::read_to_string(&path).expect("read PR template");
-    assert!(content.contains("Exception"), "PR template must mention Exception");
-    assert!(content.contains("Justification"), "PR template must mention Justification");
+    assert!(
+        content.contains("Exception"),
+        "PR template must mention Exception"
+    );
+    assert!(
+        content.contains("Justification"),
+        "PR template must mention Justification"
+    );
 }
 
 #[test]
@@ -188,7 +194,10 @@ fn pr_template_has_more_than_10_lines() {
     let path = repo_root().join(".github/PULL_REQUEST_TEMPLATE.md");
     let content = fs::read_to_string(&path).expect("read PR template");
     let line_count = content.lines().count();
-    assert!(line_count > 10, "PR template should have >10 lines, got {line_count}");
+    assert!(
+        line_count > 10,
+        "PR template should have >10 lines, got {line_count}"
+    );
 }
 
 #[test]
@@ -196,7 +205,10 @@ fn release_checklist_has_more_than_10_lines() {
     let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
     let content = fs::read_to_string(&path).expect("read release checklist");
     let line_count = content.lines().count();
-    assert!(line_count > 10, "release checklist should have >10 lines, got {line_count}");
+    assert!(
+        line_count > 10,
+        "release checklist should have >10 lines, got {line_count}"
+    );
 }
 
 #[test]
@@ -205,4 +217,99 @@ fn release_checklist_deterministic_double_read() {
     let a = fs::read_to_string(&path).expect("first read");
     let b = fs::read_to_string(&path).expect("second read");
     assert_eq!(a, b);
+}
+
+#[test]
+fn pr_template_references_all_three_adrs() {
+    let path = repo_root().join(".github/PULL_REQUEST_TEMPLATE.md");
+    let content = fs::read_to_string(&path).expect("read PR template");
+    for adr in ["ADR-0002", "ADR-0003", "ADR-0004"] {
+        assert!(content.contains(adr), "PR template must reference {adr}");
+    }
+}
+
+#[test]
+fn release_checklist_references_all_three_adrs() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    let content = fs::read_to_string(&path).expect("read release checklist");
+    for adr in ["ADR-0002", "ADR-0003", "ADR-0004"] {
+        assert!(
+            content.contains(adr),
+            "release checklist must reference {adr}"
+        );
+    }
+}
+
+#[test]
+fn pr_template_file_exists() {
+    let path = repo_root().join(".github/PULL_REQUEST_TEMPLATE.md");
+    assert!(path.exists(), "PR template file must exist");
+}
+
+#[test]
+fn release_checklist_file_exists() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    assert!(path.exists(), "release checklist file must exist");
+}
+
+#[test]
+fn release_checklist_contains_reuse_reimplement_section() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    let content = fs::read_to_string(&path).expect("read release checklist");
+    assert!(
+        content.contains("## Reuse Vs Reimplement Decisions"),
+        "release checklist must have Reuse Vs Reimplement section"
+    );
+}
+
+#[test]
+fn pr_template_mentions_exception_artifact() {
+    let path = repo_root().join(".github/PULL_REQUEST_TEMPLATE.md");
+    let content = fs::read_to_string(&path).expect("read PR template");
+    assert!(
+        content.contains("Exception artifact link"),
+        "PR template must mention exception artifact"
+    );
+}
+
+#[test]
+fn release_checklist_gate_failure_clause_present() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    let content = fs::read_to_string(&path).expect("read release checklist");
+    assert!(
+        content.contains("Release gate fails"),
+        "release checklist must have gate failure clause"
+    );
+}
+
+#[test]
+fn pr_template_and_checklist_both_contain_justification() {
+    let pr = fs::read_to_string(repo_root().join(".github/PULL_REQUEST_TEMPLATE.md"))
+        .expect("read PR template");
+    let cl = fs::read_to_string(repo_root().join("docs/RELEASE_CHECKLIST.md"))
+        .expect("read release checklist");
+    assert!(pr.contains("Justification"));
+    assert!(cl.contains("Justification"));
+}
+
+#[test]
+fn release_checklist_has_minimum_word_count() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    let content = fs::read_to_string(&path).expect("read release checklist");
+    let word_count = content.split_whitespace().count();
+    assert!(
+        word_count >= 50,
+        "release checklist should have >= 50 words, got {word_count}"
+    );
+}
+
+#[test]
+fn pr_template_has_minimum_word_count() {
+    let path = repo_root().join(".github/PULL_REQUEST_TEMPLATE.md");
+    let content = fs::read_to_string(&path).expect("read PR template");
+    let word_count = content.split_whitespace().count();
+    assert!(
+        word_count >= 30,
+        "PR template should have >= 30 words, got {word_count}"
+    );
 }

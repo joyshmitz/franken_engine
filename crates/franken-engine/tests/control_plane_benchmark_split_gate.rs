@@ -448,10 +448,7 @@ fn benchmark_split_thresholds_default_is_constructible() {
     let thresholds = BenchmarkSplitThresholds::default();
     let json = serde_json::to_string(&thresholds).expect("serialize");
     let recovered: BenchmarkSplitThresholds = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(
-        serde_json::to_string(&recovered).unwrap(),
-        json
-    );
+    assert_eq!(serde_json::to_string(&recovered).unwrap(), json);
 }
 
 #[test]

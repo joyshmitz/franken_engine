@@ -214,7 +214,9 @@ fn track_d_contract_has_generated_at_utc() {
     let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let ts = value["generated_at_utc"].as_str().expect("generated_at_utc");
+    let ts = value["generated_at_utc"]
+        .as_str()
+        .expect("generated_at_utc");
     assert!(ts.ends_with('Z'));
 }
 
@@ -239,7 +241,10 @@ fn track_d_contract_has_failure_policy() {
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     assert!(value["failure_policy"].is_object());
-    assert_eq!(value["failure_policy"]["mode"].as_str(), Some("fail_closed"));
+    assert_eq!(
+        value["failure_policy"]["mode"].as_str(),
+        Some("fail_closed")
+    );
 }
 
 #[test]
@@ -247,7 +252,9 @@ fn track_d_contract_has_primary_bead() {
     let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let pb = value["primary_bead"].as_str().expect("primary_bead must be string");
+    let pb = value["primary_bead"]
+        .as_str()
+        .expect("primary_bead must be string");
     assert!(!pb.trim().is_empty());
 }
 
@@ -263,7 +270,9 @@ fn track_d_contract_has_schema_version() {
     let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let sv = value["schema_version"].as_str().expect("schema_version must be string");
+    let sv = value["schema_version"]
+        .as_str()
+        .expect("schema_version must be string");
     assert!(!sv.trim().is_empty());
 }
 
@@ -286,7 +295,9 @@ fn track_d_contract_has_nonempty_primary_bead() {
     let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let primary_bead = value["primary_bead"].as_str().expect("primary_bead must be string");
+    let primary_bead = value["primary_bead"]
+        .as_str()
+        .expect("primary_bead must be string");
     assert!(!primary_bead.trim().is_empty());
 }
 
@@ -295,7 +306,9 @@ fn track_d_contract_has_generated_by() {
     let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let gen_by = value["generated_by"].as_str().expect("generated_by must be string");
+    let gen_by = value["generated_by"]
+        .as_str()
+        .expect("generated_by must be string");
     assert!(!gen_by.trim().is_empty());
 }
 
@@ -304,4 +317,31 @@ fn track_d_charter_references_wasm_lane() {
     let path = repo_root().join("docs/FRX_TRACK_D_WASM_LANE_HYBRID_ROUTER_SPRINT_V1.md");
     let doc = fs::read_to_string(&path).expect("read doc");
     assert!(doc.to_ascii_lowercase().contains("wasm lane"));
+}
+
+#[test]
+fn track_d_charter_has_more_than_50_lines() {
+    let path = repo_root().join("docs/FRX_TRACK_D_WASM_LANE_HYBRID_ROUTER_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.lines().count() > 50);
+}
+
+#[test]
+fn track_d_contract_has_nonempty_schema_version() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let sv = value["schema_version"]
+        .as_str()
+        .expect("schema_version must be string");
+    assert!(!sv.trim().is_empty());
+}
+
+#[test]
+fn track_d_contract_deterministic_double_parse() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let a: Value = serde_json::from_str(&raw).expect("parse a");
+    let b: Value = serde_json::from_str(&raw).expect("parse b");
+    assert_eq!(a, b);
 }

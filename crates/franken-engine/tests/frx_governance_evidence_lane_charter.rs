@@ -189,7 +189,9 @@ fn governance_contract_has_generated_at_utc() {
     let path = repo_root().join("docs/frx_governance_evidence_lane_contract_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let ts = value["generated_at_utc"].as_str().expect("generated_at_utc must be string");
+    let ts = value["generated_at_utc"]
+        .as_str()
+        .expect("generated_at_utc must be string");
     assert!(ts.ends_with('Z'), "generated_at_utc must end with Z");
 }
 
@@ -199,7 +201,12 @@ fn governance_contract_has_failure_policy_object() {
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     assert!(value["failure_policy"].is_object());
-    assert!(!value["failure_policy"]["mode"].as_str().unwrap_or("").is_empty());
+    assert!(
+        !value["failure_policy"]["mode"]
+            .as_str()
+            .unwrap_or("")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -214,7 +221,9 @@ fn governance_contract_has_primary_bead() {
     let path = repo_root().join("docs/frx_governance_evidence_lane_contract_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let pb = value["primary_bead"].as_str().expect("primary_bead must be string");
+    let pb = value["primary_bead"]
+        .as_str()
+        .expect("primary_bead must be string");
     assert!(!pb.trim().is_empty());
 }
 
@@ -230,7 +239,9 @@ fn governance_contract_has_schema_version() {
     let path = repo_root().join("docs/frx_governance_evidence_lane_contract_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let sv = value["schema_version"].as_str().expect("schema_version must be string");
+    let sv = value["schema_version"]
+        .as_str()
+        .expect("schema_version must be string");
     assert!(!sv.trim().is_empty());
 }
 
@@ -239,7 +250,11 @@ fn governance_contract_has_generated_by() {
     let path = repo_root().join("docs/frx_governance_evidence_lane_contract_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    assert!(value["generated_by"].as_str().is_some_and(|s| !s.is_empty()));
+    assert!(
+        value["generated_by"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+    );
 }
 
 #[test]
@@ -280,4 +295,27 @@ fn governance_contract_deterministic_double_parse() {
     let a: Value = serde_json::from_str(&raw).expect("parse 1");
     let b: Value = serde_json::from_str(&raw).expect("parse 2");
     assert_eq!(a, b);
+}
+
+#[test]
+fn governance_charter_doc_file_exists() {
+    let path = repo_root().join("docs/FRX_GOVERNANCE_EVIDENCE_LANE_CHARTER_V1.md");
+    assert!(path.exists());
+}
+
+#[test]
+fn governance_contract_json_file_exists() {
+    let path = repo_root().join("docs/frx_governance_evidence_lane_contract_v1.json");
+    assert!(path.exists());
+}
+
+#[test]
+fn governance_contract_schema_version_is_nonempty() {
+    let path = repo_root().join("docs/frx_governance_evidence_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let sv = value["schema_version"]
+        .as_str()
+        .expect("schema_version string");
+    assert!(!sv.trim().is_empty());
 }

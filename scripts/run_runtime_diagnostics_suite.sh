@@ -47,12 +47,14 @@ failed_command=""
 manifest_written=false
 step_log_index=0
 compatibility_advisory_generated=false
+last_step_log_path=""
 
 run_step() {
   local command_text="$1"
   shift
   local step_log_path="${run_dir}/step_$(printf '%03d' "$step_log_index").log"
   step_log_index=$((step_log_index + 1))
+  last_step_log_path="$step_log_path"
   commands_run+=("$command_text")
   echo "==> $command_text"
   if ! run_rch "$@" > >(tee "$step_log_path") 2>&1; then
@@ -83,8 +85,13 @@ run_mode() {
         cargo test -p frankenengine-engine --test runtime_diagnostics_cli
       run_step "cargo test -p frankenengine-engine --bin runtime_diagnostics compatibility -- --nocapture" \
         cargo test -p frankenengine-engine --bin runtime_diagnostics compatibility -- --nocapture
-      run_step "cargo run -p frankenengine-engine --bin runtime_diagnostics -- compatibility-advisories --scenario-report ${compat_scenario_fixture} --source-report ${compat_source_report} --out ${compat_advisory_output} --summary" \
-        cargo run -p frankenengine-engine --bin runtime_diagnostics -- compatibility-advisories --scenario-report "${compat_scenario_fixture}" --source-report "${compat_source_report}" --out "${compat_advisory_output}" --summary
+      run_step "cargo run -p frankenengine-engine --bin runtime_diagnostics -- compatibility-advisories --scenario-report ${compat_scenario_fixture} --source-report ${compat_source_report} --out ${compat_advisory_output} --summary [rch-inline-json-export]" \
+        bash -lc "set -euo pipefail; \
+          cargo run -p frankenengine-engine --bin runtime_diagnostics -- compatibility-advisories --scenario-report '${compat_scenario_fixture}' --source-report '${compat_source_report}' --out '${compat_advisory_output}' --summary; \
+          echo '---BEGIN_COMPAT_ADVISORY_JSON---'; \
+          cat '${compat_advisory_output}'; \
+          echo '---END_COMPAT_ADVISORY_JSON---'"
+      sed -n '/^---BEGIN_COMPAT_ADVISORY_JSON---$/,/^---END_COMPAT_ADVISORY_JSON---$/p' "$last_step_log_path" | sed '1d;$d' >"$compat_advisory_output"
       if [[ ! -s "$compat_advisory_output" ]]; then
         failed_command="compatibility-advisories output validation (missing output)"
         return 1
@@ -106,8 +113,13 @@ run_mode() {
         cargo test -p frankenengine-engine --test runtime_diagnostics_cli
       run_step "cargo test -p frankenengine-engine --bin runtime_diagnostics compatibility -- --nocapture" \
         cargo test -p frankenengine-engine --bin runtime_diagnostics compatibility -- --nocapture
-      run_step "cargo run -p frankenengine-engine --bin runtime_diagnostics -- compatibility-advisories --scenario-report ${compat_scenario_fixture} --source-report ${compat_source_report} --out ${compat_advisory_output} --summary" \
-        cargo run -p frankenengine-engine --bin runtime_diagnostics -- compatibility-advisories --scenario-report "${compat_scenario_fixture}" --source-report "${compat_source_report}" --out "${compat_advisory_output}" --summary
+      run_step "cargo run -p frankenengine-engine --bin runtime_diagnostics -- compatibility-advisories --scenario-report ${compat_scenario_fixture} --source-report ${compat_source_report} --out ${compat_advisory_output} --summary [rch-inline-json-export]" \
+        bash -lc "set -euo pipefail; \
+          cargo run -p frankenengine-engine --bin runtime_diagnostics -- compatibility-advisories --scenario-report '${compat_scenario_fixture}' --source-report '${compat_source_report}' --out '${compat_advisory_output}' --summary; \
+          echo '---BEGIN_COMPAT_ADVISORY_JSON---'; \
+          cat '${compat_advisory_output}'; \
+          echo '---END_COMPAT_ADVISORY_JSON---'"
+      sed -n '/^---BEGIN_COMPAT_ADVISORY_JSON---$/,/^---END_COMPAT_ADVISORY_JSON---$/p' "$last_step_log_path" | sed '1d;$d' >"$compat_advisory_output"
       if [[ ! -s "$compat_advisory_output" ]]; then
         failed_command="compatibility-advisories output validation (missing output)"
         return 1

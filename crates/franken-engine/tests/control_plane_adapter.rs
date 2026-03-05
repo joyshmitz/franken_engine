@@ -231,8 +231,7 @@ fn decision_verdict_serde_roundtrip() {
         DecisionVerdict::Timeout,
     ] {
         let json = serde_json::to_string(&verdict).expect("serialize verdict");
-        let recovered: DecisionVerdict =
-            serde_json::from_str(&json).expect("deserialize verdict");
+        let recovered: DecisionVerdict = serde_json::from_str(&json).expect("deserialize verdict");
         assert_eq!(recovered, verdict);
     }
 }
@@ -259,19 +258,16 @@ fn decision_request_serde_roundtrip() {
 
 #[test]
 fn control_plane_adapter_error_codes_are_stable() {
-    let budget_err = control_plane::ControlPlaneAdapterError::BudgetExhausted {
-        requested_ms: 1000,
-    };
+    let budget_err =
+        control_plane::ControlPlaneAdapterError::BudgetExhausted { requested_ms: 1000 };
     assert_eq!(budget_err.error_code(), "budget_exhausted");
 
-    let gateway_err = control_plane::ControlPlaneAdapterError::DecisionGateway {
-        code: "test_code",
-    };
+    let gateway_err =
+        control_plane::ControlPlaneAdapterError::DecisionGateway { code: "test_code" };
     assert_eq!(gateway_err.error_code(), "test_code");
 
-    let evidence_err = control_plane::ControlPlaneAdapterError::EvidenceEmission {
-        code: "emit_fail",
-    };
+    let evidence_err =
+        control_plane::ControlPlaneAdapterError::EvidenceEmission { code: "emit_fail" };
     assert_eq!(evidence_err.error_code(), "emit_fail");
 }
 
@@ -428,8 +424,7 @@ fn adapter_event_serde_roundtrip() {
         error_code: None,
     };
     let json = serde_json::to_string(&event).expect("serialize");
-    let recovered: control_plane::AdapterEvent =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: control_plane::AdapterEvent = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered, event);
 }
 
@@ -484,8 +479,7 @@ fn adapter_event_with_error_code_roundtrips() {
         error_code: Some("E-001".to_string()),
     };
     let json = serde_json::to_string(&event).expect("serialize");
-    let recovered: control_plane::AdapterEvent =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: control_plane::AdapterEvent = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.error_code, Some("E-001".to_string()));
 }
 

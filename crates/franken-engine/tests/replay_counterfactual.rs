@@ -307,7 +307,11 @@ fn cross_machine_replay_diagnosis_surfaces_environment_deltas() {
 #[test]
 fn replay_fixture_path_exists() {
     let path = replay_fixture_path();
-    assert!(path.exists(), "replay fixture file must exist: {}", path.display());
+    assert!(
+        path.exists(),
+        "replay fixture file must exist: {}",
+        path.display()
+    );
 }
 
 #[test]
@@ -385,8 +389,7 @@ fn evidence_linkage_records_have_nonempty_hashes() {
     let baseline = runner.run_fixture(&fixture).expect("baseline run");
     let collector = ArtifactCollector::new(test_temp_dir("linkage-check")).expect("collector");
     let artifacts = collector.collect(&baseline).expect("collect artifacts");
-    let evidence_json =
-        fs::read_to_string(&artifacts.evidence_linkage_path).expect("read linkage");
+    let evidence_json = fs::read_to_string(&artifacts.evidence_linkage_path).expect("read linkage");
     let records: Vec<EvidenceLinkageRecord> =
         serde_json::from_str(&evidence_json).expect("parse linkage");
     for record in &records {
@@ -414,7 +417,10 @@ fn replay_fixture_has_steps_field() {
     let path = replay_fixture_path();
     let raw = fs::read_to_string(&path).expect("read fixture");
     let value: serde_json::Value = serde_json::from_str(&raw).expect("parse fixture JSON");
-    assert!(value.get("steps").is_some(), "fixture must have a steps field");
+    assert!(
+        value.get("steps").is_some(),
+        "fixture must have a steps field"
+    );
 }
 
 #[test]

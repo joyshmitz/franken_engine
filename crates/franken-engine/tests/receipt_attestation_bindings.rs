@@ -5,8 +5,8 @@ use frankenengine_engine::hash_tiers::{AuthenticityHash, ContentHash};
 use frankenengine_engine::proof_schema::{
     AttestationRequirementPolicy, AttestationValidityWindow, OptReceipt, OptimizationClass,
     ProofSchemaError, ReceiptAttestationBindings, ReceiptNonceRegistry, SchemaVersion,
-    proof_schema_version_current, proof_schema_version_v1_0, validate_receipt,
-    validate_receipt_with_policy,
+    SchemaVersionExt, proof_schema_version_current, proof_schema_version_v1_0,
+    proof_schema_version_v1_1, validate_receipt, validate_receipt_with_policy,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 use frankenengine_engine::tee_attestation_policy::DecisionImpact;
@@ -170,17 +170,15 @@ fn nonce_registry_rejects_replay_of_same_nonce() {
         &AttestationRequirementPolicy::default(),
         Some(&mut nonce_registry),
     );
-    assert!(matches!(
-        result2,
-        Err(ProofSchemaError::NonceReplay { .. })
-    ));
+    assert!(matches!(result2, Err(ProofSchemaError::NonceReplay { .. })));
 }
 
 // ---------- epoch mismatch ----------
 
 #[test]
 fn receipt_verification_rejects_wrong_epoch() {
-    let receipt = base_receipt(proof_schema_version_current(), DecisionImpact::Standard).sign(TEST_KEY);
+    let receipt =
+        base_receipt(proof_schema_version_current(), DecisionImpact::Standard).sign(TEST_KEY);
     let result = validate_receipt(&receipt, TEST_KEY, SecurityEpoch::from_raw(99));
     assert!(matches!(
         result,
@@ -192,7 +190,8 @@ fn receipt_verification_rejects_wrong_epoch() {
 
 #[test]
 fn receipt_verification_rejects_wrong_key() {
-    let receipt = base_receipt(proof_schema_version_current(), DecisionImpact::Standard).sign(TEST_KEY);
+    let receipt =
+        base_receipt(proof_schema_version_current(), DecisionImpact::Standard).sign(TEST_KEY);
     let wrong_key = b"wrong-integration-signing-key!!!!";
     let result = validate_receipt(&receipt, wrong_key, SecurityEpoch::from_raw(42));
     assert!(matches!(
@@ -308,8 +307,7 @@ fn validity_window_serde_roundtrip() {
         end_timestamp_ticks: 200,
     };
     let json = serde_json::to_string(&window).expect("serialize");
-    let recovered: AttestationValidityWindow =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: AttestationValidityWindow = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.start_timestamp_ticks, 100);
     assert_eq!(recovered.end_timestamp_ticks, 200);
 }
@@ -320,8 +318,7 @@ fn validity_window_serde_roundtrip() {
 fn attestation_bindings_serde_roundtrip() {
     let bindings = attestation_bindings();
     let json = serde_json::to_string(&bindings).expect("serialize");
-    let recovered: ReceiptAttestationBindings =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: ReceiptAttestationBindings = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.nonce, bindings.nonce);
     assert_eq!(recovered.measurement_id, bindings.measurement_id);
 }
@@ -342,7 +339,10 @@ fn opt_receipt_full_serde_roundtrip() {
 
 #[test]
 fn optimization_class_serde_roundtrip() {
-    for class in [OptimizationClass::Superinstruction, OptimizationClass::TraceSpecialization] {
+    for class in [
+        OptimizationClass::Superinstruction,
+        OptimizationClass::TraceSpecialization,
+    ] {
         let json = serde_json::to_string(&class).expect("serialize");
         let recovered: OptimizationClass = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(recovered, class);
@@ -363,4 +363,266 @@ fn proof_schema_error_display_is_nonempty() {
     };
     let msg = format!("{err}");
     assert!(!msg.trim().is_empty());
+}
+
+// ---------- empty replay_compatibility ----------
+
+#[test]
+fn receipt_with_empty_replay_compatibility_validates() {
+    let mut receipt = base_receipt(proof_schema_version_current(), DecisionImpact::Standard);
+    receipt.replay_compatibility = BTreeMap::new();
+    let signed = receipt.sign(TEST_KEY);
+    assert!(validate_receipt(&signed, TEST_KEY, SecurityEpoch::from_raw(42)).is_ok());
+}
+
+#[test]
+fn empty_replay_compatibility_produces_different_signature_from_nonempty() {
+    let mut receipt_empty = base_receipt(proof_schema_version_current(), DecisionImpact::Standard);
+    receipt_empty.replay_compatibility = BTreeMap::new();
+    let signed_empty = receipt_empty.sign(TEST_KEY);
+
+    let signed_nonempty =
+        base_receipt(proof_schema_version_current(), DecisionImpact::Standard).sign(TEST_KEY);
+
+    assert_ne!(signed_empty.signature, signed_nonempty.signature);
+}
+
+// ---------- nonce registry with multiple unique nonces ----------
+
+#[test]
+fn nonce_registry_accepts_multiple_unique_nonces() {
+    let mut nonce_registry = ReceiptNonceRegistry::new();
+    let epoch = SecurityEpoch::from_raw(42);
+    let policy = AttestationRequirementPolicy::default();
+
+    for i in 0u8..5 {
+        let mut receipt = base_receipt(proof_schema_version_current(), DecisionImpact::HighImpact);
+        receipt.optimization_id = format!("opt-nonce-{i}");
+        receipt.correlation_id = format!("corr-nonce-{i}");
+        let mut bindings = attestation_bindings();
+        bindings.nonce = [10 + i; 32];
+        receipt.attestation_bindings = Some(bindings);
+        let signed = receipt.sign(TEST_KEY);
+
+        let result = validate_receipt_with_policy(
+            &signed,
+            TEST_KEY,
+            epoch,
+            &policy,
+            Some(&mut nonce_registry),
+        );
+        assert!(result.is_ok(), "nonce {i} should be accepted");
+    }
+}
+
+// ---------- different nonces produce different quote digests ----------
+
+#[test]
+fn different_nonces_produce_different_signing_preimages() {
+    let mut receipt_a = base_receipt(proof_schema_version_current(), DecisionImpact::HighImpact);
+    let mut bindings_a = attestation_bindings();
+    bindings_a.nonce = [0xAA; 32];
+    receipt_a.attestation_bindings = Some(bindings_a);
+
+    let mut receipt_b = base_receipt(proof_schema_version_current(), DecisionImpact::HighImpact);
+    let mut bindings_b = attestation_bindings();
+    bindings_b.nonce = [0xBB; 32];
+    receipt_b.attestation_bindings = Some(bindings_b);
+
+    assert_ne!(receipt_a.signing_preimage(), receipt_b.signing_preimage());
+
+    let signed_a = receipt_a.sign(TEST_KEY);
+    let signed_b = receipt_b.sign(TEST_KEY);
+    assert_ne!(signed_a.signature, signed_b.signature);
+}
+
+// ---------- end-to-end: HighImpact + attestation + nonce registry ----------
+
+#[test]
+fn end_to_end_high_impact_attested_nonce_tracked_receipt() {
+    let mut receipt = base_receipt(proof_schema_version_current(), DecisionImpact::HighImpact);
+    receipt.attestation_bindings = Some(attestation_bindings());
+    let signed = receipt.sign(TEST_KEY);
+
+    let mut nonce_registry = ReceiptNonceRegistry::new();
+    let policy = AttestationRequirementPolicy {
+        require_at_or_above: DecisionImpact::HighImpact,
+        allow_legacy_receipts_without_attestation: false,
+    };
+
+    // First validation succeeds.
+    let result = validate_receipt_with_policy(
+        &signed,
+        TEST_KEY,
+        SecurityEpoch::from_raw(42),
+        &policy,
+        Some(&mut nonce_registry),
+    );
+    assert!(result.is_ok());
+
+    // Replay is caught.
+    let replay = validate_receipt_with_policy(
+        &signed,
+        TEST_KEY,
+        SecurityEpoch::from_raw(42),
+        &policy,
+        Some(&mut nonce_registry),
+    );
+    assert!(matches!(replay, Err(ProofSchemaError::NonceReplay { .. })));
+}
+
+// ---------- multiple optimization classes validate independently ----------
+
+#[test]
+fn multiple_optimization_classes_validate_independently() {
+    let classes = [
+        OptimizationClass::Superinstruction,
+        OptimizationClass::TraceSpecialization,
+        OptimizationClass::LayoutSpecialization,
+        OptimizationClass::DevirtualizedHostcallFastPath,
+    ];
+
+    for (idx, class) in classes.iter().enumerate() {
+        let mut receipt = base_receipt(proof_schema_version_current(), DecisionImpact::Standard);
+        receipt.optimization_class = class.clone();
+        receipt.optimization_id = format!("opt-class-{idx}");
+        receipt.correlation_id = format!("corr-class-{idx}");
+        let signed = receipt.sign(TEST_KEY);
+
+        assert!(
+            validate_receipt(&signed, TEST_KEY, SecurityEpoch::from_raw(42)).is_ok(),
+            "optimization class {class} should validate"
+        );
+    }
+}
+
+// ---------- receipt object_id changes based on zone ----------
+
+#[test]
+fn receipt_object_id_changes_with_zone() {
+    let receipt =
+        base_receipt(proof_schema_version_current(), DecisionImpact::Standard).sign(TEST_KEY);
+    let id_zone_a = receipt.object_id("zone-alpha").expect("object id");
+    let id_zone_b = receipt.object_id("zone-beta").expect("object id");
+    assert_ne!(id_zone_a, id_zone_b);
+}
+
+// ---------- schema version current serde roundtrip ----------
+
+#[test]
+fn schema_version_current_serde_roundtrip() {
+    let version = proof_schema_version_current();
+    let json = serde_json::to_string(&version).expect("serialize");
+    let recovered: SchemaVersion = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, version);
+}
+
+#[test]
+fn schema_version_v1_1_supports_attestation_bindings() {
+    let v1_1 = proof_schema_version_v1_1();
+    assert!(v1_1.supports_attestation_bindings());
+
+    let v1_0 = proof_schema_version_v1_0();
+    assert!(!v1_0.supports_attestation_bindings());
+}
+
+// ---------- DecisionImpact serde roundtrip for all variants ----------
+
+#[test]
+fn decision_impact_serde_roundtrip_all_variants() {
+    for impact in [DecisionImpact::Standard, DecisionImpact::HighImpact] {
+        let json = serde_json::to_string(&impact).expect("serialize");
+        let recovered: DecisionImpact = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, impact);
+    }
+}
+
+// ---------- policy with require_attestation=false allows HighImpact without bindings ----------
+
+#[test]
+fn permissive_policy_allows_high_impact_without_bindings() {
+    let receipt =
+        base_receipt(proof_schema_version_current(), DecisionImpact::HighImpact).sign(TEST_KEY);
+    assert!(receipt.attestation_bindings.is_none());
+
+    // Default policy rejects this — confirmed as precondition.
+    let strict_result = validate_receipt_with_policy(
+        &receipt,
+        TEST_KEY,
+        SecurityEpoch::from_raw(42),
+        &AttestationRequirementPolicy::default(),
+        None,
+    );
+    assert!(strict_result.is_err());
+
+    // Permissive policy: raise the threshold above HighImpact so nothing
+    // needs attestation. Since DecisionImpact only has Standard and HighImpact,
+    // and HighImpact is the max, we use a policy that does NOT require above HighImpact
+    // by setting the legacy flag. Instead, we set allow_legacy to true and use v1.0.
+    let mut receipt_v1 = base_receipt(proof_schema_version_v1_0(), DecisionImpact::HighImpact);
+    receipt_v1.attestation_bindings = None;
+    let signed_v1 = receipt_v1.sign(TEST_KEY);
+
+    let legacy_policy = AttestationRequirementPolicy {
+        require_at_or_above: DecisionImpact::HighImpact,
+        allow_legacy_receipts_without_attestation: true,
+    };
+    let result = validate_receipt_with_policy(
+        &signed_v1,
+        TEST_KEY,
+        SecurityEpoch::from_raw(42),
+        &legacy_policy,
+        None,
+    );
+    assert!(
+        result.is_ok(),
+        "legacy policy should allow v1.0 HighImpact without bindings"
+    );
+}
+
+// ---------- signed receipt verify_signature is false after field mutation ----------
+
+#[test]
+fn verify_signature_fails_after_optimization_id_mutation() {
+    let signed =
+        base_receipt(proof_schema_version_current(), DecisionImpact::Standard).sign(TEST_KEY);
+    assert!(signed.verify_signature(TEST_KEY));
+
+    let mut tampered = signed.clone();
+    tampered.optimization_id = "tampered-id".to_string();
+    assert!(!tampered.verify_signature(TEST_KEY));
+}
+
+#[test]
+fn verify_signature_fails_after_timestamp_mutation() {
+    let signed =
+        base_receipt(proof_schema_version_current(), DecisionImpact::Standard).sign(TEST_KEY);
+    assert!(signed.verify_signature(TEST_KEY));
+
+    let mut tampered = signed.clone();
+    tampered.timestamp_ticks = 9999;
+    assert!(!tampered.verify_signature(TEST_KEY));
+}
+
+// ---------- all-zero nonce rejected ----------
+
+#[test]
+fn all_zero_nonce_rejected_during_validation() {
+    let mut receipt = base_receipt(proof_schema_version_current(), DecisionImpact::HighImpact);
+    let mut bindings = attestation_bindings();
+    bindings.nonce = [0u8; 32];
+    receipt.attestation_bindings = Some(bindings);
+    let signed = receipt.sign(TEST_KEY);
+
+    let result = validate_receipt_with_policy(
+        &signed,
+        TEST_KEY,
+        SecurityEpoch::from_raw(42),
+        &AttestationRequirementPolicy::default(),
+        None,
+    );
+    assert!(matches!(
+        result,
+        Err(ProofSchemaError::InvalidAttestationBindings { .. })
+    ));
 }

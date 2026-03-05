@@ -363,7 +363,12 @@ fn cache_error_serde_roundtrip() {
     let v = ModuleVersionFingerprint::new(source_hash.clone(), 1, 1);
     cache
         .insert(
-            CacheInsertRequest::new("mod:revoke-serde", v, ContentHash::compute(b"art"), "/app/r.mjs"),
+            CacheInsertRequest::new(
+                "mod:revoke-serde",
+                v,
+                ContentHash::compute(b"art"),
+                "/app/r.mjs",
+            ),
             &cache_context(),
         )
         .unwrap();
@@ -394,7 +399,12 @@ fn cache_error_is_std_error() {
     let v = ModuleVersionFingerprint::new(source_hash.clone(), 1, 1);
     cache
         .insert(
-            CacheInsertRequest::new("mod:revoke-std", v, ContentHash::compute(b"art"), "/app/s.mjs"),
+            CacheInsertRequest::new(
+                "mod:revoke-std",
+                v,
+                ContentHash::compute(b"art"),
+                "/app/s.mjs",
+            ),
             &cache_context(),
         )
         .unwrap();
@@ -465,4 +475,22 @@ fn cache_error_code_serde_roundtrip() {
 fn new_cache_has_no_events() {
     let cache = ModuleCache::new();
     assert!(cache.events().is_empty());
+}
+
+#[test]
+fn cache_error_code_debug_is_nonempty() {
+    let code = CacheErrorCode::ModuleRevoked;
+    assert!(!format!("{code:?}").is_empty());
+}
+
+#[test]
+fn module_version_fingerprint_debug_is_nonempty() {
+    let fp = ModuleVersionFingerprint::new(ContentHash::compute(b"test"), 1, 1);
+    assert!(!format!("{fp:?}").is_empty());
+}
+
+#[test]
+fn cache_context_debug_is_nonempty() {
+    let ctx = CacheContext::new("trace-1", "decision-1", "policy-1");
+    assert!(!format!("{ctx:?}").is_empty());
 }

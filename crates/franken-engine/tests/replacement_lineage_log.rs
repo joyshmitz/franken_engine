@@ -892,7 +892,12 @@ fn log_slot_ids_tracks_distinct_slots() {
 fn log_entries_returns_all_appended() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..3 {
-        let r = receipt("slot-entries", &format!("old-{i}"), &format!("new-{i}"), i * 100);
+        let r = receipt(
+            "slot-entries",
+            &format!("old-{i}"),
+            &format!("new-{i}"),
+            i * 100,
+        );
         log.append(r, ReplacementKind::DelegateToNative, i * 100)
             .expect("append");
     }
@@ -946,7 +951,12 @@ fn log_events_records_appends_and_checkpoints() {
 fn log_inclusion_proof_verifies_for_appended_entry() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..4 {
-        let r = receipt("slot-ip", &format!("old-{i}"), &format!("new-{i}"), (i + 1) * 100);
+        let r = receipt(
+            "slot-ip",
+            &format!("old-{i}"),
+            &format!("new-{i}"),
+            (i + 1) * 100,
+        );
         log.append(r, ReplacementKind::DelegateToNative, (i + 1) * 100)
             .expect("append");
     }
@@ -959,7 +969,12 @@ fn log_inclusion_proof_verifies_for_appended_entry() {
 fn log_inclusion_proof_detects_tamper() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..4 {
-        let r = receipt("slot-ip2", &format!("old-{i}"), &format!("new-{i}"), (i + 1) * 100);
+        let r = receipt(
+            "slot-ip2",
+            &format!("old-{i}"),
+            &format!("new-{i}"),
+            (i + 1) * 100,
+        );
         log.append(r, ReplacementKind::DelegateToNative, (i + 1) * 100)
             .expect("append");
     }

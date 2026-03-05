@@ -151,7 +151,8 @@ fn track_e_charter_references_fail_closed() {
 
 #[test]
 fn track_e_contract_has_track_section() {
-    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     assert!(value["track"].is_object());
@@ -160,7 +161,8 @@ fn track_e_contract_has_track_section() {
 
 #[test]
 fn track_e_contract_has_activation_gate() {
-    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     assert!(value["activation_gate"].is_object());
@@ -168,7 +170,8 @@ fn track_e_contract_has_activation_gate() {
 
 #[test]
 fn track_e_contract_has_outputs_section() {
-    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     assert!(value["outputs"].is_object());
@@ -177,15 +180,20 @@ fn track_e_contract_has_outputs_section() {
 
 #[test]
 fn track_e_contract_failure_policy_is_fail_closed() {
-    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    assert_eq!(value["failure_policy"]["mode"].as_str(), Some("fail_closed"));
+    assert_eq!(
+        value["failure_policy"]["mode"].as_str(),
+        Some("fail_closed")
+    );
 }
 
 #[test]
 fn track_e_contract_json_is_deterministic() {
-    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let v1: Value = serde_json::from_str(&raw).expect("parse first");
     let v2: Value = serde_json::from_str(&raw).expect("parse second");
@@ -194,20 +202,29 @@ fn track_e_contract_json_is_deterministic() {
 
 #[test]
 fn track_e_contract_has_generated_at_utc() {
-    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let ts = value["generated_at_utc"].as_str().expect("generated_at_utc must be string");
+    let ts = value["generated_at_utc"]
+        .as_str()
+        .expect("generated_at_utc must be string");
     assert!(ts.ends_with('Z'), "generated_at_utc must end with Z");
 }
 
 #[test]
 fn track_e_contract_has_failure_policy_object() {
-    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     assert!(value["failure_policy"].is_object());
-    assert!(!value["failure_policy"]["mode"].as_str().unwrap_or("").is_empty());
+    assert!(
+        !value["failure_policy"]["mode"]
+            .as_str()
+            .unwrap_or("")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -219,10 +236,15 @@ fn track_e_charter_mentions_fuzz() {
 
 #[test]
 fn track_e_contract_has_primary_bead() {
-    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    assert!(value["primary_bead"].as_str().is_some_and(|s| !s.is_empty()));
+    assert!(
+        value["primary_bead"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+    );
 }
 
 #[test]
@@ -234,7 +256,8 @@ fn track_e_charter_mentions_metamorphic() {
 
 #[test]
 fn track_e_contract_blocking_report_has_required_fields_array() {
-    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     let fields = value["outputs"]["blocking_report"]["required_fields"]
@@ -245,7 +268,8 @@ fn track_e_contract_blocking_report_has_required_fields_array() {
 
 #[test]
 fn track_e_contract_has_schema_version() {
-    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     let sv = value["schema_version"].as_str().expect("schema_version");
@@ -254,10 +278,15 @@ fn track_e_contract_has_schema_version() {
 
 #[test]
 fn track_e_contract_has_generated_by() {
-    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    assert!(value["generated_by"].as_str().is_some_and(|s| !s.is_empty()));
+    assert!(
+        value["generated_by"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+    );
 }
 
 #[test]
@@ -272,12 +301,16 @@ fn track_e_charter_doc_has_more_than_50_lines() {
     let path = repo_root().join("docs/FRX_TRACK_E_VERIFICATION_FUZZ_FORMAL_COVERAGE_SPRINT_V1.md");
     let doc = fs::read_to_string(&path).expect("read doc");
     let line_count = doc.lines().count();
-    assert!(line_count > 50, "doc should have >50 lines, got {line_count}");
+    assert!(
+        line_count > 50,
+        "doc should have >50 lines, got {line_count}"
+    );
 }
 
 #[test]
 fn track_e_contract_deterministic_double_parse() {
-    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
     let a: Value = serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("parse");
     let b: Value = serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("parse");
     assert_eq!(a, b);
@@ -285,7 +318,9 @@ fn track_e_contract_deterministic_double_parse() {
 
 #[test]
 fn track_e_contract_is_a_json_object() {
-    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
-    let value: Value = serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("parse");
+    let path =
+        repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let value: Value =
+        serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("parse");
     assert!(value.is_object());
 }

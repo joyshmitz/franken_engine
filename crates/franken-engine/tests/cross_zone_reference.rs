@@ -296,7 +296,10 @@ fn multiple_provenance_allowances_do_not_interfere() {
 
 #[test]
 fn capset_produces_correct_size() {
-    let set = capset(&[RuntimeCapability::VmDispatch, RuntimeCapability::NetworkEgress]);
+    let set = capset(&[
+        RuntimeCapability::VmDispatch,
+        RuntimeCapability::NetworkEgress,
+    ]);
     assert_eq!(set.len(), 2);
     assert!(set.contains(&RuntimeCapability::VmDispatch));
     assert!(set.contains(&RuntimeCapability::NetworkEgress));
@@ -357,9 +360,37 @@ fn reference_type_all_variants_serde_roundtrip() {
 
 #[test]
 fn trust_zone_error_variants_display_differently() {
-    let e1 = TrustZoneError::ZoneMissing { zone_name: "alpha".into() };
-    let e2 = TrustZoneError::ZoneMissing { zone_name: "beta".into() };
+    let e1 = TrustZoneError::ZoneMissing {
+        zone_name: "alpha".into(),
+    };
+    let e2 = TrustZoneError::ZoneMissing {
+        zone_name: "beta".into(),
+    };
     let s1 = format!("{e1}");
     let s2 = format!("{e2}");
     assert_ne!(s1, s2);
+}
+
+#[test]
+fn reference_type_debug_is_nonempty() {
+    for rt in [ReferenceType::Provenance, ReferenceType::Authority] {
+        assert!(!format!("{rt:?}").is_empty());
+    }
+}
+
+#[test]
+fn trust_zone_error_debug_is_nonempty() {
+    let err = TrustZoneError::ZoneMissing {
+        zone_name: "dbg-zone".into(),
+    };
+    assert!(!format!("{err:?}").is_empty());
+}
+
+#[test]
+fn trust_zone_error_is_std_error() {
+    let err = TrustZoneError::ZoneMissing {
+        zone_name: "std-err".into(),
+    };
+    let dyn_err: &dyn std::error::Error = &err;
+    assert!(!dyn_err.to_string().is_empty());
 }

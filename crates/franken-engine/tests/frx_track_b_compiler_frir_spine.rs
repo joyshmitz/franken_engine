@@ -158,7 +158,10 @@ fn track_b_contract_failure_policy_is_fail_closed() {
     let path = repo_root().join("docs/frx_track_b_compiler_frir_spine_v1.json");
     let raw = fs::read_to_string(&path).expect("read track B JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse track B JSON");
-    assert_eq!(value["failure_policy"]["mode"].as_str(), Some("fail_closed"));
+    assert_eq!(
+        value["failure_policy"]["mode"].as_str(),
+        Some("fail_closed")
+    );
 }
 
 #[test]
@@ -175,7 +178,9 @@ fn track_b_contract_has_generated_at_utc() {
     let path = repo_root().join("docs/frx_track_b_compiler_frir_spine_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let ts = value["generated_at_utc"].as_str().expect("generated_at_utc");
+    let ts = value["generated_at_utc"]
+        .as_str()
+        .expect("generated_at_utc");
     assert!(ts.ends_with('Z'));
 }
 
@@ -191,7 +196,11 @@ fn track_b_contract_has_primary_bead() {
     let path = repo_root().join("docs/frx_track_b_compiler_frir_spine_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    assert!(value["primary_bead"].as_str().is_some_and(|s| !s.is_empty()));
+    assert!(
+        value["primary_bead"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+    );
 }
 
 #[test]
@@ -199,7 +208,9 @@ fn track_b_contract_has_schema_version() {
     let path = repo_root().join("docs/frx_track_b_compiler_frir_spine_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let sv = value["schema_version"].as_str().expect("schema_version must be string");
+    let sv = value["schema_version"]
+        .as_str()
+        .expect("schema_version must be string");
     assert!(!sv.trim().is_empty());
 }
 
@@ -209,7 +220,12 @@ fn track_b_contract_has_failure_policy() {
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     assert!(value["failure_policy"].is_object());
-    assert!(!value["failure_policy"]["mode"].as_str().unwrap_or("").is_empty());
+    assert!(
+        !value["failure_policy"]["mode"]
+            .as_str()
+            .unwrap_or("")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -224,7 +240,11 @@ fn track_b_contract_has_generated_by() {
     let path = repo_root().join("docs/frx_track_b_compiler_frir_spine_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    assert!(value["generated_by"].as_str().is_some_and(|s| !s.is_empty()));
+    assert!(
+        value["generated_by"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+    );
 }
 
 #[test]
@@ -265,4 +285,23 @@ fn track_b_contract_deterministic_double_parse() {
     let a: Value = serde_json::from_str(&raw).expect("parse 1");
     let b: Value = serde_json::from_str(&raw).expect("parse 2");
     assert_eq!(a, b);
+}
+
+#[test]
+fn track_b_charter_doc_file_exists() {
+    let path = repo_root().join("docs/FRX_TRACK_B_COMPILER_FRIR_SPINE_V1.md");
+    assert!(path.exists());
+}
+
+#[test]
+fn track_b_contract_json_file_exists() {
+    let path = repo_root().join("docs/frx_track_b_compiler_frir_spine_v1.json");
+    assert!(path.exists());
+}
+
+#[test]
+fn track_b_charter_mentions_compiler() {
+    let path = repo_root().join("docs/FRX_TRACK_B_COMPILER_FRIR_SPINE_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.to_ascii_lowercase().contains("compiler"));
 }

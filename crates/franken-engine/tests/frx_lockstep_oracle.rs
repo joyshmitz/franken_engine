@@ -248,9 +248,12 @@ fn divergence_class_serde_roundtrip() {
 
 #[test]
 fn observable_trace_serde_roundtrip() {
-    let trace = build_trace("ref-a", "scenario-a", "trace-a", vec![
-        event(1, "render", "commit", "path", 100),
-    ]);
+    let trace = build_trace(
+        "ref-a",
+        "scenario-a",
+        "trace-a",
+        vec![event(1, "render", "commit", "path", 100)],
+    );
     let json = serde_json::to_string(&trace).expect("serialize");
     let recovered: FrxObservableTrace = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.fixture_ref, trace.fixture_ref);
@@ -262,13 +265,21 @@ fn observable_trace_serde_roundtrip() {
 
 #[test]
 fn evaluate_case_detects_event_count_mismatch() {
-    let react = build_trace("ref", "scen", "trace-r", vec![
-        event(1, "render", "commit", "path", 100),
-        event(2, "render", "done", "path", 200),
-    ]);
-    let franken = build_trace("ref", "scen", "trace-f", vec![
-        event(1, "render", "commit", "path", 100),
-    ]);
+    let react = build_trace(
+        "ref",
+        "scen",
+        "trace-r",
+        vec![
+            event(1, "render", "commit", "path", 100),
+            event(2, "render", "done", "path", 200),
+        ],
+    );
+    let franken = build_trace(
+        "ref",
+        "scen",
+        "trace-f",
+        vec![event(1, "render", "commit", "path", 100)],
+    );
 
     let result = evaluate_case(FrxLockstepCaseInput {
         fixture_ref: "ref".to_string(),
@@ -299,9 +310,12 @@ fn lockstep_run_context_deterministic_sets_fields() {
 #[test]
 fn write_trace_file_creates_file() {
     let dir = unique_temp_dir("write-trace-test");
-    let trace = build_trace("ref-write", "scen-write", "trace-write", vec![
-        event(1, "render", "commit", "path", 100),
-    ]);
+    let trace = build_trace(
+        "ref-write",
+        "scen-write",
+        "trace-write",
+        vec![event(1, "render", "commit", "path", 100)],
+    );
     write_trace_file(dir.as_path(), "ref-write", &trace);
     let path = dir.join("ref-write.trace.json");
     assert!(path.exists());
@@ -394,7 +408,10 @@ fn divergence_class_all_variants_as_str_nonempty() {
         FrxDivergenceClass::EventSequence,
         FrxDivergenceClass::SchemaViolation,
     ] {
-        assert!(!class.as_str().is_empty(), "as_str must not be empty for {class:?}");
+        assert!(
+            !class.as_str().is_empty(),
+            "as_str must not be empty for {class:?}"
+        );
     }
 }
 

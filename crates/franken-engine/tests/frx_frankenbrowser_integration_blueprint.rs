@@ -530,3 +530,21 @@ fn frx_09_3_blueprint_has_nonempty_generated_by() {
     let blueprint = parse_blueprint();
     assert!(!blueprint.generated_by.trim().is_empty());
 }
+
+#[test]
+fn frx_09_3_blueprint_has_nonempty_track_id() {
+    let blueprint = parse_blueprint();
+    assert!(!blueprint.track.id.trim().is_empty());
+}
+
+#[test]
+fn frx_09_3_blueprint_has_at_least_one_prerequisite() {
+    let blueprint = parse_blueprint();
+    assert!(!blueprint.prerequisites.is_empty());
+}
+
+#[test]
+fn frx_09_3_blueprint_has_at_least_one_migration_phase() {
+    let blueprint = parse_blueprint();
+    assert!(!blueprint.migration_phases.is_empty());
+}

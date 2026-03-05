@@ -410,8 +410,16 @@ fn frx_07_4_doc_file_exists_and_is_nonempty() {
 fn frx_07_4_policy_toggle_names_are_all_present() {
     let contract = parse_contract();
     let toggle_names: BTreeSet<&str> = contract.policy_toggles.keys().map(String::as_str).collect();
-    for expected in ["force_fallback", "policy_opt_out", "denylist_opt_out", "canary_pause"] {
-        assert!(toggle_names.contains(expected), "missing toggle: {expected}");
+    for expected in [
+        "force_fallback",
+        "policy_opt_out",
+        "denylist_opt_out",
+        "canary_pause",
+    ] {
+        assert!(
+            toggle_names.contains(expected),
+            "missing toggle: {expected}"
+        );
     }
 }
 
@@ -477,4 +485,23 @@ fn frx_07_4_contract_deterministic_double_parse() {
 fn frx_07_4_contract_has_nonempty_generated_by() {
     let contract = parse_contract();
     assert!(!contract.generated_by.trim().is_empty());
+}
+
+#[test]
+fn frx_07_4_contract_has_nonempty_bead_id() {
+    let contract = parse_contract();
+    assert!(!contract.bead_id.trim().is_empty());
+}
+
+#[test]
+fn frx_07_4_contract_has_nonempty_track_id() {
+    let contract = parse_contract();
+    assert!(!contract.track.id.trim().is_empty());
+}
+
+#[test]
+fn frx_07_4_doc_has_more_than_50_lines() {
+    let path = repo_root().join("docs/FRX_INCREMENTAL_ADOPTION_CONTROLS_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.lines().count() > 50);
 }

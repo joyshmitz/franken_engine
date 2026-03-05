@@ -540,7 +540,10 @@ fn frx_09_2_fail_closed_rules_are_nonempty() {
     let contract = parse_contract();
     assert!(!contract.fail_closed_rules.is_empty());
     for rule in &contract.fail_closed_rules {
-        assert!(!rule.trim().is_empty(), "fail-closed rule must not be empty");
+        assert!(
+            !rule.trim().is_empty(),
+            "fail-closed rule must not be empty"
+        );
     }
 }
 
@@ -654,4 +657,29 @@ fn frx_09_2_deterministic_triple_parse() {
 fn frx_09_2_contract_has_nonempty_generated_by() {
     let contract = parse_contract();
     assert!(!contract.generated_by.trim().is_empty());
+}
+
+#[test]
+fn frx_09_2_contract_has_nonempty_track_id() {
+    let contract = parse_contract();
+    assert!(!contract.track.id.trim().is_empty());
+}
+
+#[test]
+fn frx_09_2_doc_has_more_than_50_lines() {
+    let path = repo_root().join("docs/FRX_RELEASE_OPERATIONS_GATEBOOK_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.lines().count() > 50);
+}
+
+#[test]
+fn frx_09_2_operator_verification_commands_are_all_nonempty() {
+    let contract = parse_contract();
+    assert!(!contract.operator_verification.is_empty());
+    for cmd in &contract.operator_verification {
+        assert!(
+            !cmd.trim().is_empty(),
+            "operator verification command must not be empty"
+        );
+    }
 }

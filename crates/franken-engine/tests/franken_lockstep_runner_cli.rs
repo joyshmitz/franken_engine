@@ -1200,7 +1200,10 @@ fn canonical_parser_parses_simple_expression() {
 fn write_fixture_catalog_returns_sha256_prefixed_hash() {
     let path = temp_path("franken_lockstep_runner_hash_check_catalog", "json");
     let hash = write_fixture_catalog(&path);
-    assert!(hash.starts_with("sha256:"), "expected sha256 prefix, got {hash}");
+    assert!(
+        hash.starts_with("sha256:"),
+        "expected sha256 prefix, got {hash}"
+    );
     assert!(hash.len() > 10);
     let _ = fs::remove_file(path);
 }
@@ -1216,7 +1219,13 @@ fn runtime_specs_content_includes_schema_version() {
 #[test]
 fn canonical_parser_hash_is_deterministic() {
     let parser = CanonicalEs2020Parser;
-    let h1 = parser.parse("42", ParseGoal::Script).expect("parse").canonical_hash();
-    let h2 = parser.parse("42", ParseGoal::Script).expect("parse").canonical_hash();
+    let h1 = parser
+        .parse("42", ParseGoal::Script)
+        .expect("parse")
+        .canonical_hash();
+    let h2 = parser
+        .parse("42", ParseGoal::Script)
+        .expect("parse")
+        .canonical_hash();
     assert_eq!(h1, h2);
 }

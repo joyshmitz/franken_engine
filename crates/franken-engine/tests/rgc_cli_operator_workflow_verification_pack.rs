@@ -605,8 +605,8 @@ fn rgc_061_support_bundle_writes_artifacts_to_out_dir() {
         index_path.display()
     );
 
-    let index_json: Value = serde_json::from_str(&read_to_string(&index_path))
-        .expect("index should parse");
+    let index_json: Value =
+        serde_json::from_str(&read_to_string(&index_path)).expect("index should parse");
     assert!(index_json["files"].is_array());
     assert!(index_json["bundle_id"].is_string());
 

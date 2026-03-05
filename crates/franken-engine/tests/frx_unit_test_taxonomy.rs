@@ -299,7 +299,13 @@ fn default_bundle_validation_is_deterministic() {
 
 #[test]
 fn lane_id_all_variants_roundtrip() {
-    for lane in [LaneId::Compiler, LaneId::JsRuntime, LaneId::WasmRuntime, LaneId::HybridRouter, LaneId::Verification] {
+    for lane in [
+        LaneId::Compiler,
+        LaneId::JsRuntime,
+        LaneId::WasmRuntime,
+        LaneId::HybridRouter,
+        LaneId::Verification,
+    ] {
         let json = serde_json::to_string(&lane).expect("serialize");
         let recovered: LaneId = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(lane, recovered);
@@ -308,7 +314,13 @@ fn lane_id_all_variants_roundtrip() {
 
 #[test]
 fn unit_test_class_all_variants_roundtrip() {
-    for class in [UnitTestClass::Core, UnitTestClass::Edge, UnitTestClass::Adversarial, UnitTestClass::Regression, UnitTestClass::FaultInjection] {
+    for class in [
+        UnitTestClass::Core,
+        UnitTestClass::Edge,
+        UnitTestClass::Adversarial,
+        UnitTestClass::Regression,
+        UnitTestClass::FaultInjection,
+    ] {
         let json = serde_json::to_string(&class).expect("serialize");
         let recovered: UnitTestClass = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(class, recovered);
@@ -319,4 +331,38 @@ fn unit_test_class_all_variants_roundtrip() {
 fn default_bundle_has_nonempty_schema_version() {
     let bundle = default_frx20_bundle();
     assert!(!bundle.schema_version.is_empty());
+}
+
+#[test]
+fn lane_id_debug_is_nonempty() {
+    for lane in [
+        LaneId::Compiler,
+        LaneId::JsRuntime,
+        LaneId::WasmRuntime,
+        LaneId::HybridRouter,
+        LaneId::Verification,
+    ] {
+        assert!(!format!("{lane:?}").is_empty());
+    }
+}
+
+#[test]
+fn unit_test_class_debug_is_nonempty() {
+    for class in [
+        UnitTestClass::Core,
+        UnitTestClass::Edge,
+        UnitTestClass::Adversarial,
+        UnitTestClass::Regression,
+        UnitTestClass::FaultInjection,
+    ] {
+        assert!(!format!("{class:?}").is_empty());
+    }
+}
+
+#[test]
+fn required_structured_log_fields_all_entries_are_nonempty() {
+    assert!(!REQUIRED_STRUCTURED_LOG_FIELDS.is_empty());
+    for field in REQUIRED_STRUCTURED_LOG_FIELDS {
+        assert!(!field.trim().is_empty());
+    }
 }

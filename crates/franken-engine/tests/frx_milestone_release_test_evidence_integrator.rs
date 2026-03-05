@@ -517,8 +517,7 @@ fn milestone_quality_summary_serde_roundtrip() {
 fn test_evidence_integrator_input_serde_roundtrip() {
     let input = baseline_input(10_000);
     let json = serde_json::to_string(&input).expect("serialize");
-    let recovered: TestEvidenceIntegratorInput =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: TestEvidenceIntegratorInput = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.trace_id, "trace-frx-20-6");
     assert_eq!(recovered.signals.len(), input.signals.len());
 }
@@ -541,4 +540,27 @@ fn schema_version_constants_are_nonempty() {
     assert!(!TEST_EVIDENCE_INTEGRATOR_CONTRACT_SCHEMA_VERSION.is_empty());
     assert!(!TEST_EVIDENCE_INTEGRATOR_EVENT_SCHEMA_VERSION.is_empty());
     assert!(!TEST_EVIDENCE_INTEGRATOR_FAILURE_CODE.is_empty());
+}
+
+#[test]
+fn integrator_policy_debug_is_nonempty() {
+    let policy = IntegratorPolicy::default();
+    assert!(!format!("{policy:?}").is_empty());
+}
+
+#[test]
+fn signature_status_debug_is_nonempty() {
+    for status in [
+        SignatureStatus::Signed,
+        SignatureStatus::Unsigned,
+        SignatureStatus::Invalid,
+    ] {
+        assert!(!format!("{status:?}").is_empty());
+    }
+}
+
+#[test]
+fn test_evidence_integrator_input_debug_is_nonempty() {
+    let input = baseline_input(10_000);
+    assert!(!format!("{input:?}").is_empty());
 }

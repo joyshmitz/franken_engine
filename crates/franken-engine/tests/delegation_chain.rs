@@ -856,5 +856,8 @@ fn chain_verify_method_matches_free_function() {
     .expect("function verify");
 
     assert_eq!(proof_method.chain_hash, proof_fn.chain_hash);
-    assert_eq!(proof_method.authorized_capability, proof_fn.authorized_capability);
+    assert_eq!(
+        proof_method.authorized_capability,
+        proof_fn.authorized_capability
+    );
 }

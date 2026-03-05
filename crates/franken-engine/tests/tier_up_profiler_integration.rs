@@ -763,3 +763,33 @@ fn tier_up_decision_event_fields_preserved_after_roundtrip() {
     assert_eq!(recovered.component, "tier_up_profiler");
     assert_eq!(recovered.reason, "threshold met");
 }
+
+#[test]
+fn tier_up_candidate_debug_is_nonempty() {
+    let candidate = TierUpCandidate {
+        ip: 4,
+        opcode: "load_prop_cached".to_string(),
+        invocations: 50,
+        cache_hit_rate_millionths: 960_000,
+        rationale: "hot_path".to_string(),
+    };
+    assert!(!format!("{candidate:?}").is_empty());
+}
+
+#[test]
+fn tier_up_rejection_debug_is_nonempty() {
+    let rejection = TierUpRejection {
+        ip: 2,
+        opcode: "add".to_string(),
+        invocations: 3,
+        cache_hit_rate_millionths: 0,
+        reason: "insufficient_invocations".to_string(),
+    };
+    assert!(!format!("{rejection:?}").is_empty());
+}
+
+#[test]
+fn tier_up_policy_debug_is_nonempty() {
+    let policy = TierUpPolicy::default();
+    assert!(!format!("{policy:?}").is_empty());
+}

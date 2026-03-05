@@ -524,8 +524,7 @@ fn frx_07_2_known_divergence_error_codes_are_unique() {
 fn frx_07_2_serde_roundtrip_preserves_strategy() {
     let strategy = parse_strategy();
     let serialized = serde_json::to_string(&strategy).expect("serialize");
-    let deserialized: StrategyContract =
-        serde_json::from_str(&serialized).expect("deserialize");
+    let deserialized: StrategyContract = serde_json::from_str(&serialized).expect("deserialize");
     assert_eq!(strategy, deserialized);
 }
 
@@ -548,7 +547,10 @@ fn frx_07_2_operator_verification_commands_are_all_nonempty() {
     let strategy = parse_strategy();
     assert!(!strategy.operator_verification.is_empty());
     for cmd in &strategy.operator_verification {
-        assert!(!cmd.trim().is_empty(), "operator verification command must not be empty");
+        assert!(
+            !cmd.trim().is_empty(),
+            "operator verification command must not be empty"
+        );
     }
 }
 
@@ -603,4 +605,23 @@ fn frx_07_2_deterministic_triple_parse() {
 fn frx_07_2_strategy_has_nonempty_generated_by() {
     let strategy = parse_strategy();
     assert!(!strategy.generated_by.trim().is_empty());
+}
+
+#[test]
+fn frx_07_2_strategy_has_nonempty_bead_id() {
+    let strategy = parse_strategy();
+    assert!(!strategy.bead_id.trim().is_empty());
+}
+
+#[test]
+fn frx_07_2_strategy_has_nonempty_track_id() {
+    let strategy = parse_strategy();
+    assert!(!strategy.track.id.trim().is_empty());
+}
+
+#[test]
+fn frx_07_2_doc_has_more_than_50_lines() {
+    let path = repo_root().join("docs/FRX_SSR_HYDRATION_RSC_COMPATIBILITY_STRATEGY_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.lines().count() > 50);
 }

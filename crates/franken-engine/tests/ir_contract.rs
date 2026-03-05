@@ -567,7 +567,13 @@ fn ir_level_ordering_is_pipeline_order() {
 
 #[test]
 fn ir_level_serde_round_trip() {
-    for level in [IrLevel::Ir0, IrLevel::Ir1, IrLevel::Ir2, IrLevel::Ir3, IrLevel::Ir4] {
+    for level in [
+        IrLevel::Ir0,
+        IrLevel::Ir1,
+        IrLevel::Ir2,
+        IrLevel::Ir3,
+        IrLevel::Ir4,
+    ] {
         let json = serde_json::to_string(&level).expect("serialize");
         let recovered: IrLevel = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(level, recovered);
@@ -577,7 +583,11 @@ fn ir_level_serde_round_trip() {
 #[test]
 fn ir_level_as_str_all_unique() {
     let strs: std::collections::BTreeSet<&str> = [
-        IrLevel::Ir0, IrLevel::Ir1, IrLevel::Ir2, IrLevel::Ir3, IrLevel::Ir4,
+        IrLevel::Ir0,
+        IrLevel::Ir1,
+        IrLevel::Ir2,
+        IrLevel::Ir3,
+        IrLevel::Ir4,
     ]
     .iter()
     .map(|l| l.as_str())
@@ -709,11 +719,7 @@ fn binding_kind_serde_round_trip() {
 
 #[test]
 fn scope_kind_serde_round_trip() {
-    let kinds = [
-        ScopeKind::Global,
-        ScopeKind::Function,
-        ScopeKind::Block,
-    ];
+    let kinds = [ScopeKind::Global, ScopeKind::Function, ScopeKind::Block];
     for kind in kinds {
         let json = serde_json::to_string(&kind).expect("serialize");
         let recovered: ScopeKind = serde_json::from_str(&json).expect("deserialize");
@@ -744,8 +750,15 @@ fn ir0_empty_body_has_valid_hash() {
 fn ir3_instruction_serde_round_trip_all_variants() {
     let instructions = [
         Ir3Instruction::LoadInt { dst: 0, value: 42 },
-        Ir3Instruction::LoadStr { dst: 1, pool_index: 0 },
-        Ir3Instruction::Add { dst: 2, lhs: 0, rhs: 1 },
+        Ir3Instruction::LoadStr {
+            dst: 1,
+            pool_index: 0,
+        },
+        Ir3Instruction::Add {
+            dst: 2,
+            lhs: 0,
+            rhs: 1,
+        },
         Ir3Instruction::HostCall {
             capability: CapabilityTag("test".to_string()),
             args: RegRange { start: 0, count: 1 },

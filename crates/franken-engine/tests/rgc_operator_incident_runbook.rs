@@ -403,3 +403,138 @@ fn rgc_operator_runbook_fixture_deterministic_double_load() {
     assert_eq!(a.schema_version, b.schema_version);
     assert_eq!(a.bead_id, b.bead_id);
 }
+
+// ---------- additional enrichment tests ----------
+
+#[test]
+fn rgc_operator_runbook_schema_version_follows_dotted_format() {
+    let fixture = load_fixture();
+    let parts: Vec<&str> = fixture.schema_version.split('.').collect();
+    assert!(
+        parts.len() >= 3,
+        "schema_version should have at least 3 dot-separated segments, got: {}",
+        fixture.schema_version
+    );
+    for part in &parts {
+        assert!(
+            !part.trim().is_empty(),
+            "schema_version segment must not be empty"
+        );
+    }
+}
+
+#[test]
+fn rgc_operator_runbook_contract_version_is_semver() {
+    let fixture = load_fixture();
+    let parts: Vec<&str> = fixture.contract_version.split('.').collect();
+    assert_eq!(
+        parts.len(),
+        3,
+        "contract_version must be semver (major.minor.patch)"
+    );
+    for part in &parts {
+        assert!(
+            part.parse::<u32>().is_ok(),
+            "contract_version segment '{}' must be a non-negative integer",
+            part
+        );
+    }
+}
+
+#[test]
+fn rgc_operator_runbook_severity_values_are_in_allowed_set() {
+    let fixture = load_fixture();
+    let allowed: BTreeSet<&str> = ["high", "critical"].into_iter().collect();
+    for scenario in &fixture.incident_matrix {
+        let sev = scenario.severity.to_ascii_lowercase();
+        assert!(
+            allowed.contains(sev.as_str()),
+            "scenario {} has severity '{}', expected one of {:?}",
+            scenario.scenario_id,
+            scenario.severity,
+            allowed
+        );
+    }
+}
+
+#[test]
+fn rgc_operator_runbook_manifest_keys_contain_no_duplicates() {
+    let fixture = load_fixture();
+    let mut seen = BTreeSet::new();
+    for key in &fixture.required_manifest_keys {
+        assert!(seen.insert(key), "duplicate required_manifest_key: {}", key);
+    }
+}
+
+#[test]
+fn rgc_operator_runbook_log_keys_contain_no_duplicates() {
+    let fixture = load_fixture();
+    let mut seen = BTreeSet::new();
+    for key in &fixture.required_log_keys {
+        assert!(seen.insert(key), "duplicate required_log_key: {}", key);
+    }
+}
+
+#[test]
+fn rgc_operator_runbook_required_modes_contain_no_duplicates() {
+    let fixture = load_fixture();
+    let mut seen = BTreeSet::new();
+    for mode in &fixture.required_modes {
+        assert!(seen.insert(mode), "duplicate required_mode: {}", mode);
+    }
+}
+
+#[test]
+fn rgc_operator_runbook_triage_action_covers_all_scenarios() {
+    let fixture = load_fixture();
+    for scenario in &fixture.incident_matrix {
+        let derived = triage_action(scenario);
+        assert_ne!(
+            derived, "unknown",
+            "scenario {} should have a known triage action, but got 'unknown'",
+            scenario.scenario_id
+        );
+    }
+}
+
+#[test]
+fn rgc_operator_runbook_replay_commands_end_with_sh() {
+    let fixture = load_fixture();
+    for scenario in &fixture.incident_matrix {
+        assert!(
+            scenario.replay_command.ends_with(".sh"),
+            "scenario {} replay_command should end with .sh: {}",
+            scenario.scenario_id,
+            scenario.replay_command
+        );
+    }
+}
+
+#[test]
+fn rgc_operator_runbook_structured_event_with_error_code() {
+    let fixture = load_fixture();
+    // An event with a non-null error_code should also pass validation
+    let event = json!({
+        "schema_version": "franken-engine.parser-log-event.v1",
+        "trace_id": "trace-rgc-operator-runbook-err",
+        "decision_id": "decision-rgc-operator-runbook-err",
+        "policy_id": fixture.policy_id,
+        "component": "rgc_operator_incident_runbook_gate",
+        "event": "gate_completed",
+        "outcome": "fail",
+        "error_code": "FE-RUNBOOK-0001"
+    });
+    assert_required_event_keys(&event, &fixture.required_log_keys);
+}
+
+#[test]
+fn rgc_operator_runbook_expected_triage_values_are_nonempty() {
+    let fixture = load_fixture();
+    for scenario in &fixture.incident_matrix {
+        assert!(
+            !scenario.expected_triage.trim().is_empty(),
+            "scenario {} must have nonempty expected_triage",
+            scenario.scenario_id
+        );
+    }
+}

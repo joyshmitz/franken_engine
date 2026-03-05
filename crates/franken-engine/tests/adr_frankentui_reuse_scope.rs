@@ -162,7 +162,10 @@ fn frankentui_adr_has_more_than_10_lines() {
         .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
     let content = fs::read_to_string(&path).expect("read ADR");
     let line_count = content.lines().count();
-    assert!(line_count > 10, "ADR should have >10 lines, got {line_count}");
+    assert!(
+        line_count > 10,
+        "ADR should have >10 lines, got {line_count}"
+    );
 }
 
 #[test]
@@ -180,4 +183,168 @@ fn frankentui_adr_mentions_context_section() {
         .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
     let content = fs::read_to_string(&path).expect("read ADR");
     assert!(content.contains("## Context"));
+}
+
+#[test]
+fn frankentui_adr_has_exception_process_section() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("## Exception Process"));
+}
+
+#[test]
+fn frankentui_adr_has_more_than_50_lines() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.lines().count() > 50);
+}
+
+#[test]
+fn frankentui_adr_file_path_is_valid() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
+    assert!(path.exists());
+}
+
+#[test]
+fn frankentui_adr_word_count_minimum() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    let word_count = content.split_whitespace().count();
+    assert!(
+        word_count >= 200,
+        "ADR should have at least 200 words for adequate specification, got {word_count}"
+    );
+}
+
+#[test]
+fn frankentui_adr_sections_appear_in_expected_order() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    let ordered_sections = [
+        "## Context",
+        "## Decision",
+        "## Scope",
+        "## Advanced TUI Boundary Definition",
+        "## Rationale",
+        "## Exception Process",
+        "## Consequences",
+        "## Compliance Signals",
+    ];
+    let mut last_pos = 0;
+    for section in ordered_sections {
+        let pos = content.find(section).unwrap_or_else(|| {
+            panic!("ADR missing section: {section}");
+        });
+        assert!(
+            pos >= last_pos,
+            "Section `{section}` appears out of order (pos {pos} < last {last_pos})"
+        );
+        last_pos = pos;
+    }
+}
+
+#[test]
+fn frankentui_adr_references_plan_section() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(
+        content.contains("10.14"),
+        "ADR must reference plan section 10.14"
+    );
+}
+
+#[test]
+fn frankentui_adr_has_date_field() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(
+        content.contains("Date:"),
+        "ADR must include a Date field in its header"
+    );
+}
+
+#[test]
+fn frankentui_adr_has_owners_field() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(
+        content.contains("Owners:"),
+        "ADR must include an Owners field in its header"
+    );
+}
+
+#[test]
+fn frankentui_adr_boundary_definition_has_three_criteria() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    let boundary_pos = content.find("## Advanced TUI Boundary Definition").unwrap();
+    let rationale_pos = content.find("## Rationale").unwrap();
+    let boundary_section = &content[boundary_pos..rationale_pos];
+    for n in 1..=3 {
+        let marker = format!("{n}.");
+        assert!(
+            boundary_section.contains(&marker),
+            "TUI Boundary Definition must list criterion {n}"
+        );
+    }
+}
+
+#[test]
+fn frankentui_adr_exception_process_has_six_steps() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    let exception_pos = content.find("## Exception Process").unwrap();
+    let consequences_pos = content.find("## Consequences").unwrap();
+    let exception_section = &content[exception_pos..consequences_pos];
+    for n in 1..=6 {
+        let marker = format!("{n}.");
+        assert!(
+            exception_section.contains(&marker),
+            "Exception Process must list step {n}"
+        );
+    }
+}
+
+#[test]
+fn frankentui_adr_bead_references_are_well_formed() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    let bead_count = content.matches("`bd-").count();
+    assert!(
+        bead_count >= 4,
+        "ADR should reference at least 4 beads, found {bead_count}"
+    );
+}
+
+#[test]
+fn frankentui_adr_exception_artifact_path_pattern() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(
+        content.contains("ADR-EXCEPTION-TUI-"),
+        "ADR must define the exception artifact path pattern"
+    );
+}
+
+#[test]
+fn frankentui_adr_mentions_interactive_beyond_single_command() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(
+        content.contains("Interactive beyond single-command"),
+        "Boundary definition must include interactivity criterion"
+    );
 }

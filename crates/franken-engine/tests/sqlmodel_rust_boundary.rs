@@ -192,7 +192,10 @@ fn sqlmodel_adr_has_more_than_10_lines() {
     let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
     let content = fs::read_to_string(&path).expect("read ADR");
     let line_count = content.lines().count();
-    assert!(line_count > 10, "ADR should have >10 lines, got {line_count}");
+    assert!(
+        line_count > 10,
+        "ADR should have >10 lines, got {line_count}"
+    );
 }
 
 #[test]
@@ -200,12 +203,97 @@ fn sqlmodel_inventory_has_more_than_10_lines() {
     let path = repo_root().join("docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
     let content = fs::read_to_string(&path).expect("read inventory");
     let line_count = content.lines().count();
-    assert!(line_count > 10, "inventory should have >10 lines, got {line_count}");
+    assert!(
+        line_count > 10,
+        "inventory should have >10 lines, got {line_count}"
+    );
 }
 
 #[test]
 fn sqlmodel_adr_deterministic_double_read() {
     let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let a = fs::read_to_string(&path).expect("first read");
+    let b = fs::read_to_string(&path).expect("second read");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn sqlmodel_adr_file_exists() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    assert!(path.exists(), "ADR file must exist");
+}
+
+#[test]
+fn sqlmodel_inventory_file_exists() {
+    let path = repo_root().join("docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    assert!(path.exists(), "inventory file must exist");
+}
+
+#[test]
+fn sqlmodel_adr_has_minimum_word_count() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    let word_count = content.split_whitespace().count();
+    assert!(
+        word_count >= 100,
+        "ADR should have >= 100 words, got {word_count}"
+    );
+}
+
+#[test]
+fn sqlmodel_inventory_has_minimum_word_count() {
+    let path = repo_root().join("docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    let word_count = content.split_whitespace().count();
+    assert!(
+        word_count >= 50,
+        "inventory should have >= 50 words, got {word_count}"
+    );
+}
+
+#[test]
+fn sqlmodel_adr_mentions_frankensqlite() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(
+        content.contains("frankensqlite"),
+        "ADR must mention frankensqlite"
+    );
+}
+
+#[test]
+fn sqlmodel_inventory_has_model_layer_table_structure() {
+    let path = repo_root().join("docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    assert!(
+        content.contains("Model layer") && content.contains("raw frankensqlite"),
+        "inventory must have model layer table with raw frankensqlite option"
+    );
+}
+
+#[test]
+fn sqlmodel_adr_has_context_section() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(
+        content.contains("## Context"),
+        "ADR must have Context section"
+    );
+}
+
+#[test]
+fn sqlmodel_adr_mentions_sqlmodel_rust() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(
+        content.contains("sqlmodel_rust"),
+        "ADR must mention sqlmodel_rust"
+    );
+}
+
+#[test]
+fn sqlmodel_inventory_deterministic_double_read() {
+    let path = repo_root().join("docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
     let a = fs::read_to_string(&path).expect("first read");
     let b = fs::read_to_string(&path).expect("second read");
     assert_eq!(a, b);

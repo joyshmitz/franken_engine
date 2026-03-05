@@ -850,7 +850,10 @@ fn decision_impact_serde_round_trip() {
 
 #[test]
 fn revocation_source_type_serde_round_trip() {
-    for src_type in [RevocationSourceType::IntelPcs, RevocationSourceType::InternalLedger] {
+    for src_type in [
+        RevocationSourceType::IntelPcs,
+        RevocationSourceType::InternalLedger,
+    ] {
         let json = serde_json::to_string(&src_type).expect("serialize");
         let recovered: RevocationSourceType = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(src_type, recovered);
@@ -859,7 +862,10 @@ fn revocation_source_type_serde_round_trip() {
 
 #[test]
 fn revocation_fallback_serde_round_trip() {
-    for fallback in [RevocationFallback::TryNextSource, RevocationFallback::FailClosed] {
+    for fallback in [
+        RevocationFallback::TryNextSource,
+        RevocationFallback::FailClosed,
+    ] {
         let json = serde_json::to_string(&fallback).expect("serialize");
         let recovered: RevocationFallback = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(fallback, recovered);
@@ -945,7 +951,11 @@ fn tee_attestation_policy_error_error_codes_all_unique() {
         },
     ];
     let codes: BTreeSet<String> = errors.iter().map(|e| e.error_code().to_string()).collect();
-    assert_eq!(codes.len(), errors.len(), "each error variant should have a unique code");
+    assert_eq!(
+        codes.len(),
+        errors.len(),
+        "each error variant should have a unique code"
+    );
 }
 
 #[test]

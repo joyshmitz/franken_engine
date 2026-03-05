@@ -330,7 +330,11 @@ fn contract_failure_scenarios_nonempty() {
 #[test]
 fn contract_failure_scenarios_have_unique_ids() {
     let contract = parse_contract();
-    let ids: BTreeSet<&str> = contract.failure_scenarios.iter().map(|s| s.scenario_id.as_str()).collect();
+    let ids: BTreeSet<&str> = contract
+        .failure_scenarios
+        .iter()
+        .map(|s| s.scenario_id.as_str())
+        .collect();
     assert_eq!(ids.len(), contract.failure_scenarios.len());
 }
 
@@ -352,14 +356,22 @@ fn vectors_bead_id_matches_contract() {
 #[test]
 fn vectors_have_unique_scenario_ids() {
     let vectors = parse_vectors();
-    let ids: BTreeSet<&str> = vectors.vectors.iter().map(|v| v.scenario_id.as_str()).collect();
+    let ids: BTreeSet<&str> = vectors
+        .vectors
+        .iter()
+        .map(|v| v.scenario_id.as_str())
+        .collect();
     assert_eq!(ids.len(), vectors.vectors.len());
 }
 
 #[test]
 fn vectors_have_unique_seeds() {
     let vectors = parse_vectors();
-    let seeds: BTreeSet<u64> = vectors.vectors.iter().map(|v| v.deterministic_seed).collect();
+    let seeds: BTreeSet<u64> = vectors
+        .vectors
+        .iter()
+        .map(|v| v.deterministic_seed)
+        .collect();
     assert_eq!(seeds.len(), vectors.vectors.len());
 }
 
@@ -431,4 +443,22 @@ fn contract_failure_scenario_ids_are_unique_and_nonempty() {
             scenario.scenario_id
         );
     }
+}
+
+#[test]
+fn contract_debug_is_nonempty() {
+    let contract = parse_contract();
+    assert!(!format!("{contract:?}").is_empty());
+}
+
+#[test]
+fn vectors_debug_is_nonempty() {
+    let vectors = parse_vectors();
+    assert!(!format!("{vectors:?}").is_empty());
+}
+
+#[test]
+fn contract_has_nonempty_contract_version() {
+    let contract = parse_contract();
+    assert!(!contract.contract_version.trim().is_empty());
 }

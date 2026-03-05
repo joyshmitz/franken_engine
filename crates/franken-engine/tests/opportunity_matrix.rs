@@ -516,7 +516,8 @@ fn opportunity_outcome_observation_serde_roundtrip() {
         completed_at_utc: "2026-02-22T12:00:00Z".to_string(),
     };
     let json = serde_json::to_string(&obs).expect("serialize");
-    let recovered: OpportunityOutcomeObservation = serde_json::from_str(&json).expect("deserialize");
+    let recovered: OpportunityOutcomeObservation =
+        serde_json::from_str(&json).expect("deserialize");
     assert_eq!(obs, recovered);
 }
 

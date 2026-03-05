@@ -482,10 +482,7 @@ fn resolution_error_is_std_error() {
 fn registry_error_is_std_error() {
     let mut resolver = DeterministicModuleResolver::new("/app");
     let err = resolver
-        .register_builtin(
-            "",
-            ModuleDefinition::new(ModuleSyntax::EsModule, "x"),
-        )
+        .register_builtin("", ModuleDefinition::new(ModuleSyntax::EsModule, "x"))
         .expect_err("empty key");
     let dyn_err: &dyn std::error::Error = &err;
     assert!(dyn_err.to_string().contains("empty"));
@@ -496,7 +493,10 @@ fn module_source_kind_as_str() {
     use frankenengine_engine::module_resolver::ModuleSourceKind;
     assert_eq!(ModuleSourceKind::BuiltIn.as_str(), "builtin");
     assert_eq!(ModuleSourceKind::Workspace.as_str(), "workspace");
-    assert_eq!(ModuleSourceKind::ExternalRegistry.as_str(), "external_registry");
+    assert_eq!(
+        ModuleSourceKind::ExternalRegistry.as_str(),
+        "external_registry"
+    );
 }
 
 #[test]

@@ -328,10 +328,7 @@ fn benchmark_spec_deterministic_double_read() {
 #[test]
 fn ci_publication_gate_declares_failure_and_blocking_criteria() {
     let spec = read_spec();
-    for fragment in [
-        "## CI Publication Gate",
-        "CI must fail publication",
-    ] {
+    for fragment in ["## CI Publication Gate", "CI must fail publication"] {
         assert!(
             spec.contains(fragment),
             "CI publication gate missing: {fragment}"
@@ -403,4 +400,25 @@ fn benchmark_spec_deterministic_triple_read() {
 fn parse_table_row_preserves_order() {
     let row = parse_table_row("| Z | A | M |");
     assert_eq!(row, vec!["Z", "A", "M"]);
+}
+
+#[test]
+fn benchmark_spec_mentions_extension() {
+    let spec = read_spec();
+    assert!(
+        spec.contains("extension") || spec.contains("Extension"),
+        "spec should mention extensions"
+    );
+}
+
+#[test]
+fn parse_table_row_handles_single_cell() {
+    let row = parse_table_row("| only |");
+    assert_eq!(row, vec!["only"]);
+}
+
+#[test]
+fn benchmark_spec_file_path_exists() {
+    let path = repo_root().join("docs/EXTENSION_HEAVY_BENCHMARK_SUITE_V1.md");
+    assert!(path.exists());
 }

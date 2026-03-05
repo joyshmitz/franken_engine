@@ -184,7 +184,10 @@ fn frankensqlite_inventory_has_more_than_10_lines() {
         .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
     let content = fs::read_to_string(&path).expect("read inventory");
     let line_count = content.lines().count();
-    assert!(line_count > 10, "inventory should have >10 lines, got {line_count}");
+    assert!(
+        line_count > 10,
+        "inventory should have >10 lines, got {line_count}"
+    );
 }
 
 #[test]
@@ -202,4 +205,194 @@ fn frankensqlite_inventory_mentions_consistency_requirement() {
         .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
     let content = fs::read_to_string(&path).expect("read inventory");
     assert!(content.contains("Consistency requirement"));
+}
+
+#[test]
+fn frankensqlite_inventory_has_more_than_50_lines() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    assert!(content.lines().count() > 50);
+}
+
+#[test]
+fn frankensqlite_inventory_has_review_gate_section() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    assert!(content.contains("## Review Gate Requirements"));
+}
+
+#[test]
+fn frankensqlite_inventory_file_path_is_valid() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    assert!(path.exists());
+}
+
+#[test]
+fn frankensqlite_inventory_word_count_minimum() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    let word_count = content.split_whitespace().count();
+    assert!(
+        word_count >= 200,
+        "Inventory should have at least 200 words for adequate specification, got {word_count}"
+    );
+}
+
+#[test]
+fn frankensqlite_inventory_sections_appear_in_expected_order() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    let ordered_sections = [
+        "## Scope",
+        "## Database Topology",
+        "## Store Inventory",
+        "## Decision Boundary: Shared Vs Isolated",
+        "## Review Gate Requirements",
+        "## Traceability Matrix",
+        "## Operator Verification",
+    ];
+    let mut last_pos = 0;
+    for section in ordered_sections {
+        let pos = content.find(section).unwrap_or_else(|| {
+            panic!("Inventory missing section: {section}");
+        });
+        assert!(
+            pos >= last_pos,
+            "Section `{section}` appears out of order (pos {pos} < last {last_pos})"
+        );
+        last_pos = pos;
+    }
+}
+
+#[test]
+fn frankensqlite_inventory_store_table_has_eight_data_rows() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    let table_start = content.find("## Store Inventory").unwrap();
+    let table_end = content.find("## Decision Boundary").unwrap();
+    let table_section = &content[table_start..table_end];
+    // Count pipe-delimited rows, excluding header and separator
+    let pipe_rows: Vec<&str> = table_section
+        .lines()
+        .filter(|l| l.starts_with('|'))
+        .collect();
+    // header + separator + 8 stores = 10
+    assert!(
+        pipe_rows.len() >= 10,
+        "Store inventory table should have at least 10 pipe rows (header+sep+8 stores), got {}",
+        pipe_rows.len()
+    );
+}
+
+#[test]
+fn frankensqlite_inventory_shared_vs_isolated_has_three_criteria() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    let boundary_pos = content
+        .find("## Decision Boundary: Shared Vs Isolated")
+        .unwrap();
+    let review_pos = content.find("## Review Gate Requirements").unwrap();
+    let boundary_section = &content[boundary_pos..review_pos];
+    for n in 1..=3 {
+        let marker = format!("{n}.");
+        assert!(
+            boundary_section.contains(&marker),
+            "Shared Vs Isolated decision must list criterion {n}"
+        );
+    }
+}
+
+#[test]
+fn frankensqlite_inventory_review_gate_has_six_steps() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    let gate_pos = content.find("## Review Gate Requirements").unwrap();
+    let trace_pos = content.find("## Traceability Matrix").unwrap();
+    let gate_section = &content[gate_pos..trace_pos];
+    for n in 1..=6 {
+        let marker = format!("{n}.");
+        assert!(
+            gate_section.contains(&marker),
+            "Review Gate must list step {n}"
+        );
+    }
+}
+
+#[test]
+fn frankensqlite_inventory_traceability_maps_all_workflow_families() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    let trace_pos = content.find("## Traceability Matrix").unwrap();
+    let trace_section = &content[trace_pos..];
+    let required_workflows = [
+        "Witness workflows",
+        "Replacement/promotion workflows",
+        "Provenance/non-interference workflows",
+        "Proof specialization workflows",
+        "Benchmark governance workflows",
+        "Replay/evidence governance workflows",
+    ];
+    for workflow in required_workflows {
+        assert!(
+            trace_section.contains(workflow),
+            "Traceability matrix must map workflow: {workflow}"
+        );
+    }
+}
+
+#[test]
+fn frankensqlite_inventory_model_layer_types_present() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    assert!(
+        content.contains("raw frankensqlite"),
+        "Inventory must reference `raw frankensqlite` model layer"
+    );
+    assert!(
+        content.contains("sqlmodel_rust on frankensqlite"),
+        "Inventory must reference `sqlmodel_rust on frankensqlite` model layer"
+    );
+}
+
+#[test]
+fn frankensqlite_inventory_bead_references_are_well_formed() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    let bead_count = content.matches("`bd-").count();
+    assert!(
+        bead_count >= 3,
+        "Inventory should reference at least 3 beads, found {bead_count}"
+    );
+}
+
+#[test]
+fn frankensqlite_inventory_frankensqlite_integration_points_present() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    let required_points = [
+        "frankensqlite::control_plane::replay_index",
+        "frankensqlite::control_plane::evidence_index",
+        "frankensqlite::benchmark::ledger",
+        "frankensqlite::control_plane::policy_cache",
+        "frankensqlite::analysis::plas_witness",
+        "frankensqlite::replacement::lineage_log",
+    ];
+    for point in required_points {
+        assert!(
+            content.contains(point),
+            "Inventory must list integration point: {point}"
+        );
+    }
 }

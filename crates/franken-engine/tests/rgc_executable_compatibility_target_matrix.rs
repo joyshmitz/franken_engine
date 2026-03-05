@@ -436,11 +436,7 @@ fn rgc_011_row_ids_are_unique() {
     let matrix = parse_matrix();
     let mut seen = BTreeSet::new();
     for row in &matrix.coverage_rows {
-        assert!(
-            seen.insert(&row.row_id),
-            "duplicate row_id: {}",
-            row.row_id
-        );
+        assert!(seen.insert(&row.row_id), "duplicate row_id: {}", row.row_id);
     }
 }
 
@@ -448,8 +444,7 @@ fn rgc_011_row_ids_are_unique() {
 fn rgc_011_serde_roundtrip_preserves_matrix() {
     let matrix = parse_matrix();
     let serialized = serde_json::to_string(&matrix).expect("serialize");
-    let deserialized: CompatibilityMatrix =
-        serde_json::from_str(&serialized).expect("deserialize");
+    let deserialized: CompatibilityMatrix = serde_json::from_str(&serialized).expect("deserialize");
     assert_eq!(matrix, deserialized);
 }
 
@@ -498,4 +493,28 @@ fn matrix_serde_roundtrip_preserves_schema() {
 fn matrix_milestone_targets_are_nonempty() {
     let matrix = parse_matrix();
     assert!(!matrix.milestone_targets.is_empty());
+}
+
+#[test]
+fn matrix_debug_is_nonempty() {
+    let matrix = parse_matrix();
+    assert!(!format!("{matrix:?}").is_empty());
+}
+
+#[test]
+fn matrix_coverage_rows_all_have_at_least_one_bead_selector() {
+    let matrix = parse_matrix();
+    for row in &matrix.coverage_rows {
+        assert!(
+            !row.bead_selectors.is_empty(),
+            "row {} must have at least one bead selector",
+            row.row_id
+        );
+    }
+}
+
+#[test]
+fn matrix_scope_open_bead_ids_are_nonempty() {
+    let matrix = parse_matrix();
+    assert!(!matrix.scope.open_bead_ids.is_empty());
 }

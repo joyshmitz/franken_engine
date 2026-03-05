@@ -356,11 +356,7 @@ fn make_slot_populates_fields() {
 
 #[test]
 fn hook_kind_serde_round_trip_all_variants() {
-    for kind in [
-        HookKind::State,
-        HookKind::Effect,
-        HookKind::Memo,
-    ] {
+    for kind in [HookKind::State, HookKind::Effect, HookKind::Memo] {
         let json = serde_json::to_string(&kind).expect("serialize");
         let recovered: HookKind = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(kind, recovered);
@@ -369,9 +365,7 @@ fn hook_kind_serde_round_trip_all_variants() {
 
 #[test]
 fn render_phase_serde_round_trip() {
-    for phase in [
-        RenderPhase::Idle,
-    ] {
+    for phase in [RenderPhase::Idle] {
         let json = serde_json::to_string(&phase).expect("serialize");
         let recovered: RenderPhase = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(phase, recovered);
@@ -409,7 +403,12 @@ fn log_event_populates_constants() {
 
 #[test]
 fn hook_kind_serde_roundtrip() {
-    for kind in [HookKind::State, HookKind::Effect, HookKind::Memo, HookKind::Reducer] {
+    for kind in [
+        HookKind::State,
+        HookKind::Effect,
+        HookKind::Memo,
+        HookKind::Reducer,
+    ] {
         let json = serde_json::to_string(&kind).expect("serialize");
         let recovered: HookKind = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(kind, recovered);
@@ -418,7 +417,11 @@ fn hook_kind_serde_roundtrip() {
 
 #[test]
 fn render_phase_serde_roundtrip() {
-    for phase in [RenderPhase::Rendering, RenderPhase::PaintPending, RenderPhase::PassiveEffectsPending] {
+    for phase in [
+        RenderPhase::Rendering,
+        RenderPhase::PaintPending,
+        RenderPhase::PassiveEffectsPending,
+    ] {
         let json = serde_json::to_string(&phase).expect("serialize");
         let recovered: RenderPhase = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(phase, recovered);
@@ -427,9 +430,48 @@ fn render_phase_serde_roundtrip() {
 
 #[test]
 fn fallback_execution_route_serde_roundtrip() {
-    for route in [FallbackExecutionRoute::CompatibilityRuntimeLane, FallbackExecutionRoute::BaselineInterpreterLane, FallbackExecutionRoute::DeterministicSafeModeLane] {
+    for route in [
+        FallbackExecutionRoute::CompatibilityRuntimeLane,
+        FallbackExecutionRoute::BaselineInterpreterLane,
+        FallbackExecutionRoute::DeterministicSafeModeLane,
+    ] {
         let json = serde_json::to_string(&route).expect("serialize");
         let recovered: FallbackExecutionRoute = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(route, recovered);
+    }
+}
+
+#[test]
+fn hook_kind_debug_is_nonempty() {
+    for kind in [
+        HookKind::State,
+        HookKind::Effect,
+        HookKind::Memo,
+        HookKind::Reducer,
+    ] {
+        assert!(!format!("{kind:?}").is_empty());
+    }
+}
+
+#[test]
+fn render_phase_debug_is_nonempty() {
+    for phase in [
+        RenderPhase::Idle,
+        RenderPhase::Rendering,
+        RenderPhase::PaintPending,
+        RenderPhase::PassiveEffectsPending,
+    ] {
+        assert!(!format!("{phase:?}").is_empty());
+    }
+}
+
+#[test]
+fn fallback_execution_route_debug_is_nonempty() {
+    for route in [
+        FallbackExecutionRoute::CompatibilityRuntimeLane,
+        FallbackExecutionRoute::BaselineInterpreterLane,
+        FallbackExecutionRoute::DeterministicSafeModeLane,
+    ] {
+        assert!(!format!("{route:?}").is_empty());
     }
 }

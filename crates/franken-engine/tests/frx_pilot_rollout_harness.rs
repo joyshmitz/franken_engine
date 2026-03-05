@@ -451,7 +451,10 @@ fn frx_09_1_strata_ids_are_unique() {
 fn frx_09_1_thresholds_are_positive() {
     let contract = parse_contract();
     let t = &contract.sequential_monitoring.thresholds_millionths;
-    assert!(t.promote_min_confidence > 0, "promote_min_confidence must be positive");
+    assert!(
+        t.promote_min_confidence > 0,
+        "promote_min_confidence must be positive"
+    );
     assert!(t.stop_max_regret > 0, "stop_max_regret must be positive");
     assert!(
         t.rollback_incident_delta > 0,
@@ -521,8 +524,13 @@ fn frx_09_1_observation_fields_are_nonempty_and_unique() {
 #[test]
 fn frx_09_1_propensity_clip_is_within_unit_interval() {
     let contract = parse_contract();
-    let clip = contract.off_policy_evaluation.propensity_clip_min_millionths;
-    assert!(clip > 0 && clip < 1_000_000, "propensity clip must be in (0, 1)");
+    let clip = contract
+        .off_policy_evaluation
+        .propensity_clip_min_millionths;
+    assert!(
+        clip > 0 && clip < 1_000_000,
+        "propensity clip must be in (0, 1)"
+    );
 }
 
 #[test]
@@ -538,7 +546,11 @@ fn frx_09_1_estimators_are_nonempty_and_unique() {
     let estimators = &contract.off_policy_evaluation.estimators;
     assert!(!estimators.is_empty());
     let unique: BTreeSet<&str> = estimators.iter().map(String::as_str).collect();
-    assert_eq!(unique.len(), estimators.len(), "duplicate estimators detected");
+    assert_eq!(
+        unique.len(),
+        estimators.len(),
+        "duplicate estimators detected"
+    );
 }
 
 #[test]
@@ -602,4 +614,23 @@ fn frx_09_1_deterministic_triple_parse() {
 fn frx_09_1_contract_has_nonempty_generated_by() {
     let contract = parse_contract();
     assert!(!contract.generated_by.trim().is_empty());
+}
+
+#[test]
+fn frx_09_1_contract_has_nonempty_bead_id() {
+    let contract = parse_contract();
+    assert!(!contract.bead_id.trim().is_empty());
+}
+
+#[test]
+fn frx_09_1_contract_has_nonempty_track_id() {
+    let contract = parse_contract();
+    assert!(!contract.track.id.trim().is_empty());
+}
+
+#[test]
+fn frx_09_1_doc_has_more_than_50_lines() {
+    let path = repo_root().join("docs/FRX_PILOT_ROLLOUT_HARNESS_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.lines().count() > 50);
 }

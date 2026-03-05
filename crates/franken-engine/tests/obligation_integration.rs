@@ -458,7 +458,12 @@ fn two_phase_category_serde_roundtrip() {
 
 #[test]
 fn operation_phase_serde_roundtrip() {
-    for phase in [OperationPhase::Phase1Active, OperationPhase::Committed, OperationPhase::Aborted, OperationPhase::Leaked] {
+    for phase in [
+        OperationPhase::Phase1Active,
+        OperationPhase::Committed,
+        OperationPhase::Aborted,
+        OperationPhase::Leaked,
+    ] {
         let json = serde_json::to_string(&phase).expect("serialize");
         let recovered: OperationPhase = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(recovered, phase);
@@ -532,7 +537,6 @@ fn obligation_error_codes_are_unique() {
             message: "m".to_string(),
         },
     ];
-    let codes: std::collections::BTreeSet<&str> =
-        errors.iter().map(|e| e.error_code()).collect();
+    let codes: std::collections::BTreeSet<&str> = errors.iter().map(|e| e.error_code()).collect();
     assert_eq!(codes.len(), errors.len());
 }

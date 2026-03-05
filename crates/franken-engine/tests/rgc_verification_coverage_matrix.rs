@@ -465,11 +465,7 @@ fn rgc_051_row_ids_are_unique() {
     let matrix = parse_matrix();
     let mut seen = BTreeSet::new();
     for row in &matrix.coverage_rows {
-        assert!(
-            seen.insert(&row.row_id),
-            "duplicate row_id: {}",
-            row.row_id
-        );
+        assert!(seen.insert(&row.row_id), "duplicate row_id: {}", row.row_id);
     }
 }
 
@@ -526,4 +522,80 @@ fn rgc_051_matrix_track_fields_are_nonempty() {
 fn rgc_051_matrix_generated_at_utc_ends_with_z() {
     let matrix = parse_matrix();
     assert!(matrix.generated_at_utc.ends_with('Z'));
+}
+
+#[test]
+fn rgc_051_schema_version_matches_constant() {
+    let matrix = parse_matrix();
+    assert_eq!(matrix.schema_version, MATRIX_SCHEMA_VERSION);
+}
+
+#[test]
+fn rgc_051_coverage_rows_are_nonempty() {
+    let matrix = parse_matrix();
+    assert!(
+        !matrix.coverage_rows.is_empty(),
+        "coverage_rows must not be empty"
+    );
+}
+
+#[test]
+fn rgc_051_coverage_rows_have_nonempty_fields() {
+    let matrix = parse_matrix();
+    for row in &matrix.coverage_rows {
+        assert!(!row.row_id.trim().is_empty(), "row_id must not be empty");
+    }
+}
+
+#[test]
+fn rgc_051_required_structured_log_fields_present() {
+    let matrix = parse_matrix();
+    assert!(
+        !matrix.required_structured_log_fields.is_empty(),
+        "required_structured_log_fields must not be empty"
+    );
+    // trace_id and decision_id are always required
+    let actual: BTreeSet<&str> = matrix
+        .required_structured_log_fields
+        .iter()
+        .map(String::as_str)
+        .collect();
+    assert!(actual.contains("trace_id"), "must require trace_id");
+    assert!(actual.contains("decision_id"), "must require decision_id");
+}
+
+#[test]
+fn rgc_051_critical_behavior_bead_ids_are_nonempty() {
+    let matrix = parse_matrix();
+    assert!(
+        !matrix.critical_behavior_bead_ids.is_empty(),
+        "critical_behavior_bead_ids must not be empty"
+    );
+    for bead_id in &matrix.critical_behavior_bead_ids {
+        assert!(!bead_id.trim().is_empty());
+    }
+}
+
+#[test]
+fn rgc_051_scope_project_epic_is_nonempty() {
+    let matrix = parse_matrix();
+    assert!(!matrix.scope.project_epic.trim().is_empty());
+}
+
+#[test]
+fn rgc_051_scope_snapshot_source_is_nonempty() {
+    let matrix = parse_matrix();
+    assert!(!matrix.scope.snapshot_source.trim().is_empty());
+}
+
+#[test]
+fn rgc_051_waiver_governance_has_positive_max_age() {
+    let matrix = parse_matrix();
+    assert!(matrix.waiver_governance.max_waiver_age_hours > 0);
+}
+
+#[test]
+fn rgc_051_waiver_governance_required_fields_nonempty() {
+    let matrix = parse_matrix();
+    assert!(!matrix.waiver_governance.waiver_required_fields.is_empty());
 }

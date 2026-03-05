@@ -471,10 +471,12 @@ fn rgc_060_regression_gate_blocks_missing_metadata_hash() {
     }];
     let decision = evaluate_regression_gate(&observations, &contract.regression_thresholds);
     assert_eq!(decision.outcome, "hold");
-    assert!(decision
-        .findings
-        .iter()
-        .any(|f| f.error_code == "FE-RGC-060-INTEGRITY-0004"));
+    assert!(
+        decision
+            .findings
+            .iter()
+            .any(|f| f.error_code == "FE-RGC-060-INTEGRITY-0004")
+    );
 }
 
 #[test]
@@ -490,10 +492,12 @@ fn rgc_060_regression_gate_blocks_high_p_value() {
     }];
     let decision = evaluate_regression_gate(&observations, &contract.regression_thresholds);
     assert_eq!(decision.outcome, "hold");
-    assert!(decision
-        .findings
-        .iter()
-        .any(|f| f.error_code == "FE-RGC-060-SIGNIFICANCE-0005"));
+    assert!(
+        decision
+            .findings
+            .iter()
+            .any(|f| f.error_code == "FE-RGC-060-SIGNIFICANCE-0005")
+    );
 }
 
 #[test]
@@ -528,10 +532,12 @@ fn rgc_060_regression_gate_warning_level_does_not_block() {
     assert_eq!(decision.outcome, "promote");
     // should have a warning finding but no culprits
     assert!(decision.culprits.is_empty());
-    assert!(decision
-        .findings
-        .iter()
-        .any(|f| f.error_code == "WARN-RGC-060-REGRESSION-0001"));
+    assert!(
+        decision
+            .findings
+            .iter()
+            .any(|f| f.error_code == "WARN-RGC-060-REGRESSION-0001")
+    );
 }
 
 #[test]
@@ -598,7 +604,13 @@ fn rgc_060_gate_runner_fields_are_nonempty() {
     assert!(!contract.gate_runner.script.trim().is_empty());
     assert!(!contract.gate_runner.replay_wrapper.trim().is_empty());
     assert!(!contract.gate_runner.strict_mode.trim().is_empty());
-    assert!(!contract.gate_runner.manifest_schema_version.trim().is_empty());
+    assert!(
+        !contract
+            .gate_runner
+            .manifest_schema_version
+            .trim()
+            .is_empty()
+    );
 }
 
 // ---------- regression_millionths saturation ----------

@@ -169,17 +169,25 @@ write_containment_timeline() {
                 source_event,
                 action,
                 event,
+                outcome,
+                error_code,
                 lifecycle_transition,
                 resulting_state,
                 mesh_propagated,
+                mesh_attempted_fanout: (.mesh_attempted_targets | length),
                 mesh_fanout: (.mesh_targets | length),
+                mesh_failed_fanout: (.mesh_failed_targets | length),
+                mesh_attempted_targets,
+                mesh_failed_targets,
                 mesh_targets
               })
           ),
           checkpoints: {
             containment_first_event: $first_containment_ts,
             quarantine_established_at_ns: $quarantine_ts,
+            quarantine_attempted_fanout: (($quarantine.mesh_attempted_targets | length) // 0),
             quarantine_fanout: (($quarantine.mesh_targets | length) // 0),
+            quarantine_failed_fanout: (($quarantine.mesh_failed_targets | length) // 0),
             quarantine_mesh_propagated: (($quarantine.mesh_propagated) // false)
           }
         }
@@ -245,6 +253,10 @@ run_mode() {
         cargo test -p frankenengine-extension-host --lib guardplane_safe_mode_fallback_is_fail_closed
       run_step "cargo test -p frankenengine-extension-host --lib quarantine_mesh_targets_are_sorted_and_recorded" \
         cargo test -p frankenengine-extension-host --lib quarantine_mesh_targets_are_sorted_and_recorded
+      run_step "cargo test -p frankenengine-extension-host --lib quarantine_mesh_partial_failures_are_recorded" \
+        cargo test -p frankenengine-extension-host --lib quarantine_mesh_partial_failures_are_recorded
+      run_step "cargo test -p frankenengine-extension-host --lib quarantine_mesh_total_failure_is_recorded" \
+        cargo test -p frankenengine-extension-host --lib quarantine_mesh_total_failure_is_recorded
       run_guardplane_artifact_capture_step
       ;;
     clippy)
@@ -262,6 +274,10 @@ run_mode() {
         cargo test -p frankenengine-extension-host --lib guardplane_safe_mode_fallback_is_fail_closed
       run_step "cargo test -p frankenengine-extension-host --lib quarantine_mesh_targets_are_sorted_and_recorded" \
         cargo test -p frankenengine-extension-host --lib quarantine_mesh_targets_are_sorted_and_recorded
+      run_step "cargo test -p frankenengine-extension-host --lib quarantine_mesh_partial_failures_are_recorded" \
+        cargo test -p frankenengine-extension-host --lib quarantine_mesh_partial_failures_are_recorded
+      run_step "cargo test -p frankenengine-extension-host --lib quarantine_mesh_total_failure_is_recorded" \
+        cargo test -p frankenengine-extension-host --lib quarantine_mesh_total_failure_is_recorded
       run_guardplane_artifact_capture_step
       run_step "cargo clippy -p frankenengine-extension-host --lib -- -D warnings" \
         cargo clippy -p frankenengine-extension-host --lib -- -D warnings
@@ -320,6 +336,13 @@ run_mode() {
     fi
     if [[ ! -s "$containment_timeline_path" ]]; then
       echo "error: missing containment timeline artifact: $containment_timeline_path" >&2
+      failed_command="containment_timeline_generation"
+      failed_log_path="$containment_timeline_path"
+      return 1
+    fi
+    if ! jq -e '.detection.timestamp_ns != null and .checkpoints.containment_first_event != null' \
+      "$containment_timeline_path" >/dev/null; then
+      echo "error: containment timeline missing detection/first-containment anchors: $containment_timeline_path" >&2
       failed_command="containment_timeline_generation"
       failed_log_path="$containment_timeline_path"
       return 1

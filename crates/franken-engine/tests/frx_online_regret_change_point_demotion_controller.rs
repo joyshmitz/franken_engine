@@ -520,9 +520,7 @@ fn hybrid_lane_router_promote_then_observe_tracks_round() {
     let mut router = HybridLaneRouter::new(config);
     router.conformal = ConformalState::new(router.config.conformal.clone());
     router.change_point = ChangePointMonitor::new(router.config.change_point.clone());
-    router
-        .promote_to_adaptive()
-        .expect("promote");
+    router.promote_to_adaptive().expect("promote");
 
     let trace = router.observe(
         LaneChoice::Js,
@@ -559,10 +557,7 @@ fn conformal_state_serde_roundtrip() {
     });
     let json = serde_json::to_string(&state).expect("serialize");
     let recovered: ConformalState = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(
-        recovered.config.target_coverage_millionths,
-        900_000
-    );
+    assert_eq!(recovered.config.target_coverage_millionths, 900_000);
 }
 
 // ---------- RiskBudget ----------

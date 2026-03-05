@@ -598,3 +598,27 @@ fn compute_campaign_results_is_deterministic() {
     let b = compute_campaign_results(&fixture);
     assert_eq!(a, b);
 }
+
+#[test]
+fn fixture_has_nonempty_schema_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.trim().is_empty());
+}
+
+#[test]
+fn campaign_result_debug_is_nonempty() {
+    let result = CampaignResult {
+        campaign_id: "test".to_string(),
+        ev_score_millionths: 100,
+        gain_millionths: 50,
+    };
+    assert!(!format!("{result:?}").is_empty());
+}
+
+#[test]
+fn fixture_deterministic_double_load() {
+    let a = load_fixture();
+    let b = load_fixture();
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.campaign_runs.len(), b.campaign_runs.len());
+}

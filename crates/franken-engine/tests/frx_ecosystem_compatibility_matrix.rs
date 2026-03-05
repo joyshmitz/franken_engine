@@ -488,3 +488,24 @@ fn ecosystem_matrix_operator_verification_has_entries() {
         "operator_verification must not be empty"
     );
 }
+
+#[test]
+fn ecosystem_matrix_has_nonempty_bead_id() {
+    let matrix = parse_matrix();
+    assert!(!matrix.bead_id.trim().is_empty());
+}
+
+#[test]
+fn ecosystem_matrix_has_nonempty_generated_by() {
+    let matrix = parse_matrix();
+    assert!(!matrix.generated_by.trim().is_empty());
+}
+
+#[test]
+fn ecosystem_matrix_deterministic_double_parse() {
+    let a = parse_matrix();
+    let b = parse_matrix();
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.entries.len(), b.entries.len());
+    assert_eq!(a.known_gaps.len(), b.known_gaps.len());
+}

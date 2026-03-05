@@ -575,3 +575,188 @@ fn rgc_063_gate_runner_has_nonempty_script() {
     assert!(!contract.gate_runner.script.trim().is_empty());
     assert!(!contract.gate_runner.replay_wrapper.trim().is_empty());
 }
+
+// ---------- additional enrichment tests ----------
+
+#[test]
+fn rgc_063_schema_version_follows_dotted_format() {
+    let contract = parse_contract();
+    // Schema version must contain dots separating namespace segments
+    let parts: Vec<&str> = contract.schema_version.split('.').collect();
+    assert!(
+        parts.len() >= 3,
+        "schema_version should have at least 3 dot-separated segments, got: {}",
+        contract.schema_version
+    );
+    for part in &parts {
+        assert!(
+            !part.trim().is_empty(),
+            "schema_version segment must not be empty"
+        );
+    }
+}
+
+#[test]
+fn rgc_063_contract_version_is_semver() {
+    let contract = parse_contract();
+    let parts: Vec<&str> = contract.contract_version.split('.').collect();
+    assert_eq!(
+        parts.len(),
+        3,
+        "contract_version must be semver (major.minor.patch)"
+    );
+    for part in &parts {
+        assert!(
+            part.parse::<u32>().is_ok(),
+            "contract_version segment '{}' must be a non-negative integer",
+            part
+        );
+    }
+}
+
+#[test]
+fn rgc_063_all_target_fields_are_nonempty() {
+    let contract = parse_contract();
+    for target in &contract.targets {
+        assert!(!target.target_id.trim().is_empty(), "target_id empty");
+        assert!(
+            !target.os.trim().is_empty(),
+            "os empty for {}",
+            target.target_id
+        );
+        assert!(
+            !target.arch.trim().is_empty(),
+            "arch empty for {}",
+            target.target_id
+        );
+        assert!(
+            !target.tier.trim().is_empty(),
+            "tier empty for {}",
+            target.target_id
+        );
+        assert!(
+            !target.path_style.trim().is_empty(),
+            "path_style empty for {}",
+            target.target_id
+        );
+        assert!(
+            !target.line_endings.trim().is_empty(),
+            "line_endings empty for {}",
+            target.target_id
+        );
+        assert!(
+            !target.manifest_env_var.trim().is_empty(),
+            "manifest_env_var empty for {}",
+            target.target_id
+        );
+        assert!(
+            !target.replay_command.trim().is_empty(),
+            "replay_command empty for {}",
+            target.target_id
+        );
+    }
+}
+
+#[test]
+fn rgc_063_windows_targets_use_crlf_and_windows_path_style() {
+    let contract = parse_contract();
+    for target in contract.targets.iter().filter(|t| t.os == "windows") {
+        assert_eq!(
+            target.line_endings, "crlf",
+            "windows target {} should use crlf line endings",
+            target.target_id
+        );
+        assert_eq!(
+            target.path_style, "windows",
+            "windows target {} should use windows path_style",
+            target.target_id
+        );
+    }
+}
+
+#[test]
+fn rgc_063_posix_targets_use_lf_and_posix_path_style() {
+    let contract = parse_contract();
+    for target in contract
+        .targets
+        .iter()
+        .filter(|t| t.os == "linux" || t.os == "macos")
+    {
+        assert_eq!(
+            target.line_endings, "lf",
+            "posix target {} should use lf line endings",
+            target.target_id
+        );
+        assert_eq!(
+            target.path_style, "posix",
+            "posix target {} should use posix path_style",
+            target.target_id
+        );
+    }
+}
+
+#[test]
+fn rgc_063_drift_severity_values_are_in_allowed_set() {
+    let contract = parse_contract();
+    let allowed: BTreeSet<&str> = ["info", "warning", "critical"].into_iter().collect();
+    for dc in &contract.drift_classes {
+        assert!(
+            allowed.contains(dc.severity.as_str()),
+            "drift class {} has invalid severity '{}', allowed: {:?}",
+            dc.class_id,
+            dc.severity,
+            allowed
+        );
+    }
+}
+
+#[test]
+fn rgc_063_required_log_keys_contain_no_duplicates() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for key in &contract.required_log_keys {
+        assert!(seen.insert(key), "duplicate required_log_key: {}", key);
+    }
+}
+
+#[test]
+fn rgc_063_required_artifacts_contain_no_duplicates() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for artifact in &contract.required_artifacts {
+        assert!(
+            seen.insert(artifact),
+            "duplicate required_artifact: {}",
+            artifact
+        );
+    }
+}
+
+#[test]
+fn rgc_063_operator_verification_commands_are_nonempty_strings() {
+    let contract = parse_contract();
+    assert!(
+        !contract.operator_verification.is_empty(),
+        "operator_verification must not be empty"
+    );
+    for cmd in &contract.operator_verification {
+        assert!(
+            !cmd.trim().is_empty(),
+            "operator verification command must not be empty"
+        );
+    }
+}
+
+#[test]
+fn rgc_063_normalize_platform_path_windows_drive_letter_lowercased() {
+    // Uppercase drive letters should be lowercased
+    assert_eq!(
+        normalize_platform_path("D:\\projects\\franken"),
+        "d:/projects/franken"
+    );
+    // Already lowercase drive letter stays the same
+    assert_eq!(
+        normalize_platform_path("d:\\projects\\franken"),
+        "d:/projects/franken"
+    );
+}

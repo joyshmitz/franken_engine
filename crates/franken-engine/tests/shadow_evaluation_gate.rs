@@ -369,7 +369,12 @@ fn shadow_gate_rejects_unverified_rollback_artifacts() {
     let mut gate = gate();
     let signing = governance_signing_key();
 
-    let mut unverified = candidate("decision-unverified-rollback", improved_metrics(), 90_000, 900);
+    let mut unverified = candidate(
+        "decision-unverified-rollback",
+        improved_metrics(),
+        90_000,
+        900,
+    );
     unverified.rollback_readiness.rollback_command_tested = false;
     unverified.rollback_readiness.transition_receipt_signed = false;
 
@@ -521,8 +526,7 @@ fn low_risk_extension_uses_default_profile() {
 fn shadow_evaluation_candidate_serde_roundtrip() {
     let c = candidate("decision-serde", improved_metrics(), 90_000, 900);
     let json = serde_json::to_string(&c).expect("serialize");
-    let recovered: ShadowEvaluationCandidate =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: ShadowEvaluationCandidate = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.decision_id, c.decision_id);
     assert_eq!(
         recovered.shadow_success_rate_millionths,
@@ -534,8 +538,7 @@ fn shadow_evaluation_candidate_serde_roundtrip() {
 fn safety_metric_snapshot_serde_roundtrip() {
     let snapshot = improved_metrics();
     let json = serde_json::to_string(&snapshot).expect("serialize");
-    let recovered: SafetyMetricSnapshot =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: SafetyMetricSnapshot = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.values_millionths, snapshot.values_millionths);
 }
 
@@ -559,7 +562,10 @@ fn shadow_extension_class_serde_round_trip() {
 
 #[test]
 fn shadow_extension_class_default_is_standard() {
-    assert_eq!(ShadowExtensionClass::default(), ShadowExtensionClass::Standard);
+    assert_eq!(
+        ShadowExtensionClass::default(),
+        ShadowExtensionClass::Standard
+    );
 }
 
 #[test]
@@ -624,7 +630,8 @@ fn shadow_rollback_readiness_artifacts_default() {
 fn shadow_rollback_readiness_artifacts_serde_round_trip() {
     let arts = rollback_readiness();
     let json = serde_json::to_string(&arts).expect("serialize");
-    let recovered: ShadowRollbackReadinessArtifacts = serde_json::from_str(&json).expect("deserialize");
+    let recovered: ShadowRollbackReadinessArtifacts =
+        serde_json::from_str(&json).expect("deserialize");
     assert_eq!(arts, recovered);
 }
 

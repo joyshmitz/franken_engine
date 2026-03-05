@@ -531,11 +531,7 @@ fn sample_runs_run_ids_are_unique() {
     let runs = sample_runs();
     let mut seen = BTreeSet::new();
     for run in &runs {
-        assert!(
-            seen.insert(&run.run_id),
-            "duplicate run_id: {}",
-            run.run_id
-        );
+        assert!(seen.insert(&run.run_id), "duplicate run_id: {}", run.run_id);
     }
 }
 
@@ -559,7 +555,10 @@ fn contract_operator_verification_commands_are_nonempty() {
     let contract: FlakeWorkflowContract = load_json(&path);
     assert!(!contract.operator_verification.is_empty());
     for cmd in &contract.operator_verification {
-        assert!(!cmd.trim().is_empty(), "operator verification command must not be empty");
+        assert!(
+            !cmd.trim().is_empty(),
+            "operator verification command must not be empty"
+        );
     }
 }
 
@@ -604,4 +603,37 @@ fn contract_deterministic_double_load() {
     let b: FlakeWorkflowContract = load_json(&path);
     assert_eq!(a.schema_version, b.schema_version);
     assert_eq!(a.bead_id, b.bead_id);
+}
+
+#[test]
+fn flake_run_record_debug_is_nonempty() {
+    let record = &sample_runs()[0];
+    let debug = format!("{record:?}");
+    assert!(!debug.trim().is_empty());
+}
+
+#[test]
+fn flake_policy_debug_is_nonempty() {
+    let policy = FlakePolicy {
+        warning_flake_threshold_millionths: 100_000,
+        high_flake_threshold_millionths: 500_000,
+        quarantine_ttl_epochs: 3,
+        max_flake_burden_millionths: 200_000,
+        trend_stability_epsilon_millionths: 10_000,
+    };
+    let debug = format!("{policy:?}");
+    assert!(!debug.trim().is_empty());
+}
+
+#[test]
+fn classify_flakes_returns_empty_for_empty_runs() {
+    let policy = FlakePolicy {
+        warning_flake_threshold_millionths: 100_000,
+        high_flake_threshold_millionths: 500_000,
+        quarantine_ttl_epochs: 3,
+        max_flake_burden_millionths: 200_000,
+        trend_stability_epsilon_millionths: 10_000,
+    };
+    let flakes = classify_flakes(&[], &policy);
+    assert!(flakes.is_empty());
 }

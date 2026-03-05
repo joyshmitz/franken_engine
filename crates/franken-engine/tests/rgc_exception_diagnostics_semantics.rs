@@ -14,8 +14,7 @@ use sha2::{Digest, Sha256};
 const CONTRACT_SCHEMA_VERSION: &str = "franken-engine.rgc-exception-diagnostics-semantics.v1";
 const VECTORS_SCHEMA_VERSION: &str =
     "franken-engine.rgc-exception-diagnostics-semantics-vectors.v1";
-const TRACE_SCHEMA_VERSION: &str =
-    "franken-engine.rgc-exception-diagnostics-semantics.trace.v1";
+const TRACE_SCHEMA_VERSION: &str = "franken-engine.rgc-exception-diagnostics-semantics.trace.v1";
 const TRACE_BEGIN_MARKER: &str = "__RGC305_TRACE_BEGIN__";
 const TRACE_END_MARKER: &str = "__RGC305_TRACE_END__";
 const CONTRACT_JSON: &str =
@@ -134,7 +133,9 @@ fn error_for_lane(lane: &str, input: &str) -> EvalError {
     match lane {
         "quickjs" => {
             let mut engine = QuickJsInspiredNativeEngine;
-            engine.eval(input).expect_err("quickjs scenario should error")
+            engine
+                .eval(input)
+                .expect_err("quickjs scenario should error")
         }
         "v8" => {
             let mut engine = V8InspiredNativeEngine;
@@ -155,29 +156,32 @@ fn collect_snapshot(
         error = propagate_error_across_boundary(error, *boundary);
     }
 
-    let (trace_id, decision_id, policy_id) = if let Some(correlation) = error.correlation_ids.clone()
-    {
-        (
-            correlation.trace_id,
-            correlation.decision_id,
-            correlation.policy_id,
-        )
-    } else {
-        // Empty-source normalization errors are raised before eval correlation IDs are attached.
-        // Use deterministic per-lane placeholders so cross-lane diffs remain intentional/stable.
-        (
-            format!("missing-trace-id-{lane}"),
-            format!("missing-decision-id-{lane}"),
-            format!("missing-policy-id-{lane}"),
-        )
-    };
+    let (trace_id, decision_id, policy_id) =
+        if let Some(correlation) = error.correlation_ids.clone() {
+            (
+                correlation.trace_id,
+                correlation.decision_id,
+                correlation.policy_id,
+            )
+        } else {
+            // Empty-source normalization errors are raised before eval correlation IDs are attached.
+            // Use deterministic per-lane placeholders so cross-lane diffs remain intentional/stable.
+            (
+                format!("missing-trace-id-{lane}"),
+                format!("missing-decision-id-{lane}"),
+                format!("missing-policy-id-{lane}"),
+            )
+        };
 
     DiagnosticSnapshot {
         scenario_id: scenario_id.to_string(),
         lane: lane.to_string(),
         error_class: error.class().stable_label().to_string(),
         error_code: error.stable_namespace().to_string(),
-        location: error.location.as_ref().map(|location| format!("{location}")),
+        location: error
+            .location
+            .as_ref()
+            .map(|location| format!("{location}")),
         trace_id,
         decision_id,
         policy_id,
@@ -185,7 +189,9 @@ fn collect_snapshot(
     }
 }
 
-fn normalized_signature(snapshot: &DiagnosticSnapshot) -> (String, String, Option<String>, Vec<String>) {
+fn normalized_signature(
+    snapshot: &DiagnosticSnapshot,
+) -> (String, String, Option<String>, Vec<String>) {
     (
         snapshot.error_class.clone(),
         snapshot.error_code.clone(),
@@ -392,7 +398,10 @@ fn rgc_305_contract_is_versioned_and_replay_bound() {
         contract.gate_runner.replay_wrapper,
         "scripts/e2e/rgc_exception_diagnostics_semantics_replay.sh"
     );
-    assert_eq!(contract.gate_runner.strict_mode, "rch_only_no_local_fallback");
+    assert_eq!(
+        contract.gate_runner.strict_mode,
+        "rch_only_no_local_fallback"
+    );
     assert_eq!(
         contract.gate_runner.manifest_schema_version,
         "franken-engine.rgc-exception-diagnostics-semantics.run-manifest.v1"
@@ -540,8 +549,7 @@ fn rgc_305_differential_vectors_classify_intentional_divergence_with_guidance() 
 
         let classification = classify_pair(&quickjs, &v8, vector.remediation_guidance.as_str());
         assert_eq!(
-            classification.classification,
-            vector.expected_divergence_class,
+            classification.classification, vector.expected_divergence_class,
             "unexpected divergence class for {}",
             vector.scenario_id
         );
@@ -558,7 +566,10 @@ fn rgc_305_differential_vectors_classify_intentional_divergence_with_guidance() 
         }
     }
 
-    assert!(intentional_divergence_seen, "expected intentional divergence coverage");
+    assert!(
+        intentional_divergence_seen,
+        "expected intentional divergence coverage"
+    );
 }
 
 #[test]
@@ -572,8 +583,9 @@ fn rgc_305_emit_deterministic_diagnostic_trace_artifact_when_requested() {
     assert_eq!(artifact.snapshots.len(), vectors.vectors.len() * 2);
     assert_eq!(artifact.differential.len(), vectors.vectors.len());
 
-    let trace_payload = serde_json::to_vec(&(artifact.snapshots.clone(), artifact.differential.clone()))
-        .expect("diagnostic trace payload should serialize");
+    let trace_payload =
+        serde_json::to_vec(&(artifact.snapshots.clone(), artifact.differential.clone()))
+            .expect("diagnostic trace payload should serialize");
     let recomputed_hash = format!("sha256:{}", hex::encode(Sha256::digest(&trace_payload)));
     assert_eq!(artifact.trace_hash, recomputed_hash);
 
@@ -616,4 +628,365 @@ fn rgc_305_contract_deterministic_double_parse() {
     let a = parse_contract();
     let b = parse_contract();
     assert_eq!(a, b);
+}
+
+// -----------------------------------------------------------------------
+// Enrichment: PearlTower 2026-03-05 — serde, determinism, edge cases
+// -----------------------------------------------------------------------
+
+#[test]
+fn rgc_305_contract_serde_roundtrip() {
+    let contract = parse_contract();
+    let json = serde_json::to_string_pretty(&contract).unwrap();
+    let back: ExceptionDiagnosticsContract = serde_json::from_str(&json).unwrap();
+    assert_eq!(contract, back);
+}
+
+#[test]
+fn rgc_305_vectors_serde_roundtrip() {
+    let vectors = parse_vectors();
+    let json = serde_json::to_string_pretty(&vectors).unwrap();
+    let back: ExceptionDiagnosticsVectors = serde_json::from_str(&json).unwrap();
+    assert_eq!(vectors, back);
+}
+
+#[test]
+fn rgc_305_vectors_deterministic_double_parse() {
+    let a = parse_vectors();
+    let b = parse_vectors();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn rgc_305_trace_artifact_serde_roundtrip() {
+    let vectors = parse_vectors();
+    let artifact = build_trace_artifact(&vectors);
+    let json = serde_json::to_string_pretty(&artifact).unwrap();
+    let back: DiagnosticTraceArtifact = serde_json::from_str(&json).unwrap();
+    assert_eq!(artifact, back);
+}
+
+#[test]
+fn rgc_305_trace_artifact_hash_stability() {
+    let vectors = parse_vectors();
+    let artifact_a = build_trace_artifact(&vectors);
+    let artifact_b = build_trace_artifact(&vectors);
+    assert_eq!(artifact_a.trace_hash, artifact_b.trace_hash);
+    assert_eq!(artifact_a.snapshots, artifact_b.snapshots);
+    assert_eq!(artifact_a.differential, artifact_b.differential);
+}
+
+#[test]
+fn rgc_305_trace_artifact_snapshots_sorted_by_scenario_then_lane() {
+    let vectors = parse_vectors();
+    let artifact = build_trace_artifact(&vectors);
+    for window in artifact.snapshots.windows(2) {
+        let ordering = window[0]
+            .scenario_id
+            .cmp(&window[1].scenario_id)
+            .then(window[0].lane.cmp(&window[1].lane));
+        assert!(
+            ordering != std::cmp::Ordering::Greater,
+            "snapshots not sorted: {} {} comes after {} {}",
+            window[0].scenario_id,
+            window[0].lane,
+            window[1].scenario_id,
+            window[1].lane,
+        );
+    }
+}
+
+#[test]
+fn rgc_305_trace_artifact_differential_sorted_by_scenario() {
+    let vectors = parse_vectors();
+    let artifact = build_trace_artifact(&vectors);
+    for window in artifact.differential.windows(2) {
+        assert!(
+            window[0].scenario_id <= window[1].scenario_id,
+            "differential not sorted: {} comes after {}",
+            window[0].scenario_id,
+            window[1].scenario_id,
+        );
+    }
+}
+
+#[test]
+fn rgc_305_diagnostic_snapshot_serde_roundtrip() {
+    let vectors = parse_vectors();
+    let first_vector = vectors.vectors.first().expect("need at least one vector");
+    let boundaries = parse_boundaries(&first_vector.boundaries);
+    let snapshot = collect_snapshot(
+        first_vector.scenario_id.as_str(),
+        "quickjs",
+        first_vector.input_source.as_str(),
+        &boundaries,
+    );
+    let json = serde_json::to_string(&snapshot).unwrap();
+    let back: DiagnosticSnapshot = serde_json::from_str(&json).unwrap();
+    assert_eq!(snapshot, back);
+}
+
+#[test]
+fn rgc_305_differential_classification_serde_roundtrip() {
+    let classification = DifferentialClassification {
+        scenario_id: "test-scenario".into(),
+        classification: "intentional_divergence".into(),
+        remediation_guidance: "Normalize lane-specific correlation IDs".into(),
+    };
+    let json = serde_json::to_string(&classification).unwrap();
+    let back: DifferentialClassification = serde_json::from_str(&json).unwrap();
+    assert_eq!(classification, back);
+}
+
+#[test]
+fn rgc_305_classify_pair_compatible_when_identical() {
+    let snapshot = DiagnosticSnapshot {
+        scenario_id: "test".into(),
+        lane: "quickjs".into(),
+        error_class: "Parse".into(),
+        error_code: "FE-001".into(),
+        location: Some("1:1".into()),
+        trace_id: "trace-1".into(),
+        decision_id: "dec-1".into(),
+        policy_id: "pol-1".into(),
+        stack_trace: vec!["parse@<eval>:1:1".into()],
+    };
+    let other = DiagnosticSnapshot {
+        lane: "v8".into(),
+        ..snapshot.clone()
+    };
+    let result = classify_pair(&snapshot, &other, "no remediation needed");
+    assert_eq!(result.classification, "compatible");
+}
+
+#[test]
+fn rgc_305_classify_pair_intentional_divergence_on_trace_id_diff() {
+    let left = DiagnosticSnapshot {
+        scenario_id: "test".into(),
+        lane: "quickjs".into(),
+        error_class: "Parse".into(),
+        error_code: "FE-001".into(),
+        location: None,
+        trace_id: "trace-quickjs".into(),
+        decision_id: "dec-1".into(),
+        policy_id: "pol-1".into(),
+        stack_trace: vec![],
+    };
+    let right = DiagnosticSnapshot {
+        lane: "v8".into(),
+        trace_id: "trace-v8".into(),
+        ..left.clone()
+    };
+    let result = classify_pair(&left, &right, "guidance");
+    assert_eq!(result.classification, "intentional_divergence");
+}
+
+#[test]
+fn rgc_305_classify_pair_incompatible_on_error_class_diff() {
+    let left = DiagnosticSnapshot {
+        scenario_id: "test".into(),
+        lane: "quickjs".into(),
+        error_class: "Parse".into(),
+        error_code: "FE-001".into(),
+        location: None,
+        trace_id: "trace-1".into(),
+        decision_id: "dec-1".into(),
+        policy_id: "pol-1".into(),
+        stack_trace: vec![],
+    };
+    let right = DiagnosticSnapshot {
+        lane: "v8".into(),
+        error_class: "Runtime".into(),
+        ..left.clone()
+    };
+    let result = classify_pair(&left, &right, "guidance");
+    assert_eq!(result.classification, "incompatible");
+}
+
+#[test]
+fn rgc_305_each_vector_produces_valid_snapshots_on_both_lanes() {
+    let vectors = parse_vectors();
+    for vector in &vectors.vectors {
+        let boundaries = parse_boundaries(&vector.boundaries);
+        let quickjs = collect_snapshot(
+            vector.scenario_id.as_str(),
+            "quickjs",
+            vector.input_source.as_str(),
+            &boundaries,
+        );
+        let v8 = collect_snapshot(
+            vector.scenario_id.as_str(),
+            "v8",
+            vector.input_source.as_str(),
+            &boundaries,
+        );
+        assert!(
+            !quickjs.error_class.is_empty(),
+            "empty error_class for quickjs lane in {}",
+            vector.scenario_id
+        );
+        assert!(
+            !v8.error_class.is_empty(),
+            "empty error_class for v8 lane in {}",
+            vector.scenario_id
+        );
+        assert!(
+            !quickjs.error_code.is_empty(),
+            "empty error_code for quickjs lane in {}",
+            vector.scenario_id
+        );
+        assert!(
+            !v8.error_code.is_empty(),
+            "empty error_code for v8 lane in {}",
+            vector.scenario_id
+        );
+    }
+}
+
+#[test]
+fn rgc_305_snapshot_replay_determinism_across_lanes() {
+    let vectors = parse_vectors();
+    for vector in &vectors.vectors {
+        let boundaries = parse_boundaries(&vector.boundaries);
+        let q1 = collect_snapshot(
+            vector.scenario_id.as_str(),
+            "quickjs",
+            vector.input_source.as_str(),
+            &boundaries,
+        );
+        let q2 = collect_snapshot(
+            vector.scenario_id.as_str(),
+            "quickjs",
+            vector.input_source.as_str(),
+            &boundaries,
+        );
+        assert_eq!(
+            q1.error_class, q2.error_class,
+            "quickjs error_class not deterministic for {}",
+            vector.scenario_id
+        );
+        assert_eq!(
+            q1.error_code, q2.error_code,
+            "quickjs error_code not deterministic for {}",
+            vector.scenario_id
+        );
+        assert_eq!(
+            q1.stack_trace, q2.stack_trace,
+            "quickjs stack_trace not deterministic for {}",
+            vector.scenario_id
+        );
+    }
+}
+
+#[test]
+fn rgc_305_gate_runner_fields_are_nonempty() {
+    let contract = parse_contract();
+    assert!(!contract.gate_runner.script.is_empty());
+    assert!(!contract.gate_runner.replay_wrapper.is_empty());
+    assert!(!contract.gate_runner.strict_mode.is_empty());
+    assert!(!contract.gate_runner.manifest_schema_version.is_empty());
+}
+
+#[test]
+fn rgc_305_operator_verification_non_empty() {
+    let contract = parse_contract();
+    assert!(
+        !contract.operator_verification.is_empty(),
+        "operator_verification must have at least one entry"
+    );
+    for entry in &contract.operator_verification {
+        assert!(
+            !entry.trim().is_empty(),
+            "empty operator verification entry"
+        );
+    }
+}
+
+#[test]
+fn rgc_305_all_vector_severities_are_nonempty() {
+    let vectors = parse_vectors();
+    for vector in &vectors.vectors {
+        assert!(
+            !vector.severity.trim().is_empty(),
+            "empty severity for scenario {}",
+            vector.scenario_id
+        );
+    }
+}
+
+#[test]
+fn rgc_305_parse_boundaries_covers_all_known_types() {
+    let boundaries = parse_boundaries(&[
+        "sync_callframe".to_string(),
+        "async_job".to_string(),
+        "hostcall".to_string(),
+    ]);
+    assert_eq!(boundaries.len(), 3);
+    assert_eq!(boundaries[0], ExceptionBoundary::SyncCallframe);
+    assert_eq!(boundaries[1], ExceptionBoundary::AsyncJob);
+    assert_eq!(boundaries[2], ExceptionBoundary::Hostcall);
+}
+
+#[test]
+fn rgc_305_normalized_signature_excludes_trace_decision_policy() {
+    let snapshot = DiagnosticSnapshot {
+        scenario_id: "test".into(),
+        lane: "quickjs".into(),
+        error_class: "Parse".into(),
+        error_code: "FE-001".into(),
+        location: Some("1:1".into()),
+        trace_id: "trace-A".into(),
+        decision_id: "dec-A".into(),
+        policy_id: "pol-A".into(),
+        stack_trace: vec!["frame".into()],
+    };
+    let other = DiagnosticSnapshot {
+        trace_id: "trace-B".into(),
+        decision_id: "dec-B".into(),
+        policy_id: "pol-B".into(),
+        ..snapshot.clone()
+    };
+    assert_eq!(
+        normalized_signature(&snapshot),
+        normalized_signature(&other),
+        "normalized_signature should ignore trace/decision/policy IDs"
+    );
+}
+
+#[test]
+fn rgc_305_contract_json_field_names_present() {
+    let raw: serde_json::Value =
+        serde_json::from_str(CONTRACT_JSON).expect("contract JSON must parse");
+    let obj = raw.as_object().expect("contract should be a JSON object");
+    for key in [
+        "schema_version",
+        "contract_version",
+        "bead_id",
+        "policy_id",
+        "required_semantics_classes",
+        "required_log_keys",
+        "required_artifacts",
+        "test_vectors_source",
+        "gate_runner",
+        "operator_verification",
+    ] {
+        assert!(obj.contains_key(key), "missing contract JSON key: {key}");
+    }
+}
+
+#[test]
+fn rgc_305_vectors_json_field_names_present() {
+    let raw: serde_json::Value =
+        serde_json::from_str(VECTORS_JSON).expect("vectors JSON must parse");
+    let obj = raw.as_object().expect("vectors should be a JSON object");
+    for key in [
+        "schema_version",
+        "contract_version",
+        "bead_id",
+        "generated_by",
+        "generated_at_utc",
+        "vectors",
+    ] {
+        assert!(obj.contains_key(key), "missing vectors JSON key: {key}");
+    }
 }

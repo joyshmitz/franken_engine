@@ -420,9 +420,7 @@ fn obligation_max_uses_enforced_after_exhaustion() {
         .expect("first use");
 
     assert_eq!(
-        lattice
-            .obligation("obl-limited")
-            .map(|ob| ob.use_count),
+        lattice.obligation("obl-limited").map(|ob| ob.use_count),
         Some(1)
     );
 
@@ -535,10 +533,7 @@ fn lattice_records_check_flow_event() {
     );
 
     assert!(
-        lattice
-            .events()
-            .iter()
-            .any(|e| e.event == "check_flow"),
+        lattice.events().iter().any(|e| e.event == "check_flow"),
         "lattice should record check_flow event"
     );
 }
@@ -549,8 +544,7 @@ fn lattice_records_check_flow_event() {
 fn declassification_request_serde_roundtrip() {
     let req = make_request("declass-secret-internal");
     let json = serde_json::to_string(&req).expect("serialize");
-    let recovered: DeclassificationRequest =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: DeclassificationRequest = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.request_id, req.request_id);
     assert_eq!(recovered.source_label, req.source_label);
 }
@@ -612,10 +606,7 @@ fn label_join_all_and_meet_all() {
 
 #[test]
 fn clearance_serde_roundtrip() {
-    let variants = [
-        Clearance::OpenSink,
-        Clearance::NeverSink,
-    ];
+    let variants = [Clearance::OpenSink, Clearance::NeverSink];
     for c in &variants {
         let json = serde_json::to_string(c).expect("serialize");
         let recovered: Clearance = serde_json::from_str(&json).expect("deserialize");
@@ -641,7 +632,11 @@ fn clearance_meet_join() {
 
 #[test]
 fn label_class_serde_roundtrip() {
-    let classes = [LabelClass::Public, LabelClass::Secret, LabelClass::TopSecret];
+    let classes = [
+        LabelClass::Public,
+        LabelClass::Secret,
+        LabelClass::TopSecret,
+    ];
     for lc in &classes {
         let json = serde_json::to_string(lc).expect("serialize");
         let recovered: LabelClass = serde_json::from_str(&json).expect("deserialize");

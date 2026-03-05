@@ -255,7 +255,9 @@ fn objective_function_has_objective_dimensions() {
     let path = repo_root().join("docs/frx_objective_function_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let dims = value["objective"]["dimensions"].as_array().expect("dimensions array");
+    let dims = value["objective"]["dimensions"]
+        .as_array()
+        .expect("dimensions array");
     assert!(!dims.is_empty());
 }
 
@@ -264,7 +266,9 @@ fn objective_function_has_constitution_ref() {
     let path = repo_root().join("docs/frx_objective_function_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let cr = value["constitution_ref"].as_str().expect("constitution_ref");
+    let cr = value["constitution_ref"]
+        .as_str()
+        .expect("constitution_ref");
     assert!(!cr.is_empty());
 }
 
@@ -280,7 +284,9 @@ fn objective_function_has_schema_version() {
     let path = repo_root().join("docs/frx_objective_function_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let sv = value["schema_version"].as_str().expect("schema_version must be string");
+    let sv = value["schema_version"]
+        .as_str()
+        .expect("schema_version must be string");
     assert!(!sv.trim().is_empty());
 }
 
@@ -305,7 +311,9 @@ fn objective_function_has_generated_at_utc() {
     let path = repo_root().join("docs/frx_objective_function_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let ts = value["generated_at_utc"].as_str().expect("generated_at_utc");
+    let ts = value["generated_at_utc"]
+        .as_str()
+        .expect("generated_at_utc");
     assert!(ts.ends_with('Z'));
 }
 
@@ -314,7 +322,9 @@ fn objective_function_has_testable_invariants() {
     let path = repo_root().join("docs/frx_objective_function_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let invariants = value["testable_invariants"].as_array().expect("testable_invariants array");
+    let invariants = value["testable_invariants"]
+        .as_array()
+        .expect("testable_invariants array");
     assert!(!invariants.is_empty());
 }
 
@@ -323,7 +333,11 @@ fn objective_function_has_primary_bead() {
     let path = repo_root().join("docs/frx_objective_function_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    assert!(value["primary_bead"].as_str().is_some_and(|s| !s.is_empty()));
+    assert!(
+        value["primary_bead"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+    );
 }
 
 #[test]
@@ -348,4 +362,22 @@ fn objective_function_deterministic_double_parse() {
     let a: Value = serde_json::from_str(&raw).expect("parse 1");
     let b: Value = serde_json::from_str(&raw).expect("parse 2");
     assert_eq!(a, b);
+}
+
+#[test]
+fn constitution_doc_file_exists() {
+    let path = repo_root().join("docs/FRX_PROGRAM_CONSTITUTION_V1.md");
+    assert!(path.exists());
+}
+
+#[test]
+fn objective_function_json_file_exists() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    assert!(path.exists());
+}
+
+#[test]
+fn freeze_manifest_json_file_exists() {
+    let path = repo_root().join("docs/FRX_C0_FREEZE_MANIFEST_V1.json");
+    assert!(path.exists());
 }

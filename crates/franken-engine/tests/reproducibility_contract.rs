@@ -360,3 +360,239 @@ fn parse_json_template_returns_object() {
     let val = parse_json_file("docs/templates/env.json.template");
     assert!(val.is_object());
 }
+
+// ---------- canonicalize_json: number values ----------
+
+#[test]
+fn canonicalize_json_number_integer_and_float() {
+    let int_val: Value = serde_json::json!(42);
+    assert_eq!(canonicalize_json(&int_val), "42");
+
+    let neg_val: Value = serde_json::json!(-7);
+    assert_eq!(canonicalize_json(&neg_val), "-7");
+
+    let float_val: Value = serde_json::json!(3.14);
+    let canon = canonicalize_json(&float_val);
+    // Must round-trip as a number, not quoted
+    assert!(
+        !canon.starts_with('"'),
+        "number must not be quoted: {canon}"
+    );
+    let reparsed: Value = serde_json::from_str(&canon).expect("reparsed");
+    assert!(reparsed.is_number());
+
+    let zero_val: Value = serde_json::json!(0);
+    assert_eq!(canonicalize_json(&zero_val), "0");
+}
+
+// ---------- canonicalize_json: deeply nested objects ----------
+
+#[test]
+fn canonicalize_json_deeply_nested_objects() {
+    let val: Value = serde_json::json!({
+        "level1": {
+            "level2": {
+                "level3": {
+                    "level4": "deep_value"
+                }
+            }
+        }
+    });
+    let canon = canonicalize_json(&val);
+    // Keys sorted at every level; nested structure preserved
+    assert!(canon.contains("\"level1\""), "must contain level1 key");
+    assert!(canon.contains("\"deep_value\""), "must contain leaf value");
+    // Idempotent
+    let reparsed: Value = serde_json::from_str(&canon).expect("reparsed");
+    assert_eq!(canon, canonicalize_json(&reparsed));
+}
+
+// ---------- canonicalize_json: mixed arrays ----------
+
+#[test]
+fn canonicalize_json_mixed_array_objects_and_primitives() {
+    let val: Value = serde_json::json!([
+        {"b": 2, "a": 1},
+        "hello",
+        42,
+        null,
+        true,
+        [3, 4]
+    ]);
+    let canon = canonicalize_json(&val);
+    // Object inside array must have sorted keys
+    assert!(
+        canon.contains("{\"a\":1,\"b\":2}"),
+        "inner object keys sorted"
+    );
+    // Primitives preserved in order
+    assert!(canon.contains("\"hello\""), "string preserved");
+    assert!(canon.contains("null"), "null preserved");
+    assert!(canon.contains("[3,4]"), "nested array preserved");
+    // Round-trip stable
+    let reparsed: Value = serde_json::from_str(&canon).expect("reparsed");
+    assert_eq!(canon, canonicalize_json(&reparsed));
+}
+
+// ---------- canonicalize_json: empty object and empty array ----------
+
+#[test]
+fn canonicalize_json_empty_object_and_empty_array() {
+    let empty_obj: Value = serde_json::json!({});
+    assert_eq!(canonicalize_json(&empty_obj), "{}");
+
+    let empty_arr: Value = serde_json::json!([]);
+    assert_eq!(canonicalize_json(&empty_arr), "[]");
+
+    // Nested empties
+    let nested: Value = serde_json::json!({"a": {}, "b": []});
+    let canon = canonicalize_json(&nested);
+    assert_eq!(canon, "{\"a\":{},\"b\":[]}");
+}
+
+// ---------- template schema_hash fields are non-empty ----------
+
+#[test]
+fn template_schema_hash_fields_are_nonempty_strings() {
+    let template_paths = [
+        "docs/templates/env.json.template",
+        "docs/templates/manifest.json.template",
+        "docs/templates/repro.lock.template",
+    ];
+
+    for path in template_paths {
+        let val = parse_json_file(path);
+        let hash = value_at_path(&val, &["schema_hash"])
+            .as_str()
+            .unwrap_or_else(|| panic!("schema_hash must be a string in {path}"));
+        assert!(!hash.is_empty(), "schema_hash must not be empty in {path}");
+        assert!(
+            hash.len() > 1,
+            "schema_hash must be a substantial string in {path}, got: {hash}"
+        );
+    }
+}
+
+// ---------- manifest provenance receipt_ids array ----------
+
+#[test]
+fn manifest_template_provenance_receipt_ids_is_nonempty_string_array() {
+    let manifest = parse_json_file("docs/templates/manifest.json.template");
+    let receipt_ids = value_at_path(&manifest, &["provenance", "receipt_ids"])
+        .as_array()
+        .expect("receipt_ids must be an array");
+    assert!(
+        !receipt_ids.is_empty(),
+        "receipt_ids array must have at least one placeholder entry"
+    );
+    for (i, entry) in receipt_ids.iter().enumerate() {
+        assert!(
+            entry.as_str().is_some(),
+            "receipt_ids[{i}] must be a string"
+        );
+    }
+}
+
+// ---------- repro lock commands array is non-empty ----------
+
+#[test]
+fn repro_lock_template_commands_array_is_nonempty() {
+    let lock = parse_json_file("docs/templates/repro.lock.template");
+    let commands = value_at_path(&lock, &["commands"])
+        .as_array()
+        .expect("commands must be an array");
+    assert!(
+        !commands.is_empty(),
+        "repro lock commands must contain at least one command placeholder"
+    );
+    for (i, cmd) in commands.iter().enumerate() {
+        assert!(cmd.as_str().is_some(), "commands[{i}] must be a string");
+    }
+}
+
+// ---------- repro lock inputs and expected_outputs typed correctly ----------
+
+#[test]
+fn repro_lock_template_inputs_and_expected_outputs_are_object_arrays() {
+    let lock = parse_json_file("docs/templates/repro.lock.template");
+
+    for field_name in &["inputs", "expected_outputs"] {
+        let arr = value_at_path(&lock, &[field_name])
+            .as_array()
+            .unwrap_or_else(|| panic!("{field_name} must be an array"));
+        assert!(!arr.is_empty(), "{field_name} must have at least one entry");
+        for (i, entry) in arr.iter().enumerate() {
+            assert!(entry.is_object(), "{field_name}[{i}] must be an object");
+            // Each entry must have path and sha256 string fields
+            let path_val = entry
+                .get("path")
+                .unwrap_or_else(|| panic!("{field_name}[{i}] must have a 'path' field"));
+            assert!(
+                path_val.as_str().is_some(),
+                "{field_name}[{i}].path must be a string"
+            );
+            let sha_val = entry
+                .get("sha256")
+                .unwrap_or_else(|| panic!("{field_name}[{i}] must have a 'sha256' field"));
+            assert!(
+                sha_val.as_str().is_some(),
+                "{field_name}[{i}].sha256 must be a string"
+            );
+        }
+    }
+}
+
+// ---------- value_at_path with single-element path ----------
+
+#[test]
+fn value_at_path_single_element_path() {
+    let val: Value = serde_json::json!({"top": "leaf"});
+    let result = value_at_path(&val, &["top"]);
+    assert_eq!(result.as_str(), Some("leaf"));
+}
+
+// ---------- contract doc minimum word count ----------
+
+#[test]
+fn contract_doc_has_minimum_word_count() {
+    let doc = read_file("docs/REPRODUCIBILITY_CONTRACT.md");
+    let word_count = doc.split_whitespace().count();
+    // The contract doc should be substantive — at least 200 words
+    assert!(
+        word_count >= 200,
+        "reproducibility contract doc must have at least 200 words, found {word_count}"
+    );
+}
+
+// ---------- all templates share consistent schema_hash format ----------
+
+#[test]
+fn all_templates_share_consistent_schema_hash_format() {
+    let template_paths = [
+        "docs/templates/env.json.template",
+        "docs/templates/manifest.json.template",
+        "docs/templates/repro.lock.template",
+    ];
+
+    let mut hash_prefixes = std::collections::BTreeSet::new();
+    for path in template_paths {
+        let val = parse_json_file(path);
+        let hash = value_at_path(&val, &["schema_hash"])
+            .as_str()
+            .unwrap_or_else(|| panic!("schema_hash must be a string in {path}"));
+        // Extract the prefix before the first colon (e.g., "sha256")
+        let prefix = hash.split(':').next().unwrap_or("");
+        hash_prefixes.insert(prefix.to_string());
+    }
+    // All templates should use the same hash algorithm prefix
+    assert_eq!(
+        hash_prefixes.len(),
+        1,
+        "all templates must use the same schema_hash prefix format, found: {hash_prefixes:?}"
+    );
+    // And it should be "sha256"
+    assert!(
+        hash_prefixes.contains("sha256"),
+        "schema_hash prefix must be sha256, found: {hash_prefixes:?}"
+    );
+}

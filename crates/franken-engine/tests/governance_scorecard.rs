@@ -496,11 +496,17 @@ fn error_display_contains_details() {
         detail: "cannot be empty".to_string(),
     };
     let s = err.to_string();
-    assert!(s.contains("trace_id") || s.contains("empty"), "should contain field info: {s}");
+    assert!(
+        s.contains("trace_id") || s.contains("empty"),
+        "should contain field info: {s}"
+    );
 
     let err2 = GovernanceScorecardError::LedgerWriteFailure("disk full".to_string());
     let s2 = err2.to_string();
-    assert!(s2.contains("disk") || s2.contains("ledger"), "should contain detail: {s2}");
+    assert!(
+        s2.contains("disk") || s2.contains("ledger"),
+        "should contain detail: {s2}"
+    );
 }
 
 #[test]
@@ -601,7 +607,10 @@ fn multiple_blockers_accumulate() {
 fn moonshot_governor_high_kill_rate_triggers_critical() {
     let mut request = baseline_request();
     request.moonshot_governor.governance_report.kill_count = 9;
-    request.moonshot_governor.governance_report.kill_rate_millionths = 900_000;
+    request
+        .moonshot_governor
+        .governance_report
+        .kill_rate_millionths = 900_000;
     request.moonshot_governor.killed_moonshots = 9;
 
     let mut governance_ledger = ledger();

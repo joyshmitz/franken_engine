@@ -517,7 +517,10 @@ fn parse_test_class_all_variants() {
     assert_eq!(parse_test_class("edge"), TestClass::Edge);
     assert_eq!(parse_test_class("adversarial"), TestClass::Adversarial);
     assert_eq!(parse_test_class("regression"), TestClass::Regression);
-    assert_eq!(parse_test_class("fault_injection"), TestClass::FaultInjection);
+    assert_eq!(
+        parse_test_class("fault_injection"),
+        TestClass::FaultInjection
+    );
 }
 
 #[test]

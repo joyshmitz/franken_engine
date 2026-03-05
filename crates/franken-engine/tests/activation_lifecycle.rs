@@ -425,7 +425,11 @@ fn rollout_phase_serde_roundtrip() {
 
 #[test]
 fn transition_trigger_serde_roundtrip() {
-    for trigger in [TransitionTrigger::Manual, TransitionTrigger::Auto, TransitionTrigger::CrashLoop] {
+    for trigger in [
+        TransitionTrigger::Manual,
+        TransitionTrigger::Auto,
+        TransitionTrigger::CrashLoop,
+    ] {
         let json = serde_json::to_string(&trigger).expect("serialize");
         let recovered: TransitionTrigger = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(recovered, trigger);
@@ -515,4 +519,85 @@ fn pre_activation_check_serde_roundtrip() {
     let json = serde_json::to_string(&check).expect("serialize");
     let recovered: PreActivationCheck = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered, check);
+}
+
+#[test]
+fn state_returns_none_for_unknown_component() {
+    let ctrl = make_controller();
+    assert_eq!(ctrl.state("nonexistent"), None);
+}
+
+#[test]
+fn active_count_starts_at_zero() {
+    let ctrl = make_controller();
+    assert_eq!(ctrl.active_count(), 0);
+}
+
+#[test]
+fn double_register_same_id_fails() {
+    let mut ctrl = make_controller();
+    ctrl.register(descriptor("ext-a", "1.0.0"), "t").unwrap();
+    let err = ctrl.register(descriptor("ext-a", "1.0.0"), "t").unwrap_err();
+    assert!(matches!(err, LifecycleError::ActivationValidationFailed { .. }));
+}
+
+#[test]
+fn deactivate_unknown_component_fails() {
+    let mut ctrl = make_controller();
+    let err = ctrl.deactivate("ghost", "t").unwrap_err();
+    assert!(matches!(err, LifecycleError::ComponentNotFound { .. }));
+}
+
+#[test]
+fn rollback_unknown_component_fails() {
+    let mut ctrl = make_controller();
+    let err = ctrl.rollback("ghost", "t").unwrap_err();
+    assert!(matches!(err, LifecycleError::ComponentNotFound { .. }));
+}
+
+#[test]
+fn known_good_returns_none_before_activation() {
+    let mut ctrl = make_controller();
+    ctrl.register(descriptor("ext-a", "1.0.0"), "t").unwrap();
+    assert!(ctrl.known_good("ext-a").is_none());
+}
+
+#[test]
+fn lifecycle_config_default_crash_threshold_is_three() {
+    let config = LifecycleConfig::default();
+    assert_eq!(config.crash_threshold, 3);
+}
+
+#[test]
+fn ephemeral_secret_key_name_is_accessible() {
+    let secret = EphemeralSecret::new("api_key", vec![1, 2, 3]);
+    assert_eq!(secret.key_name, "api_key");
+}
+
+#[test]
+fn pre_activation_check_debug_is_nonempty() {
+    let check = PreActivationCheck {
+        check_name: "sig".to_string(),
+        passed: true,
+        detail: "ok".to_string(),
+    };
+    assert!(!format!("{check:?}").is_empty());
+}
+
+#[test]
+fn rollout_phase_debug_is_nonempty() {
+    for phase in [
+        RolloutPhase::Shadow,
+        RolloutPhase::Canary,
+        RolloutPhase::Ramp,
+        RolloutPhase::Default,
+    ] {
+        assert!(!format!("{phase:?}").is_empty());
+    }
+}
+
+#[test]
+fn lifecycle_config_debug_is_nonempty() {
+    let config = LifecycleConfig::default();
+    assert!(!format!("{config:?}").is_empty());
 }

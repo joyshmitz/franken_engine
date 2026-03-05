@@ -413,3 +413,30 @@ fn governance_rationale_serde_roundtrip() {
     let recovered: GovernanceRationale = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.summary, "test rationale");
 }
+
+#[test]
+fn governance_decision_type_debug_is_nonempty() {
+    for dt in [
+        GovernanceDecisionType::Promote,
+        GovernanceDecisionType::Override,
+        GovernanceDecisionType::Pause,
+        GovernanceDecisionType::Resume,
+        GovernanceDecisionType::Hold,
+    ] {
+        assert!(!format!("{dt:?}").is_empty());
+    }
+}
+
+#[test]
+fn governance_actor_debug_is_nonempty() {
+    let actor = GovernanceActor::System("test-actor".to_string());
+    assert!(!format!("{actor:?}").is_empty());
+}
+
+#[test]
+fn governance_ledger_config_serde_roundtrip() {
+    let config = GovernanceLedgerConfig::default();
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: GovernanceLedgerConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(serde_json::to_string(&recovered).unwrap(), json);
+}

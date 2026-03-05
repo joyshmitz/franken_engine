@@ -1,7 +1,7 @@
 use frankenengine_engine::ts_normalization::{
-    CapabilityIntent, NormalizationDecision, NormalizationEvent, SourceMapEntry,
-    TsCompilerOptions, TsIngestionError, TsIngestionErrorCode, TsIngestionEvent,
-    TsNormalizationConfig, TsNormalizationError, TsNormalizationOutput, TsNormalizationWitness,
+    CapabilityIntent, NormalizationDecision, NormalizationEvent, SourceMapEntry, TsCompilerOptions,
+    TsIngestionError, TsIngestionErrorCode, TsIngestionEvent, TsNormalizationConfig,
+    TsNormalizationError, TsNormalizationOutput, TsNormalizationWitness,
     normalize_typescript_to_es2020,
 };
 
@@ -355,10 +355,7 @@ fn ts_normalization_config_default_is_constructible() {
     let config = TsNormalizationConfig::default();
     let json = serde_json::to_string(&config).expect("serialize");
     let recovered: TsNormalizationConfig = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(
-        serde_json::to_string(&recovered).unwrap(),
-        json
-    );
+    assert_eq!(serde_json::to_string(&recovered).unwrap(), json);
 }
 
 #[test]

@@ -410,7 +410,14 @@ fn test_lane_all_variants_serialize() {
 
 #[test]
 fn failure_taxonomy_all_variants_roundtrip() {
-    for taxonomy in [FailureTaxonomy::SchemaDrift, FailureTaxonomy::DeterminismDrift, FailureTaxonomy::InvariantViolation, FailureTaxonomy::Timeout, FailureTaxonomy::ResourceBudget, FailureTaxonomy::Unknown] {
+    for taxonomy in [
+        FailureTaxonomy::SchemaDrift,
+        FailureTaxonomy::DeterminismDrift,
+        FailureTaxonomy::InvariantViolation,
+        FailureTaxonomy::Timeout,
+        FailureTaxonomy::ResourceBudget,
+        FailureTaxonomy::Unknown,
+    ] {
         let json = serde_json::to_string(&taxonomy).expect("serialize");
         let recovered: FailureTaxonomy = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(recovered, taxonomy);
@@ -436,7 +443,11 @@ fn test_lane_all_variants_roundtrip() {
 
 #[test]
 fn failure_taxonomy_debug_is_nonempty() {
-    for taxonomy in [FailureTaxonomy::SchemaDrift, FailureTaxonomy::Timeout, FailureTaxonomy::Unknown] {
+    for taxonomy in [
+        FailureTaxonomy::SchemaDrift,
+        FailureTaxonomy::Timeout,
+        FailureTaxonomy::Unknown,
+    ] {
         let s = format!("{taxonomy:?}");
         assert!(!s.is_empty());
     }
@@ -449,4 +460,69 @@ fn validate_events_deterministic_for_single_event() {
     let b = validate_events(&[event]);
     assert_eq!(a.valid, b.valid);
     assert_eq!(a.outcome, b.outcome);
+}
+
+#[test]
+fn validate_events_empty_decision_id_fails() {
+    let mut event = baseline_event();
+    event.decision_id.clear();
+    let report = validate_events(&[event]);
+    assert!(!report.valid);
+    assert_eq!(report.outcome, "fail");
+}
+
+#[test]
+fn validate_events_empty_scenario_id_fails() {
+    let mut event = baseline_event();
+    event.scenario_id.clear();
+    let report = validate_events(&[event]);
+    assert!(!report.valid);
+}
+
+#[test]
+fn validate_events_empty_policy_id_fails() {
+    let mut event = baseline_event();
+    event.policy_id.clear();
+    let report = validate_events(&[event]);
+    assert!(!report.valid);
+}
+
+#[test]
+fn test_logging_failure_code_starts_with_fe() {
+    assert!(TEST_LOGGING_FAILURE_CODE.starts_with("FE-"));
+}
+
+#[test]
+fn baseline_event_has_positive_timing() {
+    let event = baseline_event();
+    assert!(event.timing_us > 0);
+    assert!(event.timestamp_unix_ms > 0);
+}
+
+#[test]
+fn schema_spec_default_serde_roundtrip() {
+    let spec = TestLoggingSchemaSpec::default();
+    let json = serde_json::to_string(&spec).expect("serialize");
+    let recovered: TestLoggingSchemaSpec = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.required_fields, spec.required_fields);
+}
+
+#[test]
+fn test_logging_schema_spec_debug_is_nonempty() {
+    let spec = TestLoggingSchemaSpec::default();
+    assert!(!format!("{spec:?}").is_empty());
+}
+
+#[test]
+fn test_log_event_debug_is_nonempty() {
+    let event = baseline_event();
+    assert!(!format!("{event:?}").is_empty());
+}
+
+#[test]
+fn failure_taxonomy_serde_is_deterministic() {
+    let tax = FailureTaxonomy::Unknown;
+    let a = serde_json::to_string(&tax).expect("first");
+    let b = serde_json::to_string(&tax).expect("second");
+    assert_eq!(a, b);
 }

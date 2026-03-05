@@ -258,18 +258,12 @@ fn atlas_entry_captures_consumed_contexts() {
         }],
     );
     let entry = atlas.entry("CtxPanel").expect("entry exists");
-    assert!(entry
-        .required_contexts
-        .contains(&"AuthContext".to_string()));
+    assert!(entry.required_contexts.contains(&"AuthContext".to_string()));
 }
 
 #[test]
 fn atlas_empty_inputs_creates_empty_atlas() {
-    let atlas = LocalSemanticAtlas::from_inputs(
-        SemanticContractVersion::CURRENT,
-        15,
-        Vec::new(),
-    );
+    let atlas = LocalSemanticAtlas::from_inputs(SemanticContractVersion::CURRENT, 15, Vec::new());
     assert_eq!(atlas.entries.len(), 0);
     assert_eq!(atlas.blocking_debt_count(), 0);
 }
@@ -306,11 +300,7 @@ fn atlas_generated_epoch_preserved() {
 
 #[test]
 fn atlas_bead_id_matches_constant() {
-    let atlas = LocalSemanticAtlas::from_inputs(
-        SemanticContractVersion::CURRENT,
-        1,
-        Vec::new(),
-    );
+    let atlas = LocalSemanticAtlas::from_inputs(SemanticContractVersion::CURRENT, 1, Vec::new());
     assert_eq!(atlas.bead_id, LOCAL_SEMANTIC_ATLAS_BEAD_ID);
 }
 
@@ -413,9 +403,11 @@ fn atlas_entry_captures_capability_requirements() {
         }],
     );
     let entry = atlas.entry("CapPanel").expect("entry");
-    assert!(entry
-        .capability_requirements
-        .contains(&"dom.mutate".to_string()));
+    assert!(
+        entry
+            .capability_requirements
+            .contains(&"dom.mutate".to_string())
+    );
 }
 
 // ---------- doc and script existence ----------
@@ -478,7 +470,11 @@ fn semantic_contract_version_display() {
 #[test]
 fn semantic_contract_version_compatibility() {
     let v0_1 = SemanticContractVersion::CURRENT;
-    let v0_2 = SemanticContractVersion { major: 0, minor: 2, patch: 0 };
+    let v0_2 = SemanticContractVersion {
+        major: 0,
+        minor: 2,
+        patch: 0,
+    };
     assert!(v0_2.is_compatible_with(&v0_1));
     assert!(!v0_1.is_compatible_with(&v0_2));
 }
@@ -516,11 +512,7 @@ fn atlas_validate_warnings_empty_for_valid() {
 
 #[test]
 fn atlas_validate_empty_atlas_warns() {
-    let atlas = LocalSemanticAtlas::from_inputs(
-        SemanticContractVersion::CURRENT,
-        1,
-        Vec::new(),
-    );
+    let atlas = LocalSemanticAtlas::from_inputs(SemanticContractVersion::CURRENT, 1, Vec::new());
     let v = atlas.validate();
     // Empty atlas has no blocking debt but may warn about no entries
     assert_eq!(v.entry_count, 0);
@@ -600,5 +592,9 @@ fn atlas_entry_provided_contexts_from_component() {
         }],
     );
     let entry = atlas.entry("ProviderPanel").expect("entry");
-    assert!(entry.provided_contexts.contains(&"ThemeContext".to_string()));
+    assert!(
+        entry
+            .provided_contexts
+            .contains(&"ThemeContext".to_string())
+    );
 }

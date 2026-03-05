@@ -689,8 +689,12 @@ fn is_forbidden_sqlite_dep_allows_unrelated() {
 
 #[test]
 fn adapter_allowed_path_matches() {
-    assert!(is_adapter_allowed_path("crates/franken-engine/src/storage_adapter.rs"));
-    assert!(!is_adapter_allowed_path("crates/franken-engine/src/something.rs"));
+    assert!(is_adapter_allowed_path(
+        "crates/franken-engine/src/storage_adapter.rs"
+    ));
+    assert!(!is_adapter_allowed_path(
+        "crates/franken-engine/src/something.rs"
+    ));
 }
 
 // ---------- matches_pattern ----------
@@ -743,7 +747,12 @@ fn sqlite_report_jsonl_is_parseable() {
 fn sqlite_evaluate_guard_empty_passes() {
     let report = evaluate_guard(&[], &[], &[]);
     assert!(report.violations.is_empty());
-    assert!(report.events.iter().any(|e| e.event == "guard_summary" && e.outcome == "pass"));
+    assert!(
+        report
+            .events
+            .iter()
+            .any(|e| e.event == "guard_summary" && e.outcome == "pass")
+    );
 }
 
 #[test]

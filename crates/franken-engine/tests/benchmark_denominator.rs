@@ -497,19 +497,35 @@ fn publication_gate_input_serde_round_trip() {
     let json = serde_json::to_string(&input).expect("serialize");
     let recovered: PublicationGateInput = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(input.node_cases.len(), recovered.node_cases.len());
-    assert_eq!(input.replacement_lineage_ids, recovered.replacement_lineage_ids);
+    assert_eq!(
+        input.replacement_lineage_ids,
+        recovered.replacement_lineage_ids
+    );
 }
 
 #[test]
 fn benchmark_error_display_all_unique() {
     let errors: Vec<String> = vec![
-        BenchmarkDenominatorError::EmptyCaseSet { baseline: "node".to_string() },
+        BenchmarkDenominatorError::EmptyCaseSet {
+            baseline: "node".to_string(),
+        },
         BenchmarkDenominatorError::MissingCoverageProgression,
         BenchmarkDenominatorError::MissingReplacementLineage,
-        BenchmarkDenominatorError::InvalidWeightSum { baseline: "node".to_string(), sum: 1.5 },
-        BenchmarkDenominatorError::EmptyWorkloadId { baseline: "node".to_string() },
-        BenchmarkDenominatorError::DuplicateWorkloadId { baseline: "node".to_string(), workload_id: "w".to_string() },
-        BenchmarkDenominatorError::InvalidThroughput { workload_id: "w".to_string(), field: "throughput_franken_tps".to_string() },
+        BenchmarkDenominatorError::InvalidWeightSum {
+            baseline: "node".to_string(),
+            sum: 1.5,
+        },
+        BenchmarkDenominatorError::EmptyWorkloadId {
+            baseline: "node".to_string(),
+        },
+        BenchmarkDenominatorError::DuplicateWorkloadId {
+            baseline: "node".to_string(),
+            workload_id: "w".to_string(),
+        },
+        BenchmarkDenominatorError::InvalidThroughput {
+            workload_id: "w".to_string(),
+            field: "throughput_franken_tps".to_string(),
+        },
     ]
     .into_iter()
     .map(|e| e.to_string())
@@ -522,7 +538,8 @@ fn benchmark_error_display_all_unique() {
 
 #[test]
 fn benchmark_error_is_std_error() {
-    let err: Box<dyn std::error::Error> = Box::new(BenchmarkDenominatorError::MissingCoverageProgression);
+    let err: Box<dyn std::error::Error> =
+        Box::new(BenchmarkDenominatorError::MissingCoverageProgression);
     assert!(!err.to_string().is_empty());
 }
 
@@ -539,5 +556,8 @@ fn weighted_geometric_mean_negative_throughput_rejected() {
     };
     let err = weighted_geometric_mean(&[bad], BaselineEngine::Node)
         .expect_err("negative throughput should fail");
-    assert!(matches!(err, BenchmarkDenominatorError::InvalidThroughput { .. }));
+    assert!(matches!(
+        err,
+        BenchmarkDenominatorError::InvalidThroughput { .. }
+    ));
 }

@@ -5,8 +5,7 @@ use version_matrix_lane::{
     BoundaryMatrixSpec, FailureScopeKind, MatrixCellResult, MatrixFailureScope,
     MatrixHealthSummary, MatrixLaneKind, MatrixOutcome, PinnedVersionCombination,
     VersionMatrixCell, VersionMatrixError, VersionMatrixPlan, VersionSlots, VersionSource,
-    classify_failure_scopes, derive_version_matrix, derive_version_slots,
-    summarize_matrix_health,
+    classify_failure_scopes, derive_version_matrix, derive_version_slots, summarize_matrix_health,
 };
 
 fn sample_spec() -> BoundaryMatrixSpec {
@@ -292,7 +291,10 @@ fn matrix_outcome_serde_roundtrip() {
 
 #[test]
 fn failure_scope_kind_serde_roundtrip() {
-    for kind in [FailureScopeKind::Universal, FailureScopeKind::VersionSpecific] {
+    for kind in [
+        FailureScopeKind::Universal,
+        FailureScopeKind::VersionSpecific,
+    ] {
         let json = serde_json::to_string(&kind).expect("serialize");
         let recovered: FailureScopeKind = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(recovered, kind);
@@ -324,11 +326,7 @@ fn derive_version_matrix_empty_specs_produces_empty_cells() {
 #[test]
 fn pinned_combination_appears_in_matrix() {
     let plan = derive_version_matrix(&[sample_spec()]).expect("derive matrix");
-    let pinned_cells: Vec<_> = plan
-        .cells
-        .iter()
-        .filter(|cell| cell.pinned)
-        .collect();
+    let pinned_cells: Vec<_> = plan.cells.iter().filter(|cell| cell.pinned).collect();
     assert_eq!(pinned_cells.len(), 1);
     assert_eq!(pinned_cells[0].local_version, "1.4.0");
     assert_eq!(pinned_cells[0].remote_version, "2.1.5");
@@ -514,8 +512,8 @@ fn version_matrix_plan_serde_roundtrip() {
 
 #[test]
 fn version_slots_serde_roundtrip() {
-    let slots = derive_version_slots(&sample_spec().local_versions, "test-repo")
-        .expect("derive slots");
+    let slots =
+        derive_version_slots(&sample_spec().local_versions, "test-repo").expect("derive slots");
     let json = serde_json::to_string(&slots).expect("serialize");
     let recovered: VersionSlots = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.current, slots.current);

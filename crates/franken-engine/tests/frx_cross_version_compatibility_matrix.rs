@@ -232,7 +232,11 @@ fn projection_from_tags_deduplicates_case_ids() {
     let projection = projection_from_tags(&matrix.cases, |c| &c.test_selector_tags);
     for case_ids in projection.values() {
         let set: BTreeSet<_> = case_ids.iter().collect();
-        assert_eq!(set.len(), case_ids.len(), "case IDs should be unique per tag");
+        assert_eq!(
+            set.len(),
+            case_ids.len(),
+            "case IDs should be unique per tag"
+        );
     }
 }
 
@@ -319,7 +323,10 @@ fn all_cases_use_declared_compatibility_routes() {
     let matrix = parse_matrix();
     for case in &matrix.cases {
         assert!(
-            matrix.dimensions.compatibility_routes.contains(&case.compatibility_route),
+            matrix
+                .dimensions
+                .compatibility_routes
+                .contains(&case.compatibility_route),
             "case {} uses undeclared route: {}",
             case.case_id,
             case.compatibility_route
@@ -400,4 +407,27 @@ fn matrix_cases_have_unique_case_ids() {
             case.case_id
         );
     }
+}
+
+#[test]
+fn matrix_has_nonempty_policy_id() {
+    let matrix = parse_matrix();
+    assert!(!matrix.policy_id.trim().is_empty());
+}
+
+#[test]
+fn matrix_dimensions_have_nonempty_react_versions() {
+    let matrix = parse_matrix();
+    assert!(!matrix.dimensions.react_versions.is_empty());
+    for version in &matrix.dimensions.react_versions {
+        assert!(!version.trim().is_empty());
+    }
+}
+
+#[test]
+fn matrix_deterministic_double_parse() {
+    let a = parse_matrix();
+    let b = parse_matrix();
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.cases.len(), b.cases.len());
 }

@@ -386,7 +386,10 @@ fn decision_serde_roundtrip() {
     assert_eq!(decision.report_id, recovered.report_id);
     assert_eq!(decision.outcome, recovered.outcome);
     assert_eq!(decision.blocked, recovered.blocked);
-    assert_eq!(decision.workload_reports.len(), recovered.workload_reports.len());
+    assert_eq!(
+        decision.workload_reports.len(),
+        recovered.workload_reports.len()
+    );
 }
 
 #[test]
@@ -401,12 +404,7 @@ fn revoked_attribution_blocks_publication() {
     request.proof_attribution[0].revoked = true;
     let decision = run_constrained_ambient_benchmark_lane(&request);
     assert!(decision.blocked);
-    assert!(
-        decision
-            .blockers
-            .iter()
-            .any(|b| b.contains("revoked"))
-    );
+    assert!(decision.blockers.iter().any(|b| b.contains("revoked")));
 }
 
 #[test]

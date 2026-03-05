@@ -436,10 +436,7 @@ fn build_fixture_labels_are_valid_toml() {
         .join("benign/echo_read/workload_label.toml");
     let content = fs::read_to_string(&benign_label).unwrap();
     let parsed: toml::Value = toml::from_str(&content).expect("valid toml");
-    assert_eq!(
-        parsed["workload_id"].as_str(),
-        Some("benign-echo-read")
-    );
+    assert_eq!(parsed["workload_id"].as_str(), Some("benign-echo-read"));
 }
 
 // ---------- fixture observations are valid JSON ----------
@@ -460,10 +457,12 @@ fn build_fixture_observations_are_valid_json() {
 fn build_fixture_policy_hash_has_correct_length() {
     let fixture = build_fixture();
     assert_eq!(fixture.policy_snapshot_hash.len(), 64);
-    assert!(fixture
-        .policy_snapshot_hash
-        .chars()
-        .all(|c| c.is_ascii_hexdigit()));
+    assert!(
+        fixture
+            .policy_snapshot_hash
+            .chars()
+            .all(|c| c.is_ascii_hexdigit())
+    );
 }
 
 #[test]
@@ -485,4 +484,36 @@ fn sha256_hex_distinct_inputs_produce_distinct_hashes() {
     let a = sha256_hex(b"input-alpha");
     let b = sha256_hex(b"input-beta");
     assert_ne!(a, b);
+}
+
+#[test]
+fn build_fixture_malicious_label_is_valid_toml() {
+    let fixture = build_fixture();
+    let malicious_label = fixture
+        .labels_root
+        .join("malicious/credential_exfil/workload_label.toml");
+    let content = fs::read_to_string(&malicious_label).unwrap();
+    let parsed: toml::Value = toml::from_str(&content).expect("valid toml");
+    assert_eq!(
+        parsed["workload_id"].as_str(),
+        Some("malicious-credential-exfil")
+    );
+}
+
+#[test]
+fn sha256_hex_is_lowercase_hex_only() {
+    let hash = sha256_hex(b"lowercase check");
+    assert!(
+        hash.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    );
+}
+
+#[test]
+fn write_file_overwrites_existing_content() {
+    let guard = TestTempDir::new("overwrite-test");
+    let path = guard.path.join("overwrite.txt");
+    write_file(&path, "first");
+    write_file(&path, "second");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "second");
 }

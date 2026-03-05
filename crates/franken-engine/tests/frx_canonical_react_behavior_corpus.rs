@@ -588,7 +588,10 @@ fn fixtures_dir_exists_and_contains_json_files() {
     let dir = fixtures_dir();
     assert!(dir.is_dir(), "fixtures directory must exist");
     let files = list_json_files(&dir, ".fixture.json");
-    assert!(!files.is_empty(), "fixtures directory must contain fixture files");
+    assert!(
+        !files.is_empty(),
+        "fixtures directory must contain fixture files"
+    );
 }
 
 #[test]
@@ -596,7 +599,10 @@ fn traces_dir_exists_and_contains_trace_files() {
     let dir = traces_dir();
     assert!(dir.is_dir(), "traces directory must exist");
     let files = list_json_files(&dir, ".trace.json");
-    assert!(!files.is_empty(), "traces directory must contain trace files");
+    assert!(
+        !files.is_empty(),
+        "traces directory must contain trace files"
+    );
 }
 
 #[test]

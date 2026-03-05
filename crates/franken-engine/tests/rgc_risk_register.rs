@@ -395,3 +395,165 @@ fn rgc_013_register_deterministic_double_parse() {
     let b = parse_risk_register();
     assert_eq!(a, b);
 }
+
+// ---------- additional enrichment tests ----------
+
+#[test]
+fn rgc_013_schema_version_follows_dotted_format() {
+    let register = parse_risk_register();
+    let parts: Vec<&str> = register.schema_version.split('.').collect();
+    assert!(
+        parts.len() >= 3,
+        "schema_version should have at least 3 dot-separated segments, got: {}",
+        register.schema_version
+    );
+    for part in &parts {
+        assert!(
+            !part.trim().is_empty(),
+            "schema_version segment must not be empty"
+        );
+    }
+}
+
+#[test]
+fn rgc_013_risk_likelihood_and_impact_are_within_bounds() {
+    let register = parse_risk_register();
+    for risk in &register.risks {
+        assert!(
+            (1..=5).contains(&risk.likelihood),
+            "{} likelihood {} not in 1..=5",
+            risk.risk_id,
+            risk.likelihood
+        );
+        assert!(
+            (1..=5).contains(&risk.impact),
+            "{} impact {} not in 1..=5",
+            risk.risk_id,
+            risk.impact
+        );
+    }
+}
+
+#[test]
+fn rgc_013_mitigation_beads_contain_no_duplicates_per_risk() {
+    let register = parse_risk_register();
+    for risk in &register.risks {
+        let mut seen = BTreeSet::new();
+        for bead in &risk.mitigation_beads {
+            assert!(
+                seen.insert(bead),
+                "risk {} has duplicate mitigation_bead: {}",
+                risk.risk_id,
+                bead
+            );
+        }
+    }
+}
+
+#[test]
+fn rgc_013_milestones_pending_contain_no_duplicates_per_risk() {
+    let register = parse_risk_register();
+    for risk in &register.risks {
+        let mut seen = BTreeSet::new();
+        for milestone in &risk.milestones_pending {
+            assert!(
+                seen.insert(milestone),
+                "risk {} has duplicate milestone_pending: {}",
+                risk.risk_id,
+                milestone
+            );
+        }
+    }
+}
+
+#[test]
+fn rgc_013_operator_verification_commands_contain_no_duplicates() {
+    let register = parse_risk_register();
+    let mut seen = BTreeSet::new();
+    for cmd in &register.operator_verification {
+        assert!(
+            seen.insert(cmd),
+            "duplicate operator_verification command: {}",
+            cmd
+        );
+    }
+}
+
+#[test]
+fn rgc_013_review_cadence_values_are_nonempty() {
+    let register = parse_risk_register();
+    for review in &register.review_policy.milestone_reviews {
+        assert!(
+            !review.cadence.trim().is_empty(),
+            "milestone {} has empty cadence",
+            review.milestone
+        );
+    }
+}
+
+#[test]
+fn rgc_013_all_rollback_plans_are_nonempty() {
+    let register = parse_risk_register();
+    for risk in &register.risks {
+        assert!(
+            !risk.rollback_plan.trim().is_empty(),
+            "risk {} has empty rollback_plan",
+            risk.risk_id
+        );
+    }
+}
+
+#[test]
+fn rgc_013_all_mitigation_summaries_are_nonempty() {
+    let register = parse_risk_register();
+    for risk in &register.risks {
+        assert!(
+            !risk.mitigation_summary.trim().is_empty(),
+            "risk {} has empty mitigation_summary",
+            risk.risk_id
+        );
+    }
+}
+
+#[test]
+fn rgc_013_medium_and_low_risks_have_valid_scores() {
+    let register = parse_risk_register();
+    for risk in &register.risks {
+        let score = risk.likelihood as u16 * risk.impact as u16;
+        if risk.risk_level == "low" {
+            assert!(
+                score <= 25,
+                "{} marked low but score {} exceeds max of 25",
+                risk.risk_id,
+                score
+            );
+        }
+        if risk.risk_level == "medium" {
+            assert!(
+                score <= 25,
+                "{} marked medium but score {} exceeds max of 25",
+                risk.risk_id,
+                score
+            );
+        }
+    }
+}
+
+#[test]
+fn rgc_013_last_reviewed_utc_and_next_review_due_utc_end_with_z() {
+    let register = parse_risk_register();
+    for risk in &register.risks {
+        assert!(
+            risk.last_reviewed_utc.ends_with('Z'),
+            "risk {} last_reviewed_utc does not end with Z: {}",
+            risk.risk_id,
+            risk.last_reviewed_utc
+        );
+        assert!(
+            risk.next_review_due_utc.ends_with('Z'),
+            "risk {} next_review_due_utc does not end with Z: {}",
+            risk.risk_id,
+            risk.next_review_due_utc
+        );
+    }
+}

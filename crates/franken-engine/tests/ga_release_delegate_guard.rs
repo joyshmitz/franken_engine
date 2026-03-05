@@ -368,8 +368,14 @@ fn ga_signed_lineage_artifact_serde_round_trip() {
     let json = serde_json::to_string(&artifact).expect("serialize");
     let recovered: GaSignedLineageArtifact = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(artifact.slot_id, recovered.slot_id);
-    assert_eq!(artifact.former_delegate_digest, recovered.former_delegate_digest);
-    assert_eq!(artifact.replacement_component_digest, recovered.replacement_component_digest);
+    assert_eq!(
+        artifact.former_delegate_digest,
+        recovered.former_delegate_digest
+    );
+    assert_eq!(
+        artifact.replacement_component_digest,
+        recovered.replacement_component_digest
+    );
     assert!(recovered.signature_verified);
     assert!(recovered.equivalence_passed);
 }
@@ -392,7 +398,10 @@ fn slot_registry_new_is_empty() {
     let registry = SlotRegistry::new();
     let json = serde_json::to_string(&registry).expect("serialize");
     let recovered: SlotRegistry = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(json, serde_json::to_string(&recovered).expect("re-serialize"));
+    assert_eq!(
+        json,
+        serde_json::to_string(&recovered).expect("re-serialize")
+    );
 }
 
 #[test]
@@ -428,7 +437,11 @@ fn slot_id_serde_round_trip() {
 
 #[test]
 fn slot_kind_serde_roundtrip() {
-    for kind in [SlotKind::Parser, SlotKind::IrLowering, SlotKind::Interpreter] {
+    for kind in [
+        SlotKind::Parser,
+        SlotKind::IrLowering,
+        SlotKind::Interpreter,
+    ] {
         let json = serde_json::to_string(&kind).expect("serialize");
         let recovered: SlotKind = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(recovered, kind);
@@ -450,4 +463,25 @@ fn slot_registry_error_display_is_nonempty() {
     };
     let msg = format!("{err}");
     assert!(!msg.trim().is_empty());
+}
+
+#[test]
+fn ga_release_guard_verdict_debug_is_nonempty() {
+    let verdict = GaReleaseGuardVerdict::Pass;
+    let debug = format!("{verdict:?}");
+    assert!(!debug.trim().is_empty());
+}
+
+#[test]
+fn slot_capability_debug_is_nonempty() {
+    let cap = SlotCapability::ReadSource;
+    let debug = format!("{cap:?}");
+    assert!(!debug.trim().is_empty());
+}
+
+#[test]
+fn authority_envelope_debug_is_nonempty() {
+    let authority = test_authority();
+    let debug = format!("{authority:?}");
+    assert!(!debug.trim().is_empty());
 }

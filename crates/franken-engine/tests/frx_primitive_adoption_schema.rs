@@ -178,7 +178,12 @@ fn primitive_tier_requires_reuse_scan_for_s_and_a() {
 
 #[test]
 fn primitive_tier_serde_roundtrip() {
-    for tier in [PrimitiveTier::S, PrimitiveTier::A, PrimitiveTier::B, PrimitiveTier::C] {
+    for tier in [
+        PrimitiveTier::S,
+        PrimitiveTier::A,
+        PrimitiveTier::B,
+        PrimitiveTier::C,
+    ] {
         let json = serde_json::to_string(&tier).expect("serialize");
         let recovered: PrimitiveTier = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(recovered, tier);
@@ -216,7 +221,10 @@ fn a_tier_requires_reuse_scan_for_activation() {
     record.reuse_scan = None;
 
     let err = record.validate_for_activation().unwrap_err();
-    assert_eq!(err, PrimitiveAdoptionValidationError::MissingReuseScanOutcome);
+    assert_eq!(
+        err,
+        PrimitiveAdoptionValidationError::MissingReuseScanOutcome
+    );
 }
 
 #[test]
@@ -358,8 +366,7 @@ fn validation_error_codes_are_unique() {
             field: "y".to_string(),
         },
     ];
-    let codes: std::collections::BTreeSet<&str> =
-        errors.iter().map(|e| e.error_code()).collect();
+    let codes: std::collections::BTreeSet<&str> = errors.iter().map(|e| e.error_code()).collect();
     assert_eq!(codes.len(), errors.len());
 }
 

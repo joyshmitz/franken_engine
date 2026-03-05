@@ -582,7 +582,9 @@ fn dependency_section_recognizes_standard_sections() {
     assert!(dependency_section("dev-dependencies"));
     assert!(dependency_section("build-dependencies"));
     assert!(dependency_section("workspace.dependencies"));
-    assert!(dependency_section("target.x86_64-unknown-linux-gnu.dependencies"));
+    assert!(dependency_section(
+        "target.x86_64-unknown-linux-gnu.dependencies"
+    ));
 }
 
 #[test]
@@ -646,13 +648,19 @@ fn is_forbidden_tui_dependency_allows_unrelated() {
 
 #[test]
 fn is_blocked_local_tui_module_blocks_tui_in_src() {
-    assert!(is_blocked_local_tui_module("crates/foo/src/tui_dashboard.rs"));
-    assert!(is_blocked_local_tui_module("crates/bar/src/ratatui_adapter.rs"));
+    assert!(is_blocked_local_tui_module(
+        "crates/foo/src/tui_dashboard.rs"
+    ));
+    assert!(is_blocked_local_tui_module(
+        "crates/bar/src/ratatui_adapter.rs"
+    ));
 }
 
 #[test]
 fn is_blocked_local_tui_module_allows_frankentui() {
-    assert!(!is_blocked_local_tui_module("crates/frankentui/src/main.rs"));
+    assert!(!is_blocked_local_tui_module(
+        "crates/frankentui/src/main.rs"
+    ));
 }
 
 #[test]
@@ -717,7 +725,12 @@ fn policy_guard_report_as_jsonl_is_parseable() {
 fn evaluate_guard_empty_inputs_passes() {
     let report = evaluate_guard(&[], &[], &[]);
     assert!(report.violations.is_empty());
-    assert!(report.events.iter().any(|e| e.event == "guard_summary" && e.outcome == "pass"));
+    assert!(
+        report
+            .events
+            .iter()
+            .any(|e| e.event == "guard_summary" && e.outcome == "pass")
+    );
 }
 
 #[test]

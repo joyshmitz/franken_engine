@@ -699,3 +699,24 @@ fn operator_verification_includes_ci_command() {
             .any(|entry| entry.contains("run_frx_end_to_end_scenario_matrix_suite.sh ci")),
     );
 }
+
+#[test]
+fn contract_has_nonempty_bead_id() {
+    let contract = parse_contract();
+    assert!(!contract.bead_id.trim().is_empty());
+}
+
+#[test]
+fn contract_has_nonempty_generated_by() {
+    let contract = parse_contract();
+    assert!(!contract.generated_by.trim().is_empty());
+}
+
+#[test]
+fn contract_deterministic_double_parse() {
+    let a = parse_contract();
+    let b = parse_contract();
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.bead_id, b.bead_id);
+    assert_eq!(a.scenario_catalog.len(), b.scenario_catalog.len());
+}

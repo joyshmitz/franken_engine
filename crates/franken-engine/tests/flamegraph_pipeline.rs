@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use frankenengine_engine::flamegraph_pipeline::{
-    FlamegraphArtifact, FlamegraphKind, FlamegraphPipelineRequest, FlamegraphQuery,
-    FLAMEGRAPH_SCHEMA_VERSION, FLAMEGRAPH_STORAGE_INTEGRATION_POINT, query_flamegraph_artifacts,
+    FLAMEGRAPH_SCHEMA_VERSION, FLAMEGRAPH_STORAGE_INTEGRATION_POINT, FlamegraphArtifact,
+    FlamegraphKind, FlamegraphPipelineRequest, FlamegraphQuery, query_flamegraph_artifacts,
     run_flamegraph_pipeline, validate_flamegraph_artifact,
 };
 use frankenengine_engine::storage_adapter::{
@@ -295,8 +295,7 @@ fn no_baseline_produces_two_artifacts_cpu_and_allocation() {
     assert_eq!(decision.artifacts.len(), 2);
     assert_eq!(decision.store_keys.len(), 2);
 
-    let kinds: BTreeSet<FlamegraphKind> =
-        decision.artifacts.iter().map(|a| a.kind).collect();
+    let kinds: BTreeSet<FlamegraphKind> = decision.artifacts.iter().map(|a| a.kind).collect();
     assert!(kinds.contains(&FlamegraphKind::Cpu));
     assert!(kinds.contains(&FlamegraphKind::Allocation));
     assert!(!kinds.contains(&FlamegraphKind::DiffCpu));
@@ -478,11 +477,7 @@ fn total_samples_equals_sum_of_folded_stack_counts() {
     assert!(decision.is_success());
 
     for artifact in &decision.artifacts {
-        let sum: u64 = artifact
-            .folded_stacks
-            .iter()
-            .map(|s| s.sample_count)
-            .sum();
+        let sum: u64 = artifact.folded_stacks.iter().map(|s| s.sample_count).sum();
         assert_eq!(
             artifact.total_samples, sum,
             "total_samples mismatch for {:?}",
@@ -523,8 +518,14 @@ fn svg_contains_rect_and_text_elements() {
     assert!(decision.is_success());
 
     for artifact in &decision.artifacts {
-        assert!(artifact.svg.contains("<rect"), "SVG must contain <rect elements");
-        assert!(artifact.svg.contains("<text"), "SVG must contain <text elements");
+        assert!(
+            artifact.svg.contains("<rect"),
+            "SVG must contain <rect elements"
+        );
+        assert!(
+            artifact.svg.contains("<text"),
+            "SVG must contain <text elements"
+        );
     }
 }
 
@@ -771,11 +772,7 @@ fn event_sequence_contains_started_parsed_generated_stored_completed() {
     let decision = run_flamegraph_pipeline(&mut adapter, &request);
     assert!(decision.is_success());
 
-    let event_types: Vec<&str> = decision
-        .events
-        .iter()
-        .map(|e| e.event.as_str())
-        .collect();
+    let event_types: Vec<&str> = decision.events.iter().map(|e| e.event.as_str()).collect();
     assert!(
         event_types.contains(&"pipeline_started"),
         "events: {event_types:?}"
@@ -784,10 +781,7 @@ fn event_sequence_contains_started_parsed_generated_stored_completed() {
     assert!(event_types.contains(&"flamegraph_stored"));
 
     // completed must be last
-    assert_eq!(
-        decision.events.last().unwrap().event,
-        "pipeline_completed"
-    );
+    assert_eq!(decision.events.last().unwrap().event, "pipeline_completed");
 }
 
 #[test]

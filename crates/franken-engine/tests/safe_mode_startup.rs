@@ -442,8 +442,7 @@ fn safe_mode_startup_input_serde_roundtrip() {
         environment: BTreeMap::from([("KEY".to_string(), "VALUE".to_string())]),
     };
     let json = serde_json::to_string(&input).expect("serialize");
-    let recovered: SafeModeStartupInput =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: SafeModeStartupInput = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.trace_id, input.trace_id);
     assert_eq!(recovered.cli_safe_mode, input.cli_safe_mode);
 }
@@ -459,8 +458,7 @@ fn safe_mode_exit_check_input_serde_roundtrip() {
         evidence_ledger_flushed: true,
     };
     let json = serde_json::to_string(&input).expect("serialize");
-    let recovered: SafeModeExitCheckInput =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: SafeModeExitCheckInput = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.trace_id, input.trace_id);
     assert_eq!(recovered.active_incidents, 0);
 }
@@ -524,5 +522,44 @@ fn multiple_blocking_reasons_accumulate() {
     })
     .expect("exit artifact");
     assert!(!exit.can_exit);
-    assert!(exit.blocking_reasons.len() >= 3, "all 3 blockers should be reported");
+    assert!(
+        exit.blocking_reasons.len() >= 3,
+        "all 3 blockers should be reported"
+    );
+}
+
+#[test]
+fn safe_mode_startup_source_debug_is_nonempty() {
+    for source in [
+        SafeModeStartupSource::CliFlag,
+        SafeModeStartupSource::EnvironmentVariable,
+        SafeModeStartupSource::NotRequested,
+    ] {
+        assert!(!format!("{source:?}").is_empty());
+    }
+}
+
+#[test]
+fn safe_mode_startup_input_debug_is_nonempty() {
+    let input = SafeModeStartupInput {
+        trace_id: "trace-dbg".to_string(),
+        decision_id: "decision-dbg".to_string(),
+        policy_id: "policy-dbg".to_string(),
+        cli_safe_mode: false,
+        environment: BTreeMap::new(),
+    };
+    assert!(!format!("{input:?}").is_empty());
+}
+
+#[test]
+fn safe_mode_exit_check_input_debug_is_nonempty() {
+    let input = SafeModeExitCheckInput {
+        trace_id: "trace-dbg-exit".to_string(),
+        decision_id: "decision-dbg-exit".to_string(),
+        policy_id: "policy-dbg-exit".to_string(),
+        active_incidents: 0,
+        pending_quarantines: 0,
+        evidence_ledger_flushed: true,
+    };
+    assert!(!format!("{input:?}").is_empty());
 }

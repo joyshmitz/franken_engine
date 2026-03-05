@@ -551,7 +551,10 @@ fn cell_error_budget_exhausted_contains_values() {
         remaining_ms: 50,
     };
     let s = e.to_string();
-    assert!(s.contains("100") || s.contains("50") || s.contains("budget"), "should contain budget info: {s}");
+    assert!(
+        s.contains("100") || s.contains("50") || s.contains("budget"),
+        "should contain budget info: {s}"
+    );
 }
 
 #[test]
@@ -613,7 +616,10 @@ fn cell_error_cx_threading_contains_message() {
 fn cell_kind_display_non_empty() {
     for k in [CellKind::Extension, CellKind::Session, CellKind::Delegate] {
         let s = k.to_string();
-        assert!(!s.is_empty(), "CellKind display should not be empty for {k:?}");
+        assert!(
+            !s.is_empty(),
+            "CellKind display should not be empty for {k:?}"
+        );
     }
 }
 

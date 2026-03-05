@@ -221,7 +221,9 @@ fn track_c_contract_has_generated_at_utc() {
     let path = repo_root().join("docs/frx_track_c_js_runtime_lane_mvp_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    let ts = value["generated_at_utc"].as_str().expect("generated_at_utc");
+    let ts = value["generated_at_utc"]
+        .as_str()
+        .expect("generated_at_utc");
     assert!(ts.ends_with('Z'));
 }
 
@@ -238,7 +240,11 @@ fn track_c_contract_has_primary_bead() {
     let path = repo_root().join("docs/frx_track_c_js_runtime_lane_mvp_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    assert!(value["primary_bead"].as_str().is_some_and(|s| !s.is_empty()));
+    assert!(
+        value["primary_bead"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+    );
 }
 
 #[test]
@@ -262,7 +268,11 @@ fn track_c_contract_has_generated_by() {
     let path = repo_root().join("docs/frx_track_c_js_runtime_lane_mvp_sprint_v1.json");
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
-    assert!(value["generated_by"].as_str().is_some_and(|s| !s.is_empty()));
+    assert!(
+        value["generated_by"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+    );
 }
 
 #[test]
@@ -287,4 +297,24 @@ fn track_c_contract_deterministic_double_parse() {
     let a: Value = serde_json::from_str(&raw).expect("parse 1");
     let b: Value = serde_json::from_str(&raw).expect("parse 2");
     assert_eq!(a, b);
+}
+
+#[test]
+fn track_c_charter_doc_file_exists() {
+    let path = repo_root().join("docs/FRX_TRACK_C_JS_RUNTIME_LANE_MVP_SPRINT_V1.md");
+    assert!(path.exists());
+}
+
+#[test]
+fn track_c_contract_json_file_exists() {
+    let path = repo_root().join("docs/frx_track_c_js_runtime_lane_mvp_sprint_v1.json");
+    assert!(path.exists());
+}
+
+#[test]
+fn track_c_contract_has_logging_contract() {
+    let path = repo_root().join("docs/frx_track_c_js_runtime_lane_mvp_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value["logging_contract"].is_object());
 }

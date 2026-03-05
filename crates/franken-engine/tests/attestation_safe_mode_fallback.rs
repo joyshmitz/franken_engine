@@ -444,7 +444,11 @@ fn multiple_degraded_actions_accumulate_pending_decisions() {
 
 #[test]
 fn action_tier_serde_round_trip() {
-    for tier in [ActionTier::LowImpact, ActionTier::Standard, ActionTier::HighImpact] {
+    for tier in [
+        ActionTier::LowImpact,
+        ActionTier::Standard,
+        ActionTier::HighImpact,
+    ] {
         let json = serde_json::to_string(&tier).expect("serialize");
         let recovered: ActionTier = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(tier, recovered);
@@ -527,7 +531,11 @@ fn attestation_health_debug_is_nonempty() {
 
 #[test]
 fn action_tier_debug_is_nonempty() {
-    for tier in [ActionTier::LowImpact, ActionTier::Standard, ActionTier::HighImpact] {
+    for tier in [
+        ActionTier::LowImpact,
+        ActionTier::Standard,
+        ActionTier::HighImpact,
+    ] {
         assert!(!format!("{tier:?}").is_empty());
     }
 }

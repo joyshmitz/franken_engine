@@ -382,9 +382,7 @@ fn pipeline_rejects_empty_revocation_reason() {
     let mut pipeline = build_pipeline();
     let witness = build_promoted_witness(301, &synthesizer_key);
     let witness_id = witness.witness_id.clone();
-    pipeline
-        .publish_witness(witness, 800_000)
-        .expect("publish");
+    pipeline.publish_witness(witness, 800_000).expect("publish");
 
     let result = pipeline.revoke_witness(&witness_id, "", 900_000);
     assert!(matches!(
@@ -562,8 +560,7 @@ fn witness_publication_event_serde_roundtrip() {
 
     let event = &pipeline.events()[0];
     let json = serde_json::to_string(event).expect("serialize");
-    let recovered: WitnessPublicationEvent =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: WitnessPublicationEvent = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.event, event.event);
     assert_eq!(recovered.outcome, event.outcome);
 }
@@ -578,8 +575,7 @@ fn witness_publication_query_serde_roundtrip() {
         include_revoked: false,
     };
     let json = serde_json::to_string(&query).expect("serialize");
-    let recovered: WitnessPublicationQuery =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: WitnessPublicationQuery = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.include_revoked, false);
     assert!(recovered.extension_id.is_some());
     assert!(recovered.epoch.is_some());
@@ -587,10 +583,7 @@ fn witness_publication_query_serde_roundtrip() {
 
 #[test]
 fn publication_entry_kind_all_variants_serde_roundtrip() {
-    for kind in [
-        PublicationEntryKind::Publish,
-        PublicationEntryKind::Revoke,
-    ] {
+    for kind in [PublicationEntryKind::Publish, PublicationEntryKind::Revoke] {
         let json = serde_json::to_string(&kind).expect("serialize");
         let recovered: PublicationEntryKind = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(recovered, kind);
@@ -611,4 +604,29 @@ fn witness_publication_config_default_is_constructible() {
     let config = WitnessPublicationConfig::default();
     let json = serde_json::to_string(&config).expect("serialize");
     assert!(!json.is_empty());
+}
+
+#[test]
+fn witness_publication_query_all_has_none_fields() {
+    let query = WitnessPublicationQuery::all();
+    assert!(query.extension_id.is_none());
+    assert!(query.policy_id.is_none());
+    assert!(query.epoch.is_none());
+    assert!(query.content_hash.is_none());
+    assert!(query.include_revoked);
+}
+
+#[test]
+fn publication_entry_kind_debug_is_nonempty() {
+    for kind in [PublicationEntryKind::Publish, PublicationEntryKind::Revoke] {
+        assert!(!format!("{kind:?}").is_empty());
+    }
+}
+
+#[test]
+fn witness_publication_config_serde_roundtrip() {
+    let config = WitnessPublicationConfig::default();
+    let json = serde_json::to_string(&config).expect("serialize");
+    let recovered: WitnessPublicationConfig = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(serde_json::to_string(&recovered).unwrap(), json);
 }

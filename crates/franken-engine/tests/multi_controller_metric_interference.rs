@@ -428,14 +428,14 @@ fn interference_events_have_unique_decision_ids() {
         controller("w-c", &[], &["m1", "m2"], 110_000, "110ms"),
     ];
     let interferences = synth.detect_interference(&configs);
-    let events = synth.build_interference_events(
-        &interferences,
-        "trace-unique",
-        "policy-unique",
-    );
+    let events = synth.build_interference_events(&interferences, "trace-unique", "policy-unique");
     let decision_ids: std::collections::BTreeSet<&str> =
         events.iter().map(|e| e.decision_id.as_str()).collect();
-    assert_eq!(decision_ids.len(), events.len(), "decision IDs must be unique per event");
+    assert_eq!(
+        decision_ids.len(),
+        events.len(),
+        "decision IDs must be unique per event"
+    );
 }
 
 #[test]
@@ -447,7 +447,10 @@ fn disjoint_metric_sets_produce_no_interference() {
         controller("w-z", &[], &["metric_c"], 100_000, "100ms"),
     ];
     let interferences = synth.detect_interference(&configs);
-    assert!(interferences.is_empty(), "disjoint metrics should not interfere");
+    assert!(
+        interferences.is_empty(),
+        "disjoint metrics should not interfere"
+    );
 }
 
 #[test]
@@ -465,6 +468,34 @@ fn oscillation_detection_with_many_writers() {
         })
         .collect();
     let interferences = synth.detect_interference(&configs);
-    assert!(!interferences.is_empty(), "5 writers on shared metric should produce interference");
-    assert!(interferences.iter().all(|i| i.shared_metrics.contains("shared_metric")));
+    assert!(
+        !interferences.is_empty(),
+        "5 writers on shared metric should produce interference"
+    );
+    assert!(
+        interferences
+            .iter()
+            .all(|i| i.shared_metrics.contains("shared_metric"))
+    );
+}
+
+#[test]
+fn controller_config_debug_is_nonempty() {
+    let config = controller("ctrl-dbg", &["r1"], &["w1"], 100_000, "100ms");
+    let debug = format!("{config:?}");
+    assert!(!debug.trim().is_empty());
+}
+
+#[test]
+fn synthesis_config_debug_is_nonempty() {
+    let config = SynthesisConfig::default();
+    let debug = format!("{config:?}");
+    assert!(!debug.trim().is_empty());
+}
+
+#[test]
+fn metric_value_stream_is_deterministic() {
+    let a = metric_value_stream(10);
+    let b = metric_value_stream(10);
+    assert_eq!(a, b);
 }

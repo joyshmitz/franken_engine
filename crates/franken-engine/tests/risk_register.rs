@@ -391,10 +391,7 @@ fn risk_schema_section_defines_key_fields() {
 #[test]
 fn risk_register_file_exists_at_expected_path() {
     let path = repo_root().join("docs/RISK_REGISTER.md");
-    assert!(
-        path.exists(),
-        "RISK_REGISTER.md must exist at docs/"
-    );
+    assert!(path.exists(), "RISK_REGISTER.md must exist at docs/");
 }
 
 #[test]
@@ -457,4 +454,23 @@ fn risk_ids_are_nonempty() {
 fn risk_register_is_nonempty() {
     let register = read_risk_register();
     assert!(!register.is_empty());
+}
+
+#[test]
+fn risk_register_has_more_than_50_lines() {
+    let register = read_risk_register();
+    assert!(register.lines().count() > 50);
+}
+
+#[test]
+fn risk_register_has_phase_gate_review_log_section() {
+    let register = read_risk_register();
+    assert!(register.contains("## Phase Gate Review Log"));
+}
+
+#[test]
+fn risk_register_deterministic_double_read() {
+    let a = read_risk_register();
+    let b = read_risk_register();
+    assert_eq!(a, b);
 }

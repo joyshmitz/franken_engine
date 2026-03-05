@@ -583,10 +583,7 @@ fn dry_run_with_unconvertible_objects_fails() {
         details: vec!["10 objects incompatible".to_string()],
     };
     let err = runner.dry_run("dry-fail", failed_dry, "t").unwrap_err();
-    assert!(matches!(
-        err,
-        MigrationContractError::DryRunFailed { .. }
-    ));
+    assert!(matches!(err, MigrationContractError::DryRunFailed { .. }));
 }
 
 #[test]

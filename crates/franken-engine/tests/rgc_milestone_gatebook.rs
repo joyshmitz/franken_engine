@@ -348,8 +348,7 @@ fn rgc_012_operator_verification_commands_are_present() {
 fn rgc_012_serde_roundtrip_preserves_gatebook() {
     let gatebook = parse_gatebook();
     let serialized = serde_json::to_string(&gatebook).expect("serialize");
-    let deserialized: MilestoneGatebook =
-        serde_json::from_str(&serialized).expect("deserialize");
+    let deserialized: MilestoneGatebook = serde_json::from_str(&serialized).expect("deserialize");
     assert_eq!(gatebook, deserialized);
 }
 
@@ -428,9 +427,17 @@ fn rgc_012_ci_gate_workflow_ids_are_unique() {
 #[test]
 fn rgc_012_automation_decision_event_fields_are_nonempty() {
     let gatebook = parse_gatebook();
-    assert!(!gatebook.automation.decision_event_required_fields.is_empty());
+    assert!(
+        !gatebook
+            .automation
+            .decision_event_required_fields
+            .is_empty()
+    );
     for field in &gatebook.automation.decision_event_required_fields {
-        assert!(!field.trim().is_empty(), "decision event field must not be empty");
+        assert!(
+            !field.trim().is_empty(),
+            "decision event field must not be empty"
+        );
     }
 }
 
@@ -451,7 +458,10 @@ fn rgc_012_operator_verification_commands_are_all_nonempty() {
     let gatebook = parse_gatebook();
     assert!(!gatebook.operator_verification.is_empty());
     for cmd in &gatebook.operator_verification {
-        assert!(!cmd.trim().is_empty(), "operator verification command must not be empty");
+        assert!(
+            !cmd.trim().is_empty(),
+            "operator verification command must not be empty"
+        );
     }
 }
 
@@ -472,4 +482,147 @@ fn rgc_012_gatebook_track_fields_are_nonempty() {
 fn rgc_012_automation_ci_contract_version_is_nonempty() {
     let gatebook = parse_gatebook();
     assert!(!gatebook.automation.ci_contract_version.trim().is_empty());
+}
+
+// ---------- additional enrichment tests ----------
+
+#[test]
+fn rgc_012_schema_version_follows_dotted_format() {
+    let gatebook = parse_gatebook();
+    let parts: Vec<&str> = gatebook.schema_version.split('.').collect();
+    assert!(
+        parts.len() >= 3,
+        "schema_version should have at least 3 dot-separated segments, got: {}",
+        gatebook.schema_version
+    );
+    for part in &parts {
+        assert!(
+            !part.trim().is_empty(),
+            "schema_version segment must not be empty"
+        );
+    }
+}
+
+#[test]
+fn rgc_012_milestones_are_strictly_ordered_m1_to_m5() {
+    let gatebook = parse_gatebook();
+    let milestone_names: Vec<&str> = gatebook
+        .milestones
+        .iter()
+        .map(|m| m.milestone.as_str())
+        .collect();
+    assert_eq!(milestone_names, vec!["M1", "M2", "M3", "M4", "M5"]);
+}
+
+#[test]
+fn rgc_012_predicate_ids_are_globally_unique() {
+    let gatebook = parse_gatebook();
+    let mut seen = BTreeSet::new();
+    for milestone in &gatebook.milestones {
+        for pred in &milestone.pass_predicates {
+            assert!(
+                seen.insert(&pred.predicate_id),
+                "duplicate predicate_id across milestones: {}",
+                pred.predicate_id
+            );
+        }
+    }
+}
+
+#[test]
+fn rgc_012_all_milestone_gate_owners_are_nonempty() {
+    let gatebook = parse_gatebook();
+    for milestone in &gatebook.milestones {
+        assert!(
+            !milestone.gate_owner.trim().is_empty(),
+            "{} has empty gate_owner",
+            milestone.milestone
+        );
+    }
+}
+
+#[test]
+fn rgc_012_all_milestone_objectives_are_nonempty() {
+    let gatebook = parse_gatebook();
+    for milestone in &gatebook.milestones {
+        assert!(
+            !milestone.objective.trim().is_empty(),
+            "{} has empty objective",
+            milestone.milestone
+        );
+    }
+}
+
+#[test]
+fn rgc_012_transition_rule_milestones_are_unique() {
+    let gatebook = parse_gatebook();
+    let mut seen = BTreeSet::new();
+    for rule in &gatebook.automation.report_only_transition_rules {
+        assert!(
+            seen.insert(&rule.milestone),
+            "duplicate milestone in transition rules: {}",
+            rule.milestone
+        );
+    }
+}
+
+#[test]
+fn rgc_012_escalation_roles_are_nonempty_for_all_milestones() {
+    let gatebook = parse_gatebook();
+    for milestone in &gatebook.milestones {
+        assert!(
+            !milestone.decision_authority.escalation_roles.is_empty(),
+            "{} has no escalation roles",
+            milestone.milestone
+        );
+        for role in &milestone.decision_authority.escalation_roles {
+            assert!(
+                !role.trim().is_empty(),
+                "{} has empty escalation role",
+                milestone.milestone
+            );
+        }
+    }
+}
+
+#[test]
+fn rgc_012_ci_gate_commands_reference_scripts() {
+    let gatebook = parse_gatebook();
+    for milestone in &gatebook.milestones {
+        assert!(
+            milestone.ci_gate.command.contains("scripts/")
+                || milestone.ci_gate.command.contains("cargo"),
+            "{} ci_gate command should reference a script or cargo command",
+            milestone.milestone
+        );
+    }
+}
+
+#[test]
+fn rgc_012_blocker_classes_have_nonempty_required_evidence() {
+    let gatebook = parse_gatebook();
+    for class in &gatebook.blocker_classes {
+        for evidence in &class.required_evidence {
+            assert!(
+                !evidence.trim().is_empty(),
+                "blocker class {} has empty required evidence entry",
+                class.class_id
+            );
+        }
+    }
+}
+
+#[test]
+fn rgc_012_all_rollback_trigger_ids_globally_unique() {
+    let gatebook = parse_gatebook();
+    let mut seen = BTreeSet::new();
+    for milestone in &gatebook.milestones {
+        for trigger in &milestone.rollback_triggers {
+            assert!(
+                seen.insert(&trigger.trigger_id),
+                "duplicate rollback trigger_id across milestones: {}",
+                trigger.trigger_id
+            );
+        }
+    }
 }

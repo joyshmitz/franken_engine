@@ -354,12 +354,9 @@ fn easy_difficulty_for_fully_detected_low_damage() {
 #[test]
 fn mutation_crossover_merges_two_campaigns() {
     let grammar = AttackGrammar::default();
-    let mut generator = CampaignGenerator::new(
-        grammar.clone(),
-        CampaignGeneratorConfig::default(),
-        0x4444,
-    )
-    .expect("generator");
+    let mut generator =
+        CampaignGenerator::new(grammar.clone(), CampaignGeneratorConfig::default(), 0x4444)
+            .expect("generator");
     let base = generator
         .generate_campaign(CampaignComplexity::MultiStage)
         .expect("base");
@@ -382,12 +379,9 @@ fn mutation_crossover_merges_two_campaigns() {
 #[test]
 fn mutation_insertion_adds_one_step() {
     let grammar = AttackGrammar::default();
-    let mut generator = CampaignGenerator::new(
-        grammar.clone(),
-        CampaignGeneratorConfig::default(),
-        0x6666,
-    )
-    .expect("generator");
+    let mut generator =
+        CampaignGenerator::new(grammar.clone(), CampaignGeneratorConfig::default(), 0x6666)
+            .expect("generator");
     let base = generator
         .generate_campaign(CampaignComplexity::Probe)
         .expect("base");
@@ -408,12 +402,9 @@ fn mutation_insertion_adds_one_step() {
 #[test]
 fn mutation_deletion_removes_one_step() {
     let grammar = AttackGrammar::default();
-    let mut generator = CampaignGenerator::new(
-        grammar.clone(),
-        CampaignGeneratorConfig::default(),
-        0x8888,
-    )
-    .expect("generator");
+    let mut generator =
+        CampaignGenerator::new(grammar.clone(), CampaignGeneratorConfig::default(), 0x8888)
+            .expect("generator");
     let base = generator
         .generate_campaign(CampaignComplexity::MultiStage)
         .expect("base");
@@ -434,12 +425,9 @@ fn mutation_deletion_removes_one_step() {
 #[test]
 fn mutation_temporal_shift_keeps_step_count_when_temporal_steps_exist() {
     let grammar = AttackGrammar::default();
-    let mut generator = CampaignGenerator::new(
-        grammar.clone(),
-        CampaignGeneratorConfig::default(),
-        0xAAAA,
-    )
-    .expect("generator");
+    let mut generator =
+        CampaignGenerator::new(grammar.clone(), CampaignGeneratorConfig::default(), 0xAAAA)
+            .expect("generator");
     // Use Apt complexity (12 steps) to maximize chance of temporal payload steps
     for _ in 0..5 {
         let base = generator
@@ -468,12 +456,9 @@ fn mutation_temporal_shift_keeps_step_count_when_temporal_steps_exist() {
 #[test]
 fn mutation_point_mutation_keeps_step_count() {
     let grammar = AttackGrammar::default();
-    let mut generator = CampaignGenerator::new(
-        grammar.clone(),
-        CampaignGeneratorConfig::default(),
-        0xCCCC,
-    )
-    .expect("generator");
+    let mut generator =
+        CampaignGenerator::new(grammar.clone(), CampaignGeneratorConfig::default(), 0xCCCC)
+            .expect("generator");
     let base = generator
         .generate_campaign(CampaignComplexity::Probe)
         .expect("base");

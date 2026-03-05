@@ -439,10 +439,7 @@ fn copy_tree_copies_files() {
     fs::write(src.join("test.txt"), "hello").expect("write test file");
     copy_tree(&src, &dst);
     assert!(dst.join("test.txt").exists());
-    assert_eq!(
-        fs::read_to_string(dst.join("test.txt")).unwrap(),
-        "hello"
-    );
+    assert_eq!(fs::read_to_string(dst.join("test.txt")).unwrap(), "hello");
 }
 
 // ---------- asset_ids are unique ----------
@@ -506,8 +503,35 @@ fn every_asset_has_non_empty_source_and_sink_labels() {
     let assets = parse_manifest_assets();
     for asset in &assets {
         let source = asset["source_labels"].as_array().expect("source_labels");
-        let sink = asset["sink_clearances"].as_array().expect("sink_clearances");
+        let sink = asset["sink_clearances"]
+            .as_array()
+            .expect("sink_clearances");
         assert!(!source.is_empty());
         assert!(!sink.is_empty());
+    }
+}
+
+#[test]
+fn ifc_manifest_has_nonempty_schema_version() {
+    let raw = fs::read_to_string(manifest_path()).expect("read manifest");
+    let manifest: Value = serde_json::from_str(&raw).expect("parse");
+    let sv = manifest["schema_version"].as_str().expect("schema_version");
+    assert!(!sv.trim().is_empty());
+}
+
+#[test]
+fn ifc_manifest_deterministic_double_load() {
+    let raw = fs::read_to_string(manifest_path()).expect("read manifest");
+    let a: Value = serde_json::from_str(&raw).expect("parse a");
+    let b: Value = serde_json::from_str(&raw).expect("parse b");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn ifc_manifest_assets_all_have_nonempty_ids() {
+    let assets = parse_manifest_assets();
+    for asset in &assets {
+        let id = asset["asset_id"].as_str().expect("asset_id");
+        assert!(!id.trim().is_empty());
     }
 }

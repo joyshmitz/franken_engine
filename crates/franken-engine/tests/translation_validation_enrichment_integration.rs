@@ -573,7 +573,10 @@ fn validation_gate_error_token_expired_contains_epochs() {
         current_epoch: 10,
     };
     let s = e.to_string();
-    assert!(s.contains("5") || s.contains("10"), "should contain epochs: {s}");
+    assert!(
+        s.contains("5") || s.contains("10"),
+        "should contain epochs: {s}"
+    );
 }
 
 #[test]
@@ -664,7 +667,9 @@ fn serde_roundtrip_rollback_receipt() {
         rollback_from_stage: ActivationStage::Canary,
         timestamp_ticks: 5000,
         epoch: SecurityEpoch::from_raw(3),
-        signature: frankenengine_engine::hash_tiers::AuthenticityHash::compute_keyed(b"data", b"key"),
+        signature: frankenengine_engine::hash_tiers::AuthenticityHash::compute_keyed(
+            b"data", b"key",
+        ),
     };
     let json = serde_json::to_string(&receipt).unwrap();
     let rt: RollbackReceipt = serde_json::from_str(&json).unwrap();
@@ -680,7 +685,9 @@ fn serde_roundtrip_stage_promotion() {
         evidence_hash: ContentHash::compute(b"evidence"),
         timestamp_ticks: 3000,
         epoch: SecurityEpoch::from_raw(2),
-        signature: frankenengine_engine::hash_tiers::AuthenticityHash::compute_keyed(b"data", b"key"),
+        signature: frankenengine_engine::hash_tiers::AuthenticityHash::compute_keyed(
+            b"data", b"key",
+        ),
     };
     let json = serde_json::to_string(&promo).unwrap();
     let rt: StagePromotion = serde_json::from_str(&json).unwrap();

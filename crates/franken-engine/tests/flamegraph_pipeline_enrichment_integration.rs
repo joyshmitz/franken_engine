@@ -72,7 +72,10 @@ fn pipeline_error_stable_codes_all_distinct() {
             FlamegraphPipelineError::EmptyFoldedStack { field: "f".into() },
             "FE-FLAME-1003",
         ),
-        (FlamegraphPipelineError::MismatchedDiffInput, "FE-FLAME-1004"),
+        (
+            FlamegraphPipelineError::MismatchedDiffInput,
+            "FE-FLAME-1004",
+        ),
         (
             FlamegraphPipelineError::InvalidSvg {
                 kind: FlamegraphKind::Cpu,
@@ -516,7 +519,10 @@ fn pipeline_error_invalid_request_contains_field() {
         detail: "cannot be empty".into(),
     };
     let s = e.to_string();
-    assert!(s.contains("trace_id") || s.contains("empty"), "should contain field: {s}");
+    assert!(
+        s.contains("trace_id") || s.contains("empty"),
+        "should contain field: {s}"
+    );
 }
 
 #[test]
@@ -525,7 +531,10 @@ fn pipeline_error_invalid_timestamp_contains_value() {
         value: "not-a-date".into(),
     };
     let s = e.to_string();
-    assert!(s.contains("not-a-date") || s.contains("timestamp"), "should contain value: {s}");
+    assert!(
+        s.contains("not-a-date") || s.contains("timestamp"),
+        "should contain value: {s}"
+    );
 }
 
 #[test]
@@ -536,7 +545,10 @@ fn pipeline_error_invalid_folded_stack_contains_line() {
         detail: "malformed".into(),
     };
     let s = e.to_string();
-    assert!(s.contains("42") || s.contains("malformed"), "should contain line: {s}");
+    assert!(
+        s.contains("42") || s.contains("malformed"),
+        "should contain line: {s}"
+    );
 }
 
 #[test]
@@ -557,7 +569,10 @@ fn pipeline_error_serialization_contains_detail() {
         detail: "json error".into(),
     };
     let s = e.to_string();
-    assert!(s.contains("json") || s.contains("serialization"), "should contain detail: {s}");
+    assert!(
+        s.contains("json") || s.contains("serialization"),
+        "should contain detail: {s}"
+    );
 }
 
 // ===========================================================================
@@ -585,7 +600,10 @@ fn pipeline_error_invalid_folded_stack_code() {
     };
     // InvalidFoldedStack should have a code too
     let code = e.stable_code();
-    assert!(code.starts_with("FE-FLAME-"), "code should start with FE-FLAME-: {code}");
+    assert!(
+        code.starts_with("FE-FLAME-"),
+        "code should start with FE-FLAME-: {code}"
+    );
 }
 
 // ===========================================================================
@@ -648,7 +666,10 @@ fn folded_stack_sample_zero_count() {
 
 #[test]
 fn folded_stack_sample_deep_stack() {
-    let deep = (0..100).map(|i| format!("frame_{i}")).collect::<Vec<_>>().join(";");
+    let deep = (0..100)
+        .map(|i| format!("frame_{i}"))
+        .collect::<Vec<_>>()
+        .join(";");
     let fss = FoldedStackSample {
         stack: deep.clone(),
         sample_count: 1,

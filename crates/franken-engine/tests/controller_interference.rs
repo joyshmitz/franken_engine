@@ -728,8 +728,7 @@ fn interference_failure_code_serde_round_trip() {
     ];
     for code in codes {
         let json = serde_json::to_string(&code).expect("serialize");
-        let recovered: InterferenceFailureCode =
-            serde_json::from_str(&json).expect("deserialize");
+        let recovered: InterferenceFailureCode = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(code, recovered);
     }
 }
@@ -751,10 +750,12 @@ fn interference_failure_code_display_all_unique() {
 
 #[test]
 fn conflict_resolution_mode_serde_round_trip() {
-    for mode in [ConflictResolutionMode::Serialize, ConflictResolutionMode::Reject] {
+    for mode in [
+        ConflictResolutionMode::Serialize,
+        ConflictResolutionMode::Reject,
+    ] {
         let json = serde_json::to_string(&mode).expect("serialize");
-        let recovered: ConflictResolutionMode =
-            serde_json::from_str(&json).expect("deserialize");
+        let recovered: ConflictResolutionMode = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(mode, recovered);
     }
 }
@@ -767,8 +768,7 @@ fn timescale_separation_statement_serde_round_trip() {
         statement: "quarter-second observe, one-second write".to_string(),
     };
     let json = serde_json::to_string(&stmt).expect("serialize");
-    let recovered: TimescaleSeparationStatement =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: TimescaleSeparationStatement = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(stmt, recovered);
 }
 
@@ -897,22 +897,42 @@ fn serialize_mode_with_three_writers_resolves_deterministically() {
     };
     let read_requests: [MetricReadRequest; 0] = [];
     let write_requests = [
-        MetricWriteRequest { controller_id: "w-a".to_string(), metric: "m".to_string(), value: 10 },
-        MetricWriteRequest { controller_id: "w-b".to_string(), metric: "m".to_string(), value: 20 },
-        MetricWriteRequest { controller_id: "w-c".to_string(), metric: "m".to_string(), value: 30 },
+        MetricWriteRequest {
+            controller_id: "w-a".to_string(),
+            metric: "m".to_string(),
+            value: 10,
+        },
+        MetricWriteRequest {
+            controller_id: "w-b".to_string(),
+            metric: "m".to_string(),
+            value: 20,
+        },
+        MetricWriteRequest {
+            controller_id: "w-c".to_string(),
+            metric: "m".to_string(),
+            value: 30,
+        },
     ];
     let subscriptions: [MetricSubscription; 0] = [];
     let metrics = BTreeMap::from([("m".to_string(), 0)]);
 
     let eval1 = evaluate_controller_interference(&scenario(
-        "trace-3w", "policy-3w", &config, &registrations,
-        (&read_requests, &write_requests, &subscriptions), &metrics,
+        "trace-3w",
+        "policy-3w",
+        &config,
+        &registrations,
+        (&read_requests, &write_requests, &subscriptions),
+        &metrics,
     ));
 
     // Run again to verify determinism
     let eval2 = evaluate_controller_interference(&scenario(
-        "trace-3w", "policy-3w", &config, &registrations,
-        (&read_requests, &write_requests, &subscriptions), &metrics,
+        "trace-3w",
+        "policy-3w",
+        &config,
+        &registrations,
+        (&read_requests, &write_requests, &subscriptions),
+        &metrics,
     ));
 
     assert!(eval1.pass);
@@ -930,8 +950,12 @@ fn evaluation_decision_id_is_nonempty() {
     let metrics = BTreeMap::new();
 
     let evaluation = evaluate_controller_interference(&scenario(
-        "trace-id", "policy-id", &config, &registrations,
-        (&read_requests, &write_requests, &subscriptions), &metrics,
+        "trace-id",
+        "policy-id",
+        &config,
+        &registrations,
+        (&read_requests, &write_requests, &subscriptions),
+        &metrics,
     ));
 
     assert!(!evaluation.decision_id.is_empty());
@@ -939,9 +963,14 @@ fn evaluation_decision_id_is_nonempty() {
 
 #[test]
 fn subscription_without_matching_write_gets_initial_value() {
-    let registrations = vec![
-        registration("subscriber", &["cpu"], &[], 500_000, 2_000_000, "sub"),
-    ];
+    let registrations = vec![registration(
+        "subscriber",
+        &["cpu"],
+        &[],
+        500_000,
+        2_000_000,
+        "sub",
+    )];
 
     let config = InterferenceConfig::default();
     let read_requests: [MetricReadRequest; 0] = [];
@@ -953,8 +982,12 @@ fn subscription_without_matching_write_gets_initial_value() {
     let metrics = initial_metrics();
 
     let evaluation = evaluate_controller_interference(&scenario(
-        "trace-sub-no-write", "policy-sub-no-write", &config, &registrations,
-        (&read_requests, &write_requests, &subscriptions), &metrics,
+        "trace-sub-no-write",
+        "policy-sub-no-write",
+        &config,
+        &registrations,
+        (&read_requests, &write_requests, &subscriptions),
+        &metrics,
     ));
 
     assert!(evaluation.pass);

@@ -302,8 +302,7 @@ fn trend_point_serde_roundtrip() {
 #[test]
 fn bundle_with_empty_samples_returns_error() {
     let request = request_with_samples(Vec::new());
-    let err = build_plas_benchmark_bundle(&request)
-        .expect_err("empty samples should be rejected");
+    let err = build_plas_benchmark_bundle(&request).expect_err("empty samples should be rejected");
     let msg = err.to_string();
     assert!(msg.contains("samples") || msg.contains("empty"));
 }

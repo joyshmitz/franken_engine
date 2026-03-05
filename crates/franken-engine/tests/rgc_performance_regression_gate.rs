@@ -269,10 +269,12 @@ fn zero_baseline_produces_critical_finding() {
     let report = evaluate_performance_regression_gate(&input, &RegressionGatePolicy::default());
     assert!(report.blocking);
     assert!(!report.regressions.is_empty());
-    assert!(report
-        .regressions
-        .iter()
-        .any(|finding| finding.error_code.contains("BASELINE")));
+    assert!(
+        report
+            .regressions
+            .iter()
+            .any(|finding| finding.error_code.contains("BASELINE"))
+    );
 }
 
 #[test]
@@ -295,10 +297,12 @@ fn missing_metadata_hash_produces_high_severity() {
     );
     let report = evaluate_performance_regression_gate(&input, &RegressionGatePolicy::default());
     assert!(report.blocking);
-    assert!(report
-        .regressions
-        .iter()
-        .any(|finding| finding.error_code.contains("INTEGRITY")));
+    assert!(
+        report
+            .regressions
+            .iter()
+            .any(|finding| finding.error_code.contains("INTEGRITY"))
+    );
 }
 
 #[test]
@@ -389,7 +393,10 @@ fn expired_waiver_does_not_suppress_blocking() {
         )],
     );
     let report = evaluate_performance_regression_gate(&input, &RegressionGatePolicy::default());
-    assert!(report.blocking, "expired waiver should not suppress blocking");
+    assert!(
+        report.blocking,
+        "expired waiver should not suppress blocking"
+    );
 }
 
 // ---------- report fields ----------

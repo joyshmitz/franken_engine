@@ -434,9 +434,7 @@ fn rgc_056_contract_error_codes_all_start_with_fe_rgc_056() {
     let contract = parse_contract();
     for scenario in &contract.failure_scenarios {
         assert!(
-            scenario
-                .expected_error_code
-                .starts_with("FE-RGC-056-"),
+            scenario.expected_error_code.starts_with("FE-RGC-056-"),
             "scenario {} error code should start with FE-RGC-056-: {}",
             scenario.scenario_id,
             scenario.expected_error_code
@@ -455,9 +453,13 @@ fn rgc_056_contract_chaos_classes_are_exactly_three() {
         .collect();
     assert_eq!(
         classes,
-        ["containment_trigger", "degraded_mode_recovery", "fault_containment"]
-            .into_iter()
-            .collect::<BTreeSet<_>>()
+        [
+            "containment_trigger",
+            "degraded_mode_recovery",
+            "fault_containment"
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>()
     );
 }
 

@@ -842,9 +842,9 @@ fn franken_verify_attestation_create_rejects_ambiguous_signing_key_flags() {
 // ────────────────────────────────────────────────────────────
 
 use frankenengine_engine::third_party_verifier::{
-    render_attestation_summary, render_report_summary, VerificationCheckResult, VerifierEvent,
     DEFAULT_CONTAINMENT_LATENCY_SLA_NS, EXIT_CODE_FAILED, EXIT_CODE_INCONCLUSIVE,
     EXIT_CODE_PARTIALLY_VERIFIED, EXIT_CODE_VERIFIED, THIRD_PARTY_VERIFIER_COMPONENT,
+    VerificationCheckResult, VerifierEvent, render_attestation_summary, render_report_summary,
 };
 
 #[test]
@@ -863,7 +863,10 @@ fn verification_verdict_serde_round_trip() {
 
 #[test]
 fn verification_verdict_exit_codes_match_constants() {
-    assert_eq!(VerificationVerdict::Verified.exit_code(), EXIT_CODE_VERIFIED);
+    assert_eq!(
+        VerificationVerdict::Verified.exit_code(),
+        EXIT_CODE_VERIFIED
+    );
     assert_eq!(
         VerificationVerdict::PartiallyVerified.exit_code(),
         EXIT_CODE_PARTIALLY_VERIFIED
@@ -890,8 +893,7 @@ fn report_serde_round_trip() {
     let bundle = make_benchmark_claim_bundle();
     let report = verify_benchmark_claim(&bundle);
     let json = serde_json::to_string(&report).expect("serialize");
-    let recovered: ThirdPartyVerificationReport =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: ThirdPartyVerificationReport = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(report.verdict, recovered.verdict);
     assert_eq!(report.checks.len(), recovered.checks.len());
     assert_eq!(report.claim_type, recovered.claim_type);

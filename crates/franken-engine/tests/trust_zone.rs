@@ -2,9 +2,9 @@ use std::collections::BTreeSet;
 
 use frankenengine_engine::capability::RuntimeCapability;
 use frankenengine_engine::capability::trust_zone::{
-    CrossZoneReferenceRequest, ReferenceType, TrustZoneClass, TrustZoneError, ZoneCreateRequest,
-    ZoneEventOutcome, ZoneEventType, ZoneHierarchy, ZoneTransitionRequest,
-    CrossZoneReferenceChecker,
+    CrossZoneReferenceChecker, CrossZoneReferenceRequest, ReferenceType, TrustZoneClass,
+    TrustZoneError, ZoneCreateRequest, ZoneEventOutcome, ZoneEventType, ZoneHierarchy,
+    ZoneTransitionRequest,
 };
 
 fn capset(caps: &[RuntimeCapability]) -> BTreeSet<RuntimeCapability> {
@@ -505,7 +505,11 @@ fn trust_zone_error_display_all_unique() {
     .map(|e| e.to_string())
     .collect();
     let unique: BTreeSet<_> = errors.iter().collect();
-    assert_eq!(unique.len(), errors.len(), "each error Display must be unique");
+    assert_eq!(
+        unique.len(),
+        errors.len(),
+        "each error Display must be unique"
+    );
 }
 
 #[test]
@@ -560,17 +564,28 @@ fn standard_hierarchy_contains_four_zones() {
 #[test]
 fn standard_hierarchy_zone_classes_match_names() {
     let hierarchy = ZoneHierarchy::standard("maintainer", 1).expect("hierarchy");
-    assert_eq!(hierarchy.zone("owner").unwrap().class, TrustZoneClass::Owner);
-    assert_eq!(hierarchy.zone("private").unwrap().class, TrustZoneClass::Private);
+    assert_eq!(
+        hierarchy.zone("owner").unwrap().class,
+        TrustZoneClass::Owner
+    );
+    assert_eq!(
+        hierarchy.zone("private").unwrap().class,
+        TrustZoneClass::Private
+    );
     assert_eq!(hierarchy.zone("team").unwrap().class, TrustZoneClass::Team);
-    assert_eq!(hierarchy.zone("community").unwrap().class, TrustZoneClass::Community);
+    assert_eq!(
+        hierarchy.zone("community").unwrap().class,
+        TrustZoneClass::Community
+    );
 }
 
 #[test]
 fn compute_effective_ceiling_owner_broader_than_community() {
     let hierarchy = ZoneHierarchy::standard("maintainer", 1).expect("hierarchy");
     let owner_ceiling = hierarchy.compute_effective_ceiling("owner").expect("owner");
-    let community_ceiling = hierarchy.compute_effective_ceiling("community").expect("community");
+    let community_ceiling = hierarchy
+        .compute_effective_ceiling("community")
+        .expect("community");
     assert!(community_ceiling.is_subset(&owner_ceiling));
     assert!(owner_ceiling.len() > community_ceiling.len());
 }
@@ -601,10 +616,12 @@ fn derive_zone_scoped_object_id_differs_across_zones() {
     let team = hierarchy.zone("team").expect("team zone");
     let owner = hierarchy.zone("owner").expect("owner zone");
     let schema = SchemaId::from_definition(b"test-schema");
-    let id_team = derive_zone_scoped_object_id(team, ObjectDomain::PolicyObject, &schema, b"payload")
-        .expect("team id");
-    let id_owner = derive_zone_scoped_object_id(owner, ObjectDomain::PolicyObject, &schema, b"payload")
-        .expect("owner id");
+    let id_team =
+        derive_zone_scoped_object_id(team, ObjectDomain::PolicyObject, &schema, b"payload")
+            .expect("team id");
+    let id_owner =
+        derive_zone_scoped_object_id(owner, ObjectDomain::PolicyObject, &schema, b"payload")
+            .expect("owner id");
     assert_ne!(id_team, id_owner);
 }
 
@@ -612,7 +629,10 @@ fn derive_zone_scoped_object_id_differs_across_zones() {
 fn cross_zone_reference_checker_allows_same_zone() {
     let mut checker = CrossZoneReferenceChecker::new();
     let result = checker.validate(CrossZoneReferenceRequest::new(
-        "team", "team", ReferenceType::Authority, "trace-same",
+        "team",
+        "team",
+        ReferenceType::Authority,
+        "trace-same",
     ));
     assert!(result.is_ok());
 }
@@ -651,7 +671,10 @@ fn cross_zone_reference_checker_provenance_not_permitted() {
 #[test]
 fn cross_zone_reference_request_serde_round_trip() {
     let req = CrossZoneReferenceRequest::new(
-        "team", "community", ReferenceType::Provenance, "trace-serde",
+        "team",
+        "community",
+        ReferenceType::Provenance,
+        "trace-serde",
     )
     .with_policy_id("pol-1")
     .with_decision_id("dec-1");
@@ -694,7 +717,11 @@ fn zone_event_ceiling_check_recorded() {
         .enforce_ceiling("team", &caps, "trace-ceil")
         .expect("enforce ceiling");
     let events = hierarchy.events();
-    assert!(events.iter().any(|e| e.event == ZoneEventType::CeilingCheck));
+    assert!(
+        events
+            .iter()
+            .any(|e| e.event == ZoneEventType::CeilingCheck)
+    );
 }
 
 #[test]
@@ -709,5 +736,9 @@ fn zone_event_transition_recorded_with_correct_type() {
         ))
         .expect("transition");
     let events = hierarchy.events();
-    assert!(events.iter().any(|e| e.event == ZoneEventType::ZoneTransition));
+    assert!(
+        events
+            .iter()
+            .any(|e| e.event == ZoneEventType::ZoneTransition)
+    );
 }

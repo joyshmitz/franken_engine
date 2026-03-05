@@ -646,8 +646,14 @@ fn rate_distortion_envelope_rate_at_distortion_interpolates() {
         family: PayloadFamily::Optimization,
         metric: DistortionMetric::SquaredError,
         frontier: vec![
-            RateDistortionPoint { distortion_millionths: 0, rate_millibits: 1_000_000 },
-            RateDistortionPoint { distortion_millionths: 500_000, rate_millibits: 500_000 },
+            RateDistortionPoint {
+                distortion_millionths: 0,
+                rate_millibits: 1_000_000,
+            },
+            RateDistortionPoint {
+                distortion_millionths: 500_000,
+                rate_millibits: 500_000,
+            },
         ],
         max_distortion_millionths: 500_000,
         min_rate_millibits: 100_000,
@@ -681,8 +687,14 @@ fn rate_distortion_envelope_is_achievable() {
         family: PayloadFamily::Optimization,
         metric: DistortionMetric::SquaredError,
         frontier: vec![
-            RateDistortionPoint { distortion_millionths: 0, rate_millibits: 1_000_000 },
-            RateDistortionPoint { distortion_millionths: 500_000, rate_millibits: 500_000 },
+            RateDistortionPoint {
+                distortion_millionths: 0,
+                rate_millibits: 1_000_000,
+            },
+            RateDistortionPoint {
+                distortion_millionths: 500_000,
+                rate_millibits: 500_000,
+            },
         ],
         max_distortion_millionths: 500_000,
         min_rate_millibits: 100_000,

@@ -341,8 +341,7 @@ fn conformance_failure_class_serde_roundtrip() {
         ConformanceFailureClass::Performance,
     ] {
         let json = serde_json::to_string(&class).expect("serialize");
-        let recovered: ConformanceFailureClass =
-            serde_json::from_str(&json).expect("deserialize");
+        let recovered: ConformanceFailureClass = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(recovered, class);
     }
 }
@@ -361,8 +360,7 @@ fn conformance_delta_kind_serde_roundtrip() {
         ConformanceDeltaKind::ErrorFormatChange,
     ] {
         let json = serde_json::to_string(&kind).expect("serialize");
-        let recovered: ConformanceDeltaKind =
-            serde_json::from_str(&json).expect("deserialize");
+        let recovered: ConformanceDeltaKind = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(recovered, kind);
     }
 }
@@ -420,7 +418,7 @@ fn classify_failure_class_timing_only_is_performance() {
 
 #[test]
 fn severity_for_all_failure_classes() {
-    use conformance_harness::{severity_for_failure_class, ConformanceFailureSeverity};
+    use conformance_harness::{ConformanceFailureSeverity, severity_for_failure_class};
     assert_eq!(
         severity_for_failure_class(ConformanceFailureClass::Breaking),
         ConformanceFailureSeverity::Critical
@@ -451,8 +449,7 @@ fn conformance_runner_config_default_has_expected_seed() {
 fn conformance_runner_config_serde_roundtrip() {
     let config = ConformanceRunnerConfig::default();
     let json = serde_json::to_string(&config).expect("serialize");
-    let recovered: ConformanceRunnerConfig =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: ConformanceRunnerConfig = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.seed, config.seed);
     assert_eq!(recovered.run_date, config.run_date);
 }
@@ -468,9 +465,7 @@ fn conformance_repro_metadata_default_has_beads_project() {
 #[test]
 fn conformance_repro_metadata_serde_roundtrip() {
     let meta = ConformanceReproMetadata {
-        version_combination: BTreeMap::from([
-            ("franken_engine".to_string(), "0.1.0".to_string()),
-        ]),
+        version_combination: BTreeMap::from([("franken_engine".to_string(), "0.1.0".to_string())]),
         first_seen_commit: "abc123".to_string(),
         regression_commit: Some("def456".to_string()),
         ci_run_id: Some("ci-42".to_string()),
@@ -478,8 +473,7 @@ fn conformance_repro_metadata_serde_roundtrip() {
         issue_tracking_bead: Some("bd-test".to_string()),
     };
     let json = serde_json::to_string(&meta).expect("serialize");
-    let recovered: ConformanceReproMetadata =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: ConformanceReproMetadata = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.first_seen_commit, meta.first_seen_commit);
     assert_eq!(recovered.regression_commit, meta.regression_commit);
 }
@@ -497,12 +491,7 @@ fn conformance_waiver_set_default_is_empty() {
 #[test]
 fn run_result_enforce_ci_gate_fails_on_failures() {
     let temp = test_temp_dir("ci-gate");
-    let manifest = write_case_manifest(
-        &temp,
-        "let x = 1;",
-        "value 2",
-        "value 1",
-    );
+    let manifest = write_case_manifest(&temp, "let x = 1;", "value 2", "value 1");
     let run = runner_with_metadata()
         .run(&manifest, &ConformanceWaiverSet::default())
         .expect("run should succeed");
@@ -524,12 +513,7 @@ fn artifact_schema_version_is_v1() {
 #[test]
 fn artifact_serde_roundtrip_preserves_failure_class() {
     let temp = test_temp_dir("artifact-serde");
-    let manifest = write_case_manifest(
-        &temp,
-        "let a = 1;",
-        "props:a,b,c",
-        "props:a,b",
-    );
+    let manifest = write_case_manifest(&temp, "let a = 1;", "props:a,b,c", "props:a,b");
     let run = runner_with_metadata()
         .run(&manifest, &ConformanceWaiverSet::default())
         .expect("run");
@@ -546,12 +530,7 @@ fn artifact_serde_roundtrip_preserves_failure_class() {
 #[test]
 fn run_result_has_log_events() {
     let temp = test_temp_dir("log-events");
-    let manifest = write_case_manifest(
-        &temp,
-        "let x = 1;",
-        "value 2",
-        "value 1",
-    );
+    let manifest = write_case_manifest(&temp, "let x = 1;", "value 2", "value 1");
     let run = runner_with_metadata()
         .run(&manifest, &ConformanceWaiverSet::default())
         .expect("run");
@@ -572,4 +551,113 @@ fn asset_manifest_schema_is_v1() {
         ConformanceAssetManifest::CURRENT_SCHEMA,
         "franken-engine.conformance-assets.v1"
     );
+}
+
+#[test]
+fn conformance_repro_metadata_debug_is_nonempty() {
+    let meta = ConformanceReproMetadata::default();
+    assert!(!format!("{meta:?}").is_empty());
+}
+
+#[test]
+fn conformance_runner_config_debug_is_nonempty() {
+    let config = ConformanceRunnerConfig::default();
+    assert!(!format!("{config:?}").is_empty());
+}
+
+#[test]
+fn conformance_waiver_set_debug_is_nonempty() {
+    let waivers = ConformanceWaiverSet::default();
+    assert!(!format!("{waivers:?}").is_empty());
+}
+
+#[test]
+fn schema_field_modified_is_classified_when_value_changes() {
+    use conformance_harness::ConformanceDeltaKind;
+    let delta = classify_conformance_delta("props:a,b", "props:a,x");
+    // Modification (b -> x) should show either SchemaFieldRemoved+Added or Modified
+    assert!(
+        delta.iter().any(|d| d.kind == ConformanceDeltaKind::SchemaFieldRemoved
+            || d.kind == ConformanceDeltaKind::SchemaFieldModified),
+        "expected field modification or removal classification"
+    );
+}
+
+#[test]
+fn artifact_has_nonempty_evidence_ledger_id() {
+    let temp = test_temp_dir("evidence-ledger");
+    let manifest = write_case_manifest(&temp, "let z = 1;", "props:a,b,c", "props:a,b");
+    let run = runner_with_metadata()
+        .run(&manifest, &ConformanceWaiverSet::default())
+        .expect("run");
+    let artifact = run.minimized_repros.first().expect("artifact");
+    assert!(
+        !artifact.evidence_ledger_id.trim().is_empty(),
+        "evidence_ledger_id should be non-empty"
+    );
+}
+
+#[test]
+fn artifact_has_valid_schema_version() {
+    let temp = test_temp_dir("schema-ver");
+    let manifest = write_case_manifest(&temp, "let w = 1;", "props:a,b,c", "props:a,b");
+    let run = runner_with_metadata()
+        .run(&manifest, &ConformanceWaiverSet::default())
+        .expect("run");
+    let artifact = run.minimized_repros.first().expect("artifact");
+    assert_eq!(
+        artifact.schema_version,
+        conformance_harness::ConformanceMinimizedReproArtifact::CURRENT_SCHEMA
+    );
+}
+
+#[test]
+fn artifact_environment_has_nonempty_fields() {
+    let temp = test_temp_dir("env-fields");
+    let manifest = write_case_manifest(&temp, "let v = 1;", "props:a,b,c", "props:a,b");
+    let run = runner_with_metadata()
+        .run(&manifest, &ConformanceWaiverSet::default())
+        .expect("run");
+    let artifact = run.minimized_repros.first().expect("artifact");
+    assert!(!artifact.environment.locale.trim().is_empty());
+    assert!(!artifact.environment.timezone.trim().is_empty());
+    assert!(!artifact.environment.os.trim().is_empty());
+    assert!(!artifact.environment.arch.trim().is_empty());
+}
+
+#[test]
+fn conformance_failure_severity_serde_roundtrip() {
+    use conformance_harness::ConformanceFailureSeverity;
+    for severity in [
+        ConformanceFailureSeverity::Info,
+        ConformanceFailureSeverity::Warning,
+        ConformanceFailureSeverity::Error,
+        ConformanceFailureSeverity::Critical,
+    ] {
+        let json = serde_json::to_string(&severity).expect("serialize");
+        let recovered: ConformanceFailureSeverity =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, severity);
+    }
+}
+
+#[test]
+fn run_result_run_id_matches_summary_run_id() {
+    let temp = test_temp_dir("run-id-match");
+    let manifest = write_case_manifest(&temp, "let q = 1;", "value 2", "value 1");
+    let run = runner_with_metadata()
+        .run(&manifest, &ConformanceWaiverSet::default())
+        .expect("run");
+    assert_eq!(
+        run.run_id, run.summary.run_id,
+        "run_id must match summary.run_id"
+    );
+}
+
+#[test]
+fn sha256_hex_length_is_always_64() {
+    for input in [b"a".as_slice(), b"", b"hello world", &[0u8; 1024]] {
+        let hash = sha256_hex(input);
+        assert_eq!(hash.len(), 64, "sha256 hex length must be 64 for all inputs");
+    }
 }

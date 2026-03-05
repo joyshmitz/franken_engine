@@ -417,10 +417,7 @@ fn all_pass_run_is_not_blocked() {
 
 #[test]
 fn test262_observed_outcome_serde_round_trip() {
-    for outcome in [
-        Test262ObservedOutcome::Pass,
-        Test262ObservedOutcome::Fail,
-    ] {
+    for outcome in [Test262ObservedOutcome::Pass, Test262ObservedOutcome::Fail] {
         let json = serde_json::to_string(&outcome).expect("serialize");
         let recovered: Test262ObservedOutcome = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(outcome, recovered);
@@ -557,7 +554,10 @@ fn test262_gate_error_is_std_error() {
 
 #[test]
 fn test262_observed_outcome_timeout_and_crash_variants() {
-    for outcome in [Test262ObservedOutcome::Timeout, Test262ObservedOutcome::Crash] {
+    for outcome in [
+        Test262ObservedOutcome::Timeout,
+        Test262ObservedOutcome::Crash,
+    ] {
         let json = serde_json::to_string(&outcome).expect("serialize");
         let recovered: Test262ObservedOutcome = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(outcome, recovered);
