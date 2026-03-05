@@ -70,3 +70,10 @@ __pycache__/
 
 # bv (beads viewer) local config and caches
 .bv/
+
+# Alternate build target directories (agent-specific)
+/target_check_cc/
+/target_local/
+
+# Beads issue tracker history backups
+.beads/.br_history/
