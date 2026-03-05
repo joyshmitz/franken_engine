@@ -71,6 +71,8 @@ Key manifest and event fields:
 - `allocator_epoch`
 - `arena_fragmentation_ratio`
 - `arena_fragmentation_threshold`
+- `rch_observed_timeout_seconds`
+- `rch_timeout_policy_drift_detected`
 - `rollback_token`
 - `replay_command`
 - `error_code`
@@ -97,6 +99,16 @@ Key manifest and event fields:
 
 - `FE-PARSER-PHASE1-ARENA-FRAG-0001`
   - Meaning: `arena_fragmentation_ratio` exceeded `arena_fragmentation_threshold`.
+
+- `FE-PARSER-PHASE1-ARENA-TIMEOUT-0001`
+  - Meaning: `rch` wrapped the remote command with a timeout lower than the requested `RCH_BUILD_TIMEOUT_SEC`/`RCH_BUILD_TIMEOUT_SECONDS` value.
+  - Operator action:
+    1. Inspect `step_logs/step_*.log` for `timeout_secs`.
+    2. Compare against `run_manifest.json` fields:
+       - `rch_build_timeout_seconds`
+       - `rch_observed_timeout_seconds`
+       - `rch_timeout_policy_drift_detected`
+    3. Treat this as infrastructure policy drift (not parser semantics failure) and escalate before promotion.
 
 ## Handle Audit Integrity Check
 

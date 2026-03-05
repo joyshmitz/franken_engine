@@ -11,6 +11,10 @@ FRX-09.3 defines a phased blueprint for integrating FrankenReact sidecar executi
 surfaces into FrankenBrowser while preserving deterministic replay, explicit
 policy boundaries, and fail-closed fallback behavior.
 
+FRX-12.6 (Cut Line C5 readiness) consumes this blueprint and requires FRX-20.6
+milestone/release test-evidence integration before first-class subsystem
+promotion can be declared.
+
 This lane does not permit implicit privilege expansion. Every integration bridge
 must declare:
 
@@ -88,12 +92,15 @@ with:
 Blueprint promotion references these prerequisite beads:
 
 - `bd-mjh3.7.2` (SSR/Hydration/RSC compatibility baseline),
-- `bd-mjh3.9.2` (release gatebook/publication workflow integration).
+- `bd-mjh3.9.2` (release gatebook/publication workflow integration),
+- `bd-mjh3.20.6` (milestone/release test-evidence integration required for C5).
 
 ## Operator Verification
 
 ```bash
 ./scripts/run_frx_frankenbrowser_integration_blueprint_suite.sh ci
 ./scripts/e2e/frx_frankenbrowser_integration_blueprint_replay.sh ci
+./scripts/run_frx_milestone_release_test_evidence_integrator_suite.sh ci
+./scripts/e2e/frx_milestone_release_test_evidence_integrator_replay.sh ci
 jq empty docs/frx_frankenbrowser_integration_blueprint_v1.json
 ```

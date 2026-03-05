@@ -151,6 +151,15 @@ Modes:
 Runner is `rch`-gated for heavy Rust commands and fails closed if remote
 execution falls back to local.
 
+Timeout policy is also fail-closed:
+
+- requested wrapper timeout: `RCH_EXEC_TIMEOUT_SECONDS` (default `900`)
+- requested remote build timeout: `RCH_BUILD_TIMEOUT_SEC` / `RCH_BUILD_TIMEOUT_SECONDS`
+  (default matches `RCH_EXEC_TIMEOUT_SECONDS`)
+- if the rch wrapper reports a lower internal `timeout_secs` than requested, the
+  suite exits with `FE-RUNTIME-DIAGNOSTICS-TIMEOUT-0001` and records policy-drift
+  evidence in `run_manifest.json`.
+
 In `test` and `ci`, the suite also runs a fixture-backed advisory generation
 step using:
 
@@ -166,3 +175,11 @@ Each run writes:
 - `artifacts/runtime_diagnostics/<timestamp>/run_manifest.json`
 
 `run_manifest.json` includes operator verification commands.
+
+It also captures rch timeout-policy evidence fields:
+
+- `rch_exec_timeout_seconds`
+- `rch_build_timeout_sec`
+- `rch_observed_timeout_seconds` (present when rch emits wrapped timeout metadata)
+- `rch_timeout_policy_drift_detected`
+- `failure_code_mapping.timeout_policy_drift = FE-RUNTIME-DIAGNOSTICS-TIMEOUT-0001`

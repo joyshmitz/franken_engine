@@ -164,7 +164,8 @@
       ],
       "promotion_blockers": [
         "missing FRX-09.2 publication linkage",
-        "incomplete FRX-07.2 compatibility evidence"
+        "incomplete FRX-07.2 compatibility evidence",
+        "missing FRX-20.6 integrated C5 evidence bundle"
       ],
       "rollback_action": "revert_to_guarded_active"
     }
@@ -178,6 +179,11 @@
     {
       "bead_id": "bd-mjh3.9.2",
       "reason": "Release gatebook and publication workflow required before first-class subsystem promotion.",
+      "status": "required"
+    },
+    {
+      "bead_id": "bd-mjh3.20.6",
+      "reason": "C5 readiness requires integrated milestone/release test-evidence signals before subsystem promotion.",
       "status": "required"
     }
   ],
@@ -233,11 +239,26 @@
         "decision_path": "first_class_cutover",
         "outcome": "pass"
       }
+    },
+    {
+      "scenario_id": "frx-12.6-c5-evidence-integration",
+      "category": "release_evidence",
+      "required_phase": "P3_first_class_subsystem",
+      "expected_decision_path": "c5_integrated_evidence_gate",
+      "expected_outcome": "pass",
+      "log_template": {
+        "scenario_id": "frx-12.6-c5-evidence-integration",
+        "component": "frx_frankenbrowser_integration_blueprint",
+        "decision_path": "c5_integrated_evidence_gate",
+        "outcome": "pass"
+      }
     }
   ],
   "operator_verification": [
     "./scripts/run_frx_frankenbrowser_integration_blueprint_suite.sh ci",
     "./scripts/e2e/frx_frankenbrowser_integration_blueprint_replay.sh ci",
+    "./scripts/run_frx_milestone_release_test_evidence_integrator_suite.sh ci",
+    "./scripts/e2e/frx_milestone_release_test_evidence_integrator_replay.sh ci",
     "jq empty docs/frx_frankenbrowser_integration_blueprint_v1.json"
   ]
 }
