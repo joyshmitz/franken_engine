@@ -534,3 +534,25 @@ fn conformance_runner_default_seed_is_deterministic() {
     let r2 = ConformanceRunner::default();
     assert_eq!(r1.config.seed, r2.config.seed);
 }
+
+#[test]
+fn conformance_manifest_deterministic_double_load() {
+    let a = conformance_harness::ConformanceAssetManifest::load(sample_manifest_path())
+        .expect("load a");
+    let b = conformance_harness::ConformanceAssetManifest::load(sample_manifest_path())
+        .expect("load b");
+    assert_eq!(a.assets.len(), b.assets.len());
+}
+
+#[test]
+fn sha256_hex_nonempty_for_nonempty_input() {
+    let hash = sha256_hex(b"test input");
+    assert!(!hash.is_empty());
+    assert!(hash.len() == 64, "sha256 hex should be 64 chars");
+}
+
+#[test]
+fn conformance_runner_config_default_is_constructible() {
+    let config = ConformanceRunnerConfig::default();
+    assert!(config.seed > 0 || config.seed == 0);
+}

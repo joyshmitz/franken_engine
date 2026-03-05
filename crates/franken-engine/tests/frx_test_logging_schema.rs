@@ -424,3 +424,29 @@ fn validate_events_empty_list_returns_report() {
     // Just verify a report is returned with a valid outcome string
     assert!(!report.outcome.is_empty());
 }
+
+#[test]
+fn test_lane_all_variants_roundtrip() {
+    for lane in [TestLane::Runtime, TestLane::Compiler, TestLane::Router] {
+        let json = serde_json::to_string(&lane).expect("serialize");
+        let recovered: TestLane = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, lane);
+    }
+}
+
+#[test]
+fn failure_taxonomy_debug_is_nonempty() {
+    for taxonomy in [FailureTaxonomy::SchemaDrift, FailureTaxonomy::Timeout, FailureTaxonomy::Unknown] {
+        let s = format!("{taxonomy:?}");
+        assert!(!s.is_empty());
+    }
+}
+
+#[test]
+fn validate_events_deterministic_for_single_event() {
+    let event = baseline_event();
+    let a = validate_events(&[event.clone()]);
+    let b = validate_events(&[event]);
+    assert_eq!(a.valid, b.valid);
+    assert_eq!(a.outcome, b.outcome);
+}

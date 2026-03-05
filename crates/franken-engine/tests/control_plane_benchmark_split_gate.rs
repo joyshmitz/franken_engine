@@ -442,3 +442,71 @@ fn stable_baseline_runs_have_ten_entries() {
     assert_eq!(runs.len(), 10, "baseline requires exactly 10 runs");
     assert!(runs.iter().all(|&v| v > 0));
 }
+
+#[test]
+fn benchmark_split_thresholds_default_is_constructible() {
+    let thresholds = BenchmarkSplitThresholds::default();
+    let json = serde_json::to_string(&thresholds).expect("serialize");
+    let recovered: BenchmarkSplitThresholds = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(
+        serde_json::to_string(&recovered).unwrap(),
+        json
+    );
+}
+
+#[test]
+fn benchmark_split_serde_roundtrip() {
+    for split in [
+        BenchmarkSplit::Baseline,
+        BenchmarkSplit::CxThreading,
+        BenchmarkSplit::DecisionContracts,
+        BenchmarkSplit::EvidenceEmission,
+        BenchmarkSplit::FullIntegration,
+    ] {
+        let json = serde_json::to_string(&split).expect("serialize");
+        let recovered: BenchmarkSplit = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, split);
+    }
+}
+
+#[test]
+fn benchmark_split_failure_code_serde_roundtrip() {
+    let code = BenchmarkSplitFailureCode::ThroughputRegressionExceeded;
+    let json = serde_json::to_string(&code).expect("serialize");
+    let recovered: BenchmarkSplitFailureCode = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, code);
+}
+
+#[test]
+fn candidate_snapshot_has_all_five_splits() {
+    let snapshot = candidate_snapshot(0, true);
+    for split in [
+        BenchmarkSplit::Baseline,
+        BenchmarkSplit::CxThreading,
+        BenchmarkSplit::DecisionContracts,
+        BenchmarkSplit::EvidenceEmission,
+        BenchmarkSplit::FullIntegration,
+    ] {
+        assert!(
+            snapshot.split_metrics.contains_key(&split),
+            "candidate snapshot missing split: {split:?}"
+        );
+    }
+}
+
+#[test]
+fn gate_input_has_nonempty_trace_and_policy_ids() {
+    let gate_input = input(previous_snapshot(), candidate_snapshot(0, true));
+    assert!(!gate_input.trace_id.trim().is_empty());
+    assert!(!gate_input.policy_id.trim().is_empty());
+}
+
+#[test]
+fn latency_stats_ns_debug_is_nonempty() {
+    let stats = LatencyStatsNs {
+        p50_ns: 1_000,
+        p95_ns: 2_000,
+        p99_ns: 3_000,
+    };
+    assert!(!format!("{stats:?}").is_empty());
+}

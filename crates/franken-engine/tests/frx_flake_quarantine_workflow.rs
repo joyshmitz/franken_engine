@@ -583,3 +583,25 @@ fn contract_has_nonempty_generated_by() {
     let contract: FlakeWorkflowContract = load_json(&path);
     assert!(!contract.generated_by.trim().is_empty());
 }
+
+#[test]
+fn flake_policy_default_is_constructible() {
+    let policy = FlakePolicy::default();
+    let json = serde_json::to_string(&policy).expect("serialize");
+    assert!(!json.is_empty());
+}
+
+#[test]
+fn contract_json_file_exists() {
+    let path = repo_root().join("docs/frx_flake_quarantine_workflow_v1.json");
+    assert!(path.exists(), "contract JSON file must exist");
+}
+
+#[test]
+fn contract_deterministic_double_load() {
+    let path = repo_root().join("docs/frx_flake_quarantine_workflow_v1.json");
+    let a: FlakeWorkflowContract = load_json(&path);
+    let b: FlakeWorkflowContract = load_json(&path);
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.bead_id, b.bead_id);
+}

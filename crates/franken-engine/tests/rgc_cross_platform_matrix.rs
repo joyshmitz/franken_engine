@@ -556,3 +556,22 @@ fn rgc_063_all_drift_classes_have_nonempty_description() {
         );
     }
 }
+
+#[test]
+fn rgc_063_contract_has_nonempty_bead_id() {
+    let contract = parse_contract();
+    assert!(!contract.bead_id.trim().is_empty());
+}
+
+#[test]
+fn rgc_063_contract_has_nonempty_policy_id() {
+    let contract = parse_contract();
+    assert!(!contract.policy_id.trim().is_empty());
+}
+
+#[test]
+fn rgc_063_gate_runner_has_nonempty_script() {
+    let contract = parse_contract();
+    assert!(!contract.gate_runner.script.trim().is_empty());
+    assert!(!contract.gate_runner.replay_wrapper.trim().is_empty());
+}

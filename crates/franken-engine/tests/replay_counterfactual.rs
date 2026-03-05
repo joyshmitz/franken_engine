@@ -450,3 +450,32 @@ fn verify_replay_detects_divergent_runs() {
         assert!(!verification.matches);
     }
 }
+
+#[test]
+fn deterministic_runner_debug_is_nonempty() {
+    let runner = DeterministicRunner::default();
+    let dbg = format!("{runner:?}");
+    assert!(!dbg.is_empty());
+}
+
+#[test]
+fn replay_fixture_file_is_nonempty() {
+    let path = replay_fixture_path();
+    let content = fs::read_to_string(&path).expect("read fixture");
+    assert!(!content.is_empty());
+}
+
+#[test]
+fn verify_replay_identical_runs_match() {
+    let runner = DeterministicRunner::default();
+    let fixture_store =
+        FixtureStore::new(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"))
+            .expect("fixture store");
+    let fixture = fixture_store
+        .load_fixture(replay_fixture_path())
+        .expect("load replay fixture");
+    let run_a = runner.run_fixture(&fixture).expect("run a");
+    let run_b = runner.run_fixture(&fixture).expect("run b");
+    let verification = verify_replay(&run_a, &run_b);
+    assert!(verification.matches);
+}

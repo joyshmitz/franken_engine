@@ -507,3 +507,26 @@ fn frx_09_3_generated_at_utc_ends_with_z() {
     let blueprint = parse_blueprint();
     assert!(blueprint.generated_at_utc.ends_with('Z'));
 }
+
+#[test]
+fn frx_09_3_triple_parse_is_deterministic() {
+    let a = parse_blueprint();
+    let b = parse_blueprint();
+    let c = parse_blueprint();
+    assert_eq!(a, b);
+    assert_eq!(b, c);
+}
+
+#[test]
+fn frx_09_3_operator_verification_commands_are_nonempty_strings() {
+    let blueprint = parse_blueprint();
+    for cmd in &blueprint.operator_verification {
+        assert!(!cmd.trim().is_empty());
+    }
+}
+
+#[test]
+fn frx_09_3_blueprint_has_nonempty_generated_by() {
+    let blueprint = parse_blueprint();
+    assert!(!blueprint.generated_by.trim().is_empty());
+}

@@ -458,3 +458,23 @@ fn workload_matrix_cases_have_nonempty_workload_ids() {
         assert!(!wid.trim().is_empty());
     }
 }
+
+#[test]
+fn workload_matrix_deterministic_double_parse() {
+    let a = read_json("docs/extension_heavy_workload_matrix_v1.json");
+    let b = read_json("docs/extension_heavy_workload_matrix_v1.json");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn golden_output_deterministic_double_parse() {
+    let a = read_json("docs/extension_heavy_golden_outputs_v1.json");
+    let b = read_json("docs/extension_heavy_golden_outputs_v1.json");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn workload_matrix_is_a_json_object() {
+    let matrix = read_json("docs/extension_heavy_workload_matrix_v1.json");
+    assert!(matrix.is_object());
+}

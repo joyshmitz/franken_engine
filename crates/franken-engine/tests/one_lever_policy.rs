@@ -310,3 +310,28 @@ fn version_matrix_workflow_runs_one_lever_policy_gate() {
         "version_matrix_conformance workflow must run one-lever policy gate script"
     );
 }
+
+#[test]
+fn lever_category_all_variants_serde_roundtrip() {
+    for cat in [
+        LeverCategory::Execution,
+        LeverCategory::Memory,
+        LeverCategory::Security,
+    ] {
+        let json = serde_json::to_string(&cat).expect("serialize");
+        let recovered: LeverCategory = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, cat);
+    }
+}
+
+#[test]
+fn one_lever_component_constant_is_nonempty() {
+    assert!(!ONE_LEVER_POLICY_COMPONENT.trim().is_empty());
+}
+
+#[test]
+fn error_constants_are_nonempty() {
+    assert!(!ERROR_MISSING_EVIDENCE.trim().is_empty());
+    assert!(!ERROR_MULTI_LEVER_VIOLATION.trim().is_empty());
+    assert!(!ERROR_SCORE_BELOW_THRESHOLD.trim().is_empty());
+}

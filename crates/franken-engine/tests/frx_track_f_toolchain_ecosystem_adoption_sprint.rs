@@ -321,3 +321,27 @@ fn track_f_contract_has_operator_verification() {
     let ov = value["operator_verification"].as_array().expect("operator_verification must be array");
     assert!(!ov.is_empty());
 }
+
+#[test]
+fn track_f_charter_doc_has_more_than_50_lines() {
+    let path = repo_root().join("docs/FRX_TRACK_F_TOOLCHAIN_ECOSYSTEM_ADOPTION_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.lines().count() > 50);
+}
+
+#[test]
+fn track_f_contract_is_a_json_object() {
+    let path = repo_root().join("docs/frx_track_f_toolchain_ecosystem_adoption_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value.is_object());
+}
+
+#[test]
+fn track_f_contract_deterministic_double_parse() {
+    let path = repo_root().join("docs/frx_track_f_toolchain_ecosystem_adoption_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let a: Value = serde_json::from_str(&raw).expect("parse 1");
+    let b: Value = serde_json::from_str(&raw).expect("parse 2");
+    assert_eq!(a, b);
+}

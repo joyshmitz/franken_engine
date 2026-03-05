@@ -186,3 +186,27 @@ fn sqlmodel_adr_has_consequences_section() {
     let content = fs::read_to_string(&path).expect("read ADR");
     assert!(content.contains("## Consequences"));
 }
+
+#[test]
+fn sqlmodel_adr_has_more_than_10_lines() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    let line_count = content.lines().count();
+    assert!(line_count > 10, "ADR should have >10 lines, got {line_count}");
+}
+
+#[test]
+fn sqlmodel_inventory_has_more_than_10_lines() {
+    let path = repo_root().join("docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    let line_count = content.lines().count();
+    assert!(line_count > 10, "inventory should have >10 lines, got {line_count}");
+}
+
+#[test]
+fn sqlmodel_adr_deterministic_double_read() {
+    let path = repo_root().join("docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let a = fs::read_to_string(&path).expect("first read");
+    let b = fs::read_to_string(&path).expect("second read");
+    assert_eq!(a, b);
+}

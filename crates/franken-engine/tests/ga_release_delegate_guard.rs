@@ -425,3 +425,29 @@ fn slot_id_serde_round_trip() {
     assert_eq!(id, recovered);
     assert_eq!(id.as_str(), recovered.as_str());
 }
+
+#[test]
+fn slot_kind_serde_roundtrip() {
+    for kind in [SlotKind::Parser, SlotKind::IrLowering, SlotKind::Interpreter] {
+        let json = serde_json::to_string(&kind).expect("serialize");
+        let recovered: SlotKind = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, kind);
+    }
+}
+
+#[test]
+fn promotion_status_delegate_serde_roundtrip() {
+    let status = PromotionStatus::Delegate;
+    let json = serde_json::to_string(&status).expect("serialize");
+    let recovered: PromotionStatus = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, status);
+}
+
+#[test]
+fn slot_registry_error_display_is_nonempty() {
+    let err = SlotRegistryError::SlotNotFound {
+        id: "missing".to_string(),
+    };
+    let msg = format!("{err}");
+    assert!(!msg.trim().is_empty());
+}

@@ -465,3 +465,24 @@ fn build_fixture_policy_hash_has_correct_length() {
         .chars()
         .all(|c| c.is_ascii_hexdigit()));
 }
+
+#[test]
+fn sha256_hex_produces_64_char_string() {
+    let hash = sha256_hex(b"test data");
+    assert_eq!(hash.len(), 64);
+    assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+}
+
+#[test]
+fn sha256_hex_is_deterministic() {
+    let a = sha256_hex(b"deterministic");
+    let b = sha256_hex(b"deterministic");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn sha256_hex_distinct_inputs_produce_distinct_hashes() {
+    let a = sha256_hex(b"input-alpha");
+    let b = sha256_hex(b"input-beta");
+    assert_ne!(a, b);
+}

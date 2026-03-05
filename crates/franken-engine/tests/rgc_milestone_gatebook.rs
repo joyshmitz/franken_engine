@@ -454,3 +454,22 @@ fn rgc_012_operator_verification_commands_are_all_nonempty() {
         assert!(!cmd.trim().is_empty(), "operator verification command must not be empty");
     }
 }
+
+#[test]
+fn rgc_012_gatebook_has_nonempty_generated_by() {
+    let gatebook = parse_gatebook();
+    assert!(!gatebook.generated_by.trim().is_empty());
+}
+
+#[test]
+fn rgc_012_gatebook_track_fields_are_nonempty() {
+    let gatebook = parse_gatebook();
+    assert!(!gatebook.track.id.trim().is_empty());
+    assert!(!gatebook.track.name.trim().is_empty());
+}
+
+#[test]
+fn rgc_012_automation_ci_contract_version_is_nonempty() {
+    let gatebook = parse_gatebook();
+    assert!(!gatebook.automation.ci_contract_version.trim().is_empty());
+}

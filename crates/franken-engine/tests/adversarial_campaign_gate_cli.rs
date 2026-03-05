@@ -308,3 +308,23 @@ fn adversarial_gate_fixture_has_at_least_five_fields() {
     let fixture: serde_json::Value = serde_json::from_slice(&bytes).expect("parse fixture");
     assert!(fixture.as_object().unwrap().len() >= 5);
 }
+
+#[test]
+fn adversarial_gate_fixture_path_ends_with_json() {
+    let path = fixture_path();
+    assert_eq!(path.extension().and_then(|e| e.to_str()), Some("json"));
+}
+
+#[test]
+fn unique_temp_path_contains_prefix() {
+    let path = unique_temp_path("test-prefix");
+    let filename = path.file_name().unwrap().to_str().unwrap();
+    assert!(filename.starts_with("test-prefix-"));
+}
+
+#[test]
+fn adversarial_gate_fixture_top_level_is_object() {
+    let bytes = fs::read(fixture_path()).expect("read fixture");
+    let fixture: serde_json::Value = serde_json::from_slice(&bytes).expect("parse fixture");
+    assert!(fixture.is_object(), "fixture must be a JSON object");
+}

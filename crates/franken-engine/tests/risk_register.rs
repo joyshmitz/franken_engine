@@ -437,3 +437,24 @@ fn all_risks_reference_at_least_one_bead() {
         );
     }
 }
+
+#[test]
+fn risk_register_has_active_risks_section() {
+    let register = read_risk_register();
+    assert!(register.contains("## Active Risks"));
+}
+
+#[test]
+fn risk_ids_are_nonempty() {
+    let register = read_risk_register();
+    let (_, rows) = parse_table_by_heading(&register, "## Active Risks");
+    for row in &rows {
+        assert!(!row[0].trim().is_empty(), "risk ID must not be empty");
+    }
+}
+
+#[test]
+fn risk_register_is_nonempty() {
+    let register = read_risk_register();
+    assert!(!register.is_empty());
+}

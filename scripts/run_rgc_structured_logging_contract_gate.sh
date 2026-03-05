@@ -12,6 +12,7 @@ toolchain="${RUSTUP_TOOLCHAIN:-nightly}"
 artifact_root="${RGC_STRUCTURED_LOGGING_CONTRACT_ARTIFACT_ROOT:-artifacts/rgc_structured_logging_contract}"
 rch_timeout_seconds="${RCH_EXEC_TIMEOUT_SECONDS:-900}"
 rch_build_timeout_sec="${RCH_BUILD_TIMEOUT_SEC:-${RCH_BUILD_TIMEOUT_SECONDS:-900}}"
+rch_missing_marker_retry_count="${RCH_MISSING_MARKER_RETRY_COUNT:-1}"
 cargo_build_jobs="${CARGO_BUILD_JOBS:-2}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 default_target_dir="/tmp/rch_target_franken_engine_rgc_structured_logging_contract_${timestamp}_$$"
@@ -39,6 +40,7 @@ fi
 
 run_rch() {
   RCH_BUILD_TIMEOUT_SEC="${rch_build_timeout_sec}" \
+    RCH_BUILD_TIMEOUT_SECONDS="${rch_build_timeout_sec}" \
     timeout --kill-after=30 "${rch_timeout_seconds}" rch exec -- env \
     "RUSTUP_TOOLCHAIN=${toolchain}" \
     "CARGO_TARGET_DIR=${target_dir}" \
@@ -106,6 +108,8 @@ step_counter=0
 run_step() {
   local command_text="$1"
   local log_path remote_exit_code run_rch_exit command_slug missing_marker_reason
+  local attempt=0
+  local max_retries="$rch_missing_marker_retry_count"
   shift
   commands_run+=("$command_text")
   echo "==> $command_text"
@@ -114,42 +118,62 @@ run_step() {
   if [[ -z "$command_slug" ]]; then
     command_slug="step_${step_counter}"
   fi
-  log_path="${step_logs_dir}/$(printf '%02d' "$step_counter")_${command_slug}.log"
-
-  set +e
-  run_rch "$@" > >(tee "$log_path") 2>&1
-  run_rch_exit=$?
-  set -e
-
-  if [[ "$run_rch_exit" -ne 0 ]]; then
-    remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
-    if [[ "$remote_exit_code" == "0" ]]; then
-      echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
-    elif [[ -n "$remote_exit_code" ]]; then
-      failed_command="${command_text} (remote-exit=${remote_exit_code}; rch-exit=${run_rch_exit}; log=${log_path})"
-      return 1
+  while true; do
+    log_path="${step_logs_dir}/$(printf '%02d' "$step_counter")_${command_slug}"
+    if (( attempt > 0 )); then
+      log_path="${log_path}_retry${attempt}.log"
     else
-      missing_marker_reason="$(rch_missing_remote_exit_reason "$log_path" "$run_rch_exit")"
-      failed_command="${command_text} (rch-exit=${run_rch_exit}; ${missing_marker_reason}; log=${log_path})"
+      log_path="${log_path}.log"
+    fi
+
+    set +e
+    run_rch "$@" > >(tee "$log_path") 2>&1
+    run_rch_exit=$?
+    set -e
+
+    if [[ "$run_rch_exit" -ne 0 ]]; then
+      remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
+      if [[ "$remote_exit_code" == "0" ]]; then
+        echo "==> recovered: remote execution succeeded; artifact retrieval timed out" | tee -a "$log_path"
+      elif [[ -n "$remote_exit_code" ]]; then
+        failed_command="${command_text} (remote-exit=${remote_exit_code}; rch-exit=${run_rch_exit}; log=${log_path})"
+        return 1
+      else
+        missing_marker_reason="$(rch_missing_remote_exit_reason "$log_path" "$run_rch_exit")"
+        if (( attempt < max_retries )) && [[ "$missing_marker_reason" == "timeout-before-remote-exit-marker" || "$missing_marker_reason" == "remote-exit-marker-lost-after-remote-start" ]]; then
+          echo "==> retrying due to ${missing_marker_reason} (attempt $((attempt + 1))/${max_retries})" | tee -a "$log_path"
+          attempt=$((attempt + 1))
+          continue
+        fi
+        failed_command="${command_text} (rch-exit=${run_rch_exit}; ${missing_marker_reason}; retries=${attempt}; log=${log_path})"
+        return 1
+      fi
+    fi
+
+    if ! rch_reject_local_fallback "$log_path"; then
+      failed_command="${command_text} (rch-local-fallback-detected; retries=${attempt}; log=${log_path})"
       return 1
     fi
-  fi
-  if ! rch_reject_local_fallback "$log_path"; then
-    failed_command="${command_text} (rch-local-fallback-detected; log=${log_path})"
-    return 1
-  fi
 
-  remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
-  if [[ -z "$remote_exit_code" ]]; then
-    missing_marker_reason="$(rch_missing_remote_exit_reason "$log_path" "$run_rch_exit")"
-    failed_command="${command_text} (${missing_marker_reason}; rch-exit=${run_rch_exit}; log=${log_path})"
-    return 1
-  fi
+    remote_exit_code="$(rch_remote_exit_code "$log_path" || true)"
+    if [[ -z "$remote_exit_code" ]]; then
+      missing_marker_reason="$(rch_missing_remote_exit_reason "$log_path" "$run_rch_exit")"
+      if (( attempt < max_retries )) && [[ "$missing_marker_reason" == "timeout-before-remote-exit-marker" || "$missing_marker_reason" == "remote-exit-marker-lost-after-remote-start" ]]; then
+        echo "==> retrying due to ${missing_marker_reason} (attempt $((attempt + 1))/${max_retries})" | tee -a "$log_path"
+        attempt=$((attempt + 1))
+        continue
+      fi
+      failed_command="${command_text} (${missing_marker_reason}; rch-exit=${run_rch_exit}; retries=${attempt}; log=${log_path})"
+      return 1
+    fi
 
-  if [[ "$remote_exit_code" != "0" ]]; then
-    failed_command="${command_text} (remote-exit=${remote_exit_code}; rch-exit=${run_rch_exit}; log=${log_path})"
-    return 1
-  fi
+    if [[ "$remote_exit_code" != "0" ]]; then
+      failed_command="${command_text} (remote-exit=${remote_exit_code}; rch-exit=${run_rch_exit}; retries=${attempt}; log=${log_path})"
+      return 1
+    fi
+
+    break
+  done
 }
 
 run_mode() {

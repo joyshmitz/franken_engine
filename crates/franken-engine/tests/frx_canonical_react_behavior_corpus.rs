@@ -582,3 +582,54 @@ fn frx_02_1_doc_is_nonempty() {
     let content = fs::read_to_string(&path).expect("read doc");
     assert!(!content.is_empty());
 }
+
+#[test]
+fn fixtures_dir_exists_and_contains_json_files() {
+    let dir = fixtures_dir();
+    assert!(dir.is_dir(), "fixtures directory must exist");
+    let files = list_json_files(&dir, ".fixture.json");
+    assert!(!files.is_empty(), "fixtures directory must contain fixture files");
+}
+
+#[test]
+fn traces_dir_exists_and_contains_trace_files() {
+    let dir = traces_dir();
+    assert!(dir.is_dir(), "traces directory must exist");
+    let files = list_json_files(&dir, ".trace.json");
+    assert!(!files.is_empty(), "traces directory must contain trace files");
+}
+
+#[test]
+fn all_fixtures_have_nonempty_fixture_ref() {
+    let files = list_json_files(&fixtures_dir(), ".fixture.json");
+    for path in files {
+        let fixture: FixtureSpec = load_json(&path);
+        assert!(
+            !fixture.fixture_ref.trim().is_empty(),
+            "fixture_ref must not be empty in {}",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn contract_has_nonempty_bead_id() {
+    let path = repo_root().join("docs/frx_canonical_react_behavior_corpus_v1.json");
+    let contract: CorpusContract = load_json(&path);
+    assert!(!contract.bead_id.trim().is_empty());
+}
+
+#[test]
+fn contract_has_nonempty_generated_by() {
+    let path = repo_root().join("docs/frx_canonical_react_behavior_corpus_v1.json");
+    let contract: CorpusContract = load_json(&path);
+    assert!(!contract.generated_by.trim().is_empty());
+}
+
+#[test]
+fn contract_failure_policy_is_fail_closed() {
+    let path = repo_root().join("docs/frx_canonical_react_behavior_corpus_v1.json");
+    let contract: CorpusContract = load_json(&path);
+    assert_eq!(contract.failure_policy.mode, "fail_closed");
+    assert!(!contract.failure_policy.error_code.trim().is_empty());
+}

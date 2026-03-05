@@ -584,3 +584,31 @@ fn witness_publication_query_serde_roundtrip() {
     assert!(recovered.extension_id.is_some());
     assert!(recovered.epoch.is_some());
 }
+
+#[test]
+fn publication_entry_kind_all_variants_serde_roundtrip() {
+    for kind in [
+        PublicationEntryKind::Publish,
+        PublicationEntryKind::Revoke,
+    ] {
+        let json = serde_json::to_string(&kind).expect("serialize");
+        let recovered: PublicationEntryKind = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, kind);
+    }
+}
+
+#[test]
+fn witness_publication_error_display_is_nonempty() {
+    let err = WitnessPublicationError::WitnessNotPromoted {
+        state: LifecycleState::Draft,
+    };
+    let msg = format!("{err}");
+    assert!(!msg.trim().is_empty());
+}
+
+#[test]
+fn witness_publication_config_default_is_constructible() {
+    let config = WitnessPublicationConfig::default();
+    let json = serde_json::to_string(&config).expect("serialize");
+    assert!(!json.is_empty());
+}

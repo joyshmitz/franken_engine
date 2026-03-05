@@ -444,3 +444,25 @@ fn snapshot_empty_cache_has_no_entries() {
     assert!(snapshot.entries.is_empty());
     assert!(snapshot.revoked_modules.is_empty());
 }
+
+#[test]
+fn module_version_fingerprint_serde_roundtrip() {
+    let fp = ModuleVersionFingerprint::new(ContentHash::compute(b"test"), 1, 2);
+    let json = serde_json::to_string(&fp).expect("serialize");
+    let recovered: ModuleVersionFingerprint = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.source_hash, fp.source_hash);
+}
+
+#[test]
+fn cache_error_code_serde_roundtrip() {
+    let code = CacheErrorCode::ModuleRevoked;
+    let json = serde_json::to_string(&code).expect("serialize");
+    let recovered: CacheErrorCode = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, code);
+}
+
+#[test]
+fn new_cache_has_no_events() {
+    let cache = ModuleCache::new();
+    assert!(cache.events().is_empty());
+}

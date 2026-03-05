@@ -242,3 +242,27 @@ fn track_b_contract_has_ownership_section() {
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     assert!(value["ownership"].is_object());
 }
+
+#[test]
+fn track_b_charter_doc_has_more_than_50_lines() {
+    let path = repo_root().join("docs/FRX_TRACK_B_COMPILER_FRIR_SPINE_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.lines().count() > 50);
+}
+
+#[test]
+fn track_b_contract_is_a_json_object() {
+    let path = repo_root().join("docs/frx_track_b_compiler_frir_spine_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value.is_object());
+}
+
+#[test]
+fn track_b_contract_deterministic_double_parse() {
+    let path = repo_root().join("docs/frx_track_b_compiler_frir_spine_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let a: Value = serde_json::from_str(&raw).expect("parse 1");
+    let b: Value = serde_json::from_str(&raw).expect("parse 2");
+    assert_eq!(a, b);
+}

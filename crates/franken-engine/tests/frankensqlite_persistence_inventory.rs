@@ -177,3 +177,29 @@ fn frankensqlite_inventory_has_database_topology_section() {
     let content = fs::read_to_string(&path).expect("read inventory");
     assert!(content.contains("## Database Topology"));
 }
+
+#[test]
+fn frankensqlite_inventory_has_more_than_10_lines() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    let line_count = content.lines().count();
+    assert!(line_count > 10, "inventory should have >10 lines, got {line_count}");
+}
+
+#[test]
+fn frankensqlite_inventory_deterministic_double_read() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let a = fs::read_to_string(&path).expect("first read");
+    let b = fs::read_to_string(&path).expect("second read");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn frankensqlite_inventory_mentions_consistency_requirement() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/FRANKENSQLITE_PERSISTENCE_INVENTORY.md");
+    let content = fs::read_to_string(&path).expect("read inventory");
+    assert!(content.contains("Consistency requirement"));
+}

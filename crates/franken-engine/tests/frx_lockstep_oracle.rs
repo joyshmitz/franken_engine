@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenengine_engine::frx_lockstep_oracle::{
-    FrxDivergenceClass, FrxLockstepCaseInput, FrxLockstepRunContext, FrxObservableTrace,
-    FrxTraceEvent, evaluate_case, run_lockstep_oracle,
+    FrxDivergenceClass, FrxLockstepCaseInput, FrxLockstepOracleError, FrxLockstepRunContext,
+    FrxObservableTrace, FrxTraceEvent, evaluate_case, load_trace_file, run_lockstep_oracle,
 };
 
 fn repo_root() -> PathBuf {
@@ -375,4 +375,77 @@ fn divergence_class_as_str_is_non_empty() {
 fn lockstep_run_context_deterministic_sets_policy_id() {
     let ctx = FrxLockstepRunContext::deterministic("t", "d", "p");
     assert_eq!(ctx.policy_id, "p");
+}
+
+#[test]
+fn lockstep_run_context_deterministic_sets_trace_id() {
+    let ctx = FrxLockstepRunContext::deterministic("my-trace", "my-decision", "my-policy");
+    assert_eq!(ctx.trace_id, "my-trace");
+    assert_eq!(ctx.decision_id, "my-decision");
+}
+
+#[test]
+fn divergence_class_all_variants_as_str_nonempty() {
+    for class in [
+        FrxDivergenceClass::DomMutationTrace,
+        FrxDivergenceClass::EffectInvocationOrder,
+        FrxDivergenceClass::StateTransition,
+        FrxDivergenceClass::HydrationOutcome,
+        FrxDivergenceClass::EventSequence,
+        FrxDivergenceClass::SchemaViolation,
+    ] {
+        assert!(!class.as_str().is_empty(), "as_str must not be empty for {class:?}");
+    }
+}
+
+#[test]
+fn trace_event_fields_are_preserved_after_roundtrip() {
+    let event = FrxTraceEvent {
+        seq: 0,
+        phase: "render".to_string(),
+        actor: "Counter".to_string(),
+        event: "state_change".to_string(),
+        decision_path: "path/to/decision".to_string(),
+        timing_us: 1_000,
+        outcome: "pass".to_string(),
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: FrxTraceEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.actor, "Counter");
+    assert_eq!(recovered.outcome, "pass");
+}
+
+// ---------- enrichment: error types ----------
+
+#[test]
+fn oracle_error_invalid_input_display_is_nonempty() {
+    let err = FrxLockstepOracleError::InvalidInput("empty traces".to_string());
+    let msg = err.to_string();
+    assert!(!msg.is_empty());
+    assert!(msg.contains("empty traces"));
+}
+
+#[test]
+fn oracle_error_is_std_error() {
+    let err = FrxLockstepOracleError::InvalidInput("test".to_string());
+    let dyn_err: &dyn std::error::Error = &err;
+    assert!(!dyn_err.to_string().is_empty());
+}
+
+#[test]
+fn load_trace_file_nonexistent_returns_read_error() {
+    let path = std::path::Path::new("/nonexistent/path/trace.json");
+    let err = load_trace_file(path).expect_err("should fail on missing file");
+    assert!(matches!(err, FrxLockstepOracleError::ReadFile { .. }));
+    assert!(!err.to_string().is_empty());
+}
+
+#[test]
+fn load_trace_file_invalid_json_returns_parse_error() {
+    let dir = unique_temp_dir("invalid-json");
+    let path = dir.join("bad.trace.json");
+    fs::write(&path, "not valid json").expect("write");
+    let err = load_trace_file(&path).expect_err("should fail on invalid JSON");
+    assert!(matches!(err, FrxLockstepOracleError::ParseTrace { .. }));
+    assert!(!err.to_string().is_empty());
 }

@@ -249,3 +249,27 @@ fn toolchain_contract_has_release_gate_contract() {
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     assert!(value["release_gate_contract"].is_object());
 }
+
+#[test]
+fn toolchain_charter_doc_has_more_than_50_lines() {
+    let path = repo_root().join("docs/FRX_TOOLCHAIN_ECOSYSTEM_LANE_CHARTER_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.lines().count() > 50);
+}
+
+#[test]
+fn toolchain_contract_is_a_json_object() {
+    let path = repo_root().join("docs/frx_toolchain_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value.is_object());
+}
+
+#[test]
+fn toolchain_contract_deterministic_double_parse() {
+    let path = repo_root().join("docs/frx_toolchain_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let a: Value = serde_json::from_str(&raw).expect("parse 1");
+    let b: Value = serde_json::from_str(&raw).expect("parse 2");
+    assert_eq!(a, b);
+}

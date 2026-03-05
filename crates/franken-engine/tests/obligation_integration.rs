@@ -3,9 +3,9 @@ use frankenengine_engine::control_plane::{
 };
 use frankenengine_engine::execution_cell::{CellKind, ExecutionCell};
 use frankenengine_engine::obligation_integration::{
-    LeakPolicy, ObligationTracker, OperationPhase, TwoPhaseCategory,
+    LeakPolicy, ObligationIntegrationError, ObligationTracker, OperationPhase, TwoPhaseCategory,
 };
-use frankenengine_engine::region_lifecycle::{CancelReason, DrainDeadline};
+use frankenengine_engine::region_lifecycle::{CancelReason, DrainDeadline, RegionState};
 
 #[derive(Debug, Clone)]
 struct IntegrationCx {
@@ -446,4 +446,93 @@ fn lab_tracker_with_no_leaks_does_not_fail_run() {
         .expect("commit");
     assert!(!tracker.has_leaks());
     assert!(!tracker.should_fail_run());
+}
+
+#[test]
+fn two_phase_category_serde_roundtrip() {
+    let cat = TwoPhaseCategory::ResourceAlloc;
+    let json = serde_json::to_string(&cat).expect("serialize");
+    let recovered: TwoPhaseCategory = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, cat);
+}
+
+#[test]
+fn operation_phase_serde_roundtrip() {
+    for phase in [OperationPhase::Phase1Active, OperationPhase::Committed, OperationPhase::Aborted, OperationPhase::Leaked] {
+        let json = serde_json::to_string(&phase).expect("serialize");
+        let recovered: OperationPhase = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, phase);
+    }
+}
+
+#[test]
+fn leak_policy_serde_roundtrip() {
+    let policy = LeakPolicy::default();
+    let json = serde_json::to_string(&policy).expect("serialize");
+    let recovered: LeakPolicy = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, policy);
+}
+
+// ---------- enrichment: error types ----------
+
+#[test]
+fn obligation_error_display_is_nonempty_for_all_variants() {
+    let errors: Vec<ObligationIntegrationError> = vec![
+        ObligationIntegrationError::CellNotRunning {
+            cell_id: "cell-1".to_string(),
+            current_state: RegionState::Closed,
+        },
+        ObligationIntegrationError::OperationNotFound {
+            operation_id: "op-1".to_string(),
+        },
+        ObligationIntegrationError::AlreadyResolved {
+            operation_id: "op-2".to_string(),
+            current_phase: OperationPhase::Committed,
+        },
+        ObligationIntegrationError::DuplicateOperation {
+            operation_id: "op-3".to_string(),
+        },
+        ObligationIntegrationError::CellError {
+            message: "internal failure".to_string(),
+        },
+    ];
+    for err in &errors {
+        let msg = err.to_string();
+        assert!(!msg.is_empty(), "error display must not be empty: {err:?}");
+    }
+}
+
+#[test]
+fn obligation_error_is_std_error() {
+    let err = ObligationIntegrationError::OperationNotFound {
+        operation_id: "op-test".to_string(),
+    };
+    let dyn_err: &dyn std::error::Error = &err;
+    assert!(!dyn_err.to_string().is_empty());
+}
+
+#[test]
+fn obligation_error_codes_are_unique() {
+    let errors: Vec<ObligationIntegrationError> = vec![
+        ObligationIntegrationError::CellNotRunning {
+            cell_id: "c".to_string(),
+            current_state: RegionState::Closed,
+        },
+        ObligationIntegrationError::OperationNotFound {
+            operation_id: "o".to_string(),
+        },
+        ObligationIntegrationError::AlreadyResolved {
+            operation_id: "o".to_string(),
+            current_phase: OperationPhase::Aborted,
+        },
+        ObligationIntegrationError::DuplicateOperation {
+            operation_id: "o".to_string(),
+        },
+        ObligationIntegrationError::CellError {
+            message: "m".to_string(),
+        },
+    ];
+    let codes: std::collections::BTreeSet<&str> =
+        errors.iter().map(|e| e.error_code()).collect();
+    assert_eq!(codes.len(), errors.len());
 }

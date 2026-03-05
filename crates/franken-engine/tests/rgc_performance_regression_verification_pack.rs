@@ -609,3 +609,22 @@ fn rgc_060_regression_millionths_large_values_do_not_overflow() {
     let result = regression_millionths(1, u64::MAX / 2);
     assert!(result > 0);
 }
+
+#[test]
+fn rgc_060_contract_has_nonempty_bead_id() {
+    let contract = parse_contract();
+    assert!(!contract.bead_id.trim().is_empty());
+}
+
+#[test]
+fn rgc_060_contract_has_nonempty_policy_id() {
+    let contract = parse_contract();
+    assert!(!contract.policy_id.trim().is_empty());
+}
+
+#[test]
+fn rgc_060_contract_deterministic_double_parse() {
+    let a = parse_contract();
+    let b = parse_contract();
+    assert_eq!(a, b);
+}

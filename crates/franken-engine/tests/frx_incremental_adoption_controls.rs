@@ -459,3 +459,22 @@ fn frx_07_4_remediation_ids_are_nonempty_and_unique() {
         );
     }
 }
+
+#[test]
+fn frx_07_4_contract_schema_version_matches_constant() {
+    let contract = parse_contract();
+    assert_eq!(contract.schema_version, CONTRACT_SCHEMA_VERSION);
+}
+
+#[test]
+fn frx_07_4_contract_deterministic_double_parse() {
+    let a = parse_contract();
+    let b = parse_contract();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn frx_07_4_contract_has_nonempty_generated_by() {
+    let contract = parse_contract();
+    assert!(!contract.generated_by.trim().is_empty());
+}

@@ -2,9 +2,11 @@
 mod version_matrix_lane;
 
 use version_matrix_lane::{
-    BoundaryMatrixSpec, FailureScopeKind, MatrixCellResult, MatrixLaneKind, MatrixOutcome,
-    PinnedVersionCombination, VersionMatrixError, VersionSource, classify_failure_scopes,
-    derive_version_matrix, derive_version_slots, summarize_matrix_health,
+    BoundaryMatrixSpec, FailureScopeKind, MatrixCellResult, MatrixFailureScope,
+    MatrixHealthSummary, MatrixLaneKind, MatrixOutcome, PinnedVersionCombination,
+    VersionMatrixCell, VersionMatrixError, VersionMatrixPlan, VersionSlots, VersionSource,
+    classify_failure_scopes, derive_version_matrix, derive_version_slots,
+    summarize_matrix_health,
 };
 
 fn sample_spec() -> BoundaryMatrixSpec {
@@ -450,4 +452,160 @@ fn derive_version_slots_single_tag_no_previous() {
     .expect("derive slots");
     assert_eq!(slots.current, "1.0.0");
     assert!(slots.previous.is_none());
+}
+
+// ---------- enrichment: serde roundtrips, error paths, edge cases ----------
+
+#[test]
+fn version_source_serde_roundtrip() {
+    let vs = VersionSource {
+        tags: vec!["v1.0.0".to_string()],
+        branch_names: vec!["main".to_string()],
+        current_override: Some("2.0.0".to_string()),
+        previous_override: None,
+        next_override: None,
+    };
+    let json = serde_json::to_string(&vs).expect("serialize");
+    let recovered: VersionSource = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.tags, vs.tags);
+    assert_eq!(recovered.current_override.as_deref(), Some("2.0.0"));
+}
+
+#[test]
+fn pinned_version_combination_serde_roundtrip() {
+    let pvc = PinnedVersionCombination {
+        local_version: "1.0.0".to_string(),
+        remote_version: "2.0.0".to_string(),
+        reason: "test".to_string(),
+    };
+    let json = serde_json::to_string(&pvc).expect("serialize");
+    let recovered: PinnedVersionCombination = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.local_version, "1.0.0");
+    assert_eq!(recovered.reason, "test");
+}
+
+#[test]
+fn boundary_matrix_spec_serde_roundtrip() {
+    let spec = sample_spec();
+    let json = serde_json::to_string(&spec).expect("serialize");
+    let recovered: BoundaryMatrixSpec = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.boundary_surface, spec.boundary_surface);
+    assert_eq!(recovered.pinned_combinations.len(), 1);
+}
+
+#[test]
+fn version_matrix_cell_serde_roundtrip() {
+    let plan = derive_version_matrix(&[sample_spec()]).expect("derive matrix");
+    let cell = &plan.cells[0];
+    let json = serde_json::to_string(cell).expect("serialize");
+    let recovered: VersionMatrixCell = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.cell_id, cell.cell_id);
+    assert_eq!(recovered.lane_kind, cell.lane_kind);
+}
+
+#[test]
+fn version_matrix_plan_serde_roundtrip() {
+    let plan = derive_version_matrix(&[sample_spec()]).expect("derive matrix");
+    let json = serde_json::to_string(&plan).expect("serialize");
+    let recovered: VersionMatrixPlan = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.cells.len(), plan.cells.len());
+    assert_eq!(recovered.schema_version, plan.schema_version);
+}
+
+#[test]
+fn version_slots_serde_roundtrip() {
+    let slots = derive_version_slots(&sample_spec().local_versions, "test-repo")
+        .expect("derive slots");
+    let json = serde_json::to_string(&slots).expect("serialize");
+    let recovered: VersionSlots = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.current, slots.current);
+    assert_eq!(recovered.previous, slots.previous);
+}
+
+#[test]
+fn matrix_cell_result_serde_roundtrip() {
+    let result = MatrixCellResult {
+        trace_id: "t".to_string(),
+        decision_id: "d".to_string(),
+        policy_id: "p".to_string(),
+        cell_id: "cell-1".to_string(),
+        boundary_surface: "test/boundary".to_string(),
+        lane_kind: MatrixLaneKind::Current,
+        outcome: MatrixOutcome::Pass,
+        error_code: None,
+        failure_fingerprint: None,
+        failure_class: None,
+    };
+    let json = serde_json::to_string(&result).expect("serialize");
+    let recovered: MatrixCellResult = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.cell_id, "cell-1");
+    assert_eq!(recovered.outcome, MatrixOutcome::Pass);
+}
+
+#[test]
+fn matrix_failure_scope_serde_roundtrip() {
+    let scope = MatrixFailureScope {
+        boundary_surface: "test/surface".to_string(),
+        failure_fingerprint: "fp-1".to_string(),
+        scope: FailureScopeKind::Universal,
+        failing_cells: vec!["cell-1".to_string(), "cell-2".to_string()],
+    };
+    let json = serde_json::to_string(&scope).expect("serialize");
+    let recovered: MatrixFailureScope = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.scope, FailureScopeKind::Universal);
+    assert_eq!(recovered.failing_cells.len(), 2);
+}
+
+#[test]
+fn matrix_health_summary_serde_roundtrip() {
+    let summary = MatrixHealthSummary {
+        total_cells: 10,
+        passed_cells: 7,
+        failed_cells: 3,
+        universal_failures: 1,
+        version_specific_failures: 2,
+    };
+    let json = serde_json::to_string(&summary).expect("serialize");
+    let recovered: MatrixHealthSummary = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.total_cells, 10);
+    assert_eq!(recovered.universal_failures, 1);
+}
+
+#[test]
+fn version_matrix_error_invalid_pinned_display() {
+    let err = VersionMatrixError::InvalidPinnedCombination {
+        boundary_surface: "test/surface".to_string(),
+        reason: "missing version".to_string(),
+    };
+    let msg = err.to_string();
+    assert!(!msg.is_empty());
+    assert!(msg.contains("test/surface"));
+}
+
+#[test]
+fn version_matrix_error_is_std_error() {
+    let err = VersionMatrixError::MissingCurrentVersion {
+        repo: "test-repo".to_string(),
+    };
+    let dyn_err: &dyn std::error::Error = &err;
+    assert!(!dyn_err.to_string().is_empty());
+}
+
+#[test]
+fn matrix_lane_kind_as_str_is_nonempty() {
+    for kind in [
+        MatrixLaneKind::Current,
+        MatrixLaneKind::Previous,
+        MatrixLaneKind::Next,
+        MatrixLaneKind::Pinned,
+    ] {
+        assert!(!kind.as_str().is_empty());
+    }
+}
+
+#[test]
+fn classify_failure_scopes_empty_results_produces_empty() {
+    let plan = derive_version_matrix(&[sample_spec()]).expect("derive matrix");
+    let scopes = classify_failure_scopes(&plan, &[]);
+    assert!(scopes.is_empty());
 }

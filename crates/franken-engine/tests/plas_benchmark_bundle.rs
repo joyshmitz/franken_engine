@@ -1,7 +1,7 @@
 use frankenengine_engine::plas_benchmark_bundle::{
-    PLAS_BENCHMARK_BUNDLE_SCHEMA_VERSION, PlasBenchmarkBundleRequest, PlasBenchmarkCohort,
-    PlasBenchmarkExtensionSample, PlasBenchmarkThresholds, PlasBenchmarkTrendPoint,
-    build_plas_benchmark_bundle,
+    PLAS_BENCHMARK_BUNDLE_SCHEMA_VERSION, PlasBenchmarkBundleError, PlasBenchmarkBundleRequest,
+    PlasBenchmarkCohort, PlasBenchmarkExtensionSample, PlasBenchmarkThresholds,
+    PlasBenchmarkTrendPoint, build_plas_benchmark_bundle,
 };
 
 fn base_sample(extension_id: &str, cohort: PlasBenchmarkCohort) -> PlasBenchmarkExtensionSample {
@@ -355,4 +355,60 @@ fn bundle_to_json_pretty_is_valid_json() {
     let json = decision.to_json_pretty().expect("json");
     let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse json");
     assert!(parsed.is_object());
+}
+
+// ---------- enrichment: error types ----------
+
+#[test]
+fn plas_bundle_error_display_is_nonempty() {
+    let err = PlasBenchmarkBundleError::InvalidInput {
+        field: "samples".to_string(),
+        detail: "must not be empty".to_string(),
+    };
+    let msg = err.to_string();
+    assert!(!msg.is_empty());
+    assert!(msg.contains("samples"));
+}
+
+#[test]
+fn plas_bundle_error_duplicate_extension_display() {
+    let err = PlasBenchmarkBundleError::DuplicateExtensionId {
+        extension_id: "ext-dup".to_string(),
+    };
+    let msg = err.to_string();
+    assert!(msg.contains("ext-dup"));
+}
+
+#[test]
+fn plas_bundle_error_stable_codes_are_nonempty() {
+    let errors: Vec<PlasBenchmarkBundleError> = vec![
+        PlasBenchmarkBundleError::InvalidInput {
+            field: "f".to_string(),
+            detail: "d".to_string(),
+        },
+        PlasBenchmarkBundleError::DuplicateExtensionId {
+            extension_id: "e".to_string(),
+        },
+        PlasBenchmarkBundleError::SerializationFailure("s".to_string()),
+    ];
+    for err in &errors {
+        assert!(!err.stable_code().is_empty());
+    }
+}
+
+#[test]
+fn plas_bundle_error_is_std_error() {
+    let err = PlasBenchmarkBundleError::SerializationFailure("test".to_string());
+    let dyn_err: &dyn std::error::Error = &err;
+    assert!(!dyn_err.to_string().is_empty());
+}
+
+#[test]
+fn bundle_denies_duplicate_extension_ids() {
+    let mut samples = representative_samples();
+    samples.push(base_sample("ext-simple", PlasBenchmarkCohort::Simple));
+    let request = request_with_samples(samples);
+    let err = build_plas_benchmark_bundle(&request)
+        .expect_err("duplicate extension_id should be rejected");
+    assert!(err.to_string().contains("ext-simple"));
 }

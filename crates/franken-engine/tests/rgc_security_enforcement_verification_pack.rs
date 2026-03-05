@@ -406,3 +406,29 @@ fn vectors_have_nonempty_schema_version() {
     let vectors = parse_vectors();
     assert!(!vectors.schema_version.trim().is_empty());
 }
+
+#[test]
+fn contract_schema_version_matches_constant() {
+    let contract = parse_contract();
+    assert_eq!(contract.schema_version, PACK_SCHEMA_VERSION);
+}
+
+#[test]
+fn vectors_schema_version_matches_constant() {
+    let vectors = parse_vectors();
+    assert_eq!(vectors.schema_version, VECTORS_SCHEMA_VERSION);
+}
+
+#[test]
+fn contract_failure_scenario_ids_are_unique_and_nonempty() {
+    let contract = parse_contract();
+    let mut seen = BTreeSet::new();
+    for scenario in &contract.failure_scenarios {
+        assert!(!scenario.scenario_id.trim().is_empty());
+        assert!(
+            seen.insert(&scenario.scenario_id),
+            "duplicate scenario_id: {}",
+            scenario.scenario_id
+        );
+    }
+}

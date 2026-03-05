@@ -1174,3 +1174,49 @@ fn lockstep_runner_quarantines_flaky_fixtures_for_divergence_gate() {
     let _ = fs::remove_file(script_path);
     let _ = fs::remove_file(counter_path);
 }
+
+#[test]
+fn temp_path_produces_unique_paths() {
+    let a = temp_path("test", "json");
+    let b = temp_path("test", "json");
+    assert_ne!(a, b);
+}
+
+#[test]
+fn temp_dir_creates_directory() {
+    let d = temp_dir("lockstep-check");
+    assert!(d.is_dir());
+    let _ = fs::remove_dir_all(d);
+}
+
+#[test]
+fn canonical_parser_parses_simple_expression() {
+    let parser = CanonicalEs2020Parser;
+    let tree = parser.parse("42", ParseGoal::Script).expect("parse");
+    assert!(!tree.body.is_empty());
+}
+
+#[test]
+fn write_fixture_catalog_returns_sha256_prefixed_hash() {
+    let path = temp_path("franken_lockstep_runner_hash_check_catalog", "json");
+    let hash = write_fixture_catalog(&path);
+    assert!(hash.starts_with("sha256:"), "expected sha256 prefix, got {hash}");
+    assert!(hash.len() > 10);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn runtime_specs_content_includes_schema_version() {
+    let content = runtime_specs_content("sha256:test", &["node", "bun"]);
+    assert!(content.contains("franken-engine.lockstep-runtimes.v1"));
+    assert!(content.contains("node"));
+    assert!(content.contains("bun"));
+}
+
+#[test]
+fn canonical_parser_hash_is_deterministic() {
+    let parser = CanonicalEs2020Parser;
+    let h1 = parser.parse("42", ParseGoal::Script).expect("parse").canonical_hash();
+    let h2 = parser.parse("42", ParseGoal::Script).expect("parse").canonical_hash();
+    assert_eq!(h1, h2);
+}

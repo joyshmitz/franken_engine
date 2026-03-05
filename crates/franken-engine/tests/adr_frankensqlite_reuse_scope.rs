@@ -159,3 +159,29 @@ fn frankensqlite_adr_has_migration_policy_section() {
     let content = fs::read_to_string(&path).expect("read ADR");
     assert!(content.contains("## Migration Policy"));
 }
+
+#[test]
+fn frankensqlite_adr_has_more_than_10_lines() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    let line_count = content.lines().count();
+    assert!(line_count > 10, "ADR should have >10 lines, got {line_count}");
+}
+
+#[test]
+fn frankensqlite_adr_deterministic_double_read() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let a = fs::read_to_string(&path).expect("first read");
+    let b = fs::read_to_string(&path).expect("second read");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn frankensqlite_adr_mentions_evidence_index() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0004-frankensqlite-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("evidence index"));
+}

@@ -383,3 +383,33 @@ fn governance_decision_type_display_is_non_empty() {
         assert!(!dt.to_string().is_empty());
     }
 }
+
+#[test]
+fn governance_ledger_config_default_is_valid() {
+    let config = GovernanceLedgerConfig::default();
+    assert!(config.checkpoint_interval > 0);
+}
+
+#[test]
+fn scorecard_snapshot_serde_roundtrip() {
+    let snapshot = ScorecardSnapshot::from(&sample_scorecard());
+    let json = serde_json::to_string(&snapshot).expect("serialize");
+    let recovered: ScorecardSnapshot = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.ev_millionths, snapshot.ev_millionths);
+}
+
+#[test]
+fn governance_rationale_serde_roundtrip() {
+    let rationale = GovernanceRationale {
+        summary: "test rationale".to_string(),
+        passed_criteria: vec!["crit-1".to_string()],
+        failed_criteria: vec![],
+        confidence_millionths: 900_000,
+        risk_of_harm_millionths: 100_000,
+        bypassed_risk_criteria: vec![],
+        acknowledged_bypass: false,
+    };
+    let json = serde_json::to_string(&rationale).expect("serialize");
+    let recovered: GovernanceRationale = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.summary, "test rationale");
+}

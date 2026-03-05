@@ -471,3 +471,33 @@ fn regression_gate_policy_custom_thresholds_roundtrip() {
     let recovered: RegressionGatePolicy = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered, policy);
 }
+
+#[test]
+fn regression_gate_policy_default_is_constructible() {
+    let policy = RegressionGatePolicy::default();
+    assert!(policy.max_culprits > 0);
+}
+
+#[test]
+fn contract_json_deterministic_double_parse() {
+    let a: Contract = serde_json::from_str(CONTRACT_JSON).expect("parse a");
+    let b: Contract = serde_json::from_str(CONTRACT_JSON).expect("parse b");
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.bead_id, b.bead_id);
+}
+
+#[test]
+fn regression_observation_all_fields_serde_roundtrip() {
+    let obs = RegressionObservation {
+        workload_id: "w1".to_string(),
+        scenario_id: "s1".to_string(),
+        benchmark_metadata_hash: "sha256:abc".to_string(),
+        baseline_ns: 1000,
+        observed_ns: 1100,
+        p_value_millionths: 50_000,
+        commit_id: None,
+    };
+    let json = serde_json::to_string(&obs).expect("serialize");
+    let recovered: RegressionObservation = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.workload_id, "w1");
+}

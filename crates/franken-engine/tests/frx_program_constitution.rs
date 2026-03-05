@@ -325,3 +325,27 @@ fn objective_function_has_primary_bead() {
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     assert!(value["primary_bead"].as_str().is_some_and(|s| !s.is_empty()));
 }
+
+#[test]
+fn constitution_doc_has_more_than_100_lines() {
+    let path = repo_root().join("docs/FRX_PROGRAM_CONSTITUTION_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.lines().count() > 100);
+}
+
+#[test]
+fn objective_function_json_is_an_object() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value.is_object());
+}
+
+#[test]
+fn objective_function_deterministic_double_parse() {
+    let path = repo_root().join("docs/frx_objective_function_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let a: Value = serde_json::from_str(&raw).expect("parse 1");
+    let b: Value = serde_json::from_str(&raw).expect("parse 2");
+    assert_eq!(a, b);
+}

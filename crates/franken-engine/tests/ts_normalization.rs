@@ -1,5 +1,8 @@
 use frankenengine_engine::ts_normalization::{
-    TsCompilerOptions, TsNormalizationConfig, TsNormalizationError, normalize_typescript_to_es2020,
+    CapabilityIntent, NormalizationDecision, NormalizationEvent, SourceMapEntry,
+    TsCompilerOptions, TsIngestionError, TsIngestionErrorCode, TsIngestionEvent,
+    TsNormalizationConfig, TsNormalizationError, TsNormalizationOutput, TsNormalizationWitness,
+    normalize_typescript_to_es2020,
 };
 
 #[test]
@@ -387,4 +390,185 @@ fn normalization_preserves_runtime_semantics() {
     .expect("normalization should pass");
     assert!(output.normalized_source.contains("add"));
     assert!(!output.normalized_source.contains(": number"));
+}
+
+// ---------- enrichment: serde roundtrips, error paths, edge cases ----------
+
+#[test]
+fn source_map_entry_serde_roundtrip() {
+    let entry = SourceMapEntry {
+        normalized_line: 5,
+        original_line: 10,
+    };
+    let json = serde_json::to_string(&entry).expect("serialize");
+    let recovered: SourceMapEntry = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.normalized_line, 5);
+    assert_eq!(recovered.original_line, 10);
+}
+
+#[test]
+fn capability_intent_serde_roundtrip() {
+    let intent = CapabilityIntent {
+        symbol: "hostcall".to_string(),
+        capability: "fs.read".to_string(),
+    };
+    let json = serde_json::to_string(&intent).expect("serialize");
+    let recovered: CapabilityIntent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.symbol, "hostcall");
+    assert_eq!(recovered.capability, "fs.read");
+}
+
+#[test]
+fn normalization_decision_serde_roundtrip() {
+    let decision = NormalizationDecision {
+        step: "strip_type_annotations".to_string(),
+        changed: true,
+        detail: "removed 3 annotations".to_string(),
+    };
+    let json = serde_json::to_string(&decision).expect("serialize");
+    let recovered: NormalizationDecision = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.step, "strip_type_annotations");
+    assert!(recovered.changed);
+}
+
+#[test]
+fn normalization_event_serde_roundtrip() {
+    let event = NormalizationEvent {
+        trace_id: "t".to_string(),
+        decision_id: "d".to_string(),
+        policy_id: "p".to_string(),
+        component: "ts_normalization".to_string(),
+        event: "normalize_start".to_string(),
+        outcome: "ok".to_string(),
+        error_code: None,
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: NormalizationEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.component, "ts_normalization");
+    assert_eq!(recovered.error_code, None);
+}
+
+#[test]
+fn ts_normalization_witness_serde_roundtrip() {
+    let witness = TsNormalizationWitness {
+        trace_id: "t".to_string(),
+        decision_id: "d".to_string(),
+        policy_id: "p".to_string(),
+        source_hash: "sha256-src".to_string(),
+        normalized_hash: "sha256-norm".to_string(),
+        compiler_options_hash: "sha256-opts".to_string(),
+        decisions: vec![],
+        capability_intents: vec![],
+    };
+    let json = serde_json::to_string(&witness).expect("serialize");
+    let recovered: TsNormalizationWitness = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.source_hash, "sha256-src");
+    assert_eq!(recovered.normalized_hash, "sha256-norm");
+}
+
+#[test]
+fn ts_normalization_output_serde_roundtrip() {
+    let output = normalize_typescript_to_es2020(
+        "const x: number = 1;",
+        &TsNormalizationConfig::default(),
+        "trace-serde-out",
+        "decision-serde-out",
+        "policy-serde-out",
+    )
+    .expect("normalization should pass");
+    let json = serde_json::to_string(&output).expect("serialize");
+    let recovered: TsNormalizationOutput = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(output.normalized_source, recovered.normalized_source);
+    assert_eq!(output.witness.source_hash, recovered.witness.source_hash);
+    assert_eq!(output.events.len(), recovered.events.len());
+}
+
+#[test]
+fn ts_normalization_error_display_is_nonempty() {
+    let err = TsNormalizationError::EmptySource;
+    assert!(!err.to_string().is_empty());
+
+    let err2 = TsNormalizationError::UnsupportedSyntax {
+        feature: "decorators",
+    };
+    assert!(err2.to_string().contains("decorators"));
+
+    let err3 = TsNormalizationError::UnsupportedCompilerOption {
+        option: "target",
+        value: "es5".to_string(),
+    };
+    assert!(err3.to_string().contains("target"));
+    assert!(err3.to_string().contains("es5"));
+}
+
+#[test]
+fn ts_normalization_error_is_std_error() {
+    let err = TsNormalizationError::EmptySource;
+    let dyn_err: &dyn std::error::Error = &err;
+    assert!(!dyn_err.to_string().is_empty());
+}
+
+#[test]
+fn ts_ingestion_error_code_stable_codes_are_unique() {
+    let codes = [
+        TsIngestionErrorCode::NormalizationFailed.stable_code(),
+        TsIngestionErrorCode::ParseFailed.stable_code(),
+        TsIngestionErrorCode::LoweringFailed.stable_code(),
+        TsIngestionErrorCode::CapabilityContractFailed.stable_code(),
+    ];
+    for code in &codes {
+        assert!(code.starts_with("FE-TSINGEST"));
+    }
+    let unique: std::collections::BTreeSet<&str> = codes.iter().copied().collect();
+    assert_eq!(unique.len(), codes.len());
+}
+
+#[test]
+fn ts_ingestion_error_display_is_nonempty() {
+    let err = TsIngestionError {
+        code: TsIngestionErrorCode::ParseFailed,
+        stage: "parse".to_string(),
+        message: "unexpected token".to_string(),
+        events: vec![],
+    };
+    let display = err.to_string();
+    assert!(!display.is_empty());
+    assert!(display.contains("FE-TSINGEST"));
+}
+
+#[test]
+fn ts_ingestion_error_is_std_error() {
+    let err = TsIngestionError {
+        code: TsIngestionErrorCode::LoweringFailed,
+        stage: "lowering".to_string(),
+        message: "ir0 conversion failed".to_string(),
+        events: vec![],
+    };
+    let dyn_err: &dyn std::error::Error = &err;
+    assert!(!dyn_err.to_string().is_empty());
+}
+
+#[test]
+fn ts_ingestion_event_serde_roundtrip() {
+    let event = TsIngestionEvent {
+        trace_id: "t".to_string(),
+        decision_id: "d".to_string(),
+        policy_id: "p".to_string(),
+        component: "ts_ingestion_lane".to_string(),
+        event: "parse_start".to_string(),
+        outcome: "ok".to_string(),
+        error_code: Some("FE-TSINGEST-0002".to_string()),
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: TsIngestionEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.component, "ts_ingestion_lane");
+    assert_eq!(recovered.error_code.as_deref(), Some("FE-TSINGEST-0002"));
+}
+
+#[test]
+fn ts_ingestion_error_code_serde_roundtrip() {
+    let code = TsIngestionErrorCode::CapabilityContractFailed;
+    let json = serde_json::to_string(&code).expect("serialize");
+    let recovered: TsIngestionErrorCode = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.stable_code(), code.stable_code());
 }

@@ -383,3 +383,24 @@ fn independent_verifier_onboarding_section_exists_with_content() {
         "verifier onboarding must discuss verification"
     );
 }
+
+#[test]
+fn benchmark_spec_has_more_than_100_lines() {
+    let spec = read_spec();
+    assert!(spec.lines().count() > 100, "spec should be substantial");
+}
+
+#[test]
+fn benchmark_spec_deterministic_triple_read() {
+    let a = read_spec();
+    let b = read_spec();
+    let c = read_spec();
+    assert_eq!(a, b);
+    assert_eq!(b, c);
+}
+
+#[test]
+fn parse_table_row_preserves_order() {
+    let row = parse_table_row("| Z | A | M |");
+    assert_eq!(row, vec!["Z", "A", "M"]);
+}

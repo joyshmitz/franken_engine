@@ -251,3 +251,27 @@ fn compiler_contract_has_consumer_interfaces() {
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     assert!(value["consumer_interfaces"].is_object() || value["consumer_interfaces"].is_array());
 }
+
+#[test]
+fn compiler_charter_doc_has_more_than_50_lines() {
+    let path = repo_root().join("docs/FRX_COMPILER_LANE_CHARTER_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.lines().count() > 50);
+}
+
+#[test]
+fn compiler_contract_json_is_an_object() {
+    let path = repo_root().join("docs/frx_compiler_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value.is_object());
+}
+
+#[test]
+fn compiler_contract_deterministic_double_parse() {
+    let path = repo_root().join("docs/frx_compiler_lane_contract_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let a: Value = serde_json::from_str(&raw).expect("parse 1");
+    let b: Value = serde_json::from_str(&raw).expect("parse 2");
+    assert_eq!(a, b);
+}

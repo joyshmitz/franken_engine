@@ -264,3 +264,27 @@ fn track_c_contract_has_generated_by() {
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     assert!(value["generated_by"].as_str().is_some_and(|s| !s.is_empty()));
 }
+
+#[test]
+fn track_c_charter_doc_has_more_than_50_lines() {
+    let path = repo_root().join("docs/FRX_TRACK_C_JS_RUNTIME_LANE_MVP_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.lines().count() > 50);
+}
+
+#[test]
+fn track_c_contract_is_a_json_object() {
+    let path = repo_root().join("docs/frx_track_c_js_runtime_lane_mvp_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    assert!(value.is_object());
+}
+
+#[test]
+fn track_c_contract_deterministic_double_parse() {
+    let path = repo_root().join("docs/frx_track_c_js_runtime_lane_mvp_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let a: Value = serde_json::from_str(&raw).expect("parse 1");
+    let b: Value = serde_json::from_str(&raw).expect("parse 2");
+    assert_eq!(a, b);
+}

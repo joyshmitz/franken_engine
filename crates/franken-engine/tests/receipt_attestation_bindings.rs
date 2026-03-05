@@ -339,3 +339,28 @@ fn opt_receipt_full_serde_roundtrip() {
     assert_eq!(recovered.signature, signed.signature);
     assert!(recovered.attestation_bindings.is_some());
 }
+
+#[test]
+fn optimization_class_serde_roundtrip() {
+    for class in [OptimizationClass::Superinstruction, OptimizationClass::TraceSpecialization] {
+        let json = serde_json::to_string(&class).expect("serialize");
+        let recovered: OptimizationClass = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, class);
+    }
+}
+
+#[test]
+fn proof_schema_version_v1_is_nonempty() {
+    let v = proof_schema_version_v1_0();
+    let json = serde_json::to_string(&v).expect("serialize");
+    assert!(!json.is_empty());
+}
+
+#[test]
+fn proof_schema_error_display_is_nonempty() {
+    let err = ProofSchemaError::InvalidSignature {
+        artifact: "test-artifact".to_string(),
+    };
+    let msg = format!("{err}");
+    assert!(!msg.trim().is_empty());
+}

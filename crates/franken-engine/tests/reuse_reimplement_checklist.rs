@@ -182,3 +182,27 @@ fn release_checklist_has_machine_readable_gate() {
     let content = fs::read_to_string(&path).expect("read release checklist");
     assert!(content.contains("## Machine-Readable Gate"));
 }
+
+#[test]
+fn pr_template_has_more_than_10_lines() {
+    let path = repo_root().join(".github/PULL_REQUEST_TEMPLATE.md");
+    let content = fs::read_to_string(&path).expect("read PR template");
+    let line_count = content.lines().count();
+    assert!(line_count > 10, "PR template should have >10 lines, got {line_count}");
+}
+
+#[test]
+fn release_checklist_has_more_than_10_lines() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    let content = fs::read_to_string(&path).expect("read release checklist");
+    let line_count = content.lines().count();
+    assert!(line_count > 10, "release checklist should have >10 lines, got {line_count}");
+}
+
+#[test]
+fn release_checklist_deterministic_double_read() {
+    let path = repo_root().join("docs/RELEASE_CHECKLIST.md");
+    let a = fs::read_to_string(&path).expect("first read");
+    let b = fs::read_to_string(&path).expect("second read");
+    assert_eq!(a, b);
+}

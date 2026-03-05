@@ -155,3 +155,29 @@ fn frankentui_adr_has_scope_section() {
     let content = fs::read_to_string(&path).expect("read ADR");
     assert!(content.contains("## Scope"));
 }
+
+#[test]
+fn frankentui_adr_has_more_than_10_lines() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    let line_count = content.lines().count();
+    assert!(line_count > 10, "ADR should have >10 lines, got {line_count}");
+}
+
+#[test]
+fn frankentui_adr_deterministic_double_read() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
+    let a = fs::read_to_string(&path).expect("first read");
+    let b = fs::read_to_string(&path).expect("second read");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn frankentui_adr_mentions_context_section() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/adr/ADR-0003-frankentui-reuse-scope.md");
+    let content = fs::read_to_string(&path).expect("read ADR");
+    assert!(content.contains("## Context"));
+}

@@ -375,3 +375,23 @@ fn rgc_013_register_generated_at_utc_ends_with_z() {
     let register = parse_risk_register();
     assert!(register.generated_at_utc.ends_with('Z'));
 }
+
+#[test]
+fn rgc_013_register_has_nonempty_generated_by() {
+    let register = parse_risk_register();
+    assert!(!register.generated_by.trim().is_empty());
+}
+
+#[test]
+fn rgc_013_register_track_fields_are_nonempty() {
+    let register = parse_risk_register();
+    assert!(!register.track.id.trim().is_empty());
+    assert!(!register.track.name.trim().is_empty());
+}
+
+#[test]
+fn rgc_013_register_deterministic_double_parse() {
+    let a = parse_risk_register();
+    let b = parse_risk_register();
+    assert_eq!(a, b);
+}

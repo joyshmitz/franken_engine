@@ -464,3 +464,27 @@ fn frx_07_3_known_gap_error_codes_are_unique() {
         );
     }
 }
+
+#[test]
+fn ecosystem_matrix_schema_version_matches_constant() {
+    let matrix = parse_matrix();
+    assert_eq!(matrix.schema_version, MATRIX_SCHEMA_VERSION);
+}
+
+#[test]
+fn ecosystem_matrix_serde_roundtrip() {
+    let matrix = parse_matrix();
+    let json = serde_json::to_string(&matrix).expect("serialize");
+    let recovered: EcosystemMatrix = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.schema_version, matrix.schema_version);
+    assert_eq!(recovered.entries.len(), matrix.entries.len());
+}
+
+#[test]
+fn ecosystem_matrix_operator_verification_has_entries() {
+    let matrix = parse_matrix();
+    assert!(
+        !matrix.operator_verification.is_empty(),
+        "operator_verification must not be empty"
+    );
+}

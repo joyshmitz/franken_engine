@@ -583,3 +583,24 @@ fn frx_07_2_fixture_refs_are_unique_across_scenarios() {
         );
     }
 }
+
+#[test]
+fn frx_07_2_strategy_schema_version_matches_constant() {
+    let strategy = parse_strategy();
+    assert_eq!(strategy.schema_version, STRATEGY_SCHEMA_VERSION);
+}
+
+#[test]
+fn frx_07_2_deterministic_triple_parse() {
+    let a = parse_strategy();
+    let b = parse_strategy();
+    let c = parse_strategy();
+    assert_eq!(a, b);
+    assert_eq!(b, c);
+}
+
+#[test]
+fn frx_07_2_strategy_has_nonempty_generated_by() {
+    let strategy = parse_strategy();
+    assert!(!strategy.generated_by.trim().is_empty());
+}

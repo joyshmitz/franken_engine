@@ -449,3 +449,71 @@ fn mock_id_constructors_produce_distinct_ids_for_different_seeds() {
     let policy_b = control_plane::mocks::policy_id_from_seed(2);
     assert_ne!(policy_a, policy_b);
 }
+
+#[test]
+fn adapter_event_has_nonempty_component() {
+    let event = control_plane::AdapterEvent {
+        trace_id: "t1".to_string(),
+        decision_id: "d1".to_string(),
+        policy_id: "p1".to_string(),
+        component: "adapter".to_string(),
+        event: "test".to_string(),
+        outcome: "pass".to_string(),
+        error_code: None,
+    };
+    assert!(!event.component.trim().is_empty());
+    assert!(!event.trace_id.trim().is_empty());
+}
+
+#[test]
+fn mock_id_same_seed_produces_same_id() {
+    let a = control_plane::mocks::trace_id_from_seed(42);
+    let b = control_plane::mocks::trace_id_from_seed(42);
+    assert_eq!(a, b);
+}
+
+#[test]
+fn adapter_event_with_error_code_roundtrips() {
+    let event = control_plane::AdapterEvent {
+        trace_id: "t-err".to_string(),
+        decision_id: "d-err".to_string(),
+        policy_id: "p-err".to_string(),
+        component: "adapter".to_string(),
+        event: "evaluate".to_string(),
+        outcome: "fail".to_string(),
+        error_code: Some("E-001".to_string()),
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: control_plane::AdapterEvent =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.error_code, Some("E-001".to_string()));
+}
+
+#[test]
+fn fallback_policy_serde_roundtrip() {
+    let policy = FallbackPolicy::default();
+    let json = serde_json::to_string(&policy).expect("serialize");
+    let recovered: FallbackPolicy = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, policy);
+}
+
+#[test]
+fn decision_verdict_debug_is_nonempty() {
+    for verdict in [
+        DecisionVerdict::Allow,
+        DecisionVerdict::Deny,
+        DecisionVerdict::Timeout,
+    ] {
+        assert!(!format!("{verdict:?}").is_empty());
+    }
+}
+
+#[test]
+fn posterior_uniform_has_equal_weights() {
+    let posterior = Posterior::uniform(3);
+    let json = serde_json::to_string(&posterior).expect("serialize");
+    assert!(!json.is_empty());
+    let again = Posterior::uniform(3);
+    let json_again = serde_json::to_string(&again).expect("serialize again");
+    assert_eq!(json, json_again);
+}

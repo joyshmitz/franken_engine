@@ -607,3 +607,28 @@ fn ifc_release_gate_blocks_when_declassify_evidence_type_is_wrong() {
             .any(|entry| entry.contains("missing declassification receipt type"))
     );
 }
+
+#[test]
+fn ifc_release_gate_deterministic_for_same_input() {
+    let run = run_ifc_corpus();
+    let a = evaluate_ifc_release_gate(&run);
+    let b = evaluate_ifc_release_gate(&run);
+    assert_eq!(a.blocked, b.blocked);
+    assert_eq!(a.blockers.len(), b.blockers.len());
+}
+
+#[test]
+fn ifc_release_gate_unmodified_corpus_is_not_blocked() {
+    let run = run_ifc_corpus();
+    let decision = evaluate_ifc_release_gate(&run);
+    assert!(!decision.blocked, "unmodified corpus should pass gate");
+}
+
+#[test]
+fn ifc_release_gate_decision_has_empty_blockers_on_pass() {
+    let run = run_ifc_corpus();
+    let decision = evaluate_ifc_release_gate(&run);
+    if !decision.blocked {
+        assert!(decision.blockers.is_empty());
+    }
+}

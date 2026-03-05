@@ -383,3 +383,23 @@ fn rgc_operator_runbook_all_severities_are_nonempty() {
         );
     }
 }
+
+#[test]
+fn rgc_operator_runbook_fixture_has_nonempty_schema_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.schema_version.trim().is_empty());
+}
+
+#[test]
+fn rgc_operator_runbook_fixture_has_nonempty_contract_version() {
+    let fixture = load_fixture();
+    assert!(!fixture.contract_version.trim().is_empty());
+}
+
+#[test]
+fn rgc_operator_runbook_fixture_deterministic_double_load() {
+    let a = load_fixture();
+    let b = load_fixture();
+    assert_eq!(a.schema_version, b.schema_version);
+    assert_eq!(a.bead_id, b.bead_id);
+}

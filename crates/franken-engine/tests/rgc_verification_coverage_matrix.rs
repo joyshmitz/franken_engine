@@ -508,3 +508,22 @@ fn rgc_051_milestone_ids_are_unique() {
         );
     }
 }
+
+#[test]
+fn rgc_051_matrix_has_nonempty_generated_by() {
+    let matrix = parse_matrix();
+    assert!(!matrix.generated_by.trim().is_empty());
+}
+
+#[test]
+fn rgc_051_matrix_track_fields_are_nonempty() {
+    let matrix = parse_matrix();
+    assert!(!matrix.track.id.trim().is_empty());
+    assert!(!matrix.track.name.trim().is_empty());
+}
+
+#[test]
+fn rgc_051_matrix_generated_at_utc_ends_with_z() {
+    let matrix = parse_matrix();
+    assert!(matrix.generated_at_utc.ends_with('Z'));
+}

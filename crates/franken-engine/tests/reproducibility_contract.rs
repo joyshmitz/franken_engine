@@ -340,3 +340,23 @@ fn assert_array_field_passes_for_array() {
     let val: Value = serde_json::json!({"items": [1, 2]});
     assert_array_field(&val, &["items"]);
 }
+
+#[test]
+fn canonicalize_json_deterministic_for_same_input() {
+    let val: Value = serde_json::json!({"b": 2, "a": 1});
+    let a = canonicalize_json(&val);
+    let b = canonicalize_json(&val);
+    assert_eq!(a, b);
+}
+
+#[test]
+fn read_file_returns_nonempty_for_contract() {
+    let content = read_file("docs/REPRODUCIBILITY_CONTRACT.md");
+    assert!(!content.is_empty());
+}
+
+#[test]
+fn parse_json_template_returns_object() {
+    let val = parse_json_file("docs/templates/env.json.template");
+    assert!(val.is_object());
+}

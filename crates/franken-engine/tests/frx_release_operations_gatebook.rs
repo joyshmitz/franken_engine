@@ -634,3 +634,24 @@ fn frx_09_2_contract_has_nonempty_schema_version() {
     let contract = parse_contract();
     assert!(!contract.schema_version.trim().is_empty());
 }
+
+#[test]
+fn frx_09_2_contract_schema_version_matches_constant() {
+    let contract = parse_contract();
+    assert_eq!(contract.schema_version, GATEBOOK_SCHEMA_VERSION);
+}
+
+#[test]
+fn frx_09_2_deterministic_triple_parse() {
+    let a = parse_contract();
+    let b = parse_contract();
+    let c = parse_contract();
+    assert_eq!(a, b);
+    assert_eq!(b, c);
+}
+
+#[test]
+fn frx_09_2_contract_has_nonempty_generated_by() {
+    let contract = parse_contract();
+    assert!(!contract.generated_by.trim().is_empty());
+}

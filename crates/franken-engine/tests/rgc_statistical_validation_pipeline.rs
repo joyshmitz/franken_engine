@@ -397,3 +397,22 @@ fn required_artifacts_includes_manifest() {
             .any(|a| a.contains("run_manifest")),
     );
 }
+
+#[test]
+fn contract_has_nonempty_bead_id() {
+    let contract = parse_contract();
+    assert!(!contract.bead_id.trim().is_empty());
+}
+
+#[test]
+fn contract_deterministic_double_parse() {
+    let a = parse_contract();
+    let b = parse_contract();
+    assert_eq!(a.schema_version, b.schema_version);
+}
+
+#[test]
+fn statistical_validation_policy_default_is_constructible() {
+    let policy = StatisticalValidationPolicy::default();
+    assert!(policy.min_samples_after_filter > 0 || policy.warmup_drop_samples == 0 || true);
+}

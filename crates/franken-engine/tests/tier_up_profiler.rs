@@ -445,3 +445,35 @@ fn eligibility_rejects_cache_hit_rate_below_threshold() {
         "extreme threshold should produce rejections or ineligibility"
     );
 }
+
+#[test]
+fn tier_up_policy_default_has_sane_values() {
+    let policy = TierUpPolicy::default();
+    assert!(policy.max_candidates > 0);
+    assert!(policy.profile_top_k > 0);
+}
+
+#[test]
+fn hot_path_profile_deterministic_for_same_program() {
+    let program = arithmetic_loop_program();
+    let mut vm_a = BytecodeVm::new("trace-det-same", 8, 128);
+    let report_a = vm_a.execute(&program).expect("execute a");
+    let profile_a = build_hot_path_profile(&report_a, 4);
+
+    let mut vm_b = BytecodeVm::new("trace-det-same", 8, 128);
+    let report_b = vm_b.execute(&program).expect("execute b");
+    let profile_b = build_hot_path_profile(&report_b, 4);
+
+    assert_eq!(profile_a.total_steps, profile_b.total_steps);
+    assert_eq!(profile_a.profile_hash, profile_b.profile_hash);
+}
+
+#[test]
+fn evaluate_tier_up_returns_decision_with_trace_id() {
+    let program = arithmetic_loop_program();
+    let policy = TierUpPolicy::default();
+    let mut vm = BytecodeVm::new("trace-decision-tid", 8, 128);
+    let report = vm.execute(&program).expect("execute");
+    let decision = evaluate_tier_up_eligibility(&report, &policy);
+    assert!(!decision.trace_id.is_empty());
+}

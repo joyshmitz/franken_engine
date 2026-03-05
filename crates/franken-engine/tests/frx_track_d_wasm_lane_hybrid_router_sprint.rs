@@ -280,3 +280,28 @@ fn track_d_charter_mentions_deterministic_replay() {
     let doc = fs::read_to_string(&path).expect("read doc");
     assert!(doc.contains("Deterministic Replay"));
 }
+
+#[test]
+fn track_d_contract_has_nonempty_primary_bead() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let primary_bead = value["primary_bead"].as_str().expect("primary_bead must be string");
+    assert!(!primary_bead.trim().is_empty());
+}
+
+#[test]
+fn track_d_contract_has_generated_by() {
+    let path = repo_root().join("docs/frx_track_d_wasm_lane_hybrid_router_sprint_v1.json");
+    let raw = fs::read_to_string(&path).expect("read JSON");
+    let value: Value = serde_json::from_str(&raw).expect("parse JSON");
+    let gen_by = value["generated_by"].as_str().expect("generated_by must be string");
+    assert!(!gen_by.trim().is_empty());
+}
+
+#[test]
+fn track_d_charter_references_wasm_lane() {
+    let path = repo_root().join("docs/FRX_TRACK_D_WASM_LANE_HYBRID_ROUTER_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    assert!(doc.to_ascii_lowercase().contains("wasm lane"));
+}

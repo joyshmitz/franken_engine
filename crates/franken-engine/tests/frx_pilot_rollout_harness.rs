@@ -582,3 +582,24 @@ fn frx_09_1_incident_linkage_fields_are_nonempty_and_unique() {
         "duplicate incident linkage fields detected"
     );
 }
+
+#[test]
+fn frx_09_1_contract_schema_version_matches_constant() {
+    let contract = parse_contract();
+    assert_eq!(contract.schema_version, CONTRACT_SCHEMA_VERSION);
+}
+
+#[test]
+fn frx_09_1_deterministic_triple_parse() {
+    let a = parse_contract();
+    let b = parse_contract();
+    let c = parse_contract();
+    assert_eq!(a, b);
+    assert_eq!(b, c);
+}
+
+#[test]
+fn frx_09_1_contract_has_nonempty_generated_by() {
+    let contract = parse_contract();
+    assert!(!contract.generated_by.trim().is_empty());
+}

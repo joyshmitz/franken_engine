@@ -479,3 +479,23 @@ fn rgc_011_milestone_ids_are_unique() {
         );
     }
 }
+
+#[test]
+fn matrix_schema_version_matches_constant() {
+    let matrix = parse_matrix();
+    assert_eq!(matrix.schema_version, MATRIX_SCHEMA_VERSION);
+}
+
+#[test]
+fn matrix_serde_roundtrip_preserves_schema() {
+    let matrix = parse_matrix();
+    let json = serde_json::to_string(&matrix).expect("serialize");
+    let recovered: CompatibilityMatrix = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.schema_version, matrix.schema_version);
+}
+
+#[test]
+fn matrix_milestone_targets_are_nonempty() {
+    let matrix = parse_matrix();
+    assert!(!matrix.milestone_targets.is_empty());
+}

@@ -266,3 +266,26 @@ fn track_e_charter_mentions_formal_verification() {
     let doc = fs::read_to_string(&path).expect("read doc");
     assert!(doc.contains("Formal"));
 }
+
+#[test]
+fn track_e_charter_doc_has_more_than_50_lines() {
+    let path = repo_root().join("docs/FRX_TRACK_E_VERIFICATION_FUZZ_FORMAL_COVERAGE_SPRINT_V1.md");
+    let doc = fs::read_to_string(&path).expect("read doc");
+    let line_count = doc.lines().count();
+    assert!(line_count > 50, "doc should have >50 lines, got {line_count}");
+}
+
+#[test]
+fn track_e_contract_deterministic_double_parse() {
+    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let a: Value = serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("parse");
+    let b: Value = serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("parse");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn track_e_contract_is_a_json_object() {
+    let path = repo_root().join("docs/frx_track_e_verification_fuzz_formal_coverage_sprint_v1.json");
+    let value: Value = serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("parse");
+    assert!(value.is_object());
+}

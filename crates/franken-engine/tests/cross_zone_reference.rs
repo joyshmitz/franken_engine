@@ -339,3 +339,27 @@ fn authority_reference_within_same_zone_is_allowed() {
         )
         .expect("same-zone authority reference should succeed");
 }
+
+#[test]
+fn capset_empty_input_produces_empty_set() {
+    let set = capset(&[]);
+    assert!(set.is_empty());
+}
+
+#[test]
+fn reference_type_all_variants_serde_roundtrip() {
+    for rt in [ReferenceType::Provenance, ReferenceType::Authority] {
+        let json = serde_json::to_string(&rt).expect("serialize");
+        let recovered: ReferenceType = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(recovered, rt);
+    }
+}
+
+#[test]
+fn trust_zone_error_variants_display_differently() {
+    let e1 = TrustZoneError::ZoneMissing { zone_name: "alpha".into() };
+    let e2 = TrustZoneError::ZoneMissing { zone_name: "beta".into() };
+    let s1 = format!("{e1}");
+    let s2 = format!("{e2}");
+    assert_ne!(s1, s2);
+}

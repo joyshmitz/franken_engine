@@ -734,3 +734,32 @@ fn decision_hash_differs_for_different_programs() {
 
     assert_ne!(decision_a.decision_hash, decision_b.decision_hash);
 }
+
+#[test]
+fn tier_up_policy_default_serde_roundtrip() {
+    let policy = TierUpPolicy::default();
+    let json = serde_json::to_string(&policy).expect("serialize");
+    let recovered: TierUpPolicy = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered, policy);
+}
+
+#[test]
+fn tier_up_policy_schema_version_is_nonempty() {
+    assert!(!TIER_UP_POLICY_SCHEMA_VERSION.trim().is_empty());
+}
+
+#[test]
+fn tier_up_decision_event_fields_preserved_after_roundtrip() {
+    let event = TierUpDecisionEvent {
+        trace_id: "trace-rt-1".to_string(),
+        component: "tier_up_profiler".to_string(),
+        event: "evaluate".to_string(),
+        outcome: "pass".to_string(),
+        reason: "threshold met".to_string(),
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    let recovered: TierUpDecisionEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(recovered.trace_id, "trace-rt-1");
+    assert_eq!(recovered.component, "tier_up_profiler");
+    assert_eq!(recovered.reason, "threshold met");
+}

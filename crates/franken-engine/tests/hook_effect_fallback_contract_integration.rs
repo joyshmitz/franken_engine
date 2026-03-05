@@ -406,3 +406,30 @@ fn log_event_populates_constants() {
     assert_eq!(event.replay_command, REPLAY_COMMAND);
     assert!(event.error_code.is_none());
 }
+
+#[test]
+fn hook_kind_serde_roundtrip() {
+    for kind in [HookKind::State, HookKind::Effect, HookKind::Memo, HookKind::Reducer] {
+        let json = serde_json::to_string(&kind).expect("serialize");
+        let recovered: HookKind = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(kind, recovered);
+    }
+}
+
+#[test]
+fn render_phase_serde_roundtrip() {
+    for phase in [RenderPhase::Rendering, RenderPhase::PaintPending, RenderPhase::PassiveEffectsPending] {
+        let json = serde_json::to_string(&phase).expect("serialize");
+        let recovered: RenderPhase = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(phase, recovered);
+    }
+}
+
+#[test]
+fn fallback_execution_route_serde_roundtrip() {
+    for route in [FallbackExecutionRoute::CompatibilityRuntimeLane, FallbackExecutionRoute::BaselineInterpreterLane, FallbackExecutionRoute::DeterministicSafeModeLane] {
+        let json = serde_json::to_string(&route).expect("serialize");
+        let recovered: FallbackExecutionRoute = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(route, recovered);
+    }
+}

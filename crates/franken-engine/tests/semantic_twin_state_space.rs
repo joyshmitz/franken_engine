@@ -247,3 +247,31 @@ fn default_spec_serde_roundtrip_preserves_component() {
     assert_eq!(recovered.component, SEMANTIC_TWIN_COMPONENT);
     assert_eq!(recovered.treatment_variable, spec.treatment_variable);
 }
+
+#[test]
+fn semantic_twin_component_is_nonempty() {
+    assert!(!SEMANTIC_TWIN_COMPONENT.is_empty());
+}
+
+#[test]
+fn twin_state_domain_all_variants_debug() {
+    for domain in [
+        TwinStateDomain::Outcome,
+        TwinStateDomain::Regime,
+        TwinStateDomain::Resource,
+        TwinStateDomain::Replay,
+        TwinStateDomain::Calibration,
+    ] {
+        let dbg = format!("{domain:?}");
+        assert!(!dbg.is_empty());
+    }
+}
+
+#[test]
+fn default_spec_assumptions_have_nonempty_ids() {
+    let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
+    assert!(!spec.assumptions.is_empty());
+    for assumption in &spec.assumptions {
+        assert!(!assumption.id.trim().is_empty());
+    }
+}

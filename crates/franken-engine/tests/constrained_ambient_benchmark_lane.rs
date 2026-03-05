@@ -370,3 +370,97 @@ fn allows_publication_is_inverse_of_blocked() {
     let decision = run_constrained_ambient_benchmark_lane(&baseline_request());
     assert_eq!(decision.allows_publication(), !decision.blocked);
 }
+
+// ---------- enrichment: serde, error paths, edge cases ----------
+
+use frankenengine_engine::constrained_ambient_benchmark_lane::{
+    ConstrainedAmbientBenchmarkDecision, ConstrainedAmbientError,
+};
+
+#[test]
+fn decision_serde_roundtrip() {
+    let decision = run_constrained_ambient_benchmark_lane(&baseline_request());
+    let json = serde_json::to_string(&decision).expect("serialize");
+    let recovered: ConstrainedAmbientBenchmarkDecision =
+        serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(decision.report_id, recovered.report_id);
+    assert_eq!(decision.outcome, recovered.outcome);
+    assert_eq!(decision.blocked, recovered.blocked);
+    assert_eq!(decision.workload_reports.len(), recovered.workload_reports.len());
+}
+
+#[test]
+fn decision_schema_version_is_nonempty() {
+    let decision = run_constrained_ambient_benchmark_lane(&baseline_request());
+    assert!(!decision.schema_version.is_empty());
+}
+
+#[test]
+fn revoked_attribution_blocks_publication() {
+    let mut request = baseline_request();
+    request.proof_attribution[0].revoked = true;
+    let decision = run_constrained_ambient_benchmark_lane(&request);
+    assert!(decision.blocked);
+    assert!(
+        decision
+            .blockers
+            .iter()
+            .any(|b| b.contains("revoked"))
+    );
+}
+
+#[test]
+fn constrained_ambient_error_display_is_nonempty() {
+    let err = ConstrainedAmbientError::InvalidRequest {
+        field: "trace_id".to_string(),
+        detail: "empty".to_string(),
+    };
+    assert!(!err.to_string().is_empty());
+    assert!(err.to_string().contains("trace_id"));
+}
+
+#[test]
+fn constrained_ambient_error_stable_codes_unique() {
+    let request_err = ConstrainedAmbientError::InvalidRequest {
+        field: "f".to_string(),
+        detail: "d".to_string(),
+    };
+    let metric_err = ConstrainedAmbientError::InvalidMetric {
+        field: "f".to_string(),
+        subject: "s".to_string(),
+        detail: "d".to_string(),
+    };
+    let code_req = request_err.stable_code();
+    let code_met = metric_err.stable_code();
+    assert!(code_req.starts_with("FE-CABL"));
+    assert!(code_met.starts_with("FE-CABL"));
+    assert_ne!(code_req, code_met);
+}
+
+#[test]
+fn constrained_ambient_error_is_std_error() {
+    let err = ConstrainedAmbientError::InvalidMetric {
+        field: "throughput".to_string(),
+        subject: "parser-hot".to_string(),
+        detail: "negative".to_string(),
+    };
+    let dyn_err: &dyn std::error::Error = &err;
+    assert!(!dyn_err.to_string().is_empty());
+}
+
+#[test]
+fn empty_lanes_produces_fail() {
+    let mut request = baseline_request();
+    request.constrained_lane.clear();
+    request.ambient_lane.clear();
+    let decision = run_constrained_ambient_benchmark_lane(&request);
+    assert!(decision.blocked);
+}
+
+#[test]
+fn mismatched_lane_sizes_produces_deny() {
+    let mut request = baseline_request();
+    request.constrained_lane.pop();
+    let decision = run_constrained_ambient_benchmark_lane(&request);
+    assert!(decision.blocked);
+}

@@ -373,3 +373,31 @@ fn cross_version_compatibility_doc_is_nonempty() {
     let content = std::fs::read_to_string(&path).expect("read doc");
     assert!(!content.is_empty());
 }
+
+#[test]
+fn matrix_schema_version_matches_constant() {
+    let matrix = parse_matrix();
+    assert_eq!(matrix.schema_version, MATRIX_SCHEMA_VERSION);
+}
+
+#[test]
+fn matrix_generated_at_utc_ends_with_z() {
+    let matrix = parse_matrix();
+    assert!(
+        matrix.generated_at_utc.ends_with('Z'),
+        "generated_at_utc must end with Z"
+    );
+}
+
+#[test]
+fn matrix_cases_have_unique_case_ids() {
+    let matrix = parse_matrix();
+    let mut seen = BTreeSet::new();
+    for case in &matrix.cases {
+        assert!(
+            seen.insert(&case.case_id),
+            "duplicate case_id: {}",
+            case.case_id
+        );
+    }
+}

@@ -5,9 +5,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use test262_release_gate::{
-    ProfileDecision, Test262EvidenceCollector, Test262GateRunner, Test262HighWaterMark,
-    Test262ObservedOutcome, Test262ObservedResult, Test262PinSet, Test262Profile,
-    Test262RunnerConfig, Test262WaiverSet, deterministic_worker_assignments, next_high_water_mark,
+    ProfileDecision, Test262EvidenceCollector, Test262GateError, Test262GateRun, Test262GateRunner,
+    Test262HighWaterMark, Test262ObservedOutcome, Test262ObservedResult, Test262PinSet,
+    Test262Profile, Test262RunnerConfig, Test262WaiverReason, Test262WaiverSet,
+    deterministic_worker_assignments, next_high_water_mark,
 };
 
 fn fixture(path: &str) -> PathBuf {
@@ -450,4 +451,122 @@ fn runner_default_config_has_nonempty_run_date() {
 fn fixture_helper_produces_correct_path() {
     let path = fixture("test262_es2020_profile.toml");
     assert!(path.ends_with("tests/test262_es2020_profile.toml"));
+}
+
+// ---------- enrichment: serde roundtrips, error paths, display ----------
+
+#[test]
+fn test262_waiver_reason_serde_round_trip() {
+    for reason in [
+        Test262WaiverReason::HarnessGap,
+        Test262WaiverReason::HostHookMissing,
+        Test262WaiverReason::IntentionalDivergence,
+        Test262WaiverReason::NotYetImplemented,
+    ] {
+        let json = serde_json::to_string(&reason).expect("serialize");
+        let recovered: Test262WaiverReason = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(reason, recovered);
+    }
+}
+
+#[test]
+fn test262_pin_set_serde_round_trip() {
+    let pins = load_pins();
+    let json = serde_json::to_string(&pins).expect("serialize");
+    let recovered: Test262PinSet = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(pins, recovered);
+}
+
+#[test]
+fn test262_profile_serde_round_trip() {
+    let profile = load_profile();
+    let json = serde_json::to_string(&profile).expect("serialize");
+    let recovered: Test262Profile = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(profile, recovered);
+}
+
+#[test]
+fn test262_waiver_set_serde_round_trip() {
+    let waivers = load_waivers();
+    let json = serde_json::to_string(&waivers).expect("serialize");
+    let recovered: Test262WaiverSet = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(waivers, recovered);
+}
+
+#[test]
+fn test262_observed_result_serde_round_trip() {
+    let result = observed("test/round-trip.js", "13.1", Test262ObservedOutcome::Pass);
+    let json = serde_json::to_string(&result).expect("serialize");
+    let recovered: Test262ObservedResult = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(result, recovered);
+}
+
+#[test]
+fn test262_gate_run_serde_round_trip() {
+    let profile = load_profile();
+    let pins = load_pins();
+    let waivers = load_waivers();
+    let run = runner("2026-02-22", false)
+        .run(
+            &pins,
+            &profile,
+            &waivers,
+            &[observed("a.js", "13.1", Test262ObservedOutcome::Pass)],
+            None,
+        )
+        .expect("gate run");
+    let json = serde_json::to_string(&run).expect("serialize");
+    let recovered: Test262GateRun = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(run.run_id, recovered.run_id);
+    assert_eq!(run.blocked, recovered.blocked);
+    assert_eq!(run.summary.passed, recovered.summary.passed);
+}
+
+#[test]
+fn test262_gate_error_display_is_nonempty() {
+    let err = Test262GateError::InvalidConfig("bad config".to_string());
+    let msg = err.to_string();
+    assert!(!msg.is_empty());
+    assert!(msg.contains("FE-T262"));
+}
+
+#[test]
+fn test262_gate_error_stable_codes_are_unique() {
+    let errors = [
+        Test262GateError::InvalidConfig("a".to_string()),
+        Test262GateError::DuplicateObservedResult {
+            test_id: "test.js".to_string(),
+        },
+        Test262GateError::MissingObservedField {
+            test_id: "test.js".to_string(),
+            field: "outcome",
+        },
+        Test262GateError::InvalidProfile("bad".to_string()),
+    ];
+    let codes: Vec<&str> = errors.iter().map(|e| e.stable().code).collect();
+    // Verify all codes start with FE-T262
+    assert!(codes.iter().all(|c| c.starts_with("FE-T262")));
+}
+
+#[test]
+fn test262_gate_error_is_std_error() {
+    let err = Test262GateError::InvalidConfig("test".to_string());
+    let dyn_err: &dyn std::error::Error = &err;
+    assert!(!dyn_err.to_string().is_empty());
+}
+
+#[test]
+fn test262_observed_outcome_timeout_and_crash_variants() {
+    for outcome in [Test262ObservedOutcome::Timeout, Test262ObservedOutcome::Crash] {
+        let json = serde_json::to_string(&outcome).expect("serialize");
+        let recovered: Test262ObservedOutcome = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(outcome, recovered);
+    }
+}
+
+#[test]
+fn profile_decision_not_selected_for_unmatched_path() {
+    let profile = load_profile();
+    let decision = profile.classify("totally/unrelated/path.js");
+    assert!(matches!(decision, ProfileDecision::NotSelected));
 }

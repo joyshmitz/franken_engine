@@ -296,3 +296,27 @@ fn default_bundle_validation_is_deterministic() {
     let b = default_frx20_bundle();
     assert_eq!(a.validate_for_gate(), b.validate_for_gate());
 }
+
+#[test]
+fn lane_id_all_variants_roundtrip() {
+    for lane in [LaneId::Compiler, LaneId::JsRuntime, LaneId::WasmRuntime, LaneId::HybridRouter, LaneId::Verification] {
+        let json = serde_json::to_string(&lane).expect("serialize");
+        let recovered: LaneId = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(lane, recovered);
+    }
+}
+
+#[test]
+fn unit_test_class_all_variants_roundtrip() {
+    for class in [UnitTestClass::Core, UnitTestClass::Edge, UnitTestClass::Adversarial, UnitTestClass::Regression, UnitTestClass::FaultInjection] {
+        let json = serde_json::to_string(&class).expect("serialize");
+        let recovered: UnitTestClass = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(class, recovered);
+    }
+}
+
+#[test]
+fn default_bundle_has_nonempty_schema_version() {
+    let bundle = default_frx20_bundle();
+    assert!(!bundle.schema_version.is_empty());
+}
