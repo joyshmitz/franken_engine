@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::ast::{
-    ArrowBody, BinaryOperator, ExportKind, Expression, ParseGoal, Statement,
+    ArrowBody, BinaryOperator, BindingPattern, ExportKind, Expression, ParseGoal, Statement,
     VariableDeclarationKind,
 };
 use crate::flow_lattice::{
@@ -493,122 +493,9 @@ pub fn lower_ir0_to_ir1(
                     });
                 }
             },
-            Statement::VariableDeclaration(variable_declaration) => {
-                let binding_kind = binding_kind_for_variable_declaration(variable_declaration.kind);
-
-                // ES2020 early error: const declarations must have initializers.
-                if variable_declaration.kind == VariableDeclarationKind::Const {
-                    for declarator in &variable_declaration.declarations {
-                        if declarator.initializer.is_none() {
-                            let primary_name = declarator
-                                .pattern
-                                .binding_names()
-                                .first()
-                                .map(|s| (*s).to_string());
-                            return Err(LoweringPipelineError::SemanticViolation(
-                                SemanticError::new(
-                                    SemanticErrorCode::ConstWithoutInitializer,
-                                    primary_name,
-                                    Some(declarator.span.clone()),
-                                ),
-                            ));
-                        }
-                    }
-                }
-
-                let mut binding_ids = Vec::with_capacity(variable_declaration.declarations.len());
-                for declarator in &variable_declaration.declarations {
-                    // For each bound name in the pattern, allocate a binding.
-                    let names = declarator.pattern.binding_names();
-                    let primary_name = names.first().copied().unwrap_or("_");
-                    let binding_id = alloc_binding(
-                        &mut bindings,
-                        &mut binding_lookup,
-                        &mut binding_index,
-                        root_scope_id,
-                        primary_name,
-                        binding_kind,
-                    )
-                    .map_err(LoweringPipelineError::SemanticViolation)?;
-                    // Allocate additional bindings for destructured names.
-                    for extra_name in names.iter().skip(1) {
-                        let _ = alloc_binding(
-                            &mut bindings,
-                            &mut binding_lookup,
-                            &mut binding_index,
-                            root_scope_id,
-                            extra_name,
-                            binding_kind,
-                        )
-                        .map_err(LoweringPipelineError::SemanticViolation)?;
-                    }
-                    binding_ids.push(binding_id);
-                }
-
-                for (declarator, binding_id) in variable_declaration
-                    .declarations
-                    .iter()
-                    .zip(binding_ids.into_iter())
-                {
-                    if let Some(initializer) = &declarator.initializer {
-                        lower_expression_to_ir1(
-                            initializer,
-                            &mut ir1.ops,
-                            &mut bindings,
-                            &mut binding_lookup,
-                            &mut binding_index,
-                            root_scope_id,
-                            &mut label_counter,
-                        )?;
-                    } else {
-                        ir1.ops.push(Ir1Op::LoadLiteral {
-                            value: Ir1Literal::Undefined,
-                        });
-                    }
-                    ir1.ops.push(Ir1Op::StoreBinding { binding_id });
-                }
-            }
-            Statement::Expression(statement) => {
-                lower_expression_to_ir1(
-                    &statement.expression,
-                    &mut ir1.ops,
-                    &mut bindings,
-                    &mut binding_lookup,
-                    &mut binding_index,
-                    root_scope_id,
-                    &mut label_counter,
-                )?;
-            }
-            Statement::Block(block) => {
-                for inner_stmt in &block.body {
-                    lower_statement_to_ir1(
-                        inner_stmt,
-                        &mut ir1.ops,
-                        &mut bindings,
-                        &mut binding_lookup,
-                        &mut binding_index,
-                        root_scope_id,
-                        &mut label_counter,
-                    )?;
-                }
-            }
-            Statement::If(if_stmt) => {
-                lower_expression_to_ir1(
-                    &if_stmt.condition,
-                    &mut ir1.ops,
-                    &mut bindings,
-                    &mut binding_lookup,
-                    &mut binding_index,
-                    root_scope_id,
-                    &mut label_counter,
-                )?;
-                let else_label = alloc_label(&mut label_counter);
-                let end_label = alloc_label(&mut label_counter);
-                ir1.ops.push(Ir1Op::JumpIfFalsy {
-                    label_id: else_label,
-                });
+            _ => {
                 lower_statement_to_ir1(
-                    &if_stmt.consequent,
+                    statement,
                     &mut ir1.ops,
                     &mut bindings,
                     &mut binding_lookup,
@@ -616,410 +503,6 @@ pub fn lower_ir0_to_ir1(
                     root_scope_id,
                     &mut label_counter,
                 )?;
-                ir1.ops.push(Ir1Op::Jump {
-                    label_id: end_label,
-                });
-                ir1.ops.push(Ir1Op::Label { id: else_label });
-                if let Some(alternate) = &if_stmt.alternate {
-                    lower_statement_to_ir1(
-                        alternate,
-                        &mut ir1.ops,
-                        &mut bindings,
-                        &mut binding_lookup,
-                        &mut binding_index,
-                        root_scope_id,
-                        &mut label_counter,
-                    )?;
-                }
-                ir1.ops.push(Ir1Op::Label { id: end_label });
-            }
-            Statement::For(for_stmt) => {
-                if let Some(init) = &for_stmt.init {
-                    lower_statement_to_ir1(
-                        init,
-                        &mut ir1.ops,
-                        &mut bindings,
-                        &mut binding_lookup,
-                        &mut binding_index,
-                        root_scope_id,
-                        &mut label_counter,
-                    )?;
-                }
-                let loop_label = alloc_label(&mut label_counter);
-                let end_label = alloc_label(&mut label_counter);
-                ir1.ops.push(Ir1Op::Label { id: loop_label });
-                if let Some(test) = &for_stmt.condition {
-                    lower_expression_to_ir1(
-                        test,
-                        &mut ir1.ops,
-                        &mut bindings,
-                        &mut binding_lookup,
-                        &mut binding_index,
-                        root_scope_id,
-                        &mut label_counter,
-                    )?;
-                    ir1.ops.push(Ir1Op::JumpIfFalsy {
-                        label_id: end_label,
-                    });
-                }
-                lower_statement_to_ir1(
-                    &for_stmt.body,
-                    &mut ir1.ops,
-                    &mut bindings,
-                    &mut binding_lookup,
-                    &mut binding_index,
-                    root_scope_id,
-                    &mut label_counter,
-                )?;
-                if let Some(update) = &for_stmt.update {
-                    lower_expression_to_ir1(
-                        update,
-                        &mut ir1.ops,
-                        &mut bindings,
-                        &mut binding_lookup,
-                        &mut binding_index,
-                        root_scope_id,
-                        &mut label_counter,
-                    )?;
-                    ir1.ops.push(Ir1Op::Pop);
-                }
-                ir1.ops.push(Ir1Op::Jump {
-                    label_id: loop_label,
-                });
-                ir1.ops.push(Ir1Op::Label { id: end_label });
-            }
-            Statement::ForIn(for_in_stmt) => {
-                // Lower the iterated object, then loop over the body.
-                // Full for-in enumeration is not yet implemented; emit a
-                // placeholder loop that evaluates the object once and runs
-                // the body once with the binding set to undefined.
-                lower_expression_to_ir1(
-                    &for_in_stmt.object,
-                    &mut ir1.ops,
-                    &mut bindings,
-                    &mut binding_lookup,
-                    &mut binding_index,
-                    root_scope_id,
-                    &mut label_counter,
-                )?;
-                ir1.ops.push(Ir1Op::Pop);
-                let binding_kind = for_in_stmt
-                    .binding_kind
-                    .map(binding_kind_for_variable_declaration)
-                    .unwrap_or(BindingKind::Var);
-                let primary_name = for_in_stmt
-                    .binding
-                    .binding_names()
-                    .first()
-                    .copied()
-                    .unwrap_or("_");
-                let binding_id = alloc_binding(
-                    &mut bindings,
-                    &mut binding_lookup,
-                    &mut binding_index,
-                    root_scope_id,
-                    primary_name,
-                    binding_kind,
-                )
-                .map_err(LoweringPipelineError::SemanticViolation)?;
-                ir1.ops.push(Ir1Op::LoadLiteral {
-                    value: Ir1Literal::Undefined,
-                });
-                ir1.ops.push(Ir1Op::StoreBinding { binding_id });
-                lower_statement_to_ir1(
-                    &for_in_stmt.body,
-                    &mut ir1.ops,
-                    &mut bindings,
-                    &mut binding_lookup,
-                    &mut binding_index,
-                    root_scope_id,
-                    &mut label_counter,
-                )?;
-            }
-            Statement::ForOf(for_of_stmt) => {
-                // Lower the iterable expression, then loop over the body.
-                // Full for-of iteration protocol is not yet implemented; emit
-                // a placeholder that evaluates the iterable once and runs the
-                // body once with the binding set to undefined.
-                lower_expression_to_ir1(
-                    &for_of_stmt.iterable,
-                    &mut ir1.ops,
-                    &mut bindings,
-                    &mut binding_lookup,
-                    &mut binding_index,
-                    root_scope_id,
-                    &mut label_counter,
-                )?;
-                ir1.ops.push(Ir1Op::Pop);
-                let binding_kind = for_of_stmt
-                    .binding_kind
-                    .map(binding_kind_for_variable_declaration)
-                    .unwrap_or(BindingKind::Var);
-                let primary_name = for_of_stmt
-                    .binding
-                    .binding_names()
-                    .first()
-                    .copied()
-                    .unwrap_or("_");
-                let binding_id = alloc_binding(
-                    &mut bindings,
-                    &mut binding_lookup,
-                    &mut binding_index,
-                    root_scope_id,
-                    primary_name,
-                    binding_kind,
-                )
-                .map_err(LoweringPipelineError::SemanticViolation)?;
-                ir1.ops.push(Ir1Op::LoadLiteral {
-                    value: Ir1Literal::Undefined,
-                });
-                ir1.ops.push(Ir1Op::StoreBinding { binding_id });
-                lower_statement_to_ir1(
-                    &for_of_stmt.body,
-                    &mut ir1.ops,
-                    &mut bindings,
-                    &mut binding_lookup,
-                    &mut binding_index,
-                    root_scope_id,
-                    &mut label_counter,
-                )?;
-            }
-            Statement::While(while_stmt) => {
-                let loop_label = alloc_label(&mut label_counter);
-                let end_label = alloc_label(&mut label_counter);
-                ir1.ops.push(Ir1Op::Label { id: loop_label });
-                lower_expression_to_ir1(
-                    &while_stmt.condition,
-                    &mut ir1.ops,
-                    &mut bindings,
-                    &mut binding_lookup,
-                    &mut binding_index,
-                    root_scope_id,
-                    &mut label_counter,
-                )?;
-                ir1.ops.push(Ir1Op::JumpIfFalsy {
-                    label_id: end_label,
-                });
-                lower_statement_to_ir1(
-                    &while_stmt.body,
-                    &mut ir1.ops,
-                    &mut bindings,
-                    &mut binding_lookup,
-                    &mut binding_index,
-                    root_scope_id,
-                    &mut label_counter,
-                )?;
-                ir1.ops.push(Ir1Op::Jump {
-                    label_id: loop_label,
-                });
-                ir1.ops.push(Ir1Op::Label { id: end_label });
-            }
-            Statement::DoWhile(do_while_stmt) => {
-                let loop_label = alloc_label(&mut label_counter);
-                ir1.ops.push(Ir1Op::Label { id: loop_label });
-                lower_statement_to_ir1(
-                    &do_while_stmt.body,
-                    &mut ir1.ops,
-                    &mut bindings,
-                    &mut binding_lookup,
-                    &mut binding_index,
-                    root_scope_id,
-                    &mut label_counter,
-                )?;
-                lower_expression_to_ir1(
-                    &do_while_stmt.condition,
-                    &mut ir1.ops,
-                    &mut bindings,
-                    &mut binding_lookup,
-                    &mut binding_index,
-                    root_scope_id,
-                    &mut label_counter,
-                )?;
-                // JumpIf truthy → loop back. Since we only have JumpIfFalsy,
-                // emit JumpIfFalsy to end, then unconditional jump to loop.
-                let end_label = alloc_label(&mut label_counter);
-                ir1.ops.push(Ir1Op::JumpIfFalsy {
-                    label_id: end_label,
-                });
-                ir1.ops.push(Ir1Op::Jump {
-                    label_id: loop_label,
-                });
-                ir1.ops.push(Ir1Op::Label { id: end_label });
-            }
-            Statement::Return(ret) => {
-                if let Some(argument) = &ret.argument {
-                    lower_expression_to_ir1(
-                        argument,
-                        &mut ir1.ops,
-                        &mut bindings,
-                        &mut binding_lookup,
-                        &mut binding_index,
-                        root_scope_id,
-                        &mut label_counter,
-                    )?;
-                } else {
-                    ir1.ops.push(Ir1Op::LoadLiteral {
-                        value: Ir1Literal::Undefined,
-                    });
-                }
-                ir1.ops.push(Ir1Op::Return);
-            }
-            Statement::Throw(throw_stmt) => {
-                lower_expression_to_ir1(
-                    &throw_stmt.argument,
-                    &mut ir1.ops,
-                    &mut bindings,
-                    &mut binding_lookup,
-                    &mut binding_index,
-                    root_scope_id,
-                    &mut label_counter,
-                )?;
-                ir1.ops.push(Ir1Op::Throw);
-            }
-            Statement::TryCatch(try_catch) => {
-                let catch_label = alloc_label(&mut label_counter);
-                let end_label = alloc_label(&mut label_counter);
-                ir1.ops.push(Ir1Op::BeginTry { catch_label });
-                for inner in &try_catch.block.body {
-                    lower_statement_to_ir1(
-                        inner,
-                        &mut ir1.ops,
-                        &mut bindings,
-                        &mut binding_lookup,
-                        &mut binding_index,
-                        root_scope_id,
-                        &mut label_counter,
-                    )?;
-                }
-                ir1.ops.push(Ir1Op::EndTry);
-                ir1.ops.push(Ir1Op::Jump {
-                    label_id: end_label,
-                });
-                ir1.ops.push(Ir1Op::Label { id: catch_label });
-                if let Some(handler) = &try_catch.handler {
-                    if let Some(param) = &handler.parameter {
-                        let binding_id = alloc_binding(
-                            &mut bindings,
-                            &mut binding_lookup,
-                            &mut binding_index,
-                            root_scope_id,
-                            param,
-                            BindingKind::Let,
-                        )
-                        .map_err(LoweringPipelineError::SemanticViolation)?;
-                        ir1.ops.push(Ir1Op::StoreBinding { binding_id });
-                    }
-                    for inner in &handler.body.body {
-                        lower_statement_to_ir1(
-                            inner,
-                            &mut ir1.ops,
-                            &mut bindings,
-                            &mut binding_lookup,
-                            &mut binding_index,
-                            root_scope_id,
-                            &mut label_counter,
-                        )?;
-                    }
-                }
-                ir1.ops.push(Ir1Op::Label { id: end_label });
-                if let Some(finalizer) = &try_catch.finalizer {
-                    for inner in &finalizer.body {
-                        lower_statement_to_ir1(
-                            inner,
-                            &mut ir1.ops,
-                            &mut bindings,
-                            &mut binding_lookup,
-                            &mut binding_index,
-                            root_scope_id,
-                            &mut label_counter,
-                        )?;
-                    }
-                }
-            }
-            Statement::Switch(switch_stmt) => {
-                lower_expression_to_ir1(
-                    &switch_stmt.discriminant,
-                    &mut ir1.ops,
-                    &mut bindings,
-                    &mut binding_lookup,
-                    &mut binding_index,
-                    root_scope_id,
-                    &mut label_counter,
-                )?;
-                let end_label = alloc_label(&mut label_counter);
-                for case in &switch_stmt.cases {
-                    if let Some(test) = &case.test {
-                        lower_expression_to_ir1(
-                            test,
-                            &mut ir1.ops,
-                            &mut bindings,
-                            &mut binding_lookup,
-                            &mut binding_index,
-                            root_scope_id,
-                            &mut label_counter,
-                        )?;
-                        // Compare (placeholder: emit as binary op for equality).
-                        ir1.ops.push(Ir1Op::BinaryOp {
-                            operator: BinaryOperator::StrictEqual,
-                        });
-                        let next_case_label = alloc_label(&mut label_counter);
-                        ir1.ops.push(Ir1Op::JumpIfFalsy {
-                            label_id: next_case_label,
-                        });
-                        for body_stmt in &case.consequent {
-                            lower_statement_to_ir1(
-                                body_stmt,
-                                &mut ir1.ops,
-                                &mut bindings,
-                                &mut binding_lookup,
-                                &mut binding_index,
-                                root_scope_id,
-                                &mut label_counter,
-                            )?;
-                        }
-                        ir1.ops.push(Ir1Op::Jump {
-                            label_id: end_label,
-                        });
-                        ir1.ops.push(Ir1Op::Label {
-                            id: next_case_label,
-                        });
-                    } else {
-                        // default case
-                        for body_stmt in &case.consequent {
-                            lower_statement_to_ir1(
-                                body_stmt,
-                                &mut ir1.ops,
-                                &mut bindings,
-                                &mut binding_lookup,
-                                &mut binding_index,
-                                root_scope_id,
-                                &mut label_counter,
-                            )?;
-                        }
-                    }
-                }
-                ir1.ops.push(Ir1Op::Label { id: end_label });
-            }
-            Statement::Break(_) => {
-                // Break requires loop/switch context tracking. Emit Nop for now.
-                ir1.ops.push(Ir1Op::Nop);
-            }
-            Statement::Continue(_) => {
-                // Continue requires loop context tracking. Emit Nop for now.
-                ir1.ops.push(Ir1Op::Nop);
-            }
-            Statement::FunctionDeclaration(func) => {
-                let name = func.name.clone().unwrap_or_else(|| "anonymous".to_string());
-                let binding_id = alloc_binding(
-                    &mut bindings,
-                    &mut binding_lookup,
-                    &mut binding_index,
-                    root_scope_id,
-                    &name,
-                    BindingKind::Var,
-                )
-                .map_err(LoweringPipelineError::SemanticViolation)?;
-                ir1.ops.push(Ir1Op::DeclareFunction { name, binding_id });
             }
         }
     }
@@ -1075,6 +558,43 @@ fn alloc_label(counter: &mut u32) -> u32 {
     id
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct ControlFlowTargets {
+    break_label: Option<u32>,
+    continue_label: Option<u32>,
+}
+
+fn alloc_pattern_primary_binding(
+    bindings: &mut Vec<ResolvedBinding>,
+    binding_lookup: &mut BTreeMap<String, BindingId>,
+    binding_index: &mut BindingId,
+    scope_id: ScopeId,
+    pattern: &BindingPattern,
+    binding_kind: BindingKind,
+) -> Result<BindingId, SemanticError> {
+    let names = pattern.binding_names();
+    let primary_name = names.first().copied().unwrap_or("_");
+    let primary_binding = alloc_binding(
+        bindings,
+        binding_lookup,
+        binding_index,
+        scope_id,
+        primary_name,
+        binding_kind,
+    )?;
+    for extra_name in names.iter().skip(1) {
+        let _ = alloc_binding(
+            bindings,
+            binding_lookup,
+            binding_index,
+            scope_id,
+            extra_name,
+            binding_kind,
+        )?;
+    }
+    Ok(primary_binding)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn lower_statement_to_ir1(
     statement: &Statement,
@@ -1084,6 +604,29 @@ fn lower_statement_to_ir1(
     binding_index: &mut BindingId,
     scope_id: ScopeId,
     label_counter: &mut u32,
+) -> Result<(), LoweringPipelineError> {
+    lower_statement_to_ir1_with_flow(
+        statement,
+        ops,
+        bindings,
+        binding_lookup,
+        binding_index,
+        scope_id,
+        label_counter,
+        ControlFlowTargets::default(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_statement_to_ir1_with_flow(
+    statement: &Statement,
+    ops: &mut Vec<Ir1Op>,
+    bindings: &mut Vec<ResolvedBinding>,
+    binding_lookup: &mut BTreeMap<String, BindingId>,
+    binding_index: &mut BindingId,
+    scope_id: ScopeId,
+    label_counter: &mut u32,
+    control_flow: ControlFlowTargets,
 ) -> Result<(), LoweringPipelineError> {
     match statement {
         Statement::Expression(stmt) => {
@@ -1115,13 +658,12 @@ fn lower_statement_to_ir1(
                 }
             }
             for d in &vd.declarations {
-                let d_primary = d.pattern.binding_names().first().copied().unwrap_or("_");
-                let bid = alloc_binding(
+                let bid = alloc_pattern_primary_binding(
                     bindings,
                     binding_lookup,
                     binding_index,
                     scope_id,
-                    d_primary,
+                    &d.pattern,
                     binding_kind,
                 )
                 .map_err(LoweringPipelineError::SemanticViolation)?;
@@ -1145,7 +687,7 @@ fn lower_statement_to_ir1(
         }
         Statement::Block(block) => {
             for inner in &block.body {
-                lower_statement_to_ir1(
+                lower_statement_to_ir1_with_flow(
                     inner,
                     ops,
                     bindings,
@@ -1153,6 +695,7 @@ fn lower_statement_to_ir1(
                     binding_index,
                     scope_id,
                     label_counter,
+                    control_flow,
                 )?;
             }
         }
@@ -1171,7 +714,7 @@ fn lower_statement_to_ir1(
             ops.push(Ir1Op::JumpIfFalsy {
                 label_id: else_label,
             });
-            lower_statement_to_ir1(
+            lower_statement_to_ir1_with_flow(
                 &if_stmt.consequent,
                 ops,
                 bindings,
@@ -1179,13 +722,14 @@ fn lower_statement_to_ir1(
                 binding_index,
                 scope_id,
                 label_counter,
+                control_flow,
             )?;
             ops.push(Ir1Op::Jump {
                 label_id: end_label,
             });
             ops.push(Ir1Op::Label { id: else_label });
             if let Some(alt) = &if_stmt.alternate {
-                lower_statement_to_ir1(
+                lower_statement_to_ir1_with_flow(
                     alt,
                     ops,
                     bindings,
@@ -1193,13 +737,14 @@ fn lower_statement_to_ir1(
                     binding_index,
                     scope_id,
                     label_counter,
+                    control_flow,
                 )?;
             }
             ops.push(Ir1Op::Label { id: end_label });
         }
         Statement::For(for_stmt) => {
             if let Some(init) = &for_stmt.init {
-                lower_statement_to_ir1(
+                lower_statement_to_ir1_with_flow(
                     init,
                     ops,
                     bindings,
@@ -1207,9 +752,11 @@ fn lower_statement_to_ir1(
                     binding_index,
                     scope_id,
                     label_counter,
+                    control_flow,
                 )?;
             }
             let loop_label = alloc_label(label_counter);
+            let continue_label = alloc_label(label_counter);
             let end_label = alloc_label(label_counter);
             ops.push(Ir1Op::Label { id: loop_label });
             if let Some(test) = &for_stmt.condition {
@@ -1226,7 +773,7 @@ fn lower_statement_to_ir1(
                     label_id: end_label,
                 });
             }
-            lower_statement_to_ir1(
+            lower_statement_to_ir1_with_flow(
                 &for_stmt.body,
                 ops,
                 bindings,
@@ -1234,7 +781,12 @@ fn lower_statement_to_ir1(
                 binding_index,
                 scope_id,
                 label_counter,
+                ControlFlowTargets {
+                    break_label: Some(end_label),
+                    continue_label: Some(continue_label),
+                },
             )?;
+            ops.push(Ir1Op::Label { id: continue_label });
             if let Some(update) = &for_stmt.update {
                 lower_expression_to_ir1(
                     update,
@@ -1270,18 +822,12 @@ fn lower_statement_to_ir1(
                 .binding_kind
                 .map(binding_kind_for_variable_declaration)
                 .unwrap_or(BindingKind::Var);
-            let for_in_primary = for_in_stmt
-                .binding
-                .binding_names()
-                .first()
-                .copied()
-                .unwrap_or("_");
-            let bid = alloc_binding(
+            let bid = alloc_pattern_primary_binding(
                 bindings,
                 binding_lookup,
                 binding_index,
                 scope_id,
-                for_in_primary,
+                &for_in_stmt.binding,
                 binding_kind,
             )
             .map_err(LoweringPipelineError::SemanticViolation)?;
@@ -1289,7 +835,8 @@ fn lower_statement_to_ir1(
                 value: Ir1Literal::Undefined,
             });
             ops.push(Ir1Op::StoreBinding { binding_id: bid });
-            lower_statement_to_ir1(
+            let end_label = alloc_label(label_counter);
+            lower_statement_to_ir1_with_flow(
                 &for_in_stmt.body,
                 ops,
                 bindings,
@@ -1297,7 +844,12 @@ fn lower_statement_to_ir1(
                 binding_index,
                 scope_id,
                 label_counter,
+                ControlFlowTargets {
+                    break_label: Some(end_label),
+                    continue_label: Some(end_label),
+                },
             )?;
+            ops.push(Ir1Op::Label { id: end_label });
         }
         Statement::ForOf(for_of_stmt) => {
             // Evaluate the iterable expression for side effects, then run the
@@ -1318,18 +870,12 @@ fn lower_statement_to_ir1(
                 .binding_kind
                 .map(binding_kind_for_variable_declaration)
                 .unwrap_or(BindingKind::Var);
-            let for_of_primary = for_of_stmt
-                .binding
-                .binding_names()
-                .first()
-                .copied()
-                .unwrap_or("_");
-            let bid = alloc_binding(
+            let bid = alloc_pattern_primary_binding(
                 bindings,
                 binding_lookup,
                 binding_index,
                 scope_id,
-                for_of_primary,
+                &for_of_stmt.binding,
                 binding_kind,
             )
             .map_err(LoweringPipelineError::SemanticViolation)?;
@@ -1337,7 +883,8 @@ fn lower_statement_to_ir1(
                 value: Ir1Literal::Undefined,
             });
             ops.push(Ir1Op::StoreBinding { binding_id: bid });
-            lower_statement_to_ir1(
+            let end_label = alloc_label(label_counter);
+            lower_statement_to_ir1_with_flow(
                 &for_of_stmt.body,
                 ops,
                 bindings,
@@ -1345,7 +892,12 @@ fn lower_statement_to_ir1(
                 binding_index,
                 scope_id,
                 label_counter,
+                ControlFlowTargets {
+                    break_label: Some(end_label),
+                    continue_label: Some(end_label),
+                },
             )?;
+            ops.push(Ir1Op::Label { id: end_label });
         }
         Statement::While(while_stmt) => {
             let loop_label = alloc_label(label_counter);
@@ -1363,7 +915,7 @@ fn lower_statement_to_ir1(
             ops.push(Ir1Op::JumpIfFalsy {
                 label_id: end_label,
             });
-            lower_statement_to_ir1(
+            lower_statement_to_ir1_with_flow(
                 &while_stmt.body,
                 ops,
                 bindings,
@@ -1371,6 +923,10 @@ fn lower_statement_to_ir1(
                 binding_index,
                 scope_id,
                 label_counter,
+                ControlFlowTargets {
+                    break_label: Some(end_label),
+                    continue_label: Some(loop_label),
+                },
             )?;
             ops.push(Ir1Op::Jump {
                 label_id: loop_label,
@@ -1379,9 +935,10 @@ fn lower_statement_to_ir1(
         }
         Statement::DoWhile(do_while) => {
             let loop_label = alloc_label(label_counter);
+            let continue_label = alloc_label(label_counter);
             let end_label = alloc_label(label_counter);
             ops.push(Ir1Op::Label { id: loop_label });
-            lower_statement_to_ir1(
+            lower_statement_to_ir1_with_flow(
                 &do_while.body,
                 ops,
                 bindings,
@@ -1389,7 +946,12 @@ fn lower_statement_to_ir1(
                 binding_index,
                 scope_id,
                 label_counter,
+                ControlFlowTargets {
+                    break_label: Some(end_label),
+                    continue_label: Some(continue_label),
+                },
             )?;
+            ops.push(Ir1Op::Label { id: continue_label });
             lower_expression_to_ir1(
                 &do_while.condition,
                 ops,
@@ -1442,7 +1004,7 @@ fn lower_statement_to_ir1(
             let end_label = alloc_label(label_counter);
             ops.push(Ir1Op::BeginTry { catch_label });
             for inner in &tc.block.body {
-                lower_statement_to_ir1(
+                lower_statement_to_ir1_with_flow(
                     inner,
                     ops,
                     bindings,
@@ -1450,6 +1012,7 @@ fn lower_statement_to_ir1(
                     binding_index,
                     scope_id,
                     label_counter,
+                    control_flow,
                 )?;
             }
             ops.push(Ir1Op::EndTry);
@@ -1471,7 +1034,7 @@ fn lower_statement_to_ir1(
                     ops.push(Ir1Op::StoreBinding { binding_id: bid });
                 }
                 for inner in &handler.body.body {
-                    lower_statement_to_ir1(
+                    lower_statement_to_ir1_with_flow(
                         inner,
                         ops,
                         bindings,
@@ -1479,13 +1042,14 @@ fn lower_statement_to_ir1(
                         binding_index,
                         scope_id,
                         label_counter,
+                        control_flow,
                     )?;
                 }
             }
             ops.push(Ir1Op::Label { id: end_label });
             if let Some(finalizer) = &tc.finalizer {
                 for inner in &finalizer.body {
-                    lower_statement_to_ir1(
+                    lower_statement_to_ir1_with_flow(
                         inner,
                         ops,
                         bindings,
@@ -1493,75 +1057,60 @@ fn lower_statement_to_ir1(
                         binding_index,
                         scope_id,
                         label_counter,
+                        control_flow,
                     )?;
                 }
             }
         }
         Statement::Switch(switch_stmt) => {
-            lower_expression_to_ir1(
-                &switch_stmt.discriminant,
+            lower_switch_to_ir1(
+                switch_stmt,
                 ops,
                 bindings,
                 binding_lookup,
                 binding_index,
                 scope_id,
                 label_counter,
+                control_flow,
             )?;
-            let end_label = alloc_label(label_counter);
-            for case in &switch_stmt.cases {
-                if let Some(test) = &case.test {
-                    lower_expression_to_ir1(
-                        test,
-                        ops,
-                        bindings,
-                        binding_lookup,
-                        binding_index,
-                        scope_id,
-                        label_counter,
-                    )?;
-                    ops.push(Ir1Op::BinaryOp {
-                        operator: BinaryOperator::StrictEqual,
-                    });
-                    let next_label = alloc_label(label_counter);
-                    ops.push(Ir1Op::JumpIfFalsy {
-                        label_id: next_label,
-                    });
-                    for body_stmt in &case.consequent {
-                        lower_statement_to_ir1(
-                            body_stmt,
-                            ops,
-                            bindings,
-                            binding_lookup,
-                            binding_index,
-                            scope_id,
-                            label_counter,
-                        )?;
-                    }
-                    ops.push(Ir1Op::Jump {
-                        label_id: end_label,
-                    });
-                    ops.push(Ir1Op::Label { id: next_label });
-                } else {
-                    for body_stmt in &case.consequent {
-                        lower_statement_to_ir1(
-                            body_stmt,
-                            ops,
-                            bindings,
-                            binding_lookup,
-                            binding_index,
-                            scope_id,
-                            label_counter,
-                        )?;
-                    }
-                }
+        }
+        Statement::Break(brk) => {
+            if let Some(label) = &brk.label {
+                return Err(LoweringPipelineError::SemanticViolation(
+                    SemanticError::new(
+                        SemanticErrorCode::UndefinedLabel,
+                        Some(label.clone()),
+                        Some(brk.span.clone()),
+                    ),
+                ));
             }
-            ops.push(Ir1Op::Label { id: end_label });
+            let label_id = control_flow.break_label.ok_or_else(|| {
+                LoweringPipelineError::SemanticViolation(SemanticError::new(
+                    SemanticErrorCode::IllegalBreak,
+                    None,
+                    Some(brk.span.clone()),
+                ))
+            })?;
+            ops.push(Ir1Op::Jump { label_id });
         }
-        Statement::Break(_) => {
-            ops.push(Ir1Op::Nop);
-        }
-        Statement::Continue(_) => {
-            ops.push(Ir1Op::Nop);
+        Statement::Continue(cont) => {
+            if let Some(label) = &cont.label {
+                return Err(LoweringPipelineError::SemanticViolation(
+                    SemanticError::new(
+                        SemanticErrorCode::UndefinedLabel,
+                        Some(label.clone()),
+                        Some(cont.span.clone()),
+                    ),
+                ));
+            }
+            let label_id = control_flow.continue_label.ok_or_else(|| {
+                LoweringPipelineError::SemanticViolation(SemanticError::new(
+                    SemanticErrorCode::IllegalContinue,
+                    None,
+                    Some(cont.span.clone()),
+                ))
+            })?;
+            ops.push(Ir1Op::Jump { label_id });
         }
         Statement::FunctionDeclaration(func) => {
             let name = func.name.clone().unwrap_or_else(|| "anonymous".to_string());
@@ -1584,6 +1133,106 @@ fn lower_statement_to_ir1(
             ops.push(Ir1Op::Nop);
         }
     }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_switch_to_ir1(
+    switch_stmt: &crate::ast::SwitchStatement,
+    ops: &mut Vec<Ir1Op>,
+    bindings: &mut Vec<ResolvedBinding>,
+    binding_lookup: &mut BTreeMap<String, BindingId>,
+    binding_index: &mut BindingId,
+    scope_id: ScopeId,
+    label_counter: &mut u32,
+    control_flow: ControlFlowTargets,
+) -> Result<(), LoweringPipelineError> {
+    lower_expression_to_ir1(
+        &switch_stmt.discriminant,
+        ops,
+        bindings,
+        binding_lookup,
+        binding_index,
+        scope_id,
+        label_counter,
+    )?;
+    let discriminant_binding_name = format!("__franken_switch_discriminant_{}", *binding_index);
+    let discriminant_binding = alloc_binding(
+        bindings,
+        binding_lookup,
+        binding_index,
+        scope_id,
+        &discriminant_binding_name,
+        BindingKind::Let,
+    )
+    .map_err(LoweringPipelineError::SemanticViolation)?;
+    ops.push(Ir1Op::StoreBinding {
+        binding_id: discriminant_binding,
+    });
+
+    let end_label = alloc_label(label_counter);
+    let case_labels: Vec<u32> = (0..switch_stmt.cases.len())
+        .map(|_| alloc_label(label_counter))
+        .collect();
+    let mut default_label = None;
+
+    for (case, case_label) in switch_stmt.cases.iter().zip(case_labels.iter().copied()) {
+        if let Some(test) = &case.test {
+            ops.push(Ir1Op::LoadBinding {
+                binding_id: discriminant_binding,
+            });
+            lower_expression_to_ir1(
+                test,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+                label_counter,
+            )?;
+            ops.push(Ir1Op::BinaryOp {
+                operator: BinaryOperator::StrictEqual,
+            });
+            let next_case_label = alloc_label(label_counter);
+            ops.push(Ir1Op::JumpIfFalsy {
+                label_id: next_case_label,
+            });
+            ops.push(Ir1Op::Jump {
+                label_id: case_label,
+            });
+            ops.push(Ir1Op::Label {
+                id: next_case_label,
+            });
+        } else {
+            default_label = Some(case_label);
+        }
+    }
+
+    ops.push(Ir1Op::Jump {
+        label_id: default_label.unwrap_or(end_label),
+    });
+
+    let switch_flow = ControlFlowTargets {
+        break_label: Some(end_label),
+        continue_label: control_flow.continue_label,
+    };
+    for (case, case_label) in switch_stmt.cases.iter().zip(case_labels.iter().copied()) {
+        ops.push(Ir1Op::Label { id: case_label });
+        for body_stmt in &case.consequent {
+            lower_statement_to_ir1_with_flow(
+                body_stmt,
+                ops,
+                bindings,
+                binding_lookup,
+                binding_index,
+                scope_id,
+                label_counter,
+                switch_flow,
+            )?;
+        }
+    }
+
+    ops.push(Ir1Op::Label { id: end_label });
     Ok(())
 }
 
@@ -3106,10 +2755,10 @@ mod tests {
         ArrowBody, AssignmentOperator, BinaryOperator, BindingPattern, BlockStatement,
         BreakStatement, CatchClause, ContinueStatement, DoWhileStatement, ExportDeclaration,
         ExportKind, Expression, ExpressionStatement, ForInStatement, ForOfStatement, ForStatement,
-        FunctionDeclaration, FunctionParam, IfStatement, ImportDeclaration, ObjectProperty,
-        ParseGoal, ReturnStatement, SourceSpan, Statement, SwitchCase, SwitchStatement, SyntaxTree,
-        ThrowStatement, TryCatchStatement, UnaryOperator, VariableDeclaration,
-        VariableDeclarationKind, VariableDeclarator, WhileStatement,
+        FunctionDeclaration, FunctionParam, IfStatement, ImportDeclaration, ObjectPatternProperty,
+        ObjectProperty, ParseGoal, ReturnStatement, SourceSpan, Statement, SwitchCase,
+        SwitchStatement, SyntaxTree, ThrowStatement, TryCatchStatement, UnaryOperator,
+        VariableDeclaration, VariableDeclarationKind, VariableDeclarator, WhileStatement,
     };
 
     fn span() -> SourceSpan {
@@ -5690,26 +5339,131 @@ mod tests {
                 operator: BinaryOperator::StrictEqual
             }
         )));
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::LoadBinding { .. }))
+        );
     }
 
     #[test]
-    fn lower_break_emits_nop() {
+    fn lower_break_outside_control_flow_is_error() {
         let ir0 = stmt_ir0(vec![Statement::Break(BreakStatement {
             label: None,
             span: span(),
         })]);
-        let result = lower_ir0_to_ir1(&ir0).expect("break should lower");
-        assert!(result.module.ops.iter().any(|op| matches!(op, Ir1Op::Nop)));
+        let err = lower_ir0_to_ir1(&ir0).expect_err("top-level break should fail");
+        assert!(matches!(
+            err,
+            LoweringPipelineError::SemanticViolation(SemanticError {
+                code: SemanticErrorCode::IllegalBreak,
+                ..
+            })
+        ));
     }
 
     #[test]
-    fn lower_continue_emits_nop() {
+    fn lower_continue_outside_loop_is_error() {
         let ir0 = stmt_ir0(vec![Statement::Continue(ContinueStatement {
             label: None,
             span: span(),
         })]);
-        let result = lower_ir0_to_ir1(&ir0).expect("continue should lower");
-        assert!(result.module.ops.iter().any(|op| matches!(op, Ir1Op::Nop)));
+        let err = lower_ir0_to_ir1(&ir0).expect_err("top-level continue should fail");
+        assert!(matches!(
+            err,
+            LoweringPipelineError::SemanticViolation(SemanticError {
+                code: SemanticErrorCode::IllegalContinue,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn lower_break_inside_switch_emits_jump() {
+        let ir0 = stmt_ir0(vec![Statement::Switch(SwitchStatement {
+            discriminant: Expression::Identifier("x".into()),
+            cases: vec![SwitchCase {
+                test: Some(Expression::NumericLiteral(1)),
+                consequent: vec![Statement::Break(BreakStatement {
+                    label: None,
+                    span: span(),
+                })],
+                span: span(),
+            }],
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("break in switch should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::Jump { .. }))
+        );
+        assert!(!result.module.ops.iter().any(|op| matches!(op, Ir1Op::Nop)));
+    }
+
+    #[test]
+    fn lower_continue_inside_for_emits_jump() {
+        let ir0 = stmt_ir0(vec![Statement::For(ForStatement {
+            init: None,
+            condition: Some(Expression::BooleanLiteral(true)),
+            update: Some(Expression::NumericLiteral(1)),
+            body: Box::new(Statement::Continue(ContinueStatement {
+                label: None,
+                span: span(),
+            })),
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("continue in for should lower");
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::Jump { .. }))
+        );
+        assert!(!result.module.ops.iter().any(|op| matches!(op, Ir1Op::Nop)));
+    }
+
+    #[test]
+    fn lower_block_destructuring_allocates_all_bindings() {
+        let ir0 = stmt_ir0(vec![Statement::Block(BlockStatement {
+            body: vec![Statement::VariableDeclaration(VariableDeclaration {
+                kind: VariableDeclarationKind::Let,
+                declarations: vec![VariableDeclarator {
+                    pattern: BindingPattern::ObjectPattern(vec![
+                        ObjectPatternProperty {
+                            key: Expression::Identifier("a".into()),
+                            value: BindingPattern::Identifier("a".into()),
+                            computed: false,
+                            shorthand: true,
+                        },
+                        ObjectPatternProperty {
+                            key: Expression::Identifier("b".into()),
+                            value: BindingPattern::Identifier("renamed".into()),
+                            computed: false,
+                            shorthand: false,
+                        },
+                    ]),
+                    initializer: Some(Expression::Identifier("source".into())),
+                    span: span(),
+                }],
+                span: span(),
+            })],
+            span: span(),
+        })]);
+        let result = lower_ir0_to_ir1(&ir0).expect("destructuring block should lower");
+        let scope = result.module.scopes.first().expect("root scope");
+        assert!(scope.bindings.iter().any(|binding| binding.name == "a"));
+        assert!(
+            scope
+                .bindings
+                .iter()
+                .any(|binding| binding.name == "renamed")
+        );
     }
 
     #[test]
