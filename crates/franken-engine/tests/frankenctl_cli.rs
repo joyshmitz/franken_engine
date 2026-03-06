@@ -597,11 +597,15 @@ fn frankenctl_doctor_outputs_json_and_writes_support_bundle() {
     );
     assert_eq!(json["signal_counts"]["platform_signals"].as_u64(), Some(0));
     assert!(
-        out_dir.join("support_bundle/preflight_report.json").is_file(),
+        out_dir
+            .join("support_bundle/preflight_report.json")
+            .is_file(),
         "expected preflight report to be written"
     );
     assert!(
-        out_dir.join("support_bundle/onboarding_scorecard.json").is_file(),
+        out_dir
+            .join("support_bundle/onboarding_scorecard.json")
+            .is_file(),
         "expected onboarding scorecard to be written"
     );
     assert!(
@@ -667,7 +671,12 @@ fn frankenctl_doctor_summary_mentions_verdict_and_recommendation() {
     write_runtime_diagnostics_input(&input_path, &build_doctor_input());
 
     let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
-        .args(["doctor", "--input", input_path.to_str().unwrap(), "--summary"])
+        .args([
+            "doctor",
+            "--input",
+            input_path.to_str().unwrap(),
+            "--summary",
+        ])
         .output()
         .expect("doctor --summary command should execute");
 
@@ -1090,16 +1099,12 @@ fn frankenctl_benchmark_score_and_verify_bundle_round_trip() {
     .expect("verify report should parse");
     assert_eq!(verify_report["claim_type"].as_str(), Some("benchmark"));
     assert_eq!(verify_report["verdict"].as_str(), Some("verified"));
-    assert!(
-        verify_report["checks"]
-            .as_array()
-            .is_some_and(|checks| !checks.is_empty())
-    );
-    assert!(
-        verify_report["events"]
-            .as_array()
-            .is_some_and(|events| !events.is_empty())
-    );
+    assert!(verify_report["checks"]
+        .as_array()
+        .is_some_and(|checks| !checks.is_empty()));
+    assert!(verify_report["events"]
+        .as_array()
+        .is_some_and(|events| !events.is_empty()));
 
     let _ = fs::remove_file(score_input_path);
     let _ = fs::remove_file(score_results_path);

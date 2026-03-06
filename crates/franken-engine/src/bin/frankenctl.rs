@@ -8,11 +8,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenengine_engine::ast::ParseGoal;
 use frankenengine_engine::benchmark_denominator::{
-    PublicationContext, PublicationGateInput, evaluate_publication_gate,
+    evaluate_publication_gate, PublicationContext, PublicationGateInput,
 };
 use frankenengine_engine::benchmark_e2e::{
-    BenchmarkFamily, BenchmarkSuiteConfig, ScaleProfile, run_benchmark_suite,
-    write_evidence_artifacts,
+    run_benchmark_suite, write_evidence_artifacts, BenchmarkFamily, BenchmarkSuiteConfig,
+    ScaleProfile,
 };
 use frankenengine_engine::deterministic_replay::{NondeterminismTrace, ReplayEngine, ReplayMode};
 use frankenengine_engine::execution_orchestrator::{
@@ -20,30 +20,29 @@ use frankenengine_engine::execution_orchestrator::{
 };
 use frankenengine_engine::ir_contract::Ir0Module;
 use frankenengine_engine::lowering_pipeline::{
-    LoweringContext, LoweringPipelineOutput, lower_ir0_to_ir3,
+    lower_ir0_to_ir3, LoweringContext, LoweringPipelineOutput,
 };
 use frankenengine_engine::module_compatibility_matrix::CompatibilityScenarioReport;
 use frankenengine_engine::parser::{CanonicalEs2020Parser, ParseEventIr, ParserOptions};
 use frankenengine_engine::receipt_verifier_pipeline::{
-    ReceiptVerifierCliInput, render_verdict_summary, verify_receipt_by_id,
+    render_verdict_summary, verify_receipt_by_id, ReceiptVerifierCliInput,
 };
 use frankenengine_engine::region_lifecycle::FinalizeResult;
 use frankenengine_engine::runtime_diagnostics_cli::{
-    CompatibilityAdvisoryInput, CompatibilityAdvisoryOutput, EvidenceExportFilter,
-    OnboardingReadinessClass, OnboardingScorecardInput, OnboardingScorecardOutput,
-    OnboardingScorecardSignal, PreflightDoctorOutput, PreflightVerdict,
-    RolloutDecisionArtifactInput, RolloutDecisionArtifactOutput, RolloutRecommendation,
-    RuntimeDiagnosticsCliInput, SupportBundleFile, SupportBundleOutput,
-    SupportBundleRedactionPolicy, build_compatibility_advisories, build_onboarding_scorecard,
-    build_rollout_decision_artifact, parse_decision_type, parse_evidence_severity,
-    run_preflight_doctor,
+    build_compatibility_advisories, build_onboarding_scorecard, build_rollout_decision_artifact,
+    parse_decision_type, parse_evidence_severity, run_preflight_doctor, CompatibilityAdvisoryInput,
+    CompatibilityAdvisoryOutput, EvidenceExportFilter, OnboardingReadinessClass,
+    OnboardingScorecardInput, OnboardingScorecardOutput, OnboardingScorecardSignal,
+    PreflightDoctorOutput, RolloutDecisionArtifactInput, RolloutDecisionArtifactOutput,
+    RolloutRecommendation, RuntimeDiagnosticsCliInput, SupportBundleFile, SupportBundleOutput,
+    SupportBundleRedactionPolicy,
 };
 use frankenengine_engine::third_party_verifier::{
-    BenchmarkClaimBundle, ClaimedBenchmarkOutcome, THIRD_PARTY_VERIFIER_COMPONENT,
+    render_report_summary, verify_benchmark_claim, BenchmarkClaimBundle, ClaimedBenchmarkOutcome,
     ThirdPartyVerificationReport, VerificationCheckResult, VerificationVerdict, VerifierEvent,
-    render_report_summary, verify_benchmark_claim,
+    THIRD_PARTY_VERIFIER_COMPONENT,
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 const FRANKENCTL_SCHEMA_VERSION: &str = "franken-engine.frankenctl.v1";
 const COMPILE_ARTIFACT_SCHEMA_VERSION: &str = "franken-engine.frankenctl.compile-artifact.v1";
@@ -464,29 +463,41 @@ fn parse_doctor_args(args: &[String]) -> Result<DoctorArgs, String> {
                 advisories = Some(PathBuf::from(next_arg(args, &mut index, "--advisories")?))
             }
             "--scenario-report" => {
-                scenario_report = Some(PathBuf::from(next_arg(args, &mut index, "--scenario-report")?))
+                scenario_report = Some(PathBuf::from(next_arg(
+                    args,
+                    &mut index,
+                    "--scenario-report",
+                )?))
             }
             "--platform-signals" => {
-                platform_signals =
-                    Some(PathBuf::from(next_arg(args, &mut index, "--platform-signals")?))
+                platform_signals = Some(PathBuf::from(next_arg(
+                    args,
+                    &mut index,
+                    "--platform-signals",
+                )?))
             }
             "--extension-id" => {
                 filter.extension_id = Some(next_arg(args, &mut index, "--extension-id")?)
             }
             "--trace-id" => filter.trace_id = Some(next_arg(args, &mut index, "--trace-id")?),
             "--start-ns" => {
-                filter.start_timestamp_ns =
-                    Some(parse_u64(&next_arg(args, &mut index, "--start-ns")?, "--start-ns")?)
+                filter.start_timestamp_ns = Some(parse_u64(
+                    &next_arg(args, &mut index, "--start-ns")?,
+                    "--start-ns",
+                )?)
             }
             "--end-ns" => {
-                filter.end_timestamp_ns =
-                    Some(parse_u64(&next_arg(args, &mut index, "--end-ns")?, "--end-ns")?)
+                filter.end_timestamp_ns = Some(parse_u64(
+                    &next_arg(args, &mut index, "--end-ns")?,
+                    "--end-ns",
+                )?)
             }
             "--severity" => {
                 let value = next_arg(args, &mut index, "--severity")?;
-                filter.severity = Some(parse_evidence_severity(value.as_str()).ok_or_else(
-                    || format!("invalid --severity `{value}` (expected info|warning|critical)"),
-                )?);
+                filter.severity =
+                    Some(parse_evidence_severity(value.as_str()).ok_or_else(|| {
+                        format!("invalid --severity `{value}` (expected info|warning|critical)")
+                    })?);
             }
             "--decision-type" => {
                 let value = next_arg(args, &mut index, "--decision-type")?;
@@ -934,7 +945,11 @@ fn execute_doctor(args: DoctorArgs) -> Result<i32, String> {
         print_json(&output)?;
     }
 
-    if blocked { Ok(25) } else { Ok(0) }
+    if blocked {
+        Ok(25)
+    } else {
+        Ok(0)
+    }
 }
 
 fn execute_verify(args: VerifyArgs) -> Result<i32, String> {
@@ -949,7 +964,11 @@ fn execute_verify(args: VerifyArgs) -> Result<i32, String> {
                 errors,
             };
             print_json(&output)?;
-            if output.passed { Ok(0) } else { Ok(25) }
+            if output.passed {
+                Ok(0)
+            } else {
+                Ok(25)
+            }
         }
         VerifyArgs::Receipt {
             input,
@@ -1026,7 +1045,11 @@ fn execute_benchmark_run(args: BenchmarkRunArgs) -> Result<i32, String> {
     };
 
     print_json(&output)?;
-    if result.blocked { Ok(25) } else { Ok(0) }
+    if result.blocked {
+        Ok(25)
+    } else {
+        Ok(0)
+    }
 }
 
 fn execute_benchmark_score(args: BenchmarkScoreArgs) -> Result<i32, String> {
@@ -1671,7 +1694,10 @@ fn render_doctor_summary(output: &DoctorCommandOutput) -> String {
             "mandatory_fields_valid: {}",
             output.rollout_decision.mandatory_field_status.valid
         ),
-        format!("next_steps: {}", output.onboarding_scorecard.next_steps.len()),
+        format!(
+            "next_steps: {}",
+            output.onboarding_scorecard.next_steps.len()
+        ),
     ];
 
     for step in &output.onboarding_scorecard.next_steps {
@@ -1858,10 +1884,7 @@ mod tests {
                     spec.scenario_report,
                     Some(PathBuf::from("compatibility_report.json"))
                 );
-                assert_eq!(
-                    spec.filter.severity,
-                    parse_evidence_severity("warning")
-                );
+                assert_eq!(spec.filter.severity, parse_evidence_severity("warning"));
             }
             other => panic!("expected doctor command, got {other:?}"),
         }
