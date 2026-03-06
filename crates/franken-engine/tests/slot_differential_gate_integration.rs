@@ -1037,18 +1037,24 @@ fn double_evaluation_of_same_slot_updates_verdict() {
 
     // First evaluation: diverge
     let (_, v1) = gate
-        .evaluate_single(&sid, &[workload("w1", WorkloadCategory::SemanticEquivalence)], &|_| Ok(matching_output("42")), &|_| {
-            Ok(matching_output("99"))
-        })
+        .evaluate_single(
+            &sid,
+            &[workload("w1", WorkloadCategory::SemanticEquivalence)],
+            &|_| Ok(matching_output("42")),
+            &|_| Ok(matching_output("99")),
+        )
         .unwrap();
     assert!(v1.is_blocked());
     assert!(!gate.passes());
 
     // Second evaluation: matching (re-evaluate same slot)
     let (_, v2) = gate
-        .evaluate_single(&sid, &[workload("w2", WorkloadCategory::SemanticEquivalence)], &|_| Ok(matching_output("42")), &|_| {
-            Ok(matching_output("42"))
-        })
+        .evaluate_single(
+            &sid,
+            &[workload("w2", WorkloadCategory::SemanticEquivalence)],
+            &|_| Ok(matching_output("42")),
+            &|_| Ok(matching_output("42")),
+        )
         .unwrap();
     assert!(v2.is_ready());
     // Gate should now pass since the latest verdict is Ready
@@ -1103,13 +1109,17 @@ fn differential_config_default_has_positive_thresholds() {
 #[test]
 fn evidence_with_only_informational_divergences_passes_gate() {
     let mut gate = make_gate();
-    gate.register_slot(inventory_entry("resource-slot", SlotKind::GarbageCollector, false));
+    gate.register_slot(inventory_entry(
+        "resource-slot",
+        SlotKind::GarbageCollector,
+        false,
+    ));
 
     let sid = slot("resource-slot");
     let corpus = vec![workload("w1", WorkloadCategory::SemanticEquivalence)];
 
     // Native uses more memory but same semantics (resource divergence = informational)
-    let (results, verdict) = gate
+    let (results, _verdict) = gate
         .evaluate_single(
             &sid,
             &corpus,

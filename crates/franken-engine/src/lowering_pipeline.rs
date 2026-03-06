@@ -450,6 +450,7 @@ pub fn lower_ir0_to_ir1(
                         &mut binding_lookup,
                         &mut binding_index,
                         root_scope_id,
+                        &mut label_counter,
                     )?;
                     let binding_name = format!("__default_export_{synthetic_export_index}");
                     synthetic_export_index = synthetic_export_index.saturating_add(1);
@@ -557,6 +558,7 @@ pub fn lower_ir0_to_ir1(
                             &mut binding_lookup,
                             &mut binding_index,
                             root_scope_id,
+                            &mut label_counter,
                         )?;
                     } else {
                         ir1.ops.push(Ir1Op::LoadLiteral {
@@ -574,6 +576,7 @@ pub fn lower_ir0_to_ir1(
                     &mut binding_lookup,
                     &mut binding_index,
                     root_scope_id,
+                    &mut label_counter,
                 )?;
             }
             Statement::Block(block) => {
@@ -597,6 +600,7 @@ pub fn lower_ir0_to_ir1(
                     &mut binding_lookup,
                     &mut binding_index,
                     root_scope_id,
+                    &mut label_counter,
                 )?;
                 let else_label = alloc_label(&mut label_counter);
                 let end_label = alloc_label(&mut label_counter);
@@ -652,6 +656,7 @@ pub fn lower_ir0_to_ir1(
                         &mut binding_lookup,
                         &mut binding_index,
                         root_scope_id,
+                        &mut label_counter,
                     )?;
                     ir1.ops.push(Ir1Op::JumpIfFalsy {
                         label_id: end_label,
@@ -674,6 +679,7 @@ pub fn lower_ir0_to_ir1(
                         &mut binding_lookup,
                         &mut binding_index,
                         root_scope_id,
+                        &mut label_counter,
                     )?;
                     ir1.ops.push(Ir1Op::Pop);
                 }
@@ -694,6 +700,7 @@ pub fn lower_ir0_to_ir1(
                     &mut binding_lookup,
                     &mut binding_index,
                     root_scope_id,
+                    &mut label_counter,
                 )?;
                 ir1.ops.push(Ir1Op::Pop);
                 let binding_kind = for_in_stmt
@@ -741,6 +748,7 @@ pub fn lower_ir0_to_ir1(
                     &mut binding_lookup,
                     &mut binding_index,
                     root_scope_id,
+                    &mut label_counter,
                 )?;
                 ir1.ops.push(Ir1Op::Pop);
                 let binding_kind = for_of_stmt
@@ -787,6 +795,7 @@ pub fn lower_ir0_to_ir1(
                     &mut binding_lookup,
                     &mut binding_index,
                     root_scope_id,
+                    &mut label_counter,
                 )?;
                 ir1.ops.push(Ir1Op::JumpIfFalsy {
                     label_id: end_label,
@@ -824,6 +833,7 @@ pub fn lower_ir0_to_ir1(
                     &mut binding_lookup,
                     &mut binding_index,
                     root_scope_id,
+                    &mut label_counter,
                 )?;
                 // JumpIf truthy → loop back. Since we only have JumpIfFalsy,
                 // emit JumpIfFalsy to end, then unconditional jump to loop.
@@ -845,6 +855,7 @@ pub fn lower_ir0_to_ir1(
                         &mut binding_lookup,
                         &mut binding_index,
                         root_scope_id,
+                        &mut label_counter,
                     )?;
                 } else {
                     ir1.ops.push(Ir1Op::LoadLiteral {
@@ -861,6 +872,7 @@ pub fn lower_ir0_to_ir1(
                     &mut binding_lookup,
                     &mut binding_index,
                     root_scope_id,
+                    &mut label_counter,
                 )?;
                 ir1.ops.push(Ir1Op::Throw);
             }
@@ -932,6 +944,7 @@ pub fn lower_ir0_to_ir1(
                     &mut binding_lookup,
                     &mut binding_index,
                     root_scope_id,
+                    &mut label_counter,
                 )?;
                 let end_label = alloc_label(&mut label_counter);
                 for case in &switch_stmt.cases {
@@ -943,6 +956,7 @@ pub fn lower_ir0_to_ir1(
                             &mut binding_lookup,
                             &mut binding_index,
                             root_scope_id,
+                            &mut label_counter,
                         )?;
                         // Compare (placeholder: emit as binary op for equality).
                         ir1.ops.push(Ir1Op::BinaryOp {
@@ -1080,6 +1094,7 @@ fn lower_statement_to_ir1(
                 binding_lookup,
                 binding_index,
                 scope_id,
+                label_counter,
             )?;
         }
         Statement::VariableDeclaration(vd) => {
@@ -1118,6 +1133,7 @@ fn lower_statement_to_ir1(
                         binding_lookup,
                         binding_index,
                         scope_id,
+                        label_counter,
                     )?;
                 } else {
                     ops.push(Ir1Op::LoadLiteral {
@@ -1148,6 +1164,7 @@ fn lower_statement_to_ir1(
                 binding_lookup,
                 binding_index,
                 scope_id,
+                label_counter,
             )?;
             let else_label = alloc_label(label_counter);
             let end_label = alloc_label(label_counter);
@@ -1203,6 +1220,7 @@ fn lower_statement_to_ir1(
                     binding_lookup,
                     binding_index,
                     scope_id,
+                    label_counter,
                 )?;
                 ops.push(Ir1Op::JumpIfFalsy {
                     label_id: end_label,
@@ -1225,6 +1243,7 @@ fn lower_statement_to_ir1(
                     binding_lookup,
                     binding_index,
                     scope_id,
+                    label_counter,
                 )?;
                 ops.push(Ir1Op::Pop);
             }
@@ -1244,6 +1263,7 @@ fn lower_statement_to_ir1(
                 binding_lookup,
                 binding_index,
                 scope_id,
+                label_counter,
             )?;
             ops.push(Ir1Op::Pop);
             let binding_kind = for_in_stmt
@@ -1291,6 +1311,7 @@ fn lower_statement_to_ir1(
                 binding_lookup,
                 binding_index,
                 scope_id,
+                label_counter,
             )?;
             ops.push(Ir1Op::Pop);
             let binding_kind = for_of_stmt
@@ -1337,6 +1358,7 @@ fn lower_statement_to_ir1(
                 binding_lookup,
                 binding_index,
                 scope_id,
+                label_counter,
             )?;
             ops.push(Ir1Op::JumpIfFalsy {
                 label_id: end_label,
@@ -1375,6 +1397,7 @@ fn lower_statement_to_ir1(
                 binding_lookup,
                 binding_index,
                 scope_id,
+                label_counter,
             )?;
             ops.push(Ir1Op::JumpIfFalsy {
                 label_id: end_label,
@@ -1393,6 +1416,7 @@ fn lower_statement_to_ir1(
                     binding_lookup,
                     binding_index,
                     scope_id,
+                    label_counter,
                 )?;
             } else {
                 ops.push(Ir1Op::LoadLiteral {
@@ -1409,6 +1433,7 @@ fn lower_statement_to_ir1(
                 binding_lookup,
                 binding_index,
                 scope_id,
+                label_counter,
             )?;
             ops.push(Ir1Op::Throw);
         }
@@ -1480,6 +1505,7 @@ fn lower_statement_to_ir1(
                 binding_lookup,
                 binding_index,
                 scope_id,
+                label_counter,
             )?;
             let end_label = alloc_label(label_counter);
             for case in &switch_stmt.cases {
@@ -1491,6 +1517,7 @@ fn lower_statement_to_ir1(
                         binding_lookup,
                         binding_index,
                         scope_id,
+                        label_counter,
                     )?;
                     ops.push(Ir1Op::BinaryOp {
                         operator: BinaryOperator::StrictEqual,
@@ -2347,6 +2374,7 @@ fn lower_expression_to_ir1(
     binding_lookup: &mut BTreeMap<String, BindingId>,
     binding_index: &mut BindingId,
     root_scope_id: ScopeId,
+    label_counter: &mut u32,
 ) -> Result<(), LoweringPipelineError> {
     match expression {
         Expression::Identifier(name) => {
@@ -2403,6 +2431,7 @@ fn lower_expression_to_ir1(
                 binding_lookup,
                 binding_index,
                 root_scope_id,
+                label_counter,
             )?;
             ops.push(Ir1Op::Await);
         }
@@ -2426,6 +2455,7 @@ fn lower_expression_to_ir1(
                 binding_lookup,
                 binding_index,
                 root_scope_id,
+                label_counter,
             )?;
             lower_expression_to_ir1(
                 right,
@@ -2434,6 +2464,7 @@ fn lower_expression_to_ir1(
                 binding_lookup,
                 binding_index,
                 root_scope_id,
+                label_counter,
             )?;
             ops.push(Ir1Op::BinaryOp {
                 operator: *operator,
@@ -2449,6 +2480,7 @@ fn lower_expression_to_ir1(
                 binding_lookup,
                 binding_index,
                 root_scope_id,
+                label_counter,
             )?;
             ops.push(Ir1Op::UnaryOp {
                 operator: *operator,
@@ -2466,6 +2498,7 @@ fn lower_expression_to_ir1(
                 binding_lookup,
                 binding_index,
                 root_scope_id,
+                label_counter,
             )?;
             // Resolve left-hand side as a binding target.
             if let Expression::Identifier(name) = left.as_ref() {
@@ -2497,6 +2530,8 @@ fn lower_expression_to_ir1(
             consequent,
             alternate,
         } => {
+            // Ternaries must preserve branch selection; lowering both arms eagerly
+            // changes side effects and discards the consequent value.
             lower_expression_to_ir1(
                 test,
                 ops,
@@ -2504,8 +2539,13 @@ fn lower_expression_to_ir1(
                 binding_lookup,
                 binding_index,
                 root_scope_id,
+                label_counter,
             )?;
-            // Emit both branches; result is the last evaluated.
+            let else_label = alloc_label(label_counter);
+            let end_label = alloc_label(label_counter);
+            ops.push(Ir1Op::JumpIfFalsy {
+                label_id: else_label,
+            });
             lower_expression_to_ir1(
                 consequent,
                 ops,
@@ -2513,8 +2553,12 @@ fn lower_expression_to_ir1(
                 binding_lookup,
                 binding_index,
                 root_scope_id,
+                label_counter,
             )?;
-            ops.push(Ir1Op::Pop);
+            ops.push(Ir1Op::Jump {
+                label_id: end_label,
+            });
+            ops.push(Ir1Op::Label { id: else_label });
             lower_expression_to_ir1(
                 alternate,
                 ops,
@@ -2522,7 +2566,9 @@ fn lower_expression_to_ir1(
                 binding_lookup,
                 binding_index,
                 root_scope_id,
+                label_counter,
             )?;
+            ops.push(Ir1Op::Label { id: end_label });
         }
         Expression::Call { callee, arguments } => {
             lower_expression_to_ir1(
@@ -2532,6 +2578,7 @@ fn lower_expression_to_ir1(
                 binding_lookup,
                 binding_index,
                 root_scope_id,
+                label_counter,
             )?;
             for arg in arguments {
                 lower_expression_to_ir1(
@@ -2541,6 +2588,7 @@ fn lower_expression_to_ir1(
                     binding_lookup,
                     binding_index,
                     root_scope_id,
+                    label_counter,
                 )?;
             }
             ops.push(Ir1Op::Call {
@@ -2559,6 +2607,7 @@ fn lower_expression_to_ir1(
                 binding_lookup,
                 binding_index,
                 root_scope_id,
+                label_counter,
             )?;
             // Extract property key as string.
             let key = match property.as_ref() {
@@ -2580,6 +2629,7 @@ fn lower_expression_to_ir1(
                     binding_lookup,
                     binding_index,
                     root_scope_id,
+                    label_counter,
                 )?;
             }
             ops.push(Ir1Op::NewArray {
@@ -2604,6 +2654,7 @@ fn lower_expression_to_ir1(
                     binding_lookup,
                     binding_index,
                     root_scope_id,
+                    label_counter,
                 )?;
             }
             ops.push(Ir1Op::NewObject {
@@ -2636,12 +2687,11 @@ fn lower_expression_to_ir1(
                         binding_lookup,
                         binding_index,
                         root_scope_id,
+                        label_counter,
                     )?;
                 }
                 ArrowBody::Block(block) => {
                     for stmt in &block.body {
-                        // Arrow block bodies need a label_counter; use 0-start inline.
-                        let mut arrow_label_counter = 0u32;
                         lower_statement_to_ir1(
                             stmt,
                             ops,
@@ -2649,7 +2699,7 @@ fn lower_expression_to_ir1(
                             binding_lookup,
                             binding_index,
                             root_scope_id,
-                            &mut arrow_label_counter,
+                            label_counter,
                         )?;
                     }
                 }
@@ -2667,6 +2717,7 @@ fn lower_expression_to_ir1(
                 binding_lookup,
                 binding_index,
                 root_scope_id,
+                label_counter,
             )?;
             for arg in arguments {
                 lower_expression_to_ir1(
@@ -2676,6 +2727,7 @@ fn lower_expression_to_ir1(
                     binding_lookup,
                     binding_index,
                     root_scope_id,
+                    label_counter,
                 )?;
             }
             ops.push(Ir1Op::Call {
@@ -2697,6 +2749,7 @@ fn lower_expression_to_ir1(
                     binding_lookup,
                     binding_index,
                     root_scope_id,
+                    label_counter,
                 )?;
                 ops.push(Ir1Op::Pop);
             }
@@ -5041,7 +5094,28 @@ mod tests {
             alternate: Box::new(Expression::NumericLiteral(2)),
         });
         let result = lower_ir0_to_ir1(&ir0).expect("conditional should lower");
-        assert!(result.module.ops.iter().any(|op| matches!(op, Ir1Op::Pop)));
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::JumpIfFalsy { .. }))
+        );
+        assert!(
+            result
+                .module
+                .ops
+                .iter()
+                .any(|op| matches!(op, Ir1Op::Jump { .. }))
+        );
+        assert!(!result.module.ops.iter().any(|op| matches!(op, Ir1Op::Pop)));
+        let label_count = result
+            .module
+            .ops
+            .iter()
+            .filter(|op| matches!(op, Ir1Op::Label { .. }))
+            .count();
+        assert_eq!(label_count, 2);
         let lit_count = result
             .module
             .ops
@@ -5173,6 +5247,52 @@ mod tests {
             .filter(|op| matches!(op, Ir1Op::Return))
             .count();
         assert!(return_count >= 2); // inner return + outer return
+    }
+
+    #[test]
+    fn lower_arrow_function_block_reuses_outer_label_counter() {
+        let ir0 = stmt_ir0(vec![
+            Statement::If(IfStatement {
+                condition: Expression::BooleanLiteral(true),
+                consequent: Box::new(Statement::Expression(ExpressionStatement {
+                    expression: Expression::NumericLiteral(1),
+                    span: span(),
+                })),
+                alternate: None,
+                span: span(),
+            }),
+            Statement::Expression(ExpressionStatement {
+                expression: Expression::ArrowFunction {
+                    params: vec![],
+                    body: ArrowBody::Block(BlockStatement {
+                        body: vec![Statement::If(IfStatement {
+                            condition: Expression::BooleanLiteral(false),
+                            consequent: Box::new(Statement::Return(ReturnStatement {
+                                argument: Some(Expression::NumericLiteral(2)),
+                                span: span(),
+                            })),
+                            alternate: None,
+                            span: span(),
+                        })],
+                        span: span(),
+                    }),
+                    is_async: false,
+                },
+                span: span(),
+            }),
+        ]);
+        let result = lower_ir0_to_ir1(&ir0).expect("arrow block labels should stay unique");
+        let label_ids: Vec<u32> = result
+            .module
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                Ir1Op::Label { id } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        let unique_label_count = label_ids.iter().copied().collect::<BTreeSet<_>>().len();
+        assert_eq!(label_ids.len(), unique_label_count);
     }
 
     #[test]

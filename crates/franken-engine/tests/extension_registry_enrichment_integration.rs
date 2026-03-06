@@ -8,9 +8,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use frankenengine_engine::extension_registry::{
-    ArtifactEntry, BuildDescriptor, CapabilityDeclaration, EventOutcome, ExtensionManifest,
-    ExtensionRegistry, PackageKey, PackageQuery, PackageVersion, PublisherIdentity, RegistryError,
-    RegistryEvent, RegistryEventType, SignedPackage, VerificationResult,
+    ArtifactEntry, BuildDescriptor, CapabilityDeclaration, EventOutcome, ExtensionRegistry,
+    PackageKey, PackageQuery, PackageVersion, PublisherIdentity, RegistryError, RegistryEvent,
+    RegistryEventType, VerificationResult,
 };
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::policy_checkpoint::DeterministicTimestamp;
@@ -880,13 +880,6 @@ fn registry_register_publisher() {
     let pub_info = registry.get_publisher(&publisher_id).unwrap();
     assert_eq!(pub_info.display_name, "Test Publisher");
     assert!(!pub_info.revoked);
-}
-
-// Helper to clone EngineObjectId without Copy
-fn clone_id(
-    id: &frankenengine_engine::engine_object_id::EngineObjectId,
-) -> frankenengine_engine::engine_object_id::EngineObjectId {
-    id.clone()
 }
 
 #[test]

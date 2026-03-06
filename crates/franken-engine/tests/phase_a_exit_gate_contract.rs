@@ -90,9 +90,9 @@ fn phase_a_gate_blocked_mode_emits_standard_artifact_triad() {
         .as_array()
         .expect("unmet dependencies should be array");
     assert!(
-        unmet_dependencies
-            .iter()
-            .any(|value| value.as_str().is_some_and(|value| value.starts_with("bd-ntq="))),
+        unmet_dependencies.iter().any(|value| value
+            .as_str()
+            .is_some_and(|value| value.starts_with("bd-ntq="))),
         "expected unresolved phase-a dependencies in manifest: {manifest:#}"
     );
     let operator_verification: Vec<&str> = manifest["operator_verification"]

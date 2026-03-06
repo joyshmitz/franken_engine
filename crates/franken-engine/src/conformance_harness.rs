@@ -1939,14 +1939,13 @@ fn minimize_source_segments(
     _expected: &str,
     _actual: &str,
 ) -> Vec<String> {
-    let best = if original.is_empty() {
+    // Cannot minimize source segments without re-evaluation engine
+    // to generate new expected/actual outputs. Returning unminimized.
+    if original.is_empty() {
         vec!["void 0".to_string()]
     } else {
         original.to_vec()
-    };
-    // Cannot minimize source segments without re-evaluation engine
-    // to generate new expected/actual outputs. Returning unminimized.
-    best
+    }
 }
 
 fn reduce_output_lines(

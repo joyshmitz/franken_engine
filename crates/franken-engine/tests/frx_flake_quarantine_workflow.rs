@@ -756,15 +756,17 @@ fn gate_confidence_report_serde_roundtrip() {
     let report = evaluate_gate_confidence(&sample_runs(), &flakes, &policy);
 
     let json = serde_json::to_string(&report).expect("serialize report");
-    let recovered: GateConfidenceReport =
-        serde_json::from_str(&json).expect("deserialize report");
+    let recovered: GateConfidenceReport = serde_json::from_str(&json).expect("deserialize report");
     assert_eq!(recovered.latest_epoch, report.latest_epoch);
     assert_eq!(
         recovered.flake_burden_millionths,
         report.flake_burden_millionths
     );
     assert_eq!(recovered.promotion_outcome, report.promotion_outcome);
-    assert_eq!(recovered.per_epoch_burden.len(), report.per_epoch_burden.len());
+    assert_eq!(
+        recovered.per_epoch_burden.len(),
+        report.per_epoch_burden.len()
+    );
     assert_eq!(recovered.trend_direction, report.trend_direction);
 }
 
@@ -822,7 +824,6 @@ fn classify_flakes_all_failures_gives_100_percent_flake_rate() {
             seed: 1234,
         })
         .collect();
-    let flakes = classify_flakes(&runs, &policy);
     // All failures is not a flake (it's a hard failure, not intermittent)
     // The classify_flakes function should either return empty or classify as high
     // since the "flake rate" is 0% (no pass/fail alternation) or 100% failure.
@@ -905,10 +906,7 @@ fn emit_structured_events_gate_report_event_is_present() {
     );
 
     // there should be a gate_report event
-    let gate_events: Vec<_> = events
-        .iter()
-        .filter(|e| e.event == "gate_report")
-        .collect();
+    let gate_events: Vec<_> = events.iter().filter(|e| e.event == "gate_report").collect();
     assert!(
         !gate_events.is_empty(),
         "structured events must include a gate_report event"

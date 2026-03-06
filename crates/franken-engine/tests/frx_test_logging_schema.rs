@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+#[allow(dead_code)]
 #[path = "../src/test_logging_schema.rs"]
 mod test_logging_schema;
 
@@ -456,7 +457,7 @@ fn failure_taxonomy_debug_is_nonempty() {
 #[test]
 fn validate_events_deterministic_for_single_event() {
     let event = baseline_event();
-    let a = validate_events(&[event.clone()]);
+    let a = validate_events(std::slice::from_ref(&event));
     let b = validate_events(&[event]);
     assert_eq!(a.valid, b.valid);
     assert_eq!(a.outcome, b.outcome);

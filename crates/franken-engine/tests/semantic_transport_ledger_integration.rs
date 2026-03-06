@@ -15,8 +15,8 @@ use frankenengine_engine::semantic_transport_ledger::{
     DEBT_TRANSPORT_INCOMPATIBLE, MorphismSpec, RegressionMask, SemanticTransportAnalyzer,
     SemanticTransportLedger, TRANSPORT_LEDGER_BEAD_ID, TRANSPORT_LEDGER_SCHEMA_VERSION,
     TransportAnalysisInput, TransportAnalysisOutcome, TransportAnalysisResult,
-    TransportAnalyzerConfig, TransportEntry, TransportEntrySpec, TransportError, TransportVerdict,
-    VersionPair, render_transport_report, should_block_gate,
+    TransportAnalyzerConfig, TransportEntrySpec, TransportError, TransportVerdict, VersionPair,
+    render_transport_report, should_block_gate,
 };
 
 // ===========================================================================
@@ -41,6 +41,7 @@ fn delta(aspect: &str, src: &str, tgt: &str, severity: i64, bridgeable: bool) ->
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn entry_spec(
     name: &str,
     domain: ContractDomain,
@@ -63,6 +64,7 @@ fn entry_spec(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn morphism_spec(
     name: &str,
     domain: ContractDomain,

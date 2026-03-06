@@ -1687,11 +1687,18 @@ fn lowering_conditional_produces_branch_ops() {
         })],
     );
     let ir1 = lower_ir0_to_ir1(&ir0).unwrap();
-    // Conditional lowers as: test, consequent, Pop, alternate (both branches evaluated).
-    let has_pop = ir1.module.ops.iter().any(|op| matches!(op, Ir1Op::Pop));
+    let has_branch_ops = ir1
+        .module
+        .ops
+        .iter()
+        .any(|op| matches!(op, Ir1Op::JumpIfFalsy { .. }));
     assert!(
-        has_pop,
-        "conditional expression should produce Pop between branches"
+        has_branch_ops,
+        "conditional expression should lower through explicit branch control flow"
+    );
+    assert!(
+        !ir1.module.ops.iter().any(|op| matches!(op, Ir1Op::Pop)),
+        "conditional expression should not eagerly evaluate both branches"
     );
 }
 

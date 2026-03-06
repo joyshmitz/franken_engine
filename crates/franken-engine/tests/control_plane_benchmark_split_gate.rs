@@ -622,11 +622,11 @@ fn thresholds_default_min_baseline_runs_is_ten() {
 #[test]
 fn benchmark_split_as_str_covers_all_variants() {
     let variants = [
-        (BenchmarkSplit::Baseline, "Baseline"),
-        (BenchmarkSplit::CxThreading, "CxThreading"),
-        (BenchmarkSplit::DecisionContracts, "DecisionContracts"),
-        (BenchmarkSplit::EvidenceEmission, "EvidenceEmission"),
-        (BenchmarkSplit::FullIntegration, "FullIntegration"),
+        (BenchmarkSplit::Baseline, "baseline"),
+        (BenchmarkSplit::CxThreading, "cx_threading"),
+        (BenchmarkSplit::DecisionContracts, "decision_contracts"),
+        (BenchmarkSplit::EvidenceEmission, "evidence_emission"),
+        (BenchmarkSplit::FullIntegration, "full_integration"),
     ];
     for (v, expected) in variants {
         assert_eq!(v.as_str(), expected);
