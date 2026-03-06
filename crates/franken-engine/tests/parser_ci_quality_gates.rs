@@ -758,25 +758,26 @@ fn parser_ci_quality_dominant_error_signature_tiebreaks_alphabetically() {
     let refs: Vec<&CiRunRecord> = runs.iter().collect();
     let sig = dominant_error_signature(&refs);
     // Both have count 1; tie-break favours the lexicographically earlier signature.
-    assert!(sig == "sig_a" || sig == "sig_b", "expected one of the tied signatures, got {sig}");
+    assert!(
+        sig == "sig_a" || sig == "sig_b",
+        "expected one of the tied signatures, got {sig}"
+    );
 }
 
 #[test]
 fn parser_ci_quality_dominant_error_signature_ignores_pass_runs() {
-    let runs = vec![
-        CiRunRecord {
-            run_id: "r1".into(),
-            epoch: 1,
-            suite_kind: "unit".into(),
-            case_id: "c1".into(),
-            outcome: "pass".into(),
-            duration_ms: 10,
-            error_signature: Some("should_be_ignored".into()),
-            replay_command: "replay".into(),
-            artifact_bundle_id: "b1".into(),
-            created_at_utc: "2026-01-01T00:00:00Z".into(),
-        },
-    ];
+    let runs = vec![CiRunRecord {
+        run_id: "r1".into(),
+        epoch: 1,
+        suite_kind: "unit".into(),
+        case_id: "c1".into(),
+        outcome: "pass".into(),
+        duration_ms: 10,
+        error_signature: Some("should_be_ignored".into()),
+        replay_command: "replay".into(),
+        artifact_bundle_id: "b1".into(),
+        created_at_utc: "2026-01-01T00:00:00Z".into(),
+    }];
     let refs: Vec<&CiRunRecord> = runs.iter().collect();
     assert_eq!(dominant_error_signature(&refs), "none");
 }

@@ -797,7 +797,8 @@ fn all_traces_have_frx_react_corpus_component() {
     for path in &files {
         let trace: ObservableTrace = load_json(path);
         assert_eq!(
-            trace.component, "frx_react_corpus",
+            trace.component,
+            "frx_react_corpus",
             "trace {} must have component 'frx_react_corpus', got '{}'",
             path.display(),
             trace.component

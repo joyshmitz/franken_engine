@@ -716,14 +716,8 @@ fn promotion_receipt_serde_roundtrip() {
     // Receipt is Serialize but not Deserialize, so just check JSON validity
     let value: serde_json::Value =
         serde_json::from_slice(&json).expect("receipt json must be valid");
-    assert_eq!(
-        value["corpus"].as_str().unwrap_or(""),
-        "normative"
-    );
-    assert_eq!(
-        value["promotion_outcome"].as_str().unwrap_or(""),
-        "promote"
-    );
+    assert_eq!(value["corpus"].as_str().unwrap_or(""), "normative");
+    assert_eq!(value["promotion_outcome"].as_str().unwrap_or(""), "promote");
 }
 
 #[test]

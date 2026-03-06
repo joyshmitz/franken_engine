@@ -368,7 +368,9 @@ fn optimization_contract_outputs_have_replay_command_field() {
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     let before_after = &value["outputs"]["before_after_artifacts"]["required_fields"];
-    let fields = before_after.as_array().expect("before_after required_fields array");
+    let fields = before_after
+        .as_array()
+        .expect("before_after required_fields array");
     assert!(
         fields.iter().any(|f| f.as_str() == Some("replay_command")),
         "before_after_artifacts must include replay_command for reproducibility"
@@ -389,9 +391,9 @@ fn optimization_contract_consumer_interfaces_cover_all_downstream_lanes() {
             obj.contains_key(lane),
             "consumer_interfaces missing downstream lane: {lane}"
         );
-        let items = obj[lane].as_array().unwrap_or_else(|| {
-            panic!("consumer_interfaces.{lane} must be an array")
-        });
+        let items = obj[lane]
+            .as_array()
+            .unwrap_or_else(|| panic!("consumer_interfaces.{lane} must be an array"));
         assert!(
             !items.is_empty(),
             "consumer_interfaces.{lane} must not be empty"

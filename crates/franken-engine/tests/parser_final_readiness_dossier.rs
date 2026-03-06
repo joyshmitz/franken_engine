@@ -839,7 +839,10 @@ fn risk_register_hash_deterministic_for_same_risks() {
 #[test]
 fn rank_open_risks_empty_input_returns_empty() {
     let ranked = rank_open_risks(&[]);
-    assert!(ranked.is_empty(), "empty risk slice should yield empty ranking");
+    assert!(
+        ranked.is_empty(),
+        "empty risk slice should yield empty ranking"
+    );
 }
 
 #[test]
@@ -923,7 +926,11 @@ fn evidence_status_ordering_fail_after_pass() {
 fn severity_parse_roundtrip_weight_consistency() {
     for (label, expected_weight) in [("critical", 4), ("high", 3), ("medium", 2), ("low", 1)] {
         let severity = Severity::parse(label);
-        assert_eq!(severity.weight(), expected_weight, "weight mismatch for {label}");
+        assert_eq!(
+            severity.weight(),
+            expected_weight,
+            "weight mismatch for {label}"
+        );
     }
 }
 
@@ -977,7 +984,10 @@ fn readiness_event_serde_roundtrip_preserves_all_fields() {
     let map: BTreeMap<String, serde_json::Value> =
         serde_json::from_str(&json).expect("deserialize event as map");
     // Verify key fields survive roundtrip
-    assert_eq!(map["schema_version"].as_str().unwrap(), event.schema_version);
+    assert_eq!(
+        map["schema_version"].as_str().unwrap(),
+        event.schema_version
+    );
     assert_eq!(map["trace_id"].as_str().unwrap(), event.trace_id);
     assert_eq!(map["component"].as_str().unwrap(), event.component);
     assert_eq!(map["outcome"].as_str().unwrap(), event.outcome);

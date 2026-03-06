@@ -537,7 +537,8 @@ fn normalize_path_absolute_with_trailing_component() {
 
 #[test]
 fn parse_evidence_path_ignores_other_lines() {
-    let stdout = "info: initializing\nstatus: ok\nsecurity evidence=/output/evidence.jsonl\ndone.\n";
+    let stdout =
+        "info: initializing\nstatus: ok\nsecurity evidence=/output/evidence.jsonl\ndone.\n";
     let path = parse_evidence_path(stdout);
     assert_eq!(path, PathBuf::from("/output/evidence.jsonl"));
 }

@@ -507,9 +507,7 @@ fn evaluate_case_detects_phase_divergence_at_specific_index() {
 
 #[test]
 fn lockstep_case_result_serde_roundtrip() {
-    use frankenengine_engine::frx_lockstep_oracle::{
-        FrxDivergenceDetail, FrxLockstepCaseResult,
-    };
+    use frankenengine_engine::frx_lockstep_oracle::{FrxDivergenceDetail, FrxLockstepCaseResult};
     let case_result = FrxLockstepCaseResult {
         fixture_ref: "compat.render.basic".to_string(),
         scenario_id: "scen-rt".to_string(),
@@ -526,8 +524,7 @@ fn lockstep_case_result_serde_roundtrip() {
         replay_command: "replay --fixture compat.render.basic".to_string(),
     };
     let json = serde_json::to_string(&case_result).expect("serialize");
-    let recovered: FrxLockstepCaseResult =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: FrxLockstepCaseResult = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.fixture_ref, case_result.fixture_ref);
     assert_eq!(recovered.pass, false);
     assert_eq!(
@@ -594,11 +591,7 @@ fn run_lockstep_oracle_empty_dirs_returns_invalid_input_error() {
     let err = run_lockstep_oracle(
         react_dir.as_path(),
         franken_dir.as_path(),
-        FrxLockstepRunContext::deterministic(
-            "trace-empty",
-            "decision-empty",
-            "policy-empty",
-        ),
+        FrxLockstepRunContext::deterministic("trace-empty", "decision-empty", "policy-empty"),
         None,
     )
     .expect_err("empty dirs should be rejected");
@@ -701,7 +694,12 @@ fn run_lockstep_oracle_single_matching_pair_passes() {
         event(1, "render", "dom_commit", "render_path", 100),
         event(2, "effects", "cleanup", "effect_path", 200),
     ];
-    let react_trace = build_trace(fixture_ref, scenario_id, "trace-react-single", events.clone());
+    let react_trace = build_trace(
+        fixture_ref,
+        scenario_id,
+        "trace-react-single",
+        events.clone(),
+    );
     let franken_trace = build_trace(fixture_ref, scenario_id, "trace-franken-single", events);
     write_trace_file(react_dir.as_path(), fixture_ref, &react_trace);
     write_trace_file(franken_dir.as_path(), fixture_ref, &franken_trace);

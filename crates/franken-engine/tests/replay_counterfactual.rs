@@ -521,7 +521,9 @@ fn golden_store_verify_detects_missing_baseline() {
 
     let store_dir = test_temp_dir("golden-store-missing");
     let store = e2e_harness::GoldenStore::new(&store_dir).expect("golden store");
-    let err = store.verify_run(&run).expect_err("missing baseline should fail");
+    let err = store
+        .verify_run(&run)
+        .expect_err("missing baseline should fail");
     let msg = format!("{err}");
     assert!(msg.contains("missing golden baseline"));
 
@@ -665,8 +667,7 @@ fn replay_environment_fingerprint_serde_roundtrip() {
         endian: "little".to_string(),
     };
     let json = serde_json::to_string(&env).expect("serialize");
-    let recovered: ReplayEnvironmentFingerprint =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: ReplayEnvironmentFingerprint = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(env, recovered);
 }
 
@@ -725,7 +726,11 @@ fn cross_machine_diagnosis_multiple_deltas_reported() {
     // Both os and architecture differ
     assert!(diagnosis.environment_mismatches.len() >= 2);
     assert!(diagnosis.environment_mismatches.contains(&"os".to_string()));
-    assert!(diagnosis.environment_mismatches.contains(&"architecture".to_string()));
+    assert!(
+        diagnosis
+            .environment_mismatches
+            .contains(&"architecture".to_string())
+    );
 }
 
 #[test]

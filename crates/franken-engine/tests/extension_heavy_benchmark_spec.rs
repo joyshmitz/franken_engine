@@ -440,9 +440,9 @@ fn scale_profile_matrix_has_monotonically_increasing_extension_counts() {
             .find(|r| r[0] == *profile_name)
             .unwrap_or_else(|| panic!("missing profile {profile_name}"));
         let count_str = row[1].trim().replace(',', "").replace('_', "");
-        let count: u64 = count_str
-            .parse()
-            .unwrap_or_else(|_| panic!("extension count for {profile_name} must be numeric: '{count_str}'"));
+        let count: u64 = count_str.parse().unwrap_or_else(|_| {
+            panic!("extension count for {profile_name} must be numeric: '{count_str}'")
+        });
         profile_counts.push((profile_name, count));
     }
 
@@ -514,7 +514,10 @@ fn parse_table_row_handles_leading_trailing_whitespace_in_cells() {
 fn benchmark_spec_mentions_throughput() {
     let spec = read_spec();
     let lower = spec.to_lowercase();
-    assert!(lower.contains("throughput"), "spec should mention throughput");
+    assert!(
+        lower.contains("throughput"),
+        "spec should mention throughput"
+    );
 }
 
 #[test]

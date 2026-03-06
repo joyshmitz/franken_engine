@@ -326,7 +326,9 @@ fn validate_snapshot_rejects_unknown_variable() {
     let err = spec
         .validate_snapshot(&snapshot)
         .expect_err("unknown variable should fail");
-    assert!(matches!(err, TwinSpecError::UnknownVariable(ref id) if id == "completely_unknown_variable"));
+    assert!(
+        matches!(err, TwinSpecError::UnknownVariable(ref id) if id == "completely_unknown_variable")
+    );
 }
 
 #[test]
@@ -343,14 +345,18 @@ fn assumption_ledger_observation_with_passing_value_no_violation() {
         .expect("ledger");
     // Observe with a value that satisfies the monitor (>= 1_000_000)
     let actions = ledger.observe("nondeterminism_log_completeness", 1_000_000, 11, 5);
-    assert!(actions.is_empty(), "passing value should produce no actions");
+    assert!(
+        actions.is_empty(),
+        "passing value should produce no actions"
+    );
     assert_eq!(ledger.violated_count(), 0);
 }
 
 #[test]
 fn default_spec_validate_succeeds() {
     let spec = SemanticTwinSpecification::lane_decision_default().expect("default spec");
-    spec.validate().expect("default spec should pass validation");
+    spec.validate()
+        .expect("default spec should pass validation");
 }
 
 #[test]

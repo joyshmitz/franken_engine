@@ -333,7 +333,10 @@ fn verification_contract_consumer_interfaces_cover_all_lanes() {
             "consumer_interfaces missing lane: {lane}"
         );
         let entries = ci[lane].as_array().expect("lane entries must be array");
-        assert!(!entries.is_empty(), "consumer_interfaces.{lane} must not be empty");
+        assert!(
+            !entries.is_empty(),
+            "consumer_interfaces.{lane} must not be empty"
+        );
     }
 }
 
@@ -362,7 +365,10 @@ fn verification_contract_logging_contract_has_component_and_fields() {
     let fields = lc["required_fields"]
         .as_array()
         .expect("logging_contract.required_fields must be array");
-    assert!(!fields.is_empty(), "logging required_fields must not be empty");
+    assert!(
+        !fields.is_empty(),
+        "logging required_fields must not be empty"
+    );
     for field in fields {
         let s = field.as_str().expect("each field must be string");
         assert!(!s.trim().is_empty());
@@ -376,18 +382,10 @@ fn verification_contract_json_roundtrip_preserves_all_keys() {
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     let reserialized = serde_json::to_string_pretty(&value).expect("re-serialize");
     let reparsed: Value = serde_json::from_str(&reserialized).expect("re-parse");
-    let original_keys: std::collections::BTreeSet<String> = value
-        .as_object()
-        .unwrap()
-        .keys()
-        .cloned()
-        .collect();
-    let reparsed_keys: std::collections::BTreeSet<String> = reparsed
-        .as_object()
-        .unwrap()
-        .keys()
-        .cloned()
-        .collect();
+    let original_keys: std::collections::BTreeSet<String> =
+        value.as_object().unwrap().keys().cloned().collect();
+    let reparsed_keys: std::collections::BTreeSet<String> =
+        reparsed.as_object().unwrap().keys().cloned().collect();
     assert_eq!(original_keys, reparsed_keys);
 }
 
@@ -401,7 +399,10 @@ fn verification_contract_activation_gate_all_blocks_are_true() {
         .expect("activation_gate must be object");
     for (key, val) in gate {
         if let Some(b) = val.as_bool() {
-            assert!(b, "activation_gate.{key} must be true for fail-closed policy");
+            assert!(
+                b,
+                "activation_gate.{key} must be true for fail-closed policy"
+            );
         }
     }
 }
@@ -450,8 +451,14 @@ fn verification_charter_doc_contains_all_input_and_output_sections() {
     let path = repo_root().join("docs/FRX_VERIFICATION_LANE_CHARTER_V1.md");
     let doc = fs::read_to_string(&path).expect("read charter doc");
     // Inputs and Outputs are required charter sections
-    assert!(doc.contains("## Inputs"), "charter missing ## Inputs section");
-    assert!(doc.contains("## Outputs"), "charter missing ## Outputs section");
+    assert!(
+        doc.contains("## Inputs"),
+        "charter missing ## Inputs section"
+    );
+    assert!(
+        doc.contains("## Outputs"),
+        "charter missing ## Outputs section"
+    );
     // Should have content under each (not just empty sections)
     let inputs_idx = doc.find("## Inputs").unwrap();
     let outputs_idx = doc.find("## Outputs").unwrap();

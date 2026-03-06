@@ -465,7 +465,16 @@ fn mismatched_lane_sizes_produces_deny() {
 
 #[test]
 fn lane_workload_metrics_preserves_all_fields_through_serde() {
-    let wl = workload("wl-full", "digest-full", 10_000, 500, 1_000, 2_000, 4096, 100);
+    let wl = workload(
+        "wl-full",
+        "digest-full",
+        10_000,
+        500,
+        1_000,
+        2_000,
+        4096,
+        100,
+    );
     let json = serde_json::to_string(&wl).expect("serialize");
     let recovered: LaneWorkloadMetrics = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.workload_id, "wl-full");

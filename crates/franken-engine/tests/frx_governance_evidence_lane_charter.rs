@@ -381,19 +381,21 @@ fn governance_contract_logging_fields_are_superset_of_evidence_ledger_query_fiel
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
 
-    let logging_fields: std::collections::BTreeSet<&str> = value["logging_contract"]["required_fields"]
-        .as_array()
-        .expect("logging required_fields array")
-        .iter()
-        .filter_map(|v| v.as_str())
-        .collect();
+    let logging_fields: std::collections::BTreeSet<&str> =
+        value["logging_contract"]["required_fields"]
+            .as_array()
+            .expect("logging required_fields array")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
 
-    let query_fields: std::collections::BTreeSet<&str> = value["outputs"]["evidence_ledger"]["required_query_fields"]
-        .as_array()
-        .expect("evidence ledger query fields array")
-        .iter()
-        .filter_map(|v| v.as_str())
-        .collect();
+    let query_fields: std::collections::BTreeSet<&str> =
+        value["outputs"]["evidence_ledger"]["required_query_fields"]
+            .as_array()
+            .expect("evidence ledger query fields array")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
 
     // every query field must also appear in logging fields so evidence can be reconstructed from logs
     for qf in &query_fields {

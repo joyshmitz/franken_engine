@@ -734,9 +734,21 @@ fn collect_waiver_issues_accumulates_multiple_independent_issues() {
     ]);
     let issues = collect_waiver_issues(&fixture);
     assert_eq!(issues.len(), 3);
-    assert!(issues.iter().any(|i| i.contains("d1") && i.contains("missing_fields")));
-    assert!(issues.iter().any(|i| i.contains("d2") && i.contains("invalid_due_date")));
-    assert!(issues.iter().any(|i| i.contains("d3") && i.contains("missing_record")));
+    assert!(
+        issues
+            .iter()
+            .any(|i| i.contains("d1") && i.contains("missing_fields"))
+    );
+    assert!(
+        issues
+            .iter()
+            .any(|i| i.contains("d2") && i.contains("invalid_due_date"))
+    );
+    assert!(
+        issues
+            .iter()
+            .any(|i| i.contains("d3") && i.contains("missing_record"))
+    );
 }
 
 #[test]
@@ -753,7 +765,10 @@ fn evaluate_gate_failing_fixture_ids_are_sorted_and_deduped() {
         s.dedup();
         s
     };
-    assert_eq!(eval.failing_fixture_ids, sorted, "failing_fixture_ids must be sorted and deduped");
+    assert_eq!(
+        eval.failing_fixture_ids, sorted,
+        "failing_fixture_ids must be sorted and deduped"
+    );
 }
 
 #[test]
@@ -781,5 +796,9 @@ fn emit_structured_event_replay_pointers_are_deduplicated() {
         .iter()
         .filter_map(serde_json::Value::as_str)
         .collect();
-    assert_eq!(pointers.len(), unique.len(), "replay_pointers must already be deduplicated");
+    assert_eq!(
+        pointers.len(),
+        unique.len(),
+        "replay_pointers must already be deduplicated"
+    );
 }

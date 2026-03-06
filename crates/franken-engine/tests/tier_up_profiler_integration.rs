@@ -801,13 +801,37 @@ fn profile_hash_differs_for_different_top_k() {
         property_pool: vec!["v".to_string()],
         instructions: vec![
             Instruction::NewObject { dst: r(0) },
-            Instruction::LoadConst { dst: r(1), const_index: 0 },
-            Instruction::StoreProp { object: r(0), property_index: 0, value: r(1) },
-            Instruction::LoadConst { dst: r(3), const_index: 1 },
-            Instruction::LoadPropCached { dst: r(2), object: r(0), property_index: 0 },
-            Instruction::LoadConst { dst: r(4), const_index: 2 },
-            Instruction::Sub { dst: r(3), lhs: r(3), rhs: r(4) },
-            Instruction::JumpIfFalse { condition: r(3), target: 9 },
+            Instruction::LoadConst {
+                dst: r(1),
+                const_index: 0,
+            },
+            Instruction::StoreProp {
+                object: r(0),
+                property_index: 0,
+                value: r(1),
+            },
+            Instruction::LoadConst {
+                dst: r(3),
+                const_index: 1,
+            },
+            Instruction::LoadPropCached {
+                dst: r(2),
+                object: r(0),
+                property_index: 0,
+            },
+            Instruction::LoadConst {
+                dst: r(4),
+                const_index: 2,
+            },
+            Instruction::Sub {
+                dst: r(3),
+                lhs: r(3),
+                rhs: r(4),
+            },
+            Instruction::JumpIfFalse {
+                condition: r(3),
+                target: 9,
+            },
             Instruction::Jump { target: 4 },
             Instruction::Return { src: r(2) },
         ],
@@ -828,7 +852,10 @@ fn decision_eligible_flag_consistent_with_candidates() {
         constants: vec![Value::Int(1)],
         property_pool: Vec::new(),
         instructions: vec![
-            Instruction::LoadConst { dst: r(0), const_index: 0 },
+            Instruction::LoadConst {
+                dst: r(0),
+                const_index: 0,
+            },
             Instruction::Return { src: r(0) },
         ],
     };
@@ -855,9 +882,19 @@ fn profile_total_steps_matches_vm_execution() {
         constants: vec![Value::Int(5), Value::Int(3)],
         property_pool: Vec::new(),
         instructions: vec![
-            Instruction::LoadConst { dst: r(0), const_index: 0 },
-            Instruction::LoadConst { dst: r(1), const_index: 1 },
-            Instruction::Add { dst: r(2), lhs: r(0), rhs: r(1) },
+            Instruction::LoadConst {
+                dst: r(0),
+                const_index: 0,
+            },
+            Instruction::LoadConst {
+                dst: r(1),
+                const_index: 1,
+            },
+            Instruction::Add {
+                dst: r(2),
+                lhs: r(0),
+                rhs: r(1),
+            },
             Instruction::Return { src: r(2) },
         ],
     };
@@ -874,7 +911,10 @@ fn decision_trace_id_matches_vm_trace_id() {
         constants: vec![Value::Int(99)],
         property_pool: Vec::new(),
         instructions: vec![
-            Instruction::LoadConst { dst: r(0), const_index: 0 },
+            Instruction::LoadConst {
+                dst: r(0),
+                const_index: 0,
+            },
             Instruction::Return { src: r(0) },
         ],
     };
@@ -891,7 +931,10 @@ fn decision_events_have_consistent_component_field() {
         constants: vec![Value::Int(1)],
         property_pool: Vec::new(),
         instructions: vec![
-            Instruction::LoadConst { dst: r(0), const_index: 0 },
+            Instruction::LoadConst {
+                dst: r(0),
+                const_index: 0,
+            },
             Instruction::Return { src: r(0) },
         ],
     };
@@ -913,7 +956,10 @@ fn hot_path_profile_debug_is_nonempty() {
         constants: vec![Value::Int(1)],
         property_pool: Vec::new(),
         instructions: vec![
-            Instruction::LoadConst { dst: r(0), const_index: 0 },
+            Instruction::LoadConst {
+                dst: r(0),
+                const_index: 0,
+            },
             Instruction::Return { src: r(0) },
         ],
     };

@@ -861,7 +861,10 @@ fn determinism_contract_strict_validates_clean() {
     assert!(dc.virtual_clock_required);
     assert!(dc.deterministic_rng_required);
     let violations = dc.validate();
-    assert!(violations.is_empty(), "strict contract should have no violations");
+    assert!(
+        violations.is_empty(),
+        "strict contract should have no violations"
+    );
 }
 
 #[test]
@@ -881,9 +884,15 @@ fn test_class_min_provenance_level_is_defined_for_all() {
     for class in TestClass::ALL {
         let prov = class.min_provenance_level();
         // Provenance level must have non-empty as_str
-        assert!(!prov.as_str().is_empty(), "provenance as_str empty for {class}");
+        assert!(
+            !prov.as_str().is_empty(),
+            "provenance as_str empty for {class}"
+        );
         // trust_rank must be in range 0..=3
-        assert!(prov.trust_rank() <= 3, "trust_rank out of range for {class}");
+        assert!(
+            prov.trust_rank() <= 3,
+            "trust_rank out of range for {class}"
+        );
     }
 }
 
@@ -906,6 +915,9 @@ fn fixture_entry_validation_detects_missing_seed_for_core_class() {
     };
     if dc.seed_required {
         let violations = entry.validate_against_contract(&dc);
-        assert!(!violations.is_empty(), "missing seed should produce violation for core class");
+        assert!(
+            !violations.is_empty(),
+            "missing seed should produce violation for core class"
+        );
     }
 }

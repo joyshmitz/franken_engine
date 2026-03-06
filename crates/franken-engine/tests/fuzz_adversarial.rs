@@ -643,10 +643,16 @@ fn synthetic_value_encode_decode_roundtrip_determinism() {
         let value = synthetic_value(&data);
         let encoded_a = encode_value(&value);
         let encoded_b = encode_value(&value);
-        assert_eq!(encoded_a, encoded_b, "encoding must be deterministic for variant {variant}");
+        assert_eq!(
+            encoded_a, encoded_b,
+            "encoding must be deterministic for variant {variant}"
+        );
         if let Ok(decoded) = decode_value(&encoded_a) {
             let re_encoded = encode_value(&decoded);
-            assert_eq!(encoded_a, re_encoded, "decode-reencode must be stable for variant {variant}");
+            assert_eq!(
+                encoded_a, re_encoded,
+                "decode-reencode must be stable for variant {variant}"
+            );
         }
     }
 }
@@ -699,7 +705,9 @@ fn build_token_serde_roundtrip_when_present() {
 
 #[test]
 fn mutate_token_does_not_panic_with_alternating_bytes() {
-    let data: Vec<u8> = (0..64).map(|i| if i % 2 == 0 { 0xFF } else { 0x00 }).collect();
+    let data: Vec<u8> = (0..64)
+        .map(|i| if i % 2 == 0 { 0xFF } else { 0x00 })
+        .collect();
     if let Some(mut token) = build_token(&data) {
         mutate_token(&mut token, &data);
         // Verify we can still serialize after mutation
@@ -724,8 +732,7 @@ fn run_handshake_program_handles_long_deterministic_input() {
 fn collect_files_returns_sorted_paths() {
     // Verify that the corpus helper returns sorted paths (determinism guarantee)
     let repo = repo_root();
-    let fixture_dir = repo
-        .join("crates/franken-engine/tests/fixtures/fuzz_adversarial/decode_dos");
+    let fixture_dir = repo.join("crates/franken-engine/tests/fixtures/fuzz_adversarial/decode_dos");
     if fixture_dir.exists() {
         let files = collect_files(&fixture_dir);
         let sorted: Vec<_> = {

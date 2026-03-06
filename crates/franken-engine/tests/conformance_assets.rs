@@ -559,7 +559,10 @@ fn conformance_runner_config_default_is_constructible() {
 
 #[test]
 fn sample_manifest_file_exists() {
-    assert!(sample_manifest_path().exists(), "sample manifest fixture must exist");
+    assert!(
+        sample_manifest_path().exists(),
+        "sample manifest fixture must exist"
+    );
 }
 
 #[test]

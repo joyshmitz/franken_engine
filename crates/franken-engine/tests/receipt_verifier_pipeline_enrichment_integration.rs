@@ -604,9 +604,15 @@ fn layer_check_debug_repr_captures_all_fields() {
         detail: "ok".into(),
     };
     let dbg = format!("{lc:?}");
-    assert!(dbg.contains("sig_valid"), "Debug should contain check name: {dbg}");
+    assert!(
+        dbg.contains("sig_valid"),
+        "Debug should contain check name: {dbg}"
+    );
     assert!(dbg.contains("pass"), "Debug should contain outcome: {dbg}");
-    assert!(dbg.contains("None"), "Debug should show None error_code: {dbg}");
+    assert!(
+        dbg.contains("None"),
+        "Debug should show None error_code: {dbg}"
+    );
 }
 
 // ===========================================================================
@@ -615,11 +621,9 @@ fn layer_check_debug_repr_captures_all_fields() {
 
 #[test]
 fn pipeline_error_all_variants_display_nonempty() {
-    let errors = vec![
-        ReceiptVerifierPipelineError::ReceiptNotFound {
-            receipt_id: "rcpt-missing".to_string(),
-        },
-    ];
+    let errors = vec![ReceiptVerifierPipelineError::ReceiptNotFound {
+        receipt_id: "rcpt-missing".to_string(),
+    }];
     for e in &errors {
         let s = e.to_string();
         assert!(!s.is_empty(), "Display for {:?} should not be empty", e);
@@ -643,9 +647,21 @@ fn verdict_warnings_serialize_as_json_array() {
         passed: true,
         failure_class: None,
         exit_code: EXIT_CODE_SUCCESS,
-        signature: LayerResult { passed: true, error_code: None, checks: vec![] },
-        transparency: LayerResult { passed: true, error_code: None, checks: vec![] },
-        attestation: LayerResult { passed: true, error_code: None, checks: vec![] },
+        signature: LayerResult {
+            passed: true,
+            error_code: None,
+            checks: vec![],
+        },
+        transparency: LayerResult {
+            passed: true,
+            error_code: None,
+            checks: vec![],
+        },
+        attestation: LayerResult {
+            passed: true,
+            error_code: None,
+            checks: vec![],
+        },
         warnings: vec!["clock-skew".to_string(), "cert-expiry-soon".to_string()],
         logs: vec![],
     };

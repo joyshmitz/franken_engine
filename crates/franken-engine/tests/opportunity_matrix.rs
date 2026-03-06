@@ -590,7 +590,10 @@ fn benchmark_pressure_from_cases_returns_i64() {
     let cases_b = [benchmark_case("wl-b", 100.0, 100.0)];
     let pressure = benchmark_pressure_from_cases(&cases_a, &cases_b);
     // Result is a millionths-scale i64 — verify it's in a reasonable range
-    assert!(pressure.abs() <= 2_000_000, "pressure should be within ±2.0");
+    assert!(
+        pressure.abs() <= 2_000_000,
+        "pressure should be within ±2.0"
+    );
 }
 
 #[test]

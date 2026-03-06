@@ -469,10 +469,7 @@ fn oracle_report_serde_roundtrip_preserves_all_fields() {
 
     let results = obj["fixture_results"].as_array().expect("results array");
     assert_eq!(results.len(), 2);
-    assert_eq!(
-        obj["summary"]["critical_drift_count"].as_u64().unwrap(),
-        1
-    );
+    assert_eq!(obj["summary"]["critical_drift_count"].as_u64().unwrap(), 1);
     let _ = fs::remove_file(path);
 }
 
@@ -594,7 +591,10 @@ fn gate_action_serde_roundtrip() {
     for action in [GateAction::Promote, GateAction::Reject, GateAction::Hold] {
         let json = serde_json::to_string(&action).expect("serialize gate action");
         let recovered: GateAction = serde_json::from_str(&json).expect("deserialize gate action");
-        assert_eq!(recovered, action, "serde roundtrip must preserve GateAction");
+        assert_eq!(
+            recovered, action,
+            "serde roundtrip must preserve GateAction"
+        );
     }
 }
 
@@ -618,7 +618,9 @@ fn load_fixture_catalog_returns_correct_schema() {
 
 #[test]
 fn partition_fixtures_smoke_sorts_and_limits() {
-    use frankenengine_engine::parser_oracle::{OracleFixtureCatalog, OracleFixtureSpec, partition_fixtures};
+    use frankenengine_engine::parser_oracle::{
+        OracleFixtureCatalog, OracleFixtureSpec, partition_fixtures,
+    };
     let specs: Vec<OracleFixtureSpec> = (0..8)
         .map(|i| OracleFixtureSpec {
             id: format!("pf_{i}"),
@@ -657,7 +659,10 @@ fn report_decision_fallback_not_triggered_when_no_drift_in_fail_closed() {
     config.decision_id = "decision-no-fb".to_string();
     config.policy_id = "policy-no-fb".to_string();
     let report = run_parser_oracle(&config).expect("oracle");
-    assert!(!report.decision.fallback_triggered, "fallback should not trigger when no drift");
+    assert!(
+        !report.decision.fallback_triggered,
+        "fallback should not trigger when no drift"
+    );
     assert!(!report.decision.promotion_blocked);
     let _ = fs::remove_file(path);
 }

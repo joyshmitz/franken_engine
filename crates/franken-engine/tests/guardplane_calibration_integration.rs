@@ -819,7 +819,10 @@ fn drain_alerts_clears_alert_list() {
     let ctx = test_ctx();
     let outcomes = vec![make_outcome(AttackDimension::Exfiltration, 5, 10, false)];
     engine.run_calibration_cycle(&outcomes, &ctx).unwrap();
-    assert!(!engine.alerts().is_empty(), "should have alerts after evasion");
+    assert!(
+        !engine.alerts().is_empty(),
+        "should have alerts after evasion"
+    );
 
     // Running another cycle to verify alerts accumulate (not cleared between cycles)
     engine.run_calibration_cycle(&outcomes, &ctx).unwrap();

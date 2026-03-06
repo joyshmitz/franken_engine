@@ -376,12 +376,16 @@ fn compiler_charter_interface_contracts_section_references_peer_lanes() {
     let path = repo_root().join("docs/FRX_COMPILER_LANE_CHARTER_V1.md");
     let doc = fs::read_to_string(&path).expect("read charter doc");
 
-    let section_idx = doc.find("## Interface Contracts").expect("section must exist");
+    let section_idx = doc
+        .find("## Interface Contracts")
+        .expect("section must exist");
     let section_text = &doc[section_idx..];
     // Interface Contracts must reference at least one upstream/downstream lane
     assert!(
-        section_text.contains("Runtime") || section_text.contains("Verification")
-            || section_text.contains("Toolchain") || section_text.contains("Adoption"),
+        section_text.contains("Runtime")
+            || section_text.contains("Verification")
+            || section_text.contains("Toolchain")
+            || section_text.contains("Adoption"),
         "Interface Contracts must reference at least one peer lane"
     );
 }
@@ -396,10 +400,7 @@ fn compiler_contract_lane_name_is_nonempty() {
     let name = value["lane"]["name"]
         .as_str()
         .expect("lane.name must be a string");
-    assert!(
-        !name.trim().is_empty(),
-        "lane.name must not be empty"
-    );
+    assert!(!name.trim().is_empty(), "lane.name must not be empty");
 }
 
 #[test]
@@ -458,9 +459,7 @@ fn compiler_contract_failure_policy_is_fail_closed_mode() {
         "compiler lane failure_policy mode must be fail_closed"
     );
     // failure_policy should have an error_code
-    let error_code = value["failure_policy"]["error_code"]
-        .as_str()
-        .unwrap_or("");
+    let error_code = value["failure_policy"]["error_code"].as_str().unwrap_or("");
     assert!(
         !error_code.trim().is_empty(),
         "failure_policy.error_code must not be empty"

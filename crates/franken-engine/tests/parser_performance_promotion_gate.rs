@@ -907,10 +907,7 @@ fn emit_structured_event_replay_pointers_are_deduped_and_sorted() {
         .as_array()
         .expect("replay_pointers array");
     // The duplicate replay command should appear only once (BTreeSet dedup)
-    let replay_strs: Vec<&str> = pointers
-        .iter()
-        .map(|v| v.as_str().unwrap())
-        .collect();
+    let replay_strs: Vec<&str> = pointers.iter().map(|v| v.as_str().unwrap()).collect();
     let unique: BTreeSet<&str> = replay_strs.iter().copied().collect();
     assert_eq!(
         replay_strs.len(),

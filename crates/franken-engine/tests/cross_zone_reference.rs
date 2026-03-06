@@ -445,7 +445,11 @@ fn capset_deduplicates_identical_capabilities() {
         RuntimeCapability::VmDispatch,
         RuntimeCapability::VmDispatch,
     ]);
-    assert_eq!(set.len(), 1, "BTreeSet must deduplicate identical capabilities");
+    assert_eq!(
+        set.len(),
+        1,
+        "BTreeSet must deduplicate identical capabilities"
+    );
     assert!(set.contains(&RuntimeCapability::VmDispatch));
 }
 
@@ -459,7 +463,10 @@ fn zone_hierarchy_serde_roundtrip_after_entity_assignment() {
     let json = serde_json::to_string(&hierarchy).expect("serialize");
     let recovered: ZoneHierarchy = serde_json::from_str(&json).expect("deserialize");
     let recovered_json = serde_json::to_string(&recovered).expect("re-serialize");
-    assert_eq!(json, recovered_json, "serde roundtrip must be stable after entity assignment");
+    assert_eq!(
+        json, recovered_json,
+        "serde roundtrip must be stable after entity assignment"
+    );
 }
 
 #[test]

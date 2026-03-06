@@ -504,7 +504,10 @@ fn safe_mode_state_debug_is_nonempty() {
 
 #[test]
 fn fork_error_debug_is_nonempty() {
-    let err = ForkError::SafeModeActive { incident_seq: 1, reason: "test".to_string() };
+    let err = ForkError::SafeModeActive {
+        incident_seq: 1,
+        reason: "test".to_string(),
+    };
     assert!(!format!("{err:?}").is_empty());
 }
 

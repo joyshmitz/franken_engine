@@ -335,16 +335,20 @@ fn track_e_contract_logging_contract_has_required_fields() {
     let logging = &value["logging_contract"];
     assert!(logging.is_object(), "logging_contract must be an object");
     assert!(
-        !logging["component"]
-            .as_str()
-            .unwrap_or("")
-            .is_empty(),
+        !logging["component"].as_str().unwrap_or("").is_empty(),
         "logging_contract.component must be non-empty"
     );
     let fields = logging["required_fields"]
         .as_array()
         .expect("required_fields must be an array");
-    for expected in ["trace_id", "decision_id", "policy_id", "component", "event", "outcome"] {
+    for expected in [
+        "trace_id",
+        "decision_id",
+        "policy_id",
+        "component",
+        "event",
+        "outcome",
+    ] {
         assert!(
             fields.iter().any(|f| f.as_str() == Some(expected)),
             "logging_contract missing field: {expected}"
@@ -385,9 +389,7 @@ fn track_e_contract_inputs_are_nonempty_strings() {
     let raw = fs::read_to_string(&path).expect("read JSON");
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
 
-    let inputs = value["inputs"]
-        .as_array()
-        .expect("inputs must be an array");
+    let inputs = value["inputs"].as_array().expect("inputs must be an array");
     assert!(!inputs.is_empty(), "inputs must not be empty");
     for input in inputs {
         assert!(
@@ -448,8 +450,7 @@ fn track_e_charter_doc_contains_interface_contracts_and_escalation() {
 
 #[test]
 fn track_e_charter_doc_file_exists() {
-    let path =
-        repo_root().join("docs/FRX_TRACK_E_VERIFICATION_FUZZ_FORMAL_COVERAGE_SPRINT_V1.md");
+    let path = repo_root().join("docs/FRX_TRACK_E_VERIFICATION_FUZZ_FORMAL_COVERAGE_SPRINT_V1.md");
     assert!(path.exists(), "track E charter doc must exist");
 }
 
@@ -462,8 +463,7 @@ fn track_e_contract_json_file_exists() {
 
 #[test]
 fn track_e_charter_word_count_exceeds_minimum() {
-    let path =
-        repo_root().join("docs/FRX_TRACK_E_VERIFICATION_FUZZ_FORMAL_COVERAGE_SPRINT_V1.md");
+    let path = repo_root().join("docs/FRX_TRACK_E_VERIFICATION_FUZZ_FORMAL_COVERAGE_SPRINT_V1.md");
     let doc = fs::read_to_string(&path).expect("read doc");
     let word_count = doc.split_whitespace().count();
     assert!(

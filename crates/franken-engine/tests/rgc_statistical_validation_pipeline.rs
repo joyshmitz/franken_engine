@@ -421,7 +421,11 @@ fn statistical_validation_policy_default_is_constructible() {
 fn contract_required_log_keys_include_trace_and_decision() {
     let contract = parse_contract();
     assert!(contract.required_log_keys.contains(&"trace_id".to_string()));
-    assert!(contract.required_log_keys.contains(&"decision_id".to_string()));
+    assert!(
+        contract
+            .required_log_keys
+            .contains(&"decision_id".to_string())
+    );
 }
 
 #[test]
@@ -458,7 +462,10 @@ fn pipeline_report_logs_are_nonempty_for_regression() {
     );
 
     let report = evaluate_statistical_validation(&input, &policy);
-    assert!(!report.logs.is_empty(), "pipeline should emit at least one log event");
+    assert!(
+        !report.logs.is_empty(),
+        "pipeline should emit at least one log event"
+    );
 }
 
 #[test]

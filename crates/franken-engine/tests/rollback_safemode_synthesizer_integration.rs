@@ -723,13 +723,18 @@ fn synthesizer_determinism_same_input_same_result() {
         scan_result: None,
     };
 
-    let mut synth1 = RollbackSafemodeSynthesizer::new(default_config(), vec![rule.clone()], vec![]).unwrap();
-    let mut synth2 = RollbackSafemodeSynthesizer::new(default_config(), vec![rule], vec![]).unwrap();
+    let mut synth1 =
+        RollbackSafemodeSynthesizer::new(default_config(), vec![rule.clone()], vec![]).unwrap();
+    let mut synth2 =
+        RollbackSafemodeSynthesizer::new(default_config(), vec![rule], vec![]).unwrap();
 
     let r1 = synth1.synthesize(&input).unwrap();
     let r2 = synth2.synthesize(&input).unwrap();
 
     let json1 = serde_json::to_string(&r1).unwrap();
     let json2 = serde_json::to_string(&r2).unwrap();
-    assert_eq!(json1, json2, "identical inputs must produce identical serialized results");
+    assert_eq!(
+        json1, json2,
+        "identical inputs must produce identical serialized results"
+    );
 }

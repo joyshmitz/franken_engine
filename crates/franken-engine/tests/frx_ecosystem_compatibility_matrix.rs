@@ -566,7 +566,11 @@ fn frx_07_3_structured_log_decision_paths_are_nonempty() {
     let matrix = parse_matrix();
     for entry in &matrix.entries {
         assert!(
-            !entry.structured_log_template.decision_path.trim().is_empty(),
+            !entry
+                .structured_log_template
+                .decision_path
+                .trim()
+                .is_empty(),
             "entry {} has empty decision_path in log template",
             entry.stack_id
         );

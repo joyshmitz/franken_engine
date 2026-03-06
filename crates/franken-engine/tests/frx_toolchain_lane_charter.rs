@@ -338,10 +338,8 @@ fn toolchain_contract_logging_fields_include_core_observability_set() {
     let fields = value["logging_contract"]["required_fields"]
         .as_array()
         .expect("required_fields array");
-    let field_set: std::collections::BTreeSet<&str> = fields
-        .iter()
-        .filter_map(|v| v.as_str())
-        .collect();
+    let field_set: std::collections::BTreeSet<&str> =
+        fields.iter().filter_map(|v| v.as_str()).collect();
     for required in ["trace_id", "decision_id", "component", "event", "outcome"] {
         assert!(
             field_set.contains(required),

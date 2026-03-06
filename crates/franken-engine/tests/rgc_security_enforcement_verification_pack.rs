@@ -510,7 +510,11 @@ fn vectors_contract_versions_are_aligned() {
 #[test]
 fn contract_required_attack_classes_are_unique() {
     let contract = parse_contract();
-    let unique: BTreeSet<&str> = contract.required_attack_classes.iter().map(String::as_str).collect();
+    let unique: BTreeSet<&str> = contract
+        .required_attack_classes
+        .iter()
+        .map(String::as_str)
+        .collect();
     assert_eq!(
         unique.len(),
         contract.required_attack_classes.len(),
@@ -524,7 +528,13 @@ fn contract_gate_runner_fields_are_nonempty() {
     assert!(!contract.gate_runner.script.trim().is_empty());
     assert!(!contract.gate_runner.replay_wrapper.trim().is_empty());
     assert!(!contract.gate_runner.strict_mode.trim().is_empty());
-    assert!(!contract.gate_runner.manifest_schema_version.trim().is_empty());
+    assert!(
+        !contract
+            .gate_runner
+            .manifest_schema_version
+            .trim()
+            .is_empty()
+    );
 }
 
 #[test]

@@ -370,7 +370,12 @@ fn track_c_contract_promotion_evidence_pointer_fields_present() {
     let fields = pointer["required_fields"]
         .as_array()
         .expect("promotion_evidence_pointer.required_fields");
-    for expected in ["bead_id", "artifact_root", "manifest_path", "replay_command"] {
+    for expected in [
+        "bead_id",
+        "artifact_root",
+        "manifest_path",
+        "replay_command",
+    ] {
         assert!(
             fields.iter().any(|v| v.as_str() == Some(expected)),
             "promotion_evidence_pointer missing field: {expected}"
@@ -386,18 +391,10 @@ fn track_c_contract_json_roundtrip_preserves_all_keys() {
     // Re-serialize and re-parse, verifying the full key set is stable
     let reserialized = serde_json::to_string_pretty(&value).expect("re-serialize");
     let reparsed: Value = serde_json::from_str(&reserialized).expect("re-parse");
-    let original_keys: std::collections::BTreeSet<String> = value
-        .as_object()
-        .unwrap()
-        .keys()
-        .cloned()
-        .collect();
-    let reparsed_keys: std::collections::BTreeSet<String> = reparsed
-        .as_object()
-        .unwrap()
-        .keys()
-        .cloned()
-        .collect();
+    let original_keys: std::collections::BTreeSet<String> =
+        value.as_object().unwrap().keys().cloned().collect();
+    let reparsed_keys: std::collections::BTreeSet<String> =
+        reparsed.as_object().unwrap().keys().cloned().collect();
     assert_eq!(original_keys, reparsed_keys);
 }
 

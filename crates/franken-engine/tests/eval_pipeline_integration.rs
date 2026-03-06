@@ -697,12 +697,17 @@ fn lane_choice_serde_roundtrip() {
 
 #[test]
 fn eval_error_correlation_ids_survive_serde() {
-    let err = EvalError::runtime_fault("test-error")
-        .with_correlation_ids("trace-serde", "decision-serde", "policy-serde");
+    let err = EvalError::runtime_fault("test-error").with_correlation_ids(
+        "trace-serde",
+        "decision-serde",
+        "policy-serde",
+    );
     let json = serde_json::to_string(&err).unwrap();
     let back: EvalError = serde_json::from_str(&json).unwrap();
     assert_eq!(back.code, EvalErrorCode::RuntimeFault);
-    let ids = back.correlation_ids.expect("correlation ids should roundtrip");
+    let ids = back
+        .correlation_ids
+        .expect("correlation ids should roundtrip");
     assert_eq!(ids.trace_id, "trace-serde");
     assert_eq!(ids.decision_id, "decision-serde");
     assert_eq!(ids.policy_id, "policy-serde");
@@ -710,8 +715,11 @@ fn eval_error_correlation_ids_survive_serde() {
 
 #[test]
 fn propagation_through_all_exception_boundaries() {
-    let base = EvalError::runtime_fault("propagation test")
-        .with_correlation_ids("trace-prop", "decision-prop", "policy-prop");
+    let base = EvalError::runtime_fault("propagation test").with_correlation_ids(
+        "trace-prop",
+        "decision-prop",
+        "policy-prop",
+    );
     let after_sync = propagate_error_across_boundary(base, ExceptionBoundary::SyncCallframe);
     let after_async = propagate_error_across_boundary(after_sync, ExceptionBoundary::AsyncJob);
     let after_host = propagate_error_across_boundary(after_async, ExceptionBoundary::Hostcall);
@@ -722,10 +730,7 @@ fn propagation_through_all_exception_boundaries() {
 
 #[test]
 fn ir3_null_literal_produces_valid_execution() {
-    let tree = make_tree(
-        ParseGoal::Script,
-        vec![expr_stmt(Expression::NullLiteral)],
-    );
+    let tree = make_tree(ParseGoal::Script, vec![expr_stmt(Expression::NullLiteral)]);
     let ir0 = Ir0Module::from_syntax_tree(tree, "null.js");
     let ctx = LoweringContext::new("trace-null", "decision-null", "policy-null");
     let output = lower_ir0_to_ir3(&ir0, &ctx).expect("lowering should succeed");

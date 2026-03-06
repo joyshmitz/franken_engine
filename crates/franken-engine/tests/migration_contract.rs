@@ -627,7 +627,9 @@ fn declaration_accessor_returns_original_declaration() {
     let decl = declaration("acc-1", CutoverType::ParallelRun);
     runner.declare(decl.clone(), "t").unwrap();
 
-    let retrieved = runner.declaration("acc-1").expect("should find declaration");
+    let retrieved = runner
+        .declaration("acc-1")
+        .expect("should find declaration");
     assert_eq!(retrieved.migration_id, "acc-1");
     assert_eq!(retrieved.cutover_type, CutoverType::ParallelRun);
     assert_eq!(retrieved.from_version, "v1");
@@ -652,8 +654,16 @@ fn events_accessor_returns_accumulated_events_without_drain() {
     // events() should return accumulated events without consuming them
     let events_snapshot = runner.events().to_vec();
     assert!(events_snapshot.len() >= 2);
-    assert!(events_snapshot.iter().any(|e| e.event == "migration_declared"));
-    assert!(events_snapshot.iter().any(|e| e.event == "dry_run_complete"));
+    assert!(
+        events_snapshot
+            .iter()
+            .any(|e| e.event == "migration_declared")
+    );
+    assert!(
+        events_snapshot
+            .iter()
+            .any(|e| e.event == "dry_run_complete")
+    );
 
     // Calling events() again returns same data (not drained)
     assert_eq!(runner.events().len(), events_snapshot.len());
@@ -670,9 +680,7 @@ fn verification_with_discrepancies_blocks_commit() {
     runner
         .declare(declaration("vf-1", CutoverType::HardCutover), "t")
         .unwrap();
-    runner
-        .dry_run("vf-1", pass_dry_run("vf-1"), "t")
-        .unwrap();
+    runner.dry_run("vf-1", pass_dry_run("vf-1"), "t").unwrap();
     runner.create_checkpoint("vf-1", 10, "t").unwrap();
     runner.complete_execution("vf-1", 100, "t").unwrap();
 
@@ -686,7 +694,13 @@ fn verification_with_discrepancies_blocks_commit() {
 
     let err = runner.verify("vf-1", failed_verify, "t").unwrap_err();
     assert!(
-        matches!(err, MigrationContractError::VerificationFailed { discrepancy_count: 7, .. }),
+        matches!(
+            err,
+            MigrationContractError::VerificationFailed {
+                discrepancy_count: 7,
+                ..
+            }
+        ),
         "expected VerificationFailed with 7 discrepancies, got: {err}"
     );
 }

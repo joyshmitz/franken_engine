@@ -1078,7 +1078,12 @@ fn lineage_query_filters_by_timestamp_range() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..5 {
         log.append(
-            receipt("slot-ts", &format!("old-{i}"), &format!("new-{i}"), (i + 1) * 100),
+            receipt(
+                "slot-ts",
+                &format!("old-{i}"),
+                &format!("new-{i}"),
+                (i + 1) * 100,
+            ),
             ReplacementKind::DelegateToNative,
             (i + 1) * 100,
         )
@@ -1112,7 +1117,12 @@ fn log_serde_roundtrip_preserves_len_and_merkle_root() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..3 {
         log.append(
-            receipt("slot-serde", &format!("old-{i}"), &format!("new-{i}"), (i + 1) * 100),
+            receipt(
+                "slot-serde",
+                &format!("old-{i}"),
+                &format!("new-{i}"),
+                (i + 1) * 100,
+            ),
             ReplacementKind::DelegateToNative,
             (i + 1) * 100,
         )
@@ -1145,9 +1155,10 @@ fn evidence_category_debug_is_nonempty() {
 
 #[test]
 fn lineage_log_error_display_for_all_variants() {
-    let errors = vec![
-        LineageLogError::InvalidCheckpointOrder { older: 10, newer: 5 },
-    ];
+    let errors = vec![LineageLogError::InvalidCheckpointOrder {
+        older: 10,
+        newer: 5,
+    }];
     for err in &errors {
         let msg = format!("{err}");
         assert!(!msg.is_empty());
@@ -1161,7 +1172,12 @@ fn multiple_checkpoints_accumulate() {
     let mut log = ReplacementLineageLog::new(LineageLogConfig::default());
     for i in 0..3 {
         log.append(
-            receipt("slot-mcp", &format!("old-{i}"), &format!("new-{i}"), (i + 1) * 100),
+            receipt(
+                "slot-mcp",
+                &format!("old-{i}"),
+                &format!("new-{i}"),
+                (i + 1) * 100,
+            ),
             ReplacementKind::DelegateToNative,
             (i + 1) * 100,
         )

@@ -821,9 +821,18 @@ fn parser_options_default_budget_serde_roundtrip() {
     let options = ParserOptions::default();
     let json = serde_json::to_string(&options).expect("serialize");
     let recovered: ParserOptions = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(recovered.budget.max_source_bytes, options.budget.max_source_bytes);
-    assert_eq!(recovered.budget.max_token_count, options.budget.max_token_count);
-    assert_eq!(recovered.budget.max_recursion_depth, options.budget.max_recursion_depth);
+    assert_eq!(
+        recovered.budget.max_source_bytes,
+        options.budget.max_source_bytes
+    );
+    assert_eq!(
+        recovered.budget.max_token_count,
+        options.budget.max_token_count
+    );
+    assert_eq!(
+        recovered.budget.max_recursion_depth,
+        options.budget.max_recursion_depth
+    );
 }
 
 // ---------- ParseErrorCode ----------
@@ -832,7 +841,10 @@ fn parser_options_default_budget_serde_roundtrip() {
 fn parse_error_code_all_as_str_is_nonempty() {
     for code in ParseErrorCode::ALL {
         let s = code.as_str();
-        assert!(!s.is_empty(), "ParseErrorCode as_str should be nonempty for {code:?}");
+        assert!(
+            !s.is_empty(),
+            "ParseErrorCode as_str should be nonempty for {code:?}"
+        );
     }
 }
 

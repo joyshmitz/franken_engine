@@ -1456,10 +1456,13 @@ fn lowering_switch_statement() {
 fn lowering_break_statement() {
     let ir0 = make_ir0(
         ParseGoal::Script,
-        vec![Statement::Break(BreakStatement {
-            label: None,
-            span: span(),
-        })],
+        vec![make_while(
+            Expression::BooleanLiteral(true),
+            Statement::Break(BreakStatement {
+                label: None,
+                span: span(),
+            }),
+        )],
     );
     let output = run_full(&ir0);
     assert_eq!(output.witnesses.len(), 3);
@@ -1469,10 +1472,15 @@ fn lowering_break_statement() {
 fn lowering_continue_statement() {
     let ir0 = make_ir0(
         ParseGoal::Script,
-        vec![Statement::Continue(ContinueStatement {
-            label: None,
-            span: span(),
-        })],
+        vec![make_for(
+            None,
+            Some(Expression::BooleanLiteral(true)),
+            Some(Expression::NumericLiteral(1)),
+            Statement::Continue(ContinueStatement {
+                label: None,
+                span: span(),
+            }),
+        )],
     );
     let output = run_full(&ir0);
     assert_eq!(output.witnesses.len(), 3);

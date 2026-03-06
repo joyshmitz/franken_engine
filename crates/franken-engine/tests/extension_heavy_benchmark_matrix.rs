@@ -525,10 +525,7 @@ fn workload_matrix_family_ids_are_nonempty_and_unique() {
     for family in families {
         let fid = require_string_field(family, "family_id");
         assert!(!fid.trim().is_empty(), "family_id must be non-empty");
-        assert!(
-            seen.insert(fid.to_string()),
-            "duplicate family_id: {fid}"
-        );
+        assert!(seen.insert(fid.to_string()), "duplicate family_id: {fid}");
     }
 }
 
@@ -549,13 +546,19 @@ fn golden_output_entries_all_have_security_envelope() {
 #[test]
 fn is_sha256_hex_rejects_65_char_string() {
     let too_long = "a".repeat(65);
-    assert!(!is_sha256_hex(&too_long), "65-char string should be rejected");
+    assert!(
+        !is_sha256_hex(&too_long),
+        "65-char string should be rejected"
+    );
 }
 
 #[test]
 fn is_sha256_hex_rejects_63_char_string() {
     let too_short = "a".repeat(63);
-    assert!(!is_sha256_hex(&too_short), "63-char string should be rejected");
+    assert!(
+        !is_sha256_hex(&too_short),
+        "63-char string should be rejected"
+    );
 }
 
 #[test]

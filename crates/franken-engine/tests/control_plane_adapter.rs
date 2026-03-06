@@ -526,7 +526,10 @@ fn loss_matrix_dimension_mismatch_returns_error() {
         ],
         vec![0.1, 0.2, 0.3, 0.4],
     );
-    assert!(result.is_err(), "LossMatrix::new should reject mismatched dimensions");
+    assert!(
+        result.is_err(),
+        "LossMatrix::new should reject mismatched dimensions"
+    );
 }
 
 // ---------- EvidenceLedgerBuilder missing fields ----------
@@ -558,7 +561,10 @@ fn mock_budget_consume_exact_remaining_succeeds_with_zero_left() {
 
     // A subsequent consume of even 1 ms must fail.
     let err = budget.consume(1);
-    assert!(err.is_err(), "budget at zero should reject any further consume");
+    assert!(
+        err.is_err(),
+        "budget at zero should reject any further consume"
+    );
 }
 
 // ---------- MockDecisionContract empty queue ----------
@@ -576,7 +582,9 @@ fn mock_decision_contract_empty_queue_returns_timeout_fallback() {
         e_process_milli: 100,
         ci_width_milli: 50,
     };
-    let verdict = mock.evaluate(&request).expect("should succeed with fallback");
+    let verdict = mock
+        .evaluate(&request)
+        .expect("should succeed with fallback");
     assert_eq!(
         verdict,
         DecisionVerdict::Timeout,

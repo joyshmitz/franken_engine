@@ -652,11 +652,7 @@ fn ifc_corpus_covers_all_required_flow_path_types() {
 #[test]
 fn ifc_corpus_covers_all_required_exfil_vector_domains() {
     let run = run_ifc_corpus();
-    let domains: BTreeSet<String> = run
-        .logs
-        .iter()
-        .map(|e| e.semantic_domain.clone())
-        .collect();
+    let domains: BTreeSet<String> = run.logs.iter().map(|e| e.semantic_domain.clone()).collect();
     for required in REQUIRED_EXFIL_VECTOR_DOMAINS {
         assert!(
             domains.contains(required),
@@ -668,11 +664,7 @@ fn ifc_corpus_covers_all_required_exfil_vector_domains() {
 #[test]
 fn ifc_corpus_has_benign_exfil_and_declassify_categories() {
     let run = run_ifc_corpus();
-    let categories: BTreeSet<String> = run
-        .logs
-        .iter()
-        .filter_map(|e| e.category.clone())
-        .collect();
+    let categories: BTreeSet<String> = run.logs.iter().filter_map(|e| e.category.clone()).collect();
     for cat in ["benign", "exfil", "declassify"] {
         assert!(
             categories.contains(cat),

@@ -520,7 +520,10 @@ fn backlog_families_have_valid_current_status() {
     let backlog = load_grammar_closure_backlog();
     for family in &backlog.families {
         assert!(
-            matches!(family.current_status.as_str(), "supported" | "partial" | "unsupported"),
+            matches!(
+                family.current_status.as_str(),
+                "supported" | "partial" | "unsupported"
+            ),
             "family `{}` has unexpected status `{}`",
             family.family_id,
             family.current_status

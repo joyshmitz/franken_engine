@@ -646,7 +646,10 @@ fn golden_store_write_baseline_is_idempotent() {
 
     let path_a = store.write_baseline(&run).expect("first write");
     let path_b = store.write_baseline(&run).expect("second write");
-    assert_eq!(path_a, path_b, "writing the same baseline twice must produce the same path");
+    assert_eq!(
+        path_a, path_b,
+        "writing the same baseline twice must produce the same path"
+    );
     assert!(store.verify_run(&run).is_ok());
 }
 
@@ -659,7 +662,10 @@ fn evidence_linkage_records_are_serde_deterministic() {
     let linkage = e2e_harness::build_evidence_linkage(&run.events);
     let json_a = serde_json::to_string(&linkage).expect("first serialize");
     let json_b = serde_json::to_string(&linkage).expect("second serialize");
-    assert_eq!(json_a, json_b, "evidence linkage serialization must be deterministic");
+    assert_eq!(
+        json_a, json_b,
+        "evidence linkage serialization must be deterministic"
+    );
 }
 
 #[test]
@@ -714,7 +720,10 @@ fn deterministic_rng_same_seed_produces_same_sequence() {
     // zero seed also works
     let mut rng_zero = DeterministicRng::seeded(0);
     let val = rng_zero.next_u64();
-    assert_ne!(val, 0, "zero seed should be remapped to avoid degenerate xorshift");
+    assert_ne!(
+        val, 0,
+        "zero seed should be remapped to avoid degenerate xorshift"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -748,7 +757,10 @@ fn run_report_from_result_captures_error_status() {
     let report = RunReport::from_result(&run);
     assert_eq!(report.fixture_id, "fixture-hello");
     assert_eq!(report.event_count, fixture.steps.len());
-    assert!(!report.pass, "fixture with error_code step should report fail");
+    assert!(
+        !report.pass,
+        "fixture with error_code step should report fail"
+    );
     assert_eq!(report.first_error_code.as_deref(), Some("FE-E2E-0007"));
     let md = report.to_markdown();
     assert!(md.contains("# E2E Run Report"));
@@ -769,7 +781,10 @@ fn diagnose_cross_machine_replay_same_env_matches() {
     let env_fp = ReplayEnvironmentFingerprint::local();
 
     let diag = diagnose_cross_machine_replay(&run_a, &run_b, &env_fp, &env_fp);
-    assert!(diag.cross_machine_match, "same seed + same env should match");
+    assert!(
+        diag.cross_machine_match,
+        "same seed + same env should match"
+    );
     assert!(diag.environment_mismatches.is_empty());
     assert!(diag.replay_verification.matches);
 }

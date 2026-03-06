@@ -107,7 +107,10 @@ impl LikelihoodRatioFn for UniversalLikelihoodRatio {
         }
         // ratio = observation / null_mean, in millionths
         let r = (observation_millionths as i128 * 1_000_000) / self.null_mean_millionths as i128;
-        Some(r.try_into().unwrap_or(if r > 0 { i64::MAX } else { i64::MIN }))
+        Some(
+            r.try_into()
+                .unwrap_or(if r > 0 { i64::MAX } else { i64::MIN }),
+        )
     }
 
     fn family(&self) -> &str {

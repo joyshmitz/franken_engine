@@ -618,12 +618,9 @@ fn frx_07_4_doc_contains_no_todo_markers() {
 #[test]
 fn frx_07_4_all_policy_toggle_fallback_routes_are_known() {
     let contract = parse_contract();
-    let known_routes: BTreeSet<&str> = [
-        "compatibility_fallback",
-        "deterministic_safe_mode",
-    ]
-    .into_iter()
-    .collect();
+    let known_routes: BTreeSet<&str> = ["compatibility_fallback", "deterministic_safe_mode"]
+        .into_iter()
+        .collect();
     for (name, toggle) in &contract.policy_toggles {
         assert!(
             known_routes.contains(toggle.fallback_route.as_str()),

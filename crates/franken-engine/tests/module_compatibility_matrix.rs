@@ -465,10 +465,7 @@ fn matrix_required_waiver_ids_are_nonempty_strings() {
     let matrix = ModuleCompatibilityMatrix::from_default_json().expect("load matrix");
     let waivers = matrix.required_waiver_ids();
     for waiver_id in &waivers {
-        assert!(
-            !waiver_id.trim().is_empty(),
-            "waiver_id must be non-empty"
-        );
+        assert!(!waiver_id.trim().is_empty(), "waiver_id must be non-empty");
     }
 }
 
@@ -482,7 +479,10 @@ fn matrix_has_at_least_one_entry() {
 
 #[test]
 fn default_matrix_json_is_nonempty() {
-    assert!(!DEFAULT_MATRIX_JSON.is_empty(), "DEFAULT_MATRIX_JSON constant must not be empty");
+    assert!(
+        !DEFAULT_MATRIX_JSON.is_empty(),
+        "DEFAULT_MATRIX_JSON constant must not be empty"
+    );
 }
 
 #[test]

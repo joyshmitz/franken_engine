@@ -607,8 +607,7 @@ fn obligation_error_serde_round_trip_cell_not_running() {
         current_state: RegionState::Closed,
     };
     let json = serde_json::to_string(&err).expect("serialize");
-    let recovered: ObligationIntegrationError =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: ObligationIntegrationError = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(format!("{err:?}"), format!("{recovered:?}"));
 }
 

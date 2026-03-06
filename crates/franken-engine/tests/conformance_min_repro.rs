@@ -577,8 +577,10 @@ fn schema_field_modified_is_classified_when_value_changes() {
     let delta = classify_conformance_delta("props:a,b", "props:a,x");
     // Modification (b -> x) should show either SchemaFieldRemoved+Added or Modified
     assert!(
-        delta.iter().any(|d| d.kind == ConformanceDeltaKind::SchemaFieldRemoved
-            || d.kind == ConformanceDeltaKind::SchemaFieldModified),
+        delta
+            .iter()
+            .any(|d| d.kind == ConformanceDeltaKind::SchemaFieldRemoved
+                || d.kind == ConformanceDeltaKind::SchemaFieldModified),
         "expected field modification or removal classification"
     );
 }
@@ -658,6 +660,10 @@ fn run_result_run_id_matches_summary_run_id() {
 fn sha256_hex_length_is_always_64() {
     for input in [b"a".as_slice(), b"", b"hello world", &[0u8; 1024]] {
         let hash = sha256_hex(input);
-        assert_eq!(hash.len(), 64, "sha256 hex length must be 64 for all inputs");
+        assert_eq!(
+            hash.len(),
+            64,
+            "sha256 hex length must be 64 for all inputs"
+        );
     }
 }

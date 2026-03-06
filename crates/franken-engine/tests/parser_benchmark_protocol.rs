@@ -487,8 +487,14 @@ fn measurement_window_serde_round_trip() {
     let fixture = load_fixture();
     let json = serde_json::to_string(&fixture.measurement_window).expect("serialize");
     let recovered: MeasurementWindow = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(recovered.warmup_iterations, fixture.measurement_window.warmup_iterations);
-    assert_eq!(recovered.measurement_iterations, fixture.measurement_window.measurement_iterations);
+    assert_eq!(
+        recovered.warmup_iterations,
+        fixture.measurement_window.warmup_iterations
+    );
+    assert_eq!(
+        recovered.measurement_iterations,
+        fixture.measurement_window.measurement_iterations
+    );
     assert_eq!(recovered.replicates, fixture.measurement_window.replicates);
     assert_eq!(
         recovered.max_relative_stdev_millionths,

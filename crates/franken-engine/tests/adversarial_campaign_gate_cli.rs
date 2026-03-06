@@ -438,9 +438,7 @@ fn adversarial_gate_fixture_escalations_reference_existing_campaigns() {
         .as_array()
         .expect("escalations array");
     for esc in escalations {
-        let esc_campaign_id = esc["campaign_id"]
-            .as_str()
-            .expect("escalation campaign_id");
+        let esc_campaign_id = esc["campaign_id"].as_str().expect("escalation campaign_id");
         assert!(
             sample_ids.contains(esc_campaign_id),
             "escalation references unknown campaign_id: {esc_campaign_id}"

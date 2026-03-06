@@ -748,8 +748,16 @@ fn classify_matrix_status_complete_with_many_critical_deltas() {
 fn fixture_delta_classes_have_nonempty_descriptions() {
     let fixture = load_fixture();
     for dc in &fixture.delta_classes {
-        assert!(!dc.description.trim().is_empty(), "delta class {} has empty description", dc.class_id);
-        assert!(!dc.severity.trim().is_empty(), "delta class {} has empty severity", dc.class_id);
+        assert!(
+            !dc.description.trim().is_empty(),
+            "delta class {} has empty description",
+            dc.class_id
+        );
+        assert!(
+            !dc.severity.trim().is_empty(),
+            "delta class {} has empty severity",
+            dc.class_id
+        );
     }
 }
 

@@ -831,12 +831,7 @@ fn insert_empty_module_id_rejected() {
     // Whitespace-only module_id should also be rejected
     let err2 = cache
         .insert(
-            CacheInsertRequest::new(
-                "   ",
-                v,
-                ContentHash::compute(b"art-ws"),
-                "/app/ws.mjs",
-            ),
+            CacheInsertRequest::new("   ", v, ContentHash::compute(b"art-ws"), "/app/ws.mjs"),
             &cache_context(),
         )
         .unwrap_err();
@@ -861,7 +856,10 @@ fn module_cache_key_serde_roundtrip_and_ord() {
 
     // Ord: keys are orderable (BTreeMap requirement)
     let ordering = key_a.cmp(&key_b);
-    assert!(ordering != std::cmp::Ordering::Equal, "distinct keys should not be equal");
+    assert!(
+        ordering != std::cmp::Ordering::Equal,
+        "distinct keys should not be equal"
+    );
 
     // Deterministic ordering: compare twice
     assert_eq!(key_a.cmp(&key_b), key_a.cmp(&key_b));
@@ -889,7 +887,10 @@ fn module_cache_entry_serde_roundtrip() {
     let recovered: ModuleCacheEntry = serde_json::from_str(&json).expect("deserialize entry");
     assert_eq!(recovered.key.module_id, "mod:entry-serde");
     assert_eq!(recovered.resolved_specifier, "/app/entry-serde.mjs");
-    assert_eq!(recovered.artifact_hash, ContentHash::compute(b"art-entry-serde"));
+    assert_eq!(
+        recovered.artifact_hash,
+        ContentHash::compute(b"art-entry-serde")
+    );
 }
 
 #[test]
@@ -917,7 +918,10 @@ fn cache_snapshot_full_serde_roundtrip() {
     let recovered: CacheSnapshot = serde_json::from_str(&json).expect("deserialize full snapshot");
 
     assert_eq!(recovered.entries.len(), snapshot.entries.len());
-    assert_eq!(recovered.latest_versions.len(), snapshot.latest_versions.len());
+    assert_eq!(
+        recovered.latest_versions.len(),
+        snapshot.latest_versions.len()
+    );
     assert!(recovered.revoked_modules.contains("mod:some-revoked"));
     assert_eq!(recovered.state_hash, snapshot.state_hash);
 }

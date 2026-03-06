@@ -812,13 +812,13 @@ fn tui_guard_summary_is_always_last_event() {
         content: "[dependencies]\ntui = \"1\"\n".to_string(),
     }];
     let report = evaluate_guard(&manifests, &[], &[]);
-    let last = report.events.last().expect("should have at least one event");
+    let last = report
+        .events
+        .last()
+        .expect("should have at least one event");
     assert_eq!(last.event, "guard_summary");
     assert_eq!(last.outcome, "fail");
-    assert_eq!(
-        last.error_code.as_deref(),
-        Some("FE-TUI-GUARD-BLOCKED")
-    );
+    assert_eq!(last.error_code.as_deref(), Some("FE-TUI-GUARD-BLOCKED"));
     assert_eq!(last.detail, "violations=1");
 
     // Test with no violations

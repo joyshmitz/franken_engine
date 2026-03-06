@@ -407,7 +407,10 @@ fn error_code_registry_debug_is_nonempty() {
 #[test]
 fn error_code_entry_debug_is_nonempty() {
     let registry = error_code_registry();
-    let entry = registry.entries.first().expect("registry must have entries");
+    let entry = registry
+        .entries
+        .first()
+        .expect("registry must have entries");
     assert!(!format!("{entry:?}").is_empty());
 }
 

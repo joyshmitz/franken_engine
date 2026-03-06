@@ -699,11 +699,7 @@ fn frx_09_2_ga_stage_requires_all_channels() {
         .iter()
         .map(|ch| ch.channel_id.as_str())
         .collect();
-    let ga_channel_ids: BTreeSet<&str> = ga
-        .required_channels
-        .iter()
-        .map(String::as_str)
-        .collect();
+    let ga_channel_ids: BTreeSet<&str> = ga.required_channels.iter().map(String::as_str).collect();
     assert_eq!(
         ga_channel_ids, all_channel_ids,
         "GA stage must require every declared release packet channel"
@@ -723,16 +719,8 @@ fn frx_09_2_alpha_stage_channels_are_subset_of_beta() {
         .iter()
         .find(|c| c.stage == "beta")
         .expect("beta checklist");
-    let alpha_set: BTreeSet<&str> = alpha
-        .required_channels
-        .iter()
-        .map(String::as_str)
-        .collect();
-    let beta_set: BTreeSet<&str> = beta
-        .required_channels
-        .iter()
-        .map(String::as_str)
-        .collect();
+    let alpha_set: BTreeSet<&str> = alpha.required_channels.iter().map(String::as_str).collect();
+    let beta_set: BTreeSet<&str> = beta.required_channels.iter().map(String::as_str).collect();
     assert!(
         alpha_set.is_subset(&beta_set),
         "alpha required_channels must be a subset of beta required_channels"
@@ -789,16 +777,8 @@ fn frx_09_2_beta_stage_channels_are_subset_of_ga() {
         .iter()
         .find(|c| c.stage == "ga")
         .expect("ga checklist");
-    let beta_set: BTreeSet<&str> = beta
-        .required_channels
-        .iter()
-        .map(String::as_str)
-        .collect();
-    let ga_set: BTreeSet<&str> = ga
-        .required_channels
-        .iter()
-        .map(String::as_str)
-        .collect();
+    let beta_set: BTreeSet<&str> = beta.required_channels.iter().map(String::as_str).collect();
+    let ga_set: BTreeSet<&str> = ga.required_channels.iter().map(String::as_str).collect();
     assert!(
         beta_set.is_subset(&ga_set),
         "beta required_channels must be a subset of GA required_channels"
@@ -845,13 +825,9 @@ fn frx_09_2_claim_publication_record_requires_bundle_links_and_digest() {
 #[test]
 fn frx_09_2_stage_checklist_publication_modes_are_valid() {
     let contract = parse_contract();
-    let allowed_modes: BTreeSet<&str> = [
-        "internal_only",
-        "internal_and_external",
-        "full_public",
-    ]
-    .into_iter()
-    .collect();
+    let allowed_modes: BTreeSet<&str> = ["internal_only", "internal_and_external", "full_public"]
+        .into_iter()
+        .collect();
     for checklist in &contract.stage_checklists {
         assert!(
             allowed_modes.contains(checklist.publication_mode.as_str()),

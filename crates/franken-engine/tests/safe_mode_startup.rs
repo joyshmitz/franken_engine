@@ -681,9 +681,7 @@ fn safe_mode_startup_artifact_full_serde_roundtrip() {
         decision_id: "decision-full-rt".to_string(),
         policy_id: "policy-safe-startup-v1".to_string(),
         cli_safe_mode: true,
-        environment: BTreeMap::from([
-            ("FRANKEN_SAFE_MODE".to_string(), "1".to_string()),
-        ]),
+        environment: BTreeMap::from([("FRANKEN_SAFE_MODE".to_string(), "1".to_string())]),
     };
     let artifact = evaluate_safe_mode_startup(&input).expect("artifact");
 
@@ -719,13 +717,12 @@ fn exit_artifact_blocking_reasons_include_descriptive_text() {
 }
 
 #[test]
-fn fork_detector_exit_safe_mode_fails_when_not_in_safe_mode() {
+fn fork_detector_exit_safe_mode_is_noop_when_not_in_safe_mode() {
     let mut detector = ForkDetector::with_defaults();
-    let result = detector.exit_safe_mode("zone-never-forked", "trace-exit-attempt");
-    assert!(
-        result.is_err(),
-        "exiting safe mode on a zone not in safe mode should fail"
-    );
+    let exited = detector
+        .exit_safe_mode("zone-never-forked", "trace-exit-attempt")
+        .expect("exiting safe mode on an unknown zone should be a no-op");
+    assert_eq!(exited, 0);
 }
 
 #[test]

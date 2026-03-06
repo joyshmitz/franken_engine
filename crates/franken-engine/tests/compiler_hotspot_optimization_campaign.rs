@@ -660,7 +660,11 @@ fn rank_by_ev_breaks_ties_alphabetically() {
         },
     ];
     let ranking = rank_by_ev(&results);
-    assert_eq!(ranking, vec!["alpha", "beta"], "tied EV scores must break by campaign_id ascending");
+    assert_eq!(
+        ranking,
+        vec!["alpha", "beta"],
+        "tied EV scores must break by campaign_id ascending"
+    );
 }
 
 #[test]
@@ -678,7 +682,11 @@ fn rank_by_gain_breaks_ties_alphabetically() {
         },
     ];
     let ranking = rank_by_gain(&results);
-    assert_eq!(ranking, vec!["alpha", "zulu"], "tied gain scores must break by campaign_id ascending");
+    assert_eq!(
+        ranking,
+        vec!["alpha", "zulu"],
+        "tied gain scores must break by campaign_id ascending"
+    );
 }
 
 #[test]
@@ -700,7 +708,10 @@ fn fixture_campaign_ids_are_unique() {
 fn doc_word_count_exceeds_minimum() {
     let doc = load_doc();
     let count = doc.split_whitespace().count();
-    assert!(count >= 20, "doc should have at least 20 words, got {count}");
+    assert!(
+        count >= 20,
+        "doc should have at least 20 words, got {count}"
+    );
 }
 
 #[test]

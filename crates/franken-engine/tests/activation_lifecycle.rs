@@ -537,8 +537,13 @@ fn active_count_starts_at_zero() {
 fn double_register_same_id_fails() {
     let mut ctrl = make_controller();
     ctrl.register(descriptor("ext-a", "1.0.0"), "t").unwrap();
-    let err = ctrl.register(descriptor("ext-a", "1.0.0"), "t").unwrap_err();
-    assert!(matches!(err, LifecycleError::ActivationValidationFailed { .. }));
+    let err = ctrl
+        .register(descriptor("ext-a", "1.0.0"), "t")
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        LifecycleError::ActivationValidationFailed { .. }
+    ));
 }
 
 #[test]

@@ -550,8 +550,16 @@ fn matrix_serde_roundtrip_preserves_all_row_ids() {
     let matrix = parse_matrix();
     let json = serde_json::to_string(&matrix).expect("serialize");
     let recovered: CompatibilityMatrix = serde_json::from_str(&json).expect("deserialize");
-    let original_ids: Vec<&str> = matrix.coverage_rows.iter().map(|r| r.row_id.as_str()).collect();
-    let recovered_ids: Vec<&str> = recovered.coverage_rows.iter().map(|r| r.row_id.as_str()).collect();
+    let original_ids: Vec<&str> = matrix
+        .coverage_rows
+        .iter()
+        .map(|r| r.row_id.as_str())
+        .collect();
+    let recovered_ids: Vec<&str> = recovered
+        .coverage_rows
+        .iter()
+        .map(|r| r.row_id.as_str())
+        .collect();
     assert_eq!(original_ids, recovered_ids);
 }
 

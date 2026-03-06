@@ -541,7 +541,10 @@ fn ifc_manifest_assets_all_have_nonempty_ids() {
 #[test]
 fn benign_assets_all_have_allow_outcome() {
     let assets = parse_manifest_assets();
-    for asset in assets.iter().filter(|a| a["category"].as_str() == Some("benign")) {
+    for asset in assets
+        .iter()
+        .filter(|a| a["category"].as_str() == Some("benign"))
+    {
         assert_eq!(
             asset["expected_outcome"].as_str(),
             Some("allow"),
@@ -554,7 +557,10 @@ fn benign_assets_all_have_allow_outcome() {
 #[test]
 fn exfil_assets_all_have_block_outcome() {
     let assets = parse_manifest_assets();
-    for asset in assets.iter().filter(|a| a["category"].as_str() == Some("exfil")) {
+    for asset in assets
+        .iter()
+        .filter(|a| a["category"].as_str() == Some("exfil"))
+    {
         assert_eq!(
             asset["expected_outcome"].as_str(),
             Some("block"),

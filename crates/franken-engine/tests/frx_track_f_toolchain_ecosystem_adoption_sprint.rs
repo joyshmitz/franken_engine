@@ -411,10 +411,16 @@ fn track_f_contract_operator_verification_scripts_are_non_empty() {
     let ov = value["operator_verification"]
         .as_array()
         .expect("operator_verification must be array");
-    assert!(ov.len() >= 2, "at least 2 operator verification scripts expected");
+    assert!(
+        ov.len() >= 2,
+        "at least 2 operator verification scripts expected"
+    );
     for entry in ov {
         let s = entry.as_str().expect("each entry must be a string");
-        assert!(!s.trim().is_empty(), "operator verification entry must not be blank");
+        assert!(
+            !s.trim().is_empty(),
+            "operator verification entry must not be blank"
+        );
     }
 }
 
@@ -436,18 +442,10 @@ fn track_f_contract_json_roundtrip_preserves_all_keys() {
     let value: Value = serde_json::from_str(&raw).expect("parse JSON");
     let reserialized = serde_json::to_string_pretty(&value).expect("re-serialize");
     let reparsed: Value = serde_json::from_str(&reserialized).expect("re-parse");
-    let original_keys: std::collections::BTreeSet<String> = value
-        .as_object()
-        .unwrap()
-        .keys()
-        .cloned()
-        .collect();
-    let reparsed_keys: std::collections::BTreeSet<String> = reparsed
-        .as_object()
-        .unwrap()
-        .keys()
-        .cloned()
-        .collect();
+    let original_keys: std::collections::BTreeSet<String> =
+        value.as_object().unwrap().keys().cloned().collect();
+    let reparsed_keys: std::collections::BTreeSet<String> =
+        reparsed.as_object().unwrap().keys().cloned().collect();
     assert_eq!(original_keys, reparsed_keys);
 }
 
@@ -462,7 +460,10 @@ fn track_f_contract_activation_gate_all_blocks_are_true() {
     // Every boolean key in the gate must be true (fail-closed invariant)
     for (key, val) in gate {
         if let Some(b) = val.as_bool() {
-            assert!(b, "activation_gate.{key} must be true for fail-closed policy");
+            assert!(
+                b,
+                "activation_gate.{key} must be true for fail-closed policy"
+            );
         }
     }
 }

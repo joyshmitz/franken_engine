@@ -608,7 +608,10 @@ fn demoted_slot_reverts_to_delegate_status() {
 fn is_ga_ready_false_when_delegates_remain() {
     let mut registry = SlotRegistry::new();
     let _parser = register_slot(&mut registry, "parser", SlotKind::Parser, "sha256:d-p");
-    assert!(!registry.is_ga_ready(), "registry with delegates should not be GA-ready");
+    assert!(
+        !registry.is_ga_ready(),
+        "registry with delegates should not be GA-ready"
+    );
 }
 
 #[test]
@@ -616,7 +619,10 @@ fn is_ga_ready_true_when_all_promoted() {
     let mut registry = SlotRegistry::new();
     let parser = register_slot(&mut registry, "parser", SlotKind::Parser, "sha256:d-p");
     promote_slot(&mut registry, &parser, "sha256:native-p");
-    assert!(registry.is_ga_ready(), "registry with all native slots should be GA-ready");
+    assert!(
+        registry.is_ga_ready(),
+        "registry with all native slots should be GA-ready"
+    );
 }
 
 #[test]
@@ -631,7 +637,13 @@ fn authority_envelope_is_consistent_when_required_subset_of_permitted() {
     assert!(auth.is_consistent(), "test authority should be consistent");
 
     let narrow = narrower_authority();
-    assert!(narrow.is_consistent(), "narrower authority should be consistent");
+    assert!(
+        narrow.is_consistent(),
+        "narrower authority should be consistent"
+    );
     // Full authority should subsume narrower authority
-    assert!(auth.subsumes(&narrow), "full authority should subsume narrower");
+    assert!(
+        auth.subsumes(&narrow),
+        "full authority should subsume narrower"
+    );
 }

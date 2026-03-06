@@ -716,7 +716,10 @@ fn request_serde_roundtrip_preserves_all_fields() {
     assert_eq!(recovered.trace_id, request.trace_id);
     assert_eq!(recovered.decision_id, request.decision_id);
     assert_eq!(recovered.policy_id, request.policy_id);
-    assert_eq!(recovered.attested_receipts.len(), request.attested_receipts.len());
+    assert_eq!(
+        recovered.attested_receipts.len(),
+        request.attested_receipts.len()
+    );
     assert_eq!(
         recovered.conformance.matrix_health.total_cells,
         request.conformance.matrix_health.total_cells
@@ -780,7 +783,10 @@ fn publish_scorecard_deterministic_for_same_request() {
     assert_eq!(pub_a.scorecard_id, pub_b.scorecard_id);
     assert_eq!(pub_a.outcome, pub_b.outcome);
     assert_eq!(pub_a.artifact_hash_hex, pub_b.artifact_hash_hex);
-    assert_eq!(pub_a.attested_receipt_coverage, pub_b.attested_receipt_coverage);
+    assert_eq!(
+        pub_a.attested_receipt_coverage,
+        pub_b.attested_receipt_coverage
+    );
 }
 
 #[test]
@@ -820,8 +826,7 @@ fn thresholds_custom_values_serde_roundtrip() {
 fn moonshot_governor_health_input_serde_roundtrip() {
     let request = baseline_request();
     let json = serde_json::to_string(&request.moonshot_governor).expect("serialize");
-    let recovered: MoonshotGovernorHealthInput =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: MoonshotGovernorHealthInput = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(
         recovered.active_moonshots,
         request.moonshot_governor.active_moonshots
@@ -836,8 +841,7 @@ fn moonshot_governor_health_input_serde_roundtrip() {
 fn cross_repo_conformance_input_serde_roundtrip() {
     let request = baseline_request();
     let json = serde_json::to_string(&request.conformance).expect("serialize");
-    let recovered: CrossRepoConformanceInput =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: CrossRepoConformanceInput = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(recovered.release_id, request.conformance.release_id);
     assert_eq!(
         recovered.matrix_health.total_cells,

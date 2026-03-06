@@ -359,7 +359,10 @@ fn frx_09_3_includes_frx_12_6_c5_integrated_evidence_scenario() {
 
     assert_eq!(scenario.category, "release_evidence");
     assert_eq!(scenario.required_phase, "P3_first_class_subsystem");
-    assert_eq!(scenario.expected_decision_path, "c5_integrated_evidence_gate");
+    assert_eq!(
+        scenario.expected_decision_path,
+        "c5_integrated_evidence_gate"
+    );
     assert_eq!(scenario.expected_outcome, "pass");
     assert_eq!(
         scenario.log_template.component,
@@ -583,12 +586,13 @@ fn frx_09_3_blueprint_has_at_least_one_migration_phase() {
 
 #[test]
 fn frx_09_3_blueprint_json_value_roundtrip_preserves_all_keys() {
-    let value: serde_json::Value =
-        serde_json::from_str(BLUEPRINT_JSON).expect("parse as Value");
+    let value: serde_json::Value = serde_json::from_str(BLUEPRINT_JSON).expect("parse as Value");
     let serialized = serde_json::to_string(&value).expect("re-serialize");
-    let roundtripped: serde_json::Value =
-        serde_json::from_str(&serialized).expect("re-parse");
-    assert_eq!(value, roundtripped, "JSON Value serde roundtrip must be lossless");
+    let roundtripped: serde_json::Value = serde_json::from_str(&serialized).expect("re-parse");
+    assert_eq!(
+        value, roundtripped,
+        "JSON Value serde roundtrip must be lossless"
+    );
 
     let keys: BTreeSet<&str> = value
         .as_object()
@@ -715,7 +719,10 @@ fn frx_09_3_embedding_boundary_isolation_modes_are_nonempty() {
 #[test]
 fn frx_09_3_scheduler_preemption_budget_is_within_bounds() {
     let blueprint = parse_blueprint();
-    let budget = blueprint.architecture.scheduler_contract.preemption_budget_us;
+    let budget = blueprint
+        .architecture
+        .scheduler_contract
+        .preemption_budget_us;
     // budget must be between 1us and 20ms
     assert!(
         (1..=20_000).contains(&budget),

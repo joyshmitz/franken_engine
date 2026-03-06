@@ -771,7 +771,10 @@ fn sqlite_multiple_violations_accumulate() {
 fn sqlite_dependency_names_ignores_comments_in_toml() {
     let toml = "[dependencies]\n# rusqlite = \"1\"\nserde = \"1\"\n";
     let deps = dependency_names(toml);
-    assert!(!deps.contains(&"rusqlite".to_string()), "commented-out dependency must be ignored");
+    assert!(
+        !deps.contains(&"rusqlite".to_string()),
+        "commented-out dependency must be ignored"
+    );
     assert!(deps.contains(&"serde".to_string()));
 }
 
@@ -787,10 +790,7 @@ fn sqlite_guard_summary_event_always_last_with_violation_count() {
     let last = report.events.last().expect("events should not be empty");
     assert_eq!(last.event, "guard_summary");
     assert_eq!(last.outcome, "fail");
-    assert_eq!(
-        last.error_code.as_deref(),
-        Some("FE-SQLITE-GUARD-BLOCKED")
-    );
+    assert_eq!(last.error_code.as_deref(), Some("FE-SQLITE-GUARD-BLOCKED"));
     assert_eq!(last.detail, "violations=2");
 }
 
@@ -807,13 +807,22 @@ fn sqlite_combined_dependency_and_usage_violations_both_reported() {
         content: "fn connect() { let _ = sqlite3::open(\"test.db\"); }".to_string(),
     }];
     let report = evaluate_guard(&manifests, &sources, &[]);
-    assert!(report.violations.len() >= 2, "should have both dependency and usage violations");
     assert!(
-        report.violations.iter().any(|v| v.error_code == "FE-SQLITE-DEPENDENCY-FORBIDDEN"),
+        report.violations.len() >= 2,
+        "should have both dependency and usage violations"
+    );
+    assert!(
+        report
+            .violations
+            .iter()
+            .any(|v| v.error_code == "FE-SQLITE-DEPENDENCY-FORBIDDEN"),
         "should have a dependency violation"
     );
     assert!(
-        report.violations.iter().any(|v| v.error_code == "FE-SQLITE-USAGE-FORBIDDEN"),
+        report
+            .violations
+            .iter()
+            .any(|v| v.error_code == "FE-SQLITE-USAGE-FORBIDDEN"),
         "should have a usage violation"
     );
 }
@@ -872,6 +881,7 @@ fn sqlite_policy_guard_event_serde_roundtrip() {
         ..event
     };
     let pass_json = serde_json::to_string(&pass_event).expect("serialize pass event");
-    let pass_recovered: serde_json::Value = serde_json::from_str(&pass_json).expect("parse pass json");
+    let pass_recovered: serde_json::Value =
+        serde_json::from_str(&pass_json).expect("parse pass json");
     assert!(pass_recovered["error_code"].is_null());
 }

@@ -692,7 +692,8 @@ fn rgc_057_vectors_path_types_match_expected_outcome_pattern() {
         }
         // Verify all minimal_repro_pointer values start with a path-like prefix
         assert!(
-            vector.minimal_repro_pointer.contains('/') || vector.minimal_repro_pointer.contains('.'),
+            vector.minimal_repro_pointer.contains('/')
+                || vector.minimal_repro_pointer.contains('.'),
             "minimal_repro_pointer for {} should look like a path: {}",
             vector.scenario_id,
             vector.minimal_repro_pointer

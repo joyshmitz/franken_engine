@@ -338,7 +338,10 @@ fn adoption_contract_serde_roundtrip_preserves_all_top_level_keys() {
         .keys()
         .map(String::as_str)
         .collect();
-    assert_eq!(orig_keys, rt_keys, "serde roundtrip must preserve all top-level keys");
+    assert_eq!(
+        orig_keys, rt_keys,
+        "serde roundtrip must preserve all top-level keys"
+    );
     assert_eq!(value, roundtripped, "serde roundtrip must be lossless");
 }
 
@@ -368,11 +371,15 @@ fn adoption_charter_interface_contracts_section_references_known_lanes() {
     let doc = fs::read_to_string(&path).expect("read charter doc");
 
     // Interface Contracts section should cross-reference at least one other lane
-    let interface_idx = doc.find("## Interface Contracts").expect("section must exist");
+    let interface_idx = doc
+        .find("## Interface Contracts")
+        .expect("section must exist");
     let interface_section = &doc[interface_idx..];
     assert!(
-        interface_section.contains("Compiler") || interface_section.contains("Verification")
-            || interface_section.contains("Toolchain") || interface_section.contains("Optimization"),
+        interface_section.contains("Compiler")
+            || interface_section.contains("Verification")
+            || interface_section.contains("Toolchain")
+            || interface_section.contains("Optimization"),
         "Interface Contracts section must reference at least one peer lane"
     );
 }
@@ -394,7 +401,10 @@ fn adoption_contract_stages_are_ordered_alpha_beta_ga() {
     let beta_pos = stages.iter().position(|&s| s == "beta");
     let ga_pos = stages.iter().position(|&s| s == "ga");
 
-    assert!(alpha_pos < beta_pos, "alpha must precede beta in stage order");
+    assert!(
+        alpha_pos < beta_pos,
+        "alpha must precede beta in stage order"
+    );
     assert!(beta_pos < ga_pos, "beta must precede ga in stage order");
 }
 

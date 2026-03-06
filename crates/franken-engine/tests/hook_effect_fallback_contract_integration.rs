@@ -507,10 +507,7 @@ fn diagnostic_for_different_components_produces_different_ids() {
 
 #[test]
 fn adding_slots_triggers_topology_drift_violation() {
-    let prev = HookManifest::new(
-        "Grow",
-        vec![make_slot(0, HookKind::State)],
-    );
+    let prev = HookManifest::new("Grow", vec![make_slot(0, HookKind::State)]);
     let curr = HookManifest::new(
         "Grow",
         vec![
@@ -532,10 +529,7 @@ fn adding_slots_triggers_topology_drift_violation() {
 fn hook_manifest_serde_roundtrip() {
     let manifest = HookManifest::new(
         "SerdeTest",
-        vec![
-            make_slot(0, HookKind::State),
-            make_slot(1, HookKind::Memo),
-        ],
+        vec![make_slot(0, HookKind::State), make_slot(1, HookKind::Memo)],
     );
     let json = serde_json::to_string(&manifest).expect("serialize");
     let recovered: HookManifest = serde_json::from_str(&json).expect("deserialize");

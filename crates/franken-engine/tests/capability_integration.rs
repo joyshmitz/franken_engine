@@ -468,10 +468,22 @@ fn require_all_partial_denial_reports_exact_missing_caps() {
     )
     .unwrap_err();
     assert_eq!(denials.len(), 2);
-    assert!(denials.iter().any(|d| d.required == RuntimeCapability::PolicyWrite));
-    assert!(denials.iter().any(|d| d.required == RuntimeCapability::NetworkEgress));
+    assert!(
+        denials
+            .iter()
+            .any(|d| d.required == RuntimeCapability::PolicyWrite)
+    );
+    assert!(
+        denials
+            .iter()
+            .any(|d| d.required == RuntimeCapability::NetworkEgress)
+    );
     assert!(denials.iter().all(|d| d.component == "partial-test"));
-    assert!(denials.iter().all(|d| d.held_profile == ProfileKind::EngineCore));
+    assert!(
+        denials
+            .iter()
+            .all(|d| d.held_profile == ProfileKind::EngineCore)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -513,5 +525,8 @@ fn runtime_capability_ord_is_deterministic() {
     let set2: BTreeSet<RuntimeCapability> = caps.iter().rev().copied().collect();
     let v1: Vec<RuntimeCapability> = set1.into_iter().collect();
     let v2: Vec<RuntimeCapability> = set2.into_iter().collect();
-    assert_eq!(v1, v2, "BTreeSet ordering must be independent of insertion order");
+    assert_eq!(
+        v1, v2,
+        "BTreeSet ordering must be independent of insertion order"
+    );
 }

@@ -601,8 +601,7 @@ fn attestation_fallback_decision_serde_round_trip_execute() {
         warning: Some("test warning".to_string()),
     };
     let json = serde_json::to_string(&decision).expect("serialize");
-    let recovered: AttestationFallbackDecision =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: AttestationFallbackDecision = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(decision, recovered);
 }
 
@@ -616,8 +615,7 @@ fn attestation_fallback_decision_serde_round_trip_deferred() {
         sandbox_required: false,
     };
     let json = serde_json::to_string(&decision).expect("serialize");
-    let recovered: AttestationFallbackDecision =
-        serde_json::from_str(&json).expect("deserialize");
+    let recovered: AttestationFallbackDecision = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(decision, recovered);
 }
 

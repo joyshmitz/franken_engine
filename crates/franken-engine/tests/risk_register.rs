@@ -572,10 +572,7 @@ fn risk_ids_start_with_r_prefix() {
 #[test]
 fn risk_register_has_no_duplicate_headings() {
     let register = read_risk_register();
-    let headings: Vec<&str> = register
-        .lines()
-        .filter(|l| l.starts_with("## "))
-        .collect();
+    let headings: Vec<&str> = register.lines().filter(|l| l.starts_with("## ")).collect();
     let unique: BTreeSet<&str> = headings.iter().copied().collect();
     assert_eq!(
         headings.len(),

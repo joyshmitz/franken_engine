@@ -720,7 +720,12 @@ fn shadow_evaluation_gate_config_default_has_positive_thresholds() {
     };
     assert!(config.regression_tolerance_millionths > 0);
     assert!(config.min_required_improvement_millionths > 0);
-    assert!(config.default_burn_in_profile.min_shadow_success_rate_millionths > 0);
+    assert!(
+        config
+            .default_burn_in_profile
+            .min_shadow_success_rate_millionths
+            > 0
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -737,13 +742,21 @@ fn shadow_gate_rejects_when_privacy_budget_exhausted() {
     let artifact = g
         .evaluate_candidate(
             &contract,
-            candidate("decision-budget-exceed", improved_metrics(), 10_000_000, 100_000),
+            candidate(
+                "decision-budget-exceed",
+                improved_metrics(),
+                10_000_000,
+                100_000,
+            ),
             &signing,
         )
         .expect("evaluation");
     assert_eq!(artifact.verdict, ShadowPromotionVerdict::Reject);
     assert!(
-        artifact.failure_reasons.iter().any(|r| r.contains("budget")),
+        artifact
+            .failure_reasons
+            .iter()
+            .any(|r| r.contains("budget")),
         "failure reasons should mention budget: {:?}",
         artifact.failure_reasons
     );

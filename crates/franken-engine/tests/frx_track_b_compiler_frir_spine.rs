@@ -362,7 +362,12 @@ fn track_b_frir_artifact_contract_is_deterministic_and_has_required_fields() {
         .expect("frir required_fields array");
     let field_set: std::collections::BTreeSet<&str> =
         fields.iter().filter_map(|v| v.as_str()).collect();
-    for required in ["frir_schema_version", "artifact_hash", "producer_track", "trace_id"] {
+    for required in [
+        "frir_schema_version",
+        "artifact_hash",
+        "producer_track",
+        "trace_id",
+    ] {
         assert!(
             field_set.contains(required),
             "FRIR artifact contract missing required field: {required}"
@@ -386,7 +391,13 @@ fn track_b_diagnostics_contract_is_deterministic_and_has_required_fields() {
         .expect("diagnostics required_fields array");
     let field_set: std::collections::BTreeSet<&str> =
         fields.iter().filter_map(|v| v.as_str()).collect();
-    for required in ["diagnostic_code", "severity", "component", "event", "outcome"] {
+    for required in [
+        "diagnostic_code",
+        "severity",
+        "component",
+        "event",
+        "outcome",
+    ] {
         assert!(
             field_set.contains(required),
             "diagnostics contract missing required field: {required}"

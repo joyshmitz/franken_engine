@@ -416,8 +416,9 @@ fn objective_function_hard_constraints_include_fail_closed() {
         "hard_constraints must include a fail-closed constraint"
     );
     assert!(
-        hc.iter()
-            .any(|c| c.as_str().is_some_and(|s| s.contains("deterministic_safe_mode"))),
+        hc.iter().any(|c| c
+            .as_str()
+            .is_some_and(|s| s.contains("deterministic_safe_mode"))),
         "hard_constraints must include deterministic safe mode constraint"
     );
 }

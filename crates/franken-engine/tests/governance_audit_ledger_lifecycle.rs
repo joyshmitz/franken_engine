@@ -519,10 +519,16 @@ fn chain_verification_passes_after_multiple_appends_and_checkpoints() {
             .expect("append");
     }
     assert_eq!(ledger.entries().len(), 6);
-    assert_eq!(ledger.checkpoints().len(), 3, "6 entries / interval 2 = 3 checkpoints");
+    assert_eq!(
+        ledger.checkpoints().len(),
+        3,
+        "6 entries / interval 2 = 3 checkpoints"
+    );
 
     // Full chain verification: hashes, signatures, and checkpoint signatures
-    ledger.verify_chain().expect("chain with 3 checkpoints should verify");
+    ledger
+        .verify_chain()
+        .expect("chain with 3 checkpoints should verify");
 
     // Each entry's previous_hash links to the prior entry
     for (idx, entry) in ledger.entries().iter().enumerate() {
@@ -644,8 +650,7 @@ fn governance_ledger_query_serde_roundtrip() {
     };
 
     let json = serde_json::to_string(&query).expect("serialize query");
-    let recovered: GovernanceLedgerQuery =
-        serde_json::from_str(&json).expect("deserialize query");
+    let recovered: GovernanceLedgerQuery = serde_json::from_str(&json).expect("deserialize query");
 
     assert_eq!(recovered.moonshot_id, query.moonshot_id);
     assert_eq!(recovered.decision_types, query.decision_types);

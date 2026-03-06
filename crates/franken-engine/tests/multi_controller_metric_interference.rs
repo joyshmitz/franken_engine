@@ -570,17 +570,17 @@ fn synthesis_config_with_custom_fields_serde_round_trip() {
     assert_eq!(config, recovered);
     assert_eq!(recovered.budget_ns, 42);
     assert_eq!(recovered.max_minimization_rounds, 7);
-    assert_eq!(
-        recovered.preferred_strategy,
-        SynthesisStrategy::TimeBounded
-    );
+    assert_eq!(recovered.preferred_strategy, SynthesisStrategy::TimeBounded);
     assert!(!recovered.detect_controller_interference);
 }
 
 #[test]
 fn metric_value_stream_zero_iterations_returns_empty() {
     let stream = metric_value_stream(0);
-    assert!(stream.is_empty(), "zero iterations should produce empty stream");
+    assert!(
+        stream.is_empty(),
+        "zero iterations should produce empty stream"
+    );
 }
 
 // ────────────────────────────────────────────────────────────
@@ -636,7 +636,10 @@ fn controller_interference_event_serde_round_trip() {
     let json = serde_json::to_string(&event).expect("serialize");
     let recovered: ControllerInterferenceEvent = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(event, recovered);
-    assert_eq!(recovered.error_code.as_deref(), Some("FE-CX-INTERFERENCE-TIMESCALE"));
+    assert_eq!(
+        recovered.error_code.as_deref(),
+        Some("FE-CX-INTERFERENCE-TIMESCALE")
+    );
 }
 
 #[test]
