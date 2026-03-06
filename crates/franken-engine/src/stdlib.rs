@@ -1605,7 +1605,8 @@ pub fn json_stringify(value: &JsValue) -> Result<JsValue, StdlibError> {
                 let frac_abs = frac.abs();
                 let frac_str = format!("{frac_abs:06}");
                 let trimmed = frac_str.trim_end_matches('0');
-                Ok(JsValue::Str(format!("{units}.{trimmed}")))
+                let sign = if *n < 0 && units == 0 { "-" } else { "" };
+                Ok(JsValue::Str(format!("{sign}{units}.{trimmed}")))
             }
         }
         JsValue::Str(s) => Ok(JsValue::Str(format!("\"{}\"", escape_json_string(s)))),
@@ -3321,6 +3322,14 @@ mod tests {
         assert_eq!(
             json_stringify(&JsValue::Str("line\nnewline".into())).unwrap(),
             JsValue::Str("\"line\\nnewline\"".into())
+        );
+    }
+
+    #[test]
+    fn test_json_stringify_negative_fractional_number() {
+        assert_eq!(
+            json_stringify(&JsValue::Int(-(FP_SCALE / 2))).unwrap(),
+            JsValue::Str("-0.5".into())
         );
     }
 

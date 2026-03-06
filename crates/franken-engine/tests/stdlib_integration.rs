@@ -1599,6 +1599,12 @@ fn json_stringify_negative_number() {
 }
 
 #[test]
+fn json_stringify_negative_fractional_number() {
+    let result = json_stringify(&JsValue::Int(-(FP_SCALE / 2))).unwrap();
+    assert_eq!(result, JsValue::Str("-0.5".into()));
+}
+
+#[test]
 fn json_stringify_string() {
     let result = json_stringify(&JsValue::Str("hello".into())).unwrap();
     assert_eq!(result, JsValue::Str("\"hello\"".into()));
