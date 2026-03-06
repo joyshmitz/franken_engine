@@ -1,15 +1,19 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
+
 use frankenengine_engine::module_compatibility_matrix::CompatibilityScenarioReport;
 use frankenengine_engine::runtime_diagnostics_cli::{
     CompatibilityAdvisoryInput, CompatibilityAdvisoryOutput, EvidenceExportFilter,
+    GaEvidenceArtifactCategory, GaEvidenceArtifactLink, GaEvidencePackageInput,
     OnboardingScorecardInput, OnboardingScorecardSignal, RolloutDecisionArtifactInput,
-    RuntimeDiagnosticsCliInput, SupportBundleOutput, SupportBundleRedactionPolicy,
-    build_compatibility_advisories, build_onboarding_scorecard, build_rollout_decision_artifact,
-    collect_runtime_diagnostics, export_evidence_bundle, export_support_bundle,
-    parse_decision_type, parse_evidence_severity, render_compatibility_advisory_summary,
-    render_diagnostics_summary, render_evidence_summary, render_onboarding_scorecard_summary,
+    RuntimeDiagnosticsCliInput, SupportBundleFile, SupportBundleOutput,
+    SupportBundleRedactionPolicy, build_compatibility_advisories, build_ga_evidence_package,
+    build_onboarding_scorecard, build_rollout_decision_artifact, collect_runtime_diagnostics,
+    export_evidence_bundle, export_support_bundle, parse_decision_type, parse_evidence_severity,
+    render_compatibility_advisory_summary, render_diagnostics_summary, render_evidence_summary,
+    render_ga_evidence_package_summary, render_onboarding_scorecard_summary,
     render_preflight_summary, render_rollout_decision_artifact_summary,
     render_support_bundle_summary, run_preflight_doctor,
 };
@@ -34,6 +38,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "compatibility-advisories" => run_compatibility_advisories(&args[1..]),
         "onboarding-scorecard" => run_onboarding_scorecard(&args[1..]),
         "rollout-decision-artifact" => run_rollout_decision_artifact(&args[1..]),
+        "ga-evidence-package" => run_ga_evidence_package(&args[1..]),
         "help" | "--help" | "-h" => {
             println!("{}", usage());
             Ok(())
@@ -65,6 +70,16 @@ fn usage() -> String {
         "  runtime_diagnostics rollout-decision-artifact --input <path> [--summary] [--out-dir <path>]",
         "      [--workload-id <id>] [--package-name <name>] [--target-platform <value>]...",
         "      [--signals <signals_json_path>] [--advisories <signals_json_path>] [--platform-signals <signals_json_path>]",
+        "      [--extension-id <id>] [--trace-id <id>] [--start-ns <u64>] [--end-ns <u64>]",
+        "      [--severity info|warning|critical] [--decision-type <snake_case_decision_type>]",
+        "      [--redact-key <key_fragment>]...",
+        "  runtime_diagnostics ga-evidence-package --input <path> [--summary] [--out-dir <path>]",
+        "      --release-candidate <id> [--workload-id <id>] [--package-name <name>] [--target-platform <value>]...",
+        "      [--signals <signals_json_path>] [--advisories <signals_json_path>] [--platform-signals <signals_json_path>]",
+        "      [--conformance-artifact <path>[::description]]...",
+        "      [--performance-artifact <path>[::description]]...",
+        "      [--security-artifact <path>[::description]]...",
+        "      [--third-party-replay-command <command>]...",
         "      [--extension-id <id>] [--trace-id <id>] [--start-ns <u64>] [--end-ns <u64>]",
         "      [--severity info|warning|critical] [--decision-type <snake_case_decision_type>]",
         "      [--redact-key <key_fragment>]...",
@@ -978,25 +993,292 @@ fn run_rollout_decision_artifact(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn write_support_bundle_files(output: &SupportBundleOutput, out_dir: &Path) -> Result<(), String> {
-    for file in &output.files {
+fn run_ga_evidence_package(args: &[String]) -> Result<(), String> {
+    let mut input_path: Option<&str> = None;
+    let mut summary = false;
+    let mut out_dir = None::<PathBuf>;
+    let mut workload_id = None::<String>;
+    let mut package_name = None::<String>;
+    let mut target_platforms = Vec::<String>::new();
+    let mut signals_path = None::<String>;
+    let mut advisories_path = None::<String>;
+    let mut platform_signals_path = None::<String>;
+    let mut release_candidate_id = None::<String>;
+    let mut external_evidence_links = Vec::<GaEvidenceArtifactLink>::new();
+    let mut third_party_replay_commands = Vec::<String>::new();
+    let mut filter = EvidenceExportFilter::default();
+    let mut redact_keys = Vec::<String>::new();
+
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--input" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--input requires a path".to_string())?;
+                input_path = Some(value);
+            }
+            "--summary" => summary = true,
+            "--out-dir" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--out-dir requires a value".to_string())?;
+                out_dir = Some(PathBuf::from(value));
+            }
+            "--release-candidate" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--release-candidate requires a value".to_string())?;
+                release_candidate_id = Some(value.to_string());
+            }
+            "--workload-id" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--workload-id requires a value".to_string())?;
+                workload_id = Some(value.to_string());
+            }
+            "--package-name" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--package-name requires a value".to_string())?;
+                package_name = Some(value.to_string());
+            }
+            "--target-platform" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--target-platform requires a value".to_string())?;
+                target_platforms.push(value.to_string());
+            }
+            "--signals" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--signals requires a value".to_string())?;
+                signals_path = Some(value.to_string());
+            }
+            "--advisories" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--advisories requires a value".to_string())?;
+                advisories_path = Some(value.to_string());
+            }
+            "--platform-signals" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--platform-signals requires a value".to_string())?;
+                platform_signals_path = Some(value.to_string());
+            }
+            "--conformance-artifact" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--conformance-artifact requires a value".to_string())?;
+                external_evidence_links.push(parse_ga_artifact_link(
+                    "--conformance-artifact",
+                    GaEvidenceArtifactCategory::Conformance,
+                    value,
+                )?);
+            }
+            "--performance-artifact" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--performance-artifact requires a value".to_string())?;
+                external_evidence_links.push(parse_ga_artifact_link(
+                    "--performance-artifact",
+                    GaEvidenceArtifactCategory::Performance,
+                    value,
+                )?);
+            }
+            "--security-artifact" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--security-artifact requires a value".to_string())?;
+                external_evidence_links.push(parse_ga_artifact_link(
+                    "--security-artifact",
+                    GaEvidenceArtifactCategory::Security,
+                    value,
+                )?);
+            }
+            "--third-party-replay-command" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--third-party-replay-command requires a value".to_string())?;
+                third_party_replay_commands.push(value.to_string());
+            }
+            "--extension-id" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--extension-id requires a value".to_string())?;
+                filter.extension_id = Some(value.clone());
+            }
+            "--trace-id" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--trace-id requires a value".to_string())?;
+                filter.trace_id = Some(value.clone());
+            }
+            "--start-ns" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--start-ns requires a value".to_string())?;
+                filter.start_timestamp_ns = Some(parse_u64_flag("--start-ns", value)?);
+            }
+            "--end-ns" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--end-ns requires a value".to_string())?;
+                filter.end_timestamp_ns = Some(parse_u64_flag("--end-ns", value)?);
+            }
+            "--severity" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--severity requires a value".to_string())?;
+                filter.severity = Some(parse_evidence_severity(value).ok_or_else(|| {
+                    format!("invalid --severity '{value}' (expected info|warning|critical)")
+                })?);
+            }
+            "--decision-type" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--decision-type requires a value".to_string())?;
+                filter.decision_type = Some(
+                    parse_decision_type(value)
+                        .ok_or_else(|| format!("invalid --decision-type '{value}'"))?,
+                );
+            }
+            "--redact-key" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "--redact-key requires a value".to_string())?;
+                redact_keys.push(value.to_string());
+            }
+            flag => return Err(format!("unknown flag for ga-evidence-package: {flag}")),
+        }
+        index += 1;
+    }
+
+    let path = input_path.ok_or_else(|| "missing required --input <path>".to_string())?;
+    let input = load_input(path)?;
+    let redaction_policy = if redact_keys.is_empty() {
+        SupportBundleRedactionPolicy::default()
+    } else {
+        SupportBundleRedactionPolicy::with_additional_fragments(redact_keys)
+    };
+    let preflight = run_preflight_doctor(&input, filter, redaction_policy);
+
+    let external_signals = match signals_path {
+        Some(path) => load_onboarding_signals(path.as_str())?,
+        None => Vec::new(),
+    };
+    let compatibility_advisories = match advisories_path {
+        Some(path) => load_onboarding_signals(path.as_str())?,
+        None => Vec::new(),
+    };
+    let platform_matrix_signals = match platform_signals_path {
+        Some(path) => load_onboarding_signals(path.as_str())?,
+        None => Vec::new(),
+    };
+
+    let workload_id = workload_id.unwrap_or_else(|| input.trace_id.clone());
+    let package_name = package_name.unwrap_or_else(|| workload_id.clone());
+    let scorecard = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id,
+        package_name,
+        target_platforms,
+        preflight: preflight.clone(),
+        external_signals,
+    });
+    let artifact = build_rollout_decision_artifact(&RolloutDecisionArtifactInput {
+        onboarding_scorecard: scorecard.clone(),
+        compatibility_advisories,
+        platform_matrix_signals,
+    });
+    let output = build_ga_evidence_package(&GaEvidencePackageInput {
+        release_candidate_id: release_candidate_id.unwrap_or_default(),
+        support_bundle: preflight.support_bundle.clone(),
+        onboarding_scorecard: scorecard.clone(),
+        rollout_decision_artifact: artifact.clone(),
+        external_evidence_links,
+        third_party_replay_commands,
+    });
+
+    if let Some(out_dir) = out_dir {
+        write_support_bundle_files(&preflight.support_bundle, &out_dir)?;
+        write_json_file(
+            &out_dir,
+            "support_bundle/preflight_report.json",
+            &preflight,
+            "preflight report",
+        )?;
+        write_json_file(
+            &out_dir,
+            "support_bundle/onboarding_scorecard.json",
+            &scorecard,
+            "onboarding scorecard",
+        )?;
+        write_json_file(
+            &out_dir,
+            "support_bundle/rollout_decision_artifact.json",
+            &artifact,
+            "rollout decision artifact",
+        )?;
+        write_materialized_files(&output.files, &out_dir)?;
+    }
+
+    if summary {
+        println!("{}", render_ga_evidence_package_summary(&output));
+    } else {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output)
+                .map_err(|error| format!("failed to encode ga evidence package output: {error}"))?
+        );
+    }
+
+    Ok(())
+}
+
+fn write_materialized_files(files: &[SupportBundleFile], out_dir: &Path) -> Result<(), String> {
+    for file in files {
         let destination = out_dir.join(&file.path);
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent).map_err(|error| {
                 format!(
-                    "failed to create support bundle directory '{}': {error}",
+                    "failed to create output directory '{}': {error}",
                     parent.display()
                 )
             })?;
         }
         fs::write(&destination, file.content.as_bytes()).map_err(|error| {
             format!(
-                "failed to write support bundle file '{}': {error}",
+                "failed to write output file '{}': {error}",
                 destination.display()
             )
         })?;
     }
     Ok(())
+}
+
+fn write_support_bundle_files(output: &SupportBundleOutput, out_dir: &Path) -> Result<(), String> {
+    write_materialized_files(&output.files, out_dir)
 }
 
 fn parse_u64_flag(flag: &str, value: &str) -> Result<u64, String> {
@@ -1031,6 +1313,67 @@ fn load_onboarding_signals(path: &str) -> Result<Vec<OnboardingScorecardSignal>,
     Err(format!(
         "failed to parse signal file '{path}' as JSON array or compatibility advisory bundle"
     ))
+}
+
+fn parse_ga_artifact_link(
+    flag: &str,
+    category: GaEvidenceArtifactCategory,
+    value: &str,
+) -> Result<GaEvidenceArtifactLink, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(format!(
+            "{flag} requires <path> or <path>::<description>, got empty value"
+        ));
+    }
+
+    let (path, description) = match trimmed.split_once("::") {
+        Some((path, description)) => (path.trim(), description.trim()),
+        None => (trimmed, ""),
+    };
+    if path.is_empty() {
+        return Err(format!(
+            "{flag} requires a non-empty path before optional ::description"
+        ));
+    }
+
+    let description = if description.is_empty() {
+        format!("{category} evidence artifact")
+    } else {
+        description.to_string()
+    };
+
+    Ok(GaEvidenceArtifactLink {
+        category,
+        path: path.to_string(),
+        description,
+    })
+}
+
+fn write_json_file<T: Serialize>(
+    out_dir: &Path,
+    relative_path: &str,
+    value: &T,
+    label: &str,
+) -> Result<(), String> {
+    let destination = out_dir.join(relative_path);
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create {label} directory '{}': {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let encoded = serde_json::to_vec_pretty(value)
+        .map_err(|error| format!("failed to encode {label}: {error}"))?;
+    fs::write(&destination, encoded).map_err(|error| {
+        format!(
+            "failed to write {label} '{}': {error}",
+            destination.display()
+        )
+    })
 }
 
 #[cfg(test)]

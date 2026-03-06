@@ -2648,7 +2648,7 @@ mod tests {
         let result = compiler.compile(&policy).unwrap();
 
         let scxs = synth.synthesize(&result, 1000).unwrap();
-        assert!(scxs.len() >= 1);
+        assert!(!scxs.is_empty());
 
         // Resolve the first counterexample.
         let first_id = scxs[0].conflict_id.clone();

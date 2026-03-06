@@ -1474,14 +1474,14 @@ mod tests {
     #[test]
     fn enrichment_clone_eq_closure_handle() {
         let a = ClosureHandle(99);
-        let b = a.clone();
+        let b = a;
         assert_eq!(a, b);
     }
 
     #[test]
     fn enrichment_clone_eq_environment_handle() {
         let a = EnvironmentHandle(255);
-        let b = a.clone();
+        let b = a;
         assert_eq!(a, b);
     }
 

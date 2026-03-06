@@ -878,7 +878,6 @@ mod tests {
     fn full_profile_is_not_empty() {
         let full = CapabilityProfile::full();
         assert!(!full.is_empty());
-        assert!(full.len() > 0);
     }
 
     #[test]

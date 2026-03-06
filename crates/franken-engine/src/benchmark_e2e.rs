@@ -2055,12 +2055,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(env_manifest["schema_version"], BENCHMARK_ENV_SCHEMA_VERSION);
-        assert_eq!(
+        assert!(
             env_manifest["runtime_pins"]["franken_engine"]
                 .as_str()
                 .unwrap()
-                .starts_with("franken-engine-"),
-            true
+                .starts_with("franken-engine-")
         );
         assert_eq!(env_manifest["fairness_policy"]["warmup_runs"], 2);
         assert_eq!(env_manifest["fairness_policy"]["sample_count"], 7);

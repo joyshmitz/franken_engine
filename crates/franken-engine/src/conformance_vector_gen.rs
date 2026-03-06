@@ -1852,7 +1852,7 @@ mod tests {
             VectorCategory::Fault,
         ];
         for v in &variants {
-            let cloned = v.clone();
+            let cloned = *v;
             assert_eq!(*v, cloned);
         }
     }
@@ -2005,7 +2005,7 @@ mod tests {
         assert!(val.get("seed").is_some());
         assert!(val.get("expected_pass").is_some());
         assert!(val.get("degraded_scenario").is_some());
-        assert_eq!(val["expected_pass"].as_bool().unwrap(), false);
+        assert!(!val["expected_pass"].as_bool().unwrap());
     }
 
     #[test]
@@ -2107,7 +2107,7 @@ mod tests {
         let json = serde_json::to_string(&r).unwrap();
         let val: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(val["property_id"].as_str().unwrap(), "ordering-determinism");
-        assert_eq!(val["passed"].as_bool().unwrap(), true);
+        assert!(val["passed"].as_bool().unwrap());
         assert_eq!(val["detail"].as_str().unwrap(), "ok");
     }
 

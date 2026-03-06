@@ -107,7 +107,7 @@ impl LikelihoodRatioFn for UniversalLikelihoodRatio {
         }
         // ratio = observation / null_mean, in millionths
         let r = (observation_millionths as i128 * 1_000_000) / self.null_mean_millionths as i128;
-        Some(r as i64)
+        Some(r.try_into().unwrap_or(if r > 0 { i64::MAX } else { i64::MIN }))
     }
 
     fn family(&self) -> &str {
@@ -356,7 +356,7 @@ impl EProcessGuardrail {
         let product = self.e_value_millionths as i128 * lr as i128;
         let new_val = product / 1_000_000;
 
-        if new_val > i64::MAX as i128 {
+        if new_val > i64::MAX as i128 || new_val < i64::MIN as i128 {
             return Err(GuardrailError::EValueOverflow {
                 guardrail_id: self.guardrail_id.clone(),
             });

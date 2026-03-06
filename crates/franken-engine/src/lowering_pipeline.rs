@@ -1660,12 +1660,26 @@ pub fn lower_ir1_to_ir2(
 pub fn lower_ir2_to_ir3(
     ir2: &Ir2Module,
 ) -> Result<LoweringPassResult<Ir3Module>, LoweringPipelineError> {
+    enum PendingJump {
+        Unconditional {
+            instruction_index: usize,
+            label_id: u32,
+        },
+        JumpIfFalsy {
+            truthy_skip_index: usize,
+            falsy_jump_index: usize,
+            label_id: u32,
+        },
+    }
+
     let ir2_hash = ir2.content_hash();
     let mut ir3 = Ir3Module::new(ir2_hash.clone(), ir2.header.source_label.clone());
     let mut register_cursor: Reg = 0;
     let mut binding_registers = BTreeMap::<BindingId, Reg>::new();
     let mut required_capabilities = BTreeSet::<String>::new();
     let mut last_value_register: Option<Reg> = None;
+    let mut label_targets = BTreeMap::<u32, u32>::new();
+    let mut pending_jumps = Vec::<PendingJump>::new();
 
     for op in &ir2.ops {
         if matches!(op.effect, EffectBoundary::HostcallEffect) {
@@ -1766,7 +1780,7 @@ pub fn lower_ir2_to_ir3(
                 let value = last_value_register.unwrap_or(0);
                 ir3.instructions.push(Ir3Instruction::Return { value });
             }
-            Ir1Op::Nop | Ir1Op::Pop | Ir1Op::EndTry => {
+            Ir1Op::Nop | Ir1Op::Pop | Ir1Op::BeginTry { .. } | Ir1Op::EndTry => {
                 let register =
                     last_value_register.unwrap_or_else(|| alloc_register(&mut register_cursor));
                 ir3.instructions.push(Ir3Instruction::Move {
@@ -1805,24 +1819,38 @@ pub fn lower_ir2_to_ir3(
                 ir3.instructions.push(Ir3Instruction::Move { dst, src });
                 last_value_register = Some(dst);
             }
-            Ir1Op::Label { .. } => {
-                // Labels are resolved below; emit a no-op placeholder.
-                let register =
-                    last_value_register.unwrap_or_else(|| alloc_register(&mut register_cursor));
-                ir3.instructions.push(Ir3Instruction::Move {
-                    dst: register,
-                    src: register,
+            Ir1Op::Label { id } => {
+                let target = u32::try_from(ir3.instructions.len()).map_err(|_| {
+                    LoweringPipelineError::InvariantViolation {
+                        detail: "IR3 instruction stream exceeds addressable size",
+                    }
+                })?;
+                if label_targets.insert(*id, target).is_some() {
+                    return Err(LoweringPipelineError::InvariantViolation {
+                        detail: "IR2 contains duplicate label ids",
+                    });
+                }
+            }
+            Ir1Op::Jump { label_id } => {
+                let instruction_index = ir3.instructions.len();
+                ir3.instructions.push(Ir3Instruction::Jump { target: 0 });
+                pending_jumps.push(PendingJump::Unconditional {
+                    instruction_index,
+                    label_id: *label_id,
                 });
             }
-            Ir1Op::Jump { .. } | Ir1Op::JumpIfFalsy { .. } | Ir1Op::BeginTry { .. } => {
-                // Jump targets are label IDs; emit Jump with placeholder target.
+            Ir1Op::JumpIfFalsy { label_id } => {
                 let cond = last_value_register.unwrap_or(0);
+                let truthy_skip_index = ir3.instructions.len();
+                ir3.instructions
+                    .push(Ir3Instruction::JumpIf { cond, target: 0 });
+                let falsy_jump_index = ir3.instructions.len();
                 ir3.instructions.push(Ir3Instruction::Jump { target: 0 });
-                if matches!(op.inner, Ir1Op::JumpIfFalsy { .. }) {
-                    // Replace with conditional jump.
-                    let idx = ir3.instructions.len() - 1;
-                    ir3.instructions[idx] = Ir3Instruction::JumpIf { cond, target: 0 };
-                }
+                pending_jumps.push(PendingJump::JumpIfFalsy {
+                    truthy_skip_index,
+                    falsy_jump_index,
+                    label_id: *label_id,
+                });
                 last_value_register = Some(cond);
             }
             Ir1Op::GetProperty { key } => {
@@ -1894,6 +1922,53 @@ pub fn lower_ir2_to_ir3(
         }
     }
 
+    for pending_jump in pending_jumps {
+        match pending_jump {
+            PendingJump::Unconditional {
+                instruction_index,
+                label_id,
+            } => {
+                let target = *label_targets.get(&label_id).ok_or(
+                    LoweringPipelineError::InvariantViolation {
+                        detail: "lowered control-flow references missing label",
+                    },
+                )?;
+                ir3.instructions[instruction_index] = Ir3Instruction::Jump { target };
+            }
+            PendingJump::JumpIfFalsy {
+                truthy_skip_index,
+                falsy_jump_index,
+                label_id,
+            } => {
+                let falsy_target = *label_targets.get(&label_id).ok_or(
+                    LoweringPipelineError::InvariantViolation {
+                        detail: "lowered control-flow references missing label",
+                    },
+                )?;
+                let truthy_target = u32::try_from(falsy_jump_index + 1).map_err(|_| {
+                    LoweringPipelineError::InvariantViolation {
+                        detail: "IR3 instruction stream exceeds addressable size",
+                    }
+                })?;
+                let cond = match ir3.instructions[truthy_skip_index] {
+                    Ir3Instruction::JumpIf { cond, .. } => cond,
+                    _ => {
+                        return Err(LoweringPipelineError::InvariantViolation {
+                            detail: "conditional lowering emitted unexpected instruction shape",
+                        });
+                    }
+                };
+                ir3.instructions[truthy_skip_index] = Ir3Instruction::JumpIf {
+                    cond,
+                    target: truthy_target,
+                };
+                ir3.instructions[falsy_jump_index] = Ir3Instruction::Jump {
+                    target: falsy_target,
+                };
+            }
+        }
+    }
+
     if !matches!(ir3.instructions.last(), Some(Ir3Instruction::Halt)) {
         ir3.instructions.push(Ir3Instruction::Halt);
     }
@@ -1913,6 +1988,16 @@ pub fn lower_ir2_to_ir3(
     let source_hash_matches = ir3.header.source_hash.as_ref() == Some(&ir2_hash);
     let has_main_function = !ir3.function_table.is_empty();
     let has_terminal_halt = matches!(ir3.instructions.last(), Some(Ir3Instruction::Halt));
+    let instruction_len = ir3.instructions.len();
+    let control_flow_targets_resolved =
+        ir3.instructions
+            .iter()
+            .all(|instruction| match instruction {
+                Ir3Instruction::Jump { target } | Ir3Instruction::JumpIf { target, .. } => {
+                    (*target as usize) < instruction_len
+                }
+                _ => true,
+            });
     let checks = vec![
         InvariantCheck {
             name: "source_hash_linkage".to_string(),
@@ -1928,6 +2013,11 @@ pub fn lower_ir2_to_ir3(
             name: "terminal_halt_instruction".to_string(),
             passed: has_terminal_halt,
             detail: "IR3 instruction stream ends with HALT".to_string(),
+        },
+        InvariantCheck {
+            name: "resolved_control_flow_targets".to_string(),
+            passed: control_flow_targets_resolved,
+            detail: "IR3 jump targets resolve to concrete instruction indices".to_string(),
         },
     ];
     ensure_checks_pass(&checks, "IR3 invariants failed")?;
@@ -3053,6 +3143,153 @@ mod tests {
                 .invariant_checks
                 .iter()
                 .all(|check| check.passed)
+        );
+    }
+
+    #[test]
+    fn lower_ir2_to_ir3_resolves_jump_if_falsy_targets() {
+        let mut ir2 = Ir2Module::new(ContentHash::compute(b"jump-if-falsy"), "jump_if_falsy.js");
+        ir2.ops.push(Ir2Op {
+            inner: Ir1Op::LoadLiteral {
+                value: Ir1Literal::Boolean(false),
+            },
+            effect: EffectBoundary::Pure,
+            required_capability: None,
+            flow: None,
+        });
+        ir2.ops.push(Ir2Op {
+            inner: Ir1Op::JumpIfFalsy { label_id: 7 },
+            effect: EffectBoundary::Pure,
+            required_capability: None,
+            flow: None,
+        });
+        ir2.ops.push(Ir2Op {
+            inner: Ir1Op::LoadLiteral {
+                value: Ir1Literal::Integer(1),
+            },
+            effect: EffectBoundary::Pure,
+            required_capability: None,
+            flow: None,
+        });
+        ir2.ops.push(Ir2Op {
+            inner: Ir1Op::Return,
+            effect: EffectBoundary::Pure,
+            required_capability: None,
+            flow: None,
+        });
+        ir2.ops.push(Ir2Op {
+            inner: Ir1Op::Label { id: 7 },
+            effect: EffectBoundary::Pure,
+            required_capability: None,
+            flow: None,
+        });
+        ir2.ops.push(Ir2Op {
+            inner: Ir1Op::LoadLiteral {
+                value: Ir1Literal::Integer(2),
+            },
+            effect: EffectBoundary::Pure,
+            required_capability: None,
+            flow: None,
+        });
+        ir2.ops.push(Ir2Op {
+            inner: Ir1Op::Return,
+            effect: EffectBoundary::Pure,
+            required_capability: None,
+            flow: None,
+        });
+
+        let ir3 = lower_ir2_to_ir3(&ir2)
+            .expect("IR2->IR3 should resolve conditional control-flow")
+            .module;
+
+        assert!(matches!(
+            ir3.instructions.get(1),
+            Some(Ir3Instruction::JumpIf { cond: 0, target: 3 })
+        ));
+        assert!(matches!(
+            ir3.instructions.get(2),
+            Some(Ir3Instruction::Jump { target: 5 })
+        ));
+        assert!(
+            ir3.instructions
+                .iter()
+                .all(|instruction| match instruction {
+                    Ir3Instruction::Jump { target } | Ir3Instruction::JumpIf { target, .. } => {
+                        *target != 0
+                    }
+                    _ => true,
+                })
+        );
+    }
+
+    #[test]
+    fn lower_ir2_to_ir3_rejects_missing_jump_labels() {
+        let mut ir2 = Ir2Module::new(ContentHash::compute(b"missing-label"), "missing_label.js");
+        ir2.ops.push(Ir2Op {
+            inner: Ir1Op::Jump { label_id: 42 },
+            effect: EffectBoundary::Pure,
+            required_capability: None,
+            flow: None,
+        });
+
+        let err = lower_ir2_to_ir3(&ir2).expect_err("missing label should fail closed");
+        assert_eq!(
+            err,
+            LoweringPipelineError::InvariantViolation {
+                detail: "lowered control-flow references missing label",
+            }
+        );
+    }
+
+    #[test]
+    fn lower_ir2_to_ir3_treats_begin_try_as_noop_until_ir3_support_exists() {
+        let mut ir2 = Ir2Module::new(ContentHash::compute(b"begin-try"), "begin_try.js");
+        ir2.ops.push(Ir2Op {
+            inner: Ir1Op::BeginTry { catch_label: 9 },
+            effect: EffectBoundary::Pure,
+            required_capability: None,
+            flow: None,
+        });
+        ir2.ops.push(Ir2Op {
+            inner: Ir1Op::LoadLiteral {
+                value: Ir1Literal::Integer(9),
+            },
+            effect: EffectBoundary::Pure,
+            required_capability: None,
+            flow: None,
+        });
+        ir2.ops.push(Ir2Op {
+            inner: Ir1Op::EndTry,
+            effect: EffectBoundary::Pure,
+            required_capability: None,
+            flow: None,
+        });
+        ir2.ops.push(Ir2Op {
+            inner: Ir1Op::Return,
+            effect: EffectBoundary::Pure,
+            required_capability: None,
+            flow: None,
+        });
+
+        let ir3 = lower_ir2_to_ir3(&ir2)
+            .expect("IR2->IR3 should preserve linear execution for try placeholders")
+            .module;
+
+        assert!(matches!(
+            ir3.instructions.first(),
+            Some(Ir3Instruction::Move { dst: 0, src: 0 })
+        ));
+        assert_eq!(
+            ir3.instructions
+                .iter()
+                .filter(|instruction| {
+                    matches!(
+                        instruction,
+                        Ir3Instruction::Jump { .. } | Ir3Instruction::JumpIf { .. }
+                    )
+                })
+                .count(),
+            0
         );
     }
 

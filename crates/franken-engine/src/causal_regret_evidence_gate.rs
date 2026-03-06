@@ -953,8 +953,10 @@ mod tests {
 
     #[test]
     fn config_invalid_negative_per_round() {
-        let mut config = CausalRegretGateConfig::default();
-        config.max_per_round_regret_millionths = -1;
+        let config = CausalRegretGateConfig {
+            max_per_round_regret_millionths: -1,
+            ..Default::default()
+        };
         let err = CausalRegretEvidenceGate::with_config(config).unwrap_err();
         assert!(matches!(err, CausalRegretGateError::InvalidConfig { .. }));
     }

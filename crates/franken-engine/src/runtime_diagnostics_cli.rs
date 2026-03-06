@@ -30,6 +30,9 @@ const COMPATIBILITY_ADVISORY_SCHEMA_VERSION: &str =
 const ROLLOUT_DECISION_ARTIFACT_SCHEMA_VERSION: &str =
     "franken-engine.runtime-diagnostics.rollout-decision-artifact.v1";
 const ROLLOUT_DECISION_FAILURE_CODE: &str = "FE-RUNTIME-DIAGNOSTICS-ROLLOUT-0001";
+const GA_EVIDENCE_PACKAGE_SCHEMA_VERSION: &str =
+    "franken-engine.runtime-diagnostics.ga-evidence-package.v1";
+const GA_EVIDENCE_PACKAGE_FAILURE_CODE: &str = "FE-RUNTIME-DIAGNOSTICS-GA-0001";
 
 /// Stable log envelope required by plan acceptance criteria.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -795,6 +798,104 @@ pub struct RolloutDecisionArtifactOutput {
     pub merged_signals: Vec<OnboardingScorecardSignal>,
     pub evidence_links: Vec<String>,
     pub reproducible_commands: Vec<String>,
+    pub logs: Vec<StructuredLogEvent>,
+}
+
+/// Evidence category required by the GA evidence package.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GaEvidenceArtifactCategory {
+    Conformance,
+    Performance,
+    Security,
+}
+
+impl fmt::Display for GaEvidenceArtifactCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Conformance => f.write_str("conformance"),
+            Self::Performance => f.write_str("performance"),
+            Self::Security => f.write_str("security"),
+        }
+    }
+}
+
+/// External artifact link captured by the GA evidence package.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GaEvidenceArtifactLink {
+    pub category: GaEvidenceArtifactCategory,
+    pub path: String,
+    pub description: String,
+}
+
+/// Deterministic input surface for GA evidence-package assembly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GaEvidencePackageInput {
+    pub release_candidate_id: String,
+    pub support_bundle: SupportBundleOutput,
+    pub onboarding_scorecard: OnboardingScorecardOutput,
+    pub rollout_decision_artifact: RolloutDecisionArtifactOutput,
+    pub external_evidence_links: Vec<GaEvidenceArtifactLink>,
+    pub third_party_replay_commands: Vec<String>,
+}
+
+/// Fail-closed validation status for GA evidence-package consumption.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GaEvidencePackageMandatoryFieldStatus {
+    pub valid: bool,
+    pub missing_fields: Vec<String>,
+    pub inconsistent_fields: Vec<String>,
+}
+
+/// Consolidated rollout risk disposition embedded in the GA evidence package.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GaEvidenceRiskDisposition {
+    pub readiness: OnboardingReadinessClass,
+    pub recommendation: RolloutRecommendation,
+    pub remediation_effort: OnboardingRemediationEffort,
+    pub rationale: String,
+    pub critical_signals: u64,
+    pub warning_signals: u64,
+    pub info_signals: u64,
+    pub unresolved_signal_ids: Vec<String>,
+    pub next_steps: Vec<OnboardingRemediationStep>,
+}
+
+/// Machine-readable GA evidence package index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GaEvidencePackageIndex {
+    pub schema_version: String,
+    pub package_id: String,
+    pub release_candidate_id: String,
+    pub workload_id: String,
+    pub package_name: String,
+    pub target_platforms: Vec<String>,
+    pub trace_id: String,
+    pub decision_id: String,
+    pub policy_id: String,
+    pub support_bundle_id: String,
+    pub ga_gate_consumable: bool,
+    pub total_external_artifacts: usize,
+    pub files: Vec<SupportBundleFileIndexEntry>,
+    pub reproducible_commands: Vec<String>,
+}
+
+/// Deterministic GA evidence package output.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GaEvidencePackageOutput {
+    pub schema_version: String,
+    pub release_candidate_id: String,
+    pub workload_id: String,
+    pub package_name: String,
+    pub target_platforms: Vec<String>,
+    pub mandatory_field_status: GaEvidencePackageMandatoryFieldStatus,
+    pub ga_gate_consumable: bool,
+    pub support_bundle_id: String,
+    pub risk_disposition: GaEvidenceRiskDisposition,
+    pub external_evidence_links: Vec<GaEvidenceArtifactLink>,
+    pub reproducible_commands: Vec<String>,
+    pub index: GaEvidencePackageIndex,
+    pub files: Vec<SupportBundleFile>,
     pub logs: Vec<StructuredLogEvent>,
 }
 
@@ -1941,6 +2042,341 @@ pub fn render_rollout_decision_artifact_summary(output: &RolloutDecisionArtifact
     lines.join("\n")
 }
 
+/// Build a deterministic GA evidence package over rollout-facing artifacts.
+pub fn build_ga_evidence_package(input: &GaEvidencePackageInput) -> GaEvidencePackageOutput {
+    let mut external_evidence_links = input.external_evidence_links.clone();
+    for link in &mut external_evidence_links {
+        normalize_ga_evidence_link(link);
+    }
+    external_evidence_links.sort_by(|left, right| {
+        left.category
+            .cmp(&right.category)
+            .then(left.path.cmp(&right.path))
+            .then(left.description.cmp(&right.description))
+    });
+    external_evidence_links.dedup();
+
+    let mut third_party_replay_commands = input
+        .third_party_replay_commands
+        .iter()
+        .map(|command| normalize_or_default(command, ""))
+        .filter(|command| !command.is_empty())
+        .collect::<Vec<_>>();
+    third_party_replay_commands.sort();
+    third_party_replay_commands.dedup();
+
+    let mut reproducible_commands = input.support_bundle.index.reproducible_commands.clone();
+    reproducible_commands.extend(input.onboarding_scorecard.reproducible_commands.clone());
+    reproducible_commands.extend(
+        input
+            .rollout_decision_artifact
+            .reproducible_commands
+            .clone(),
+    );
+    reproducible_commands.extend(third_party_replay_commands.clone());
+    reproducible_commands.sort();
+    reproducible_commands.dedup();
+
+    let mandatory_field_status = validate_ga_evidence_package_mandatory_fields(
+        input,
+        &external_evidence_links,
+        &third_party_replay_commands,
+    );
+    let ga_gate_consumable =
+        mandatory_field_status.valid && input.rollout_decision_artifact.ga_gate_consumable;
+
+    let risk_disposition = build_ga_evidence_risk_disposition(
+        &input.onboarding_scorecard,
+        &input.rollout_decision_artifact,
+    );
+
+    let mut logs = input.support_bundle.logs.clone();
+    logs.extend(input.onboarding_scorecard.logs.clone());
+    logs.extend(input.rollout_decision_artifact.logs.clone());
+    logs.push(StructuredLogEvent {
+        trace_id: input.support_bundle.index.trace_id.clone(),
+        decision_id: input.support_bundle.index.decision_id.clone(),
+        policy_id: input.support_bundle.index.policy_id.clone(),
+        component: COMPONENT.to_string(),
+        event: "ga_evidence_package".to_string(),
+        outcome: if ga_gate_consumable {
+            "pass".to_string()
+        } else {
+            "fail".to_string()
+        },
+        error_code: if ga_gate_consumable {
+            None
+        } else {
+            Some(GA_EVIDENCE_PACKAGE_FAILURE_CODE.to_string())
+        },
+    });
+    logs.sort_by(|left, right| {
+        left.trace_id
+            .cmp(&right.trace_id)
+            .then(left.decision_id.cmp(&right.decision_id))
+            .then(left.policy_id.cmp(&right.policy_id))
+            .then(left.component.cmp(&right.component))
+            .then(left.event.cmp(&right.event))
+            .then(left.outcome.cmp(&right.outcome))
+            .then(left.error_code.cmp(&right.error_code))
+    });
+    logs.dedup();
+
+    let rc_id = normalize_or_default(&input.release_candidate_id, "unknown-release-candidate");
+    let summary = render_ga_evidence_package_summary_inner(GaEvidencePackageSummaryView {
+        release_candidate_id: &rc_id,
+        ga_gate_consumable,
+        mandatory_field_status: &mandatory_field_status,
+        risk_disposition: &risk_disposition,
+        external_evidence_links: &external_evidence_links,
+        reproducible_commands: &reproducible_commands,
+        workload_id: &input.onboarding_scorecard.workload_id,
+        package_name: &input.onboarding_scorecard.package_name,
+        target_platforms: &input.onboarding_scorecard.target_platforms,
+        support_bundle_id: &input.support_bundle.index.bundle_id,
+    });
+
+    let mut files = vec![
+        make_support_bundle_file(
+            "ga_evidence_package/support_bundle_index.json",
+            serde_json::to_string_pretty(&input.support_bundle.index)
+                .expect("support bundle index must serialize"),
+        ),
+        make_support_bundle_file(
+            "ga_evidence_package/onboarding_scorecard.json",
+            serde_json::to_string_pretty(&input.onboarding_scorecard)
+                .expect("onboarding scorecard must serialize"),
+        ),
+        make_support_bundle_file(
+            "ga_evidence_package/rollout_decision_artifact.json",
+            serde_json::to_string_pretty(&input.rollout_decision_artifact)
+                .expect("rollout decision artifact must serialize"),
+        ),
+        make_support_bundle_file(
+            "ga_evidence_package/risk_disposition.json",
+            serde_json::to_string_pretty(&risk_disposition)
+                .expect("risk disposition must serialize"),
+        ),
+        make_support_bundle_file(
+            "ga_evidence_package/external_evidence_links.json",
+            serde_json::to_string_pretty(&external_evidence_links)
+                .expect("external evidence links must serialize"),
+        ),
+        make_support_bundle_file(
+            "ga_evidence_package/third_party_replay_commands.txt",
+            third_party_replay_commands.join("\n"),
+        ),
+        make_support_bundle_file(
+            "ga_evidence_package/events.jsonl",
+            render_support_bundle_events_jsonl(&logs),
+        ),
+        make_support_bundle_file("ga_evidence_package/summary.md", summary),
+    ];
+
+    let file_index_entries = files
+        .iter()
+        .map(|file| SupportBundleFileIndexEntry {
+            path: file.path.clone(),
+            sha256: file.sha256.clone(),
+            bytes: file.bytes,
+        })
+        .collect::<Vec<_>>();
+
+    let index = GaEvidencePackageIndex {
+        schema_version: GA_EVIDENCE_PACKAGE_SCHEMA_VERSION.to_string(),
+        package_id: compute_ga_evidence_package_id(
+            &file_index_entries,
+            &external_evidence_links,
+            &reproducible_commands,
+            &input.release_candidate_id,
+            ga_gate_consumable,
+        ),
+        release_candidate_id: normalize_or_default(
+            &input.release_candidate_id,
+            "unknown-release-candidate",
+        ),
+        workload_id: input.onboarding_scorecard.workload_id.clone(),
+        package_name: input.onboarding_scorecard.package_name.clone(),
+        target_platforms: input.onboarding_scorecard.target_platforms.clone(),
+        trace_id: input.support_bundle.index.trace_id.clone(),
+        decision_id: input.support_bundle.index.decision_id.clone(),
+        policy_id: input.support_bundle.index.policy_id.clone(),
+        support_bundle_id: input.support_bundle.index.bundle_id.clone(),
+        ga_gate_consumable,
+        total_external_artifacts: external_evidence_links.len(),
+        files: file_index_entries,
+        reproducible_commands: reproducible_commands.clone(),
+    };
+
+    files.push(make_support_bundle_file(
+        "ga_evidence_package/index.json",
+        serde_json::to_string_pretty(&index).expect("ga evidence package index must serialize"),
+    ));
+
+    GaEvidencePackageOutput {
+        schema_version: GA_EVIDENCE_PACKAGE_SCHEMA_VERSION.to_string(),
+        release_candidate_id: index.release_candidate_id.clone(),
+        workload_id: input.onboarding_scorecard.workload_id.clone(),
+        package_name: input.onboarding_scorecard.package_name.clone(),
+        target_platforms: input.onboarding_scorecard.target_platforms.clone(),
+        mandatory_field_status,
+        ga_gate_consumable,
+        support_bundle_id: input.support_bundle.index.bundle_id.clone(),
+        risk_disposition,
+        external_evidence_links,
+        reproducible_commands,
+        index,
+        files,
+        logs,
+    }
+}
+
+/// Render GA evidence package output in deterministic human-readable form.
+pub fn render_ga_evidence_package_summary(output: &GaEvidencePackageOutput) -> String {
+    render_ga_evidence_package_summary_inner(GaEvidencePackageSummaryView {
+        release_candidate_id: &output.release_candidate_id,
+        ga_gate_consumable: output.ga_gate_consumable,
+        mandatory_field_status: &output.mandatory_field_status,
+        risk_disposition: &output.risk_disposition,
+        external_evidence_links: &output.external_evidence_links,
+        reproducible_commands: &output.reproducible_commands,
+        workload_id: &output.workload_id,
+        package_name: &output.package_name,
+        target_platforms: &output.target_platforms,
+        support_bundle_id: &output.support_bundle_id,
+    })
+}
+
+struct GaEvidencePackageSummaryView<'a> {
+    release_candidate_id: &'a str,
+    ga_gate_consumable: bool,
+    mandatory_field_status: &'a GaEvidencePackageMandatoryFieldStatus,
+    risk_disposition: &'a GaEvidenceRiskDisposition,
+    external_evidence_links: &'a [GaEvidenceArtifactLink],
+    reproducible_commands: &'a [String],
+    workload_id: &'a str,
+    package_name: &'a str,
+    target_platforms: &'a [String],
+    support_bundle_id: &'a str,
+}
+
+fn render_ga_evidence_package_summary_inner(summary: GaEvidencePackageSummaryView<'_>) -> String {
+    let mut lines = vec![
+        format!("schema_version: {}", GA_EVIDENCE_PACKAGE_SCHEMA_VERSION),
+        format!("release_candidate_id: {}", summary.release_candidate_id),
+        format!("workload_id: {}", summary.workload_id),
+        format!("package_name: {}", summary.package_name),
+        format!("support_bundle_id: {}", summary.support_bundle_id),
+        format!(
+            "mandatory_fields_valid: {}",
+            summary.mandatory_field_status.valid
+        ),
+        format!("ga_gate_consumable: {}", summary.ga_gate_consumable),
+        format!(
+            "recommendation: {}",
+            summary.risk_disposition.recommendation
+        ),
+        format!("readiness: {}", summary.risk_disposition.readiness),
+        format!(
+            "signals: critical={} warning={} info={}",
+            summary.risk_disposition.critical_signals,
+            summary.risk_disposition.warning_signals,
+            summary.risk_disposition.info_signals
+        ),
+        format!("rationale: {}", summary.risk_disposition.rationale),
+    ];
+
+    if !summary.target_platforms.is_empty() {
+        lines.push("target_platforms:".to_string());
+        for platform in summary.target_platforms {
+            lines.push(format!("  - {platform}"));
+        }
+    }
+
+    if !summary.mandatory_field_status.missing_fields.is_empty() {
+        lines.push("missing_fields:".to_string());
+        for field in &summary.mandatory_field_status.missing_fields {
+            lines.push(format!("  - {field}"));
+        }
+    }
+
+    if !summary
+        .mandatory_field_status
+        .inconsistent_fields
+        .is_empty()
+    {
+        lines.push("inconsistent_fields:".to_string());
+        for field in &summary.mandatory_field_status.inconsistent_fields {
+            lines.push(format!("  - {field}"));
+        }
+    }
+
+    lines.push("external_evidence_links:".to_string());
+    for link in summary.external_evidence_links {
+        lines.push(format!(
+            "  - [{}] {} :: {}",
+            link.category, link.path, link.description
+        ));
+    }
+
+    lines.push("reproducible_commands:".to_string());
+    for command in summary.reproducible_commands {
+        lines.push(format!("  - {command}"));
+    }
+
+    lines.join("\n")
+}
+
+fn build_ga_evidence_risk_disposition(
+    onboarding_scorecard: &OnboardingScorecardOutput,
+    rollout_decision_artifact: &RolloutDecisionArtifactOutput,
+) -> GaEvidenceRiskDisposition {
+    let critical_signals = u64::try_from(
+        rollout_decision_artifact
+            .merged_signals
+            .iter()
+            .filter(|signal| signal.severity == EvidenceSeverity::Critical)
+            .count(),
+    )
+    .unwrap_or(u64::MAX);
+    let warning_signals = u64::try_from(
+        rollout_decision_artifact
+            .merged_signals
+            .iter()
+            .filter(|signal| signal.severity == EvidenceSeverity::Warning)
+            .count(),
+    )
+    .unwrap_or(u64::MAX);
+    let info_signals = u64::try_from(
+        rollout_decision_artifact
+            .merged_signals
+            .iter()
+            .filter(|signal| signal.severity == EvidenceSeverity::Info)
+            .count(),
+    )
+    .unwrap_or(u64::MAX);
+
+    let mut unresolved_signal_ids = rollout_decision_artifact
+        .merged_signals
+        .iter()
+        .map(|signal| signal.signal_id.clone())
+        .collect::<Vec<_>>();
+    unresolved_signal_ids.sort();
+    unresolved_signal_ids.dedup();
+
+    GaEvidenceRiskDisposition {
+        readiness: onboarding_scorecard.readiness,
+        recommendation: rollout_decision_artifact.recommendation,
+        remediation_effort: onboarding_scorecard.remediation_effort,
+        rationale: rollout_decision_artifact.rationale.clone(),
+        critical_signals,
+        warning_signals,
+        info_signals,
+        unresolved_signal_ids,
+        next_steps: onboarding_scorecard.next_steps.clone(),
+    }
+}
+
 fn choose_rollout_recommendation(
     readiness: OnboardingReadinessClass,
     critical_signals: usize,
@@ -2054,6 +2490,11 @@ fn normalize_onboarding_signal(signal: &mut OnboardingScorecardSignal) {
         .map(std::string::ToString::to_string);
 }
 
+fn normalize_ga_evidence_link(link: &mut GaEvidenceArtifactLink) {
+    link.path = normalize_or_default(&link.path, "");
+    link.description = normalize_or_default(&link.description, "evidence artifact");
+}
+
 fn default_owner_for_source(source: &str, severity: EvidenceSeverity) -> String {
     match source {
         "preflight_doctor" => match severity {
@@ -2125,6 +2566,110 @@ fn validate_rollout_decision_mandatory_fields(
     inconsistent_fields.dedup();
 
     RolloutDecisionMandatoryFieldStatus {
+        valid: missing_fields.is_empty() && inconsistent_fields.is_empty(),
+        missing_fields,
+        inconsistent_fields,
+    }
+}
+
+fn validate_ga_evidence_package_mandatory_fields(
+    input: &GaEvidencePackageInput,
+    external_evidence_links: &[GaEvidenceArtifactLink],
+    third_party_replay_commands: &[String],
+) -> GaEvidencePackageMandatoryFieldStatus {
+    let mut missing_fields = Vec::new();
+    let mut inconsistent_fields = Vec::new();
+
+    if input.release_candidate_id.trim().is_empty() {
+        missing_fields.push("release_candidate_id".to_string());
+    }
+    if input.support_bundle.index.bundle_id.trim().is_empty() {
+        missing_fields.push("support_bundle.index.bundle_id".to_string());
+    }
+    if input.support_bundle.index.trace_id.trim().is_empty() {
+        missing_fields.push("support_bundle.index.trace_id".to_string());
+    }
+    if input.support_bundle.index.decision_id.trim().is_empty() {
+        missing_fields.push("support_bundle.index.decision_id".to_string());
+    }
+    if input.support_bundle.index.policy_id.trim().is_empty() {
+        missing_fields.push("support_bundle.index.policy_id".to_string());
+    }
+    if input.onboarding_scorecard.workload_id.trim().is_empty() {
+        missing_fields.push("onboarding_scorecard.workload_id".to_string());
+    }
+    if input.onboarding_scorecard.package_name.trim().is_empty() {
+        missing_fields.push("onboarding_scorecard.package_name".to_string());
+    }
+    if input.onboarding_scorecard.target_platforms.is_empty() {
+        missing_fields.push("onboarding_scorecard.target_platforms".to_string());
+    }
+    if input.onboarding_scorecard.logs.is_empty() {
+        missing_fields.push("onboarding_scorecard.logs".to_string());
+    }
+    if input.onboarding_scorecard.reproducible_commands.is_empty() {
+        missing_fields.push("onboarding_scorecard.reproducible_commands".to_string());
+    }
+    if input.rollout_decision_artifact.logs.is_empty() {
+        missing_fields.push("rollout_decision_artifact.logs".to_string());
+    }
+    if third_party_replay_commands.is_empty() {
+        missing_fields.push("third_party_replay_commands".to_string());
+    }
+
+    for category in [
+        GaEvidenceArtifactCategory::Conformance,
+        GaEvidenceArtifactCategory::Performance,
+        GaEvidenceArtifactCategory::Security,
+    ] {
+        if !external_evidence_links
+            .iter()
+            .any(|link| link.category == category && !link.path.trim().is_empty())
+        {
+            missing_fields.push(format!("external_evidence_links:{category}"));
+        }
+    }
+
+    if !input.rollout_decision_artifact.mandatory_field_status.valid {
+        inconsistent_fields.push("rollout_decision_artifact.mandatory_field_status".to_string());
+    }
+    if input.rollout_decision_artifact.workload_id != input.onboarding_scorecard.workload_id {
+        inconsistent_fields.push("workload_id".to_string());
+    }
+    if input.rollout_decision_artifact.package_name != input.onboarding_scorecard.package_name {
+        inconsistent_fields.push("package_name".to_string());
+    }
+
+    if let Some(log) = input.onboarding_scorecard.logs.first() {
+        if log.trace_id != input.support_bundle.index.trace_id {
+            inconsistent_fields.push("trace_id".to_string());
+        }
+        if log.decision_id != input.support_bundle.index.decision_id {
+            inconsistent_fields.push("decision_id".to_string());
+        }
+        if log.policy_id != input.support_bundle.index.policy_id {
+            inconsistent_fields.push("policy_id".to_string());
+        }
+    }
+
+    if let Some(log) = input.rollout_decision_artifact.logs.first() {
+        if log.trace_id != input.support_bundle.index.trace_id {
+            inconsistent_fields.push("trace_id".to_string());
+        }
+        if log.decision_id != input.support_bundle.index.decision_id {
+            inconsistent_fields.push("decision_id".to_string());
+        }
+        if log.policy_id != input.support_bundle.index.policy_id {
+            inconsistent_fields.push("policy_id".to_string());
+        }
+    }
+
+    missing_fields.sort();
+    missing_fields.dedup();
+    inconsistent_fields.sort();
+    inconsistent_fields.dedup();
+
+    GaEvidencePackageMandatoryFieldStatus {
         valid: missing_fields.is_empty() && inconsistent_fields.is_empty(),
         missing_fields,
         inconsistent_fields,
@@ -2255,6 +2800,50 @@ fn compute_support_bundle_id(
     material.push_str("redacted=");
     material.push_str(&total_redacted_fields.to_string());
     format!("bundle-{}", &compute_sha256_hex(material.as_bytes())[..16])
+}
+
+fn compute_ga_evidence_package_id(
+    files: &[SupportBundleFileIndexEntry],
+    external_evidence_links: &[GaEvidenceArtifactLink],
+    reproducible_commands: &[String],
+    release_candidate_id: &str,
+    ga_gate_consumable: bool,
+) -> String {
+    let mut material = String::new();
+    material.push_str("release_candidate_id=");
+    material.push_str(release_candidate_id.trim());
+    material.push('\n');
+    material.push_str("ga_gate_consumable=");
+    material.push_str(if ga_gate_consumable { "true" } else { "false" });
+    material.push('\n');
+
+    for file in files {
+        material.push_str(file.path.as_str());
+        material.push(':');
+        material.push_str(file.sha256.as_str());
+        material.push(':');
+        material.push_str(&file.bytes.to_string());
+        material.push('\n');
+    }
+
+    for link in external_evidence_links {
+        material.push_str(&link.category.to_string());
+        material.push(':');
+        material.push_str(link.path.as_str());
+        material.push(':');
+        material.push_str(link.description.as_str());
+        material.push('\n');
+    }
+
+    for command in reproducible_commands {
+        material.push_str(command.as_str());
+        material.push('\n');
+    }
+
+    format!(
+        "ga-package-{}",
+        &compute_sha256_hex(material.as_bytes())[..16]
+    )
 }
 
 fn redact_sensitive_fields(

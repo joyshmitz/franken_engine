@@ -1776,7 +1776,7 @@ mod tests {
         // Only one variant, but Ord is derived so we test reflexivity.
         let v = TokenVersion::V2;
         assert!(v == v);
-        assert!(!(v < v));
+        assert!(v >= v);
     }
 
     #[test]

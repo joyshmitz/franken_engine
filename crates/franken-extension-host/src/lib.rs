@@ -2605,6 +2605,7 @@ impl CapabilityEscrowGateway {
             return Ok(CapabilityEscrowResolution::AuthorizedByEmergencyGrant { grant_id });
         }
 
+        let open_requests_for_extension = self.open_request_count(extension_id);
         self.request_sequence = self.request_sequence.saturating_add(1);
         let request_id = derive_escrow_request_id(
             extension_id,
@@ -2638,7 +2639,7 @@ impl CapabilityEscrowGateway {
         );
 
         let eval_context = CapabilityEscrowEvaluationContext {
-            open_requests_for_extension: self.open_request_count(extension_id),
+            open_requests_for_extension,
         };
 
         let mut contract_chain = Vec::new();
