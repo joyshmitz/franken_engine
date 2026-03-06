@@ -17,14 +17,25 @@ struct PilotRolloutHarnessContract {
     bead_id: String,
     generated_by: String,
     generated_at_utc: String,
+    rgc_alignment: RgcAlignment,
     track: Track,
     pilot_portfolio: PilotPortfolio,
     experiment_harness: ExperimentHarness,
     off_policy_evaluation: OffPolicyEvaluation,
     sequential_monitoring: SequentialMonitoring,
+    rollout_phases: RolloutPhases,
+    readiness_inputs: ReadinessInputs,
+    artifact_contract: ArtifactContract,
     incident_linkage: IncidentLinkage,
     required_structured_log_fields: Vec<String>,
     operator_verification: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct RgcAlignment {
+    bead_id: String,
+    track_id: String,
+    relationship: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +88,42 @@ struct SequentialMonitoring {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct RolloutPhases {
+    phase_order: Vec<String>,
+    fail_closed_on_missing_phase_exit_scorecard: bool,
+    require_forced_regression_drill: bool,
+    phases: Vec<RolloutPhase>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct RolloutPhase {
+    phase_id: String,
+    user_traffic_bps: u32,
+    phase_exit_scorecard_id: String,
+    required_readiness_inputs: Vec<String>,
+    promotion_requirements: Vec<String>,
+    rollback_trigger_ids: Vec<String>,
+    automatic_rollback_required: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ReadinessInputs {
+    required_inputs: Vec<String>,
+    fail_closed_on_missing_inputs: bool,
+    require_remediation_queue_for_blocked_workloads: bool,
+    require_support_bundle_linkage: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ArtifactContract {
+    artifact_root: String,
+    required_files: Vec<String>,
+    require_phase_exit_scorecard_per_phase: bool,
+    require_quantitative_thresholds: bool,
+    require_signed_promotion_decisions: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Thresholds {
     promote_min_confidence: u64,
     stop_max_regret: u64,
@@ -113,6 +160,8 @@ fn frx_09_1_doc_contains_required_sections() {
         "## Telemetry Contract for Causal and Off-Policy Safety Analysis",
         "## Off-Policy Evaluator Contract (IPS + Doubly Robust)",
         "## Sequential-Valid Monitoring and Decision Policies",
+        "## Rollout Phase Contract (Shadow -> Canary -> Active)",
+        "## Migration Readiness Inputs and Remediation Queue",
         "## Incident Linkage and Replay/Evidence Artifacts",
         "## Deterministic Logging and Artifact Contract",
         "## Operator Verification",
@@ -137,6 +186,14 @@ fn frx_09_1_contract_is_versioned_and_track_bound() {
     assert_eq!(contract.track.id, "FRX-09.1");
     assert!(contract.track.name.contains("Pilot App Program"));
     assert!(contract.generated_at_utc.ends_with('Z'));
+    assert_eq!(contract.rgc_alignment.bead_id, "bd-1lsy.10.3");
+    assert_eq!(contract.rgc_alignment.track_id, "RGC-903");
+    assert!(
+        contract
+            .rgc_alignment
+            .relationship
+            .contains("dependency_safe_prework")
+    );
 }
 
 #[test]
@@ -342,6 +399,104 @@ fn frx_09_1_sequential_decisioning_and_incident_linkage_are_fail_closed() {
 }
 
 #[test]
+fn frx_09_1_rollout_phases_cover_shadow_canary_active_and_fail_closed() {
+    let contract = parse_contract();
+    let phases = &contract.rollout_phases;
+
+    let expected_order: Vec<&str> = vec!["shadow", "canary", "active"];
+    let actual_order: Vec<&str> = phases.phase_order.iter().map(String::as_str).collect();
+    assert_eq!(actual_order, expected_order);
+    assert!(phases.fail_closed_on_missing_phase_exit_scorecard);
+    assert!(phases.require_forced_regression_drill);
+    assert_eq!(phases.phases.len(), 3);
+
+    for phase in &phases.phases {
+        assert!(!phase.phase_exit_scorecard_id.trim().is_empty());
+        assert!(!phase.required_readiness_inputs.is_empty());
+        assert!(!phase.promotion_requirements.is_empty());
+        assert!(!phase.rollback_trigger_ids.is_empty());
+        assert!(phase.automatic_rollback_required);
+    }
+
+    let shadow = &phases.phases[0];
+    let canary = &phases.phases[1];
+    let active = &phases.phases[2];
+    assert_eq!(shadow.phase_id, "shadow");
+    assert_eq!(shadow.user_traffic_bps, 0);
+    assert_eq!(canary.phase_id, "canary");
+    assert!(canary.user_traffic_bps > 0 && canary.user_traffic_bps < 10_000);
+    assert_eq!(active.phase_id, "active");
+    assert_eq!(active.user_traffic_bps, 10_000);
+}
+
+#[test]
+fn frx_09_1_readiness_inputs_and_artifact_contract_are_complete() {
+    let contract = parse_contract();
+
+    let readiness_inputs: BTreeSet<&str> = contract
+        .readiness_inputs
+        .required_inputs
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let expected_inputs: BTreeSet<&str> = [
+        "preflight_verdict",
+        "compatibility_advisories",
+        "onboarding_scorecard",
+        "support_bundle_ref",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(readiness_inputs, expected_inputs);
+    assert!(contract.readiness_inputs.fail_closed_on_missing_inputs);
+    assert!(
+        contract
+            .readiness_inputs
+            .require_remediation_queue_for_blocked_workloads
+    );
+    assert!(contract.readiness_inputs.require_support_bundle_linkage);
+
+    let required_files: BTreeSet<&str> = contract
+        .artifact_contract
+        .required_files
+        .iter()
+        .map(String::as_str)
+        .collect();
+    for file in [
+        "run_manifest.json",
+        "events.jsonl",
+        "commands.txt",
+        "phase_exit_scorecards.json",
+        "migration_readiness_inputs.json",
+        "blocked_workload_remediation_queue.json",
+        "forced_regression_rollback_drill.json",
+        "pilot_cohort_manifest.json",
+    ] {
+        assert!(
+            required_files.contains(file),
+            "missing artifact file: {file}"
+        );
+    }
+    assert!(
+        contract
+            .artifact_contract
+            .artifact_root
+            .contains("artifacts/frx_pilot_rollout_harness")
+    );
+    assert!(
+        contract
+            .artifact_contract
+            .require_phase_exit_scorecard_per_phase
+    );
+    assert!(contract.artifact_contract.require_quantitative_thresholds);
+    assert!(
+        contract
+            .artifact_contract
+            .require_signed_promotion_decisions
+    );
+}
+
+#[test]
 fn frx_09_1_contract_matches_logging_and_runtime_surfaces() {
     let contract = parse_contract();
 
@@ -380,6 +535,22 @@ fn frx_09_1_contract_matches_logging_and_runtime_surfaces() {
             .iter()
             .any(|line| { line.contains("frx_pilot_rollout_harness_replay.sh") })
     );
+
+    let harness_script =
+        fs::read_to_string(repo_root().join("scripts/run_frx_pilot_rollout_harness_suite.sh"))
+            .expect("pilot rollout harness suite script must exist");
+    for snippet in [
+        "phase_exit_scorecards.json",
+        "migration_readiness_inputs.json",
+        "blocked_workload_remediation_queue.json",
+        "forced_regression_rollback_drill.json",
+        "pilot_cohort_manifest.json",
+    ] {
+        assert!(
+            harness_script.contains(snippet),
+            "pilot rollout harness script missing: {snippet}"
+        );
+    }
 
     let activation =
         fs::read_to_string(repo_root().join("crates/franken-engine/src/activation_lifecycle.rs"))
@@ -768,5 +939,59 @@ fn frx_09_1_decision_actions_are_unique() {
         unique.len(),
         actions.len(),
         "duplicate decision actions detected"
+    );
+}
+
+#[test]
+fn frx_09_1_rollout_phase_ids_and_scorecards_are_unique() {
+    let contract = parse_contract();
+    let phases = &contract.rollout_phases.phases;
+
+    let phase_ids: BTreeSet<&str> = phases.iter().map(|phase| phase.phase_id.as_str()).collect();
+    let scorecard_ids: BTreeSet<&str> = phases
+        .iter()
+        .map(|phase| phase.phase_exit_scorecard_id.as_str())
+        .collect();
+    assert_eq!(
+        phase_ids.len(),
+        phases.len(),
+        "duplicate phase ids detected"
+    );
+    assert_eq!(
+        scorecard_ids.len(),
+        phases.len(),
+        "duplicate phase exit scorecard ids detected"
+    );
+}
+
+#[test]
+fn frx_09_1_readiness_inputs_are_unique() {
+    let contract = parse_contract();
+    let unique: BTreeSet<&str> = contract
+        .readiness_inputs
+        .required_inputs
+        .iter()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        unique.len(),
+        contract.readiness_inputs.required_inputs.len(),
+        "duplicate readiness inputs detected"
+    );
+}
+
+#[test]
+fn frx_09_1_artifact_contract_required_files_are_unique() {
+    let contract = parse_contract();
+    let unique: BTreeSet<&str> = contract
+        .artifact_contract
+        .required_files
+        .iter()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        unique.len(),
+        contract.artifact_contract.required_files.len(),
+        "duplicate artifact contract files detected"
     );
 }

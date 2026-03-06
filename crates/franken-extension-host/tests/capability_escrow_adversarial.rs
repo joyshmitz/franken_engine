@@ -1,8 +1,9 @@
 use frankenengine_extension_host::{
     compute_content_hash, BudgetExhaustionPolicy, Capability, CapabilityEscrowDecisionKind,
     CapabilityEscrowState, DelegateCell, DelegateCellFactory, DelegateCellManifest,
-    DelegationScope, DenialReason, ExtensionManifest, FlowEnforcementContext, HostcallResult,
-    HostcallType, Labeled, LifecycleContext, ResourceBudget, CURRENT_ENGINE_VERSION,
+    DelegationScope, DenialReason, EscrowFloodProtectionContract, ExtensionManifest,
+    FlowEnforcementContext, HostcallResult, HostcallType, Labeled, LifecycleContext,
+    ResourceBudget, CURRENT_ENGINE_VERSION,
 };
 
 fn base_manifest(capabilities: &[Capability]) -> ExtensionManifest {
@@ -316,6 +317,64 @@ fn escrow_flood_campaign_triggers_contract_denials() {
     assert!(delegate.capability_escrow_events().iter().any(|event| {
         event.outcome == "denied" && event.error_code.as_deref() == Some("FE-ESCROW-0003")
     }));
+}
+
+#[test]
+fn escrow_flood_contract_holds_exact_configured_boundary() {
+    let mut delegate = make_delegate("escrow-adv-flood-boundary", &[Capability::FsRead]);
+    let max_open_requests =
+        EscrowFloodProtectionContract::default().max_open_requests_per_extension;
+
+    for idx in 0..max_open_requests {
+        let result = delegate
+            .dispatch_hostcall_with_escrow(
+                HostcallType::ProcessSpawn,
+                Capability::ProcessSpawn,
+                Labeled::system_generated(format!("boundary-{idx}")),
+                10_000 + idx as u64,
+                &fctx(),
+                &lctx(),
+                Some("boundary flood probe"),
+            )
+            .expect("dispatch should complete");
+        assert!(matches!(result.result, HostcallResult::Denied { .. }));
+    }
+
+    let flood_denials_before_limit = delegate
+        .capability_escrow_receipts()
+        .iter()
+        .filter(|receipt| {
+            receipt.decision == CapabilityEscrowDecisionKind::Deny
+                && receipt.error_code.as_deref() == Some("FE-ESCROW-0003")
+        })
+        .count();
+    assert_eq!(
+        flood_denials_before_limit, 0,
+        "flood protection should not deny before the configured limit is exceeded"
+    );
+
+    let overflow = delegate
+        .dispatch_hostcall_with_escrow(
+            HostcallType::ProcessSpawn,
+            Capability::ProcessSpawn,
+            Labeled::system_generated("boundary-overflow".to_string()),
+            20_000,
+            &fctx(),
+            &lctx(),
+            Some("boundary flood probe"),
+        )
+        .expect("overflow dispatch should complete");
+    assert!(matches!(overflow.result, HostcallResult::Denied { .. }));
+
+    let flood_denials_after_limit = delegate
+        .capability_escrow_receipts()
+        .iter()
+        .filter(|receipt| {
+            receipt.decision == CapabilityEscrowDecisionKind::Deny
+                && receipt.error_code.as_deref() == Some("FE-ESCROW-0003")
+        })
+        .count();
+    assert_eq!(flood_denials_after_limit, 1);
 }
 
 #[test]

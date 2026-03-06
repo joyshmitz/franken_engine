@@ -1095,7 +1095,7 @@ fn differential_config_default_has_positive_thresholds() {
         "performance threshold should be positive"
     );
     assert!(
-        cfg.memory_threshold_millionths > 0,
+        cfg.resource_threshold_millionths > 0,
         "memory threshold should be positive"
     );
 }

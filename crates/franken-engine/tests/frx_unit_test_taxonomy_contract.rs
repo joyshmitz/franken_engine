@@ -871,7 +871,7 @@ fn determinism_contract_relaxed_has_correct_tolerance() {
     assert!(!dc.seed_required);
     assert!(!dc.virtual_clock_required);
     assert!(!dc.deterministic_rng_required);
-    assert_eq!(dc.tolerance_millionths, 500_000);
+    assert_eq!(dc.numeric_tolerance_millionths, 500_000);
 }
 
 // ---------- TestClass min_provenance_level ----------

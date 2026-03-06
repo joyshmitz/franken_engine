@@ -2,6 +2,7 @@
   "schema_version": "franken-engine.rgc-ci-quality-gates.v1",
   "gate_version": "1.0.0",
   "required_modes": [
+    "fmt",
     "check",
     "clippy",
     "unit",
@@ -25,11 +26,19 @@
     "FE-RGC-CI-QUALITY-GATE-0002",
     "FE-RGC-CI-QUALITY-GATE-0003",
     "FE-RGC-CI-QUALITY-GATE-0004",
+    "FE-RGC-CI-QUALITY-GATE-0005",
+    "FE-RGC-CI-QUALITY-GATE-0006",
+    "FE-RGC-CI-QUALITY-GATE-0007",
     "FE-RGC-CI-QUALITY-GATE-0008",
     "FE-RGC-CI-QUALITY-GATE-0009",
     "FE-RGC-CI-QUALITY-GATE-0010"
   ],
   "lane_command_contract": [
+    {
+      "lane": "fmt",
+      "command": "cargo fmt --check",
+      "requires_rch": true
+    },
     {
       "lane": "check",
       "command": "cargo check --all-targets",
@@ -56,8 +65,18 @@
       "requires_rch": false
     },
     {
+      "lane": "e2e",
+      "command": "./scripts/run_rgc_verification_coverage_matrix.sh ci",
+      "requires_rch": false
+    },
+    {
       "lane": "replay",
       "command": "./scripts/e2e/rgc_test_harness_replay.sh ci",
+      "requires_rch": false
+    },
+    {
+      "lane": "replay",
+      "command": "./scripts/e2e/rgc_verification_coverage_matrix_replay.sh ci",
       "requires_rch": false
     }
   ],

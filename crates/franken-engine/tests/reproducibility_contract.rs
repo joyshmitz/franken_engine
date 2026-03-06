@@ -371,7 +371,7 @@ fn canonicalize_json_number_integer_and_float() {
     let neg_val: Value = serde_json::json!(-7);
     assert_eq!(canonicalize_json(&neg_val), "-7");
 
-    let float_val: Value = serde_json::json!(3.14);
+    let float_val: Value = serde_json::json!(42.42);
     let canon = canonicalize_json(&float_val);
     // Must round-trip as a number, not quoted
     assert!(

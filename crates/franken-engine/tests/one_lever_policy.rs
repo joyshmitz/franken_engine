@@ -452,7 +452,7 @@ fn decision_events_contain_expected_event_types() {
     );
     // For optimization changes, classification events should be emitted.
     assert!(
-        event_names.iter().any(|e| *e == "changed_path_classified"),
+        event_names.contains(&"changed_path_classified"),
         "events must include changed_path_classified for optimization changes"
     );
 }

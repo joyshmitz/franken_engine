@@ -595,7 +595,6 @@ fn demoted_slot_reverts_to_delegate_status() {
             &parser,
             "regression detected".to_string(),
             "sha256:d-p".to_string(),
-            "2026-02-21T01:00:00Z".to_string(),
         )
         .expect("demote");
 

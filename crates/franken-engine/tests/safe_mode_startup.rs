@@ -667,7 +667,7 @@ fn startup_normal_mode_has_empty_restricted_features() {
 
 #[test]
 fn fork_detector_acknowledge_nonexistent_incident_returns_false() {
-    let detector = ForkDetector::with_defaults();
+    let mut detector = ForkDetector::with_defaults();
     assert!(
         !detector.acknowledge_incident("zone-nonexistent", "fake-incident-id"),
         "acknowledging a nonexistent incident should return false"

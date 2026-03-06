@@ -46,7 +46,7 @@ fn constants_schema_version_is_v1() {
 
 #[test]
 fn constants_min_budget_positive() {
-    assert!(MIN_BUDGET_MILLIONTHS > 0);
+    const { assert!(MIN_BUDGET_MILLIONTHS > 0) };
     assert_eq!(MIN_BUDGET_MILLIONTHS, 1_000);
 }
 

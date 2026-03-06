@@ -15,16 +15,18 @@ use frankenengine_engine::hostcall_telemetry::{
     ResourceDelta, TelemetryRecorder,
 };
 use frankenengine_engine::runtime_diagnostics_cli::{
-    ContainmentReceiptEnvelope, EvidenceExportFilter, EvidenceSeverity, GcPressureSample,
-    HostcallTelemetryEnvelope, OnboardingReadinessClass, OnboardingRemediationEffort,
-    OnboardingScorecardInput, OnboardingScorecardSignal, PreflightVerdict, ReplayArtifactRecord,
+    ContainmentReceiptEnvelope, EvidenceExportFilter, EvidenceSeverity, GaEvidenceArtifactCategory,
+    GaEvidenceArtifactLink, GaEvidencePackageInput, GcPressureSample, HostcallTelemetryEnvelope,
+    OnboardingReadinessClass, OnboardingRemediationEffort, OnboardingScorecardInput,
+    OnboardingScorecardSignal, PreflightVerdict, ReplayArtifactRecord,
     RolloutDecisionArtifactInput, RolloutRecommendation, RuntimeDiagnosticsCliInput,
     RuntimeExtensionState, RuntimeStateInput, SchedulerLaneSample, SupportBundleRedactionPolicy,
-    build_onboarding_scorecard, build_rollout_decision_artifact, collect_runtime_diagnostics,
-    export_evidence_bundle, export_support_bundle, parse_decision_type, parse_evidence_severity,
-    render_diagnostics_summary, render_evidence_summary, render_onboarding_scorecard_summary,
-    render_preflight_summary, render_rollout_decision_artifact_summary,
-    render_support_bundle_summary, run_preflight_doctor,
+    build_ga_evidence_package, build_onboarding_scorecard, build_rollout_decision_artifact,
+    collect_runtime_diagnostics, export_evidence_bundle, export_support_bundle,
+    parse_decision_type, parse_evidence_severity, render_diagnostics_summary,
+    render_evidence_summary, render_ga_evidence_package_summary,
+    render_onboarding_scorecard_summary, render_preflight_summary,
+    render_rollout_decision_artifact_summary, render_support_bundle_summary, run_preflight_doctor,
 };
 use frankenengine_engine::security_epoch::SecurityEpoch;
 
@@ -540,6 +542,119 @@ fn doctor_command_writes_support_bundle_and_preflight_report() {
     let _ = fs::remove_dir_all(out_dir);
 }
 
+#[test]
+fn ga_evidence_package_command_outputs_json_and_writes_files() {
+    let input = clean_input();
+    let input_path = write_input_file(&input);
+
+    let json_output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "ga-evidence-package",
+            "--input",
+            input_path.to_str().expect("path should be utf8"),
+            "--release-candidate",
+            "rc-2026-03-05",
+            "--workload-id",
+            "pkg/ga-cli",
+            "--package-name",
+            "ga-cli",
+            "--target-platform",
+            "linux-x64",
+            "--conformance-artifact",
+            "artifacts/conformance.json::spec parity",
+            "--performance-artifact",
+            "artifacts/perf.json::latency envelope",
+            "--security-artifact",
+            "artifacts/security.json::security review",
+            "--third-party-replay-command",
+            "nix run .#replay -- --release-candidate rc-2026-03-05",
+        ])
+        .output()
+        .expect("ga evidence package command should execute");
+    assert!(json_output.status.success());
+
+    let json_stdout = String::from_utf8(json_output.stdout).expect("stdout should be utf8");
+    let value: serde_json::Value = serde_json::from_str(&json_stdout).expect("valid json output");
+    assert_eq!(
+        value["schema_version"],
+        "franken-engine.runtime-diagnostics.ga-evidence-package.v1"
+    );
+    assert_eq!(value["release_candidate_id"], "rc-2026-03-05");
+    assert_eq!(value["ga_gate_consumable"], true);
+    assert_eq!(value["index"]["total_external_artifacts"], 3);
+    assert!(
+        value["files"].as_array().is_some_and(|files| {
+            files
+                .iter()
+                .any(|file| file["path"] == "ga_evidence_package/index.json")
+        }),
+        "ga evidence package files should include index.json"
+    );
+
+    let mut out_dir = std::env::temp_dir();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    out_dir.push(format!(
+        "runtime_diagnostics_ga_evidence_out_{}_{}",
+        std::process::id(),
+        nonce
+    ));
+
+    let summary_output = Command::new(env!("CARGO_BIN_EXE_runtime_diagnostics"))
+        .args([
+            "ga-evidence-package",
+            "--input",
+            input_path.to_str().expect("path should be utf8"),
+            "--summary",
+            "--out-dir",
+            out_dir.to_str().expect("dir should be utf8"),
+            "--release-candidate",
+            "rc-2026-03-05",
+            "--workload-id",
+            "pkg/ga-cli",
+            "--package-name",
+            "ga-cli",
+            "--target-platform",
+            "linux-x64",
+            "--conformance-artifact",
+            "artifacts/conformance.json::spec parity",
+            "--performance-artifact",
+            "artifacts/perf.json::latency envelope",
+            "--security-artifact",
+            "artifacts/security.json::security review",
+            "--third-party-replay-command",
+            "nix run .#replay -- --release-candidate rc-2026-03-05",
+        ])
+        .output()
+        .expect("ga evidence package summary command should execute");
+    assert!(summary_output.status.success());
+
+    let summary_stdout =
+        String::from_utf8(summary_output.stdout).expect("summary stdout should be utf8");
+    assert!(summary_stdout.contains("release_candidate_id: rc-2026-03-05"));
+    assert!(summary_stdout.contains("ga_gate_consumable: true"));
+
+    assert!(
+        out_dir
+            .join("support_bundle/preflight_report.json")
+            .exists(),
+        "preflight report should be written"
+    );
+    assert!(
+        out_dir.join("ga_evidence_package/index.json").exists(),
+        "ga evidence package index should be written"
+    );
+    assert!(
+        out_dir.join("ga_evidence_package/summary.md").exists(),
+        "ga evidence package summary should be written"
+    );
+
+    let _ = fs::remove_file(input_path);
+    let _ = fs::remove_dir_all(out_dir);
+}
+
 // ── Library API tests (not CLI binary) ──────────────────────────────────
 
 fn clean_input() -> RuntimeDiagnosticsCliInput {
@@ -557,6 +672,54 @@ fn clean_input() -> RuntimeDiagnosticsCliInput {
         lane.queue_depth = 0;
     }
     input
+}
+
+fn build_clean_ga_package_input() -> GaEvidencePackageInput {
+    let input = clean_input();
+    let preflight = run_preflight_doctor(
+        &input,
+        EvidenceExportFilter::default(),
+        SupportBundleRedactionPolicy::default(),
+    );
+    let onboarding = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id: "pkg/ga".to_string(),
+        package_name: "ga".to_string(),
+        target_platforms: vec!["linux-x64".to_string()],
+        preflight: preflight.clone(),
+        external_signals: Vec::new(),
+    });
+    let artifact = build_rollout_decision_artifact(&RolloutDecisionArtifactInput {
+        onboarding_scorecard: onboarding.clone(),
+        compatibility_advisories: Vec::new(),
+        platform_matrix_signals: Vec::new(),
+    });
+
+    GaEvidencePackageInput {
+        release_candidate_id: "rc-2026-03-05".to_string(),
+        support_bundle: preflight.support_bundle,
+        onboarding_scorecard: onboarding,
+        rollout_decision_artifact: artifact,
+        external_evidence_links: vec![
+            GaEvidenceArtifactLink {
+                category: GaEvidenceArtifactCategory::Security,
+                path: "artifacts/security.json".to_string(),
+                description: "security review".to_string(),
+            },
+            GaEvidenceArtifactLink {
+                category: GaEvidenceArtifactCategory::Conformance,
+                path: "artifacts/conformance.json".to_string(),
+                description: "spec parity".to_string(),
+            },
+            GaEvidenceArtifactLink {
+                category: GaEvidenceArtifactCategory::Performance,
+                path: "artifacts/perf.json".to_string(),
+                description: "latency envelope".to_string(),
+            },
+        ],
+        third_party_replay_commands: vec![
+            "nix run .#replay -- --release-candidate rc-2026-03-05".to_string(),
+        ],
+    }
 }
 
 // ── collect_runtime_diagnostics ─────────────────────────────────────────
@@ -1107,6 +1270,65 @@ fn lib_render_rollout_decision_artifact_summary_contains_key_fields() {
     assert!(rendered.contains("reproducible_commands:"));
 }
 
+// ── build_ga_evidence_package ───────────────────────────────────────────
+
+#[test]
+fn lib_ga_evidence_package_is_deterministic_and_consumable_for_complete_inputs() {
+    let mut input = build_clean_ga_package_input();
+    input
+        .external_evidence_links
+        .push(input.external_evidence_links[0].clone());
+    input
+        .third_party_replay_commands
+        .push("  nix run .#replay -- --release-candidate rc-2026-03-05  ".to_string());
+
+    let left = build_ga_evidence_package(&input);
+    let right = build_ga_evidence_package(&input);
+
+    assert_eq!(left, right);
+    assert!(left.ga_gate_consumable);
+    assert!(left.mandatory_field_status.valid);
+    assert_eq!(left.external_evidence_links.len(), 3);
+    assert_eq!(left.index.total_external_artifacts, 3);
+    assert!(
+        left.reproducible_commands
+            .iter()
+            .any(|command| { command == "nix run .#replay -- --release-candidate rc-2026-03-05" }),
+        "expected normalized third-party replay command"
+    );
+}
+
+#[test]
+fn lib_ga_evidence_package_fails_closed_when_required_artifact_category_missing() {
+    let mut input = build_clean_ga_package_input();
+    input
+        .external_evidence_links
+        .retain(|link| link.category != GaEvidenceArtifactCategory::Security);
+
+    let output = build_ga_evidence_package(&input);
+
+    assert!(!output.mandatory_field_status.valid);
+    assert!(!output.ga_gate_consumable);
+    assert!(
+        output
+            .mandatory_field_status
+            .missing_fields
+            .contains(&"external_evidence_links:security".to_string())
+    );
+}
+
+#[test]
+fn lib_render_ga_evidence_package_summary_contains_key_fields() {
+    let output = build_ga_evidence_package(&build_clean_ga_package_input());
+    let rendered = render_ga_evidence_package_summary(&output);
+
+    assert!(rendered.contains("schema_version:"));
+    assert!(rendered.contains("release_candidate_id: rc-2026-03-05"));
+    assert!(rendered.contains("ga_gate_consumable: true"));
+    assert!(rendered.contains("external_evidence_links:"));
+    assert!(rendered.contains("reproducible_commands:"));
+}
+
 // ── parse_evidence_severity / parse_decision_type ───────────────────────
 
 #[test]
@@ -1285,6 +1507,19 @@ fn lib_rollout_recommendation_serde_roundtrip() {
     }
 }
 
+#[test]
+fn lib_ga_evidence_artifact_category_serde_roundtrip() {
+    for value in [
+        GaEvidenceArtifactCategory::Conformance,
+        GaEvidenceArtifactCategory::Performance,
+        GaEvidenceArtifactCategory::Security,
+    ] {
+        let json = serde_json::to_string(&value).unwrap();
+        let back: GaEvidenceArtifactCategory = serde_json::from_str(&json).unwrap();
+        assert_eq!(value, back);
+    }
+}
+
 // ── Serde roundtrips for complex output types ───────────────────────────
 
 #[test]
@@ -1385,6 +1620,15 @@ fn lib_rollout_decision_artifact_output_serde_roundtrip() {
     let back: frankenengine_engine::runtime_diagnostics_cli::RolloutDecisionArtifactOutput =
         serde_json::from_str(&json).unwrap();
     assert_eq!(artifact, back);
+}
+
+#[test]
+fn lib_ga_evidence_package_output_serde_roundtrip() {
+    let output = build_ga_evidence_package(&build_clean_ga_package_input());
+    let json = serde_json::to_string(&output).unwrap();
+    let back: frankenengine_engine::runtime_diagnostics_cli::GaEvidencePackageOutput =
+        serde_json::from_str(&json).unwrap();
+    assert_eq!(output, back);
 }
 
 // ── Clone independence ──────────────────────────────────────────────────
@@ -1502,6 +1746,26 @@ fn lib_rollout_decision_artifact_json_field_contract() {
         "\"rationale\"",
         "\"merged_signals\"",
         "\"evidence_links\"",
+    ] {
+        assert!(json.contains(field), "missing JSON field: {field}");
+    }
+}
+
+#[test]
+fn lib_ga_evidence_package_json_field_contract() {
+    let output = build_ga_evidence_package(&build_clean_ga_package_input());
+    let json = serde_json::to_string(&output).unwrap();
+    for field in [
+        "\"schema_version\"",
+        "\"release_candidate_id\"",
+        "\"mandatory_field_status\"",
+        "\"ga_gate_consumable\"",
+        "\"risk_disposition\"",
+        "\"external_evidence_links\"",
+        "\"reproducible_commands\"",
+        "\"index\"",
+        "\"files\"",
+        "\"logs\"",
     ] {
         assert!(json.contains(field), "missing JSON field: {field}");
     }

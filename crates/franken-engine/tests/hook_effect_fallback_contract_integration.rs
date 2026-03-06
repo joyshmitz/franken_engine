@@ -365,11 +365,10 @@ fn hook_kind_serde_round_trip_all_variants() {
 
 #[test]
 fn render_phase_serde_round_trip() {
-    for phase in [RenderPhase::Idle] {
-        let json = serde_json::to_string(&phase).expect("serialize");
-        let recovered: RenderPhase = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(phase, recovered);
-    }
+    let phase = RenderPhase::Idle;
+    let json = serde_json::to_string(&phase).expect("serialize");
+    let recovered: RenderPhase = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(phase, recovered);
 }
 
 #[test]

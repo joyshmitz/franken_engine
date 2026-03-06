@@ -1242,7 +1242,7 @@ fn write_fixture_catalog_produces_valid_json_with_expected_schema() {
         Some("franken-engine.parser-phase0.semantic-fixtures.v1")
     );
     assert!(
-        catalog["fixtures"].as_array().expect("fixtures array").len() >= 1,
+        !catalog["fixtures"].as_array().expect("fixtures array").is_empty(),
         "catalog must contain at least one fixture"
     );
     let _ = fs::remove_file(path);

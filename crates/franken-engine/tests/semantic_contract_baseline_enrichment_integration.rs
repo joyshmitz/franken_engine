@@ -320,7 +320,7 @@ fn serde_exact_side_effect_boundary_tags() {
 
 #[test]
 fn fixture_priority_ordering_stable() {
-    let mut priorities = vec![
+    let mut priorities = [
         FixturePriority::Low,
         FixturePriority::Critical,
         FixturePriority::Medium,
@@ -333,7 +333,7 @@ fn fixture_priority_ordering_stable() {
 
 #[test]
 fn violation_severity_ordering_stable() {
-    let mut severities = vec![
+    let mut severities = [
         ViolationSeverity::Info,
         ViolationSeverity::Fatal,
         ViolationSeverity::Warning,

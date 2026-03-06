@@ -98,6 +98,7 @@ fn rgc_ci_quality_fixture_schema_and_modes_are_stable() {
 
     let modes = fixture.required_modes.into_iter().collect::<BTreeSet<_>>();
     for mode in [
+        "fmt",
         "check",
         "clippy",
         "unit",
@@ -153,6 +154,9 @@ fn rgc_ci_quality_log_and_artifact_contract_is_complete() {
         "FE-RGC-CI-QUALITY-GATE-0002",
         "FE-RGC-CI-QUALITY-GATE-0003",
         "FE-RGC-CI-QUALITY-GATE-0004",
+        "FE-RGC-CI-QUALITY-GATE-0005",
+        "FE-RGC-CI-QUALITY-GATE-0006",
+        "FE-RGC-CI-QUALITY-GATE-0007",
         "FE-RGC-CI-QUALITY-GATE-0008",
         "FE-RGC-CI-QUALITY-GATE-0009",
         "FE-RGC-CI-QUALITY-GATE-0010",
@@ -208,7 +212,7 @@ fn rgc_ci_quality_script_contract_references_rch_for_heavy_lanes() {
             assert!(
                 matches!(
                     contract.lane.as_str(),
-                    "check" | "clippy" | "unit" | "integration"
+                    "fmt" | "check" | "clippy" | "unit" | "integration"
                 ),
                 "unexpected rch-required lane {}",
                 contract.lane
@@ -238,6 +242,14 @@ fn rgc_ci_quality_doc_and_replay_wrapper_exist_and_reference_contract() {
     assert!(doc.contains("## Regression Verdict Ingestion (RGC-703 hook)"));
     assert!(doc.contains("## Required Artifacts"));
     assert!(doc.contains("./scripts/run_rgc_ci_quality_gates.sh ci"));
+    assert!(doc.contains("cargo fmt --check"));
+    assert!(doc.contains("./scripts/run_rgc_test_harness_suite.sh ci"));
+    assert!(doc.contains("./scripts/run_rgc_verification_coverage_matrix.sh ci"));
+    assert!(doc.contains("./scripts/e2e/rgc_test_harness_replay.sh ci"));
+    assert!(doc.contains("./scripts/e2e/rgc_verification_coverage_matrix_replay.sh ci"));
+    assert!(doc.contains("FE-RGC-CI-QUALITY-GATE-0005"));
+    assert!(doc.contains("FE-RGC-CI-QUALITY-GATE-0006"));
+    assert!(doc.contains("FE-RGC-CI-QUALITY-GATE-0007"));
 
     assert!(
         replay.contains("run_rgc_ci_quality_gates.sh"),
@@ -458,7 +470,7 @@ fn verdict_does_not_block_when_all_low_severity() {
 fn fixture_required_modes_are_complete() {
     let fixture = load_fixture();
     let modes: BTreeSet<_> = fixture.required_modes.into_iter().collect();
-    assert!(modes.len() >= 8, "expected at least 8 required modes");
+    assert!(modes.len() >= 9, "expected at least 9 required modes");
 }
 
 #[test]
@@ -482,9 +494,32 @@ fn fixture_lane_command_contract_is_non_empty() {
 }
 
 #[test]
+fn fixture_lane_command_contract_covers_dual_e2e_and_replay_commands() {
+    let fixture = load_fixture();
+    let commands: BTreeSet<_> = fixture
+        .lane_command_contract
+        .into_iter()
+        .map(|contract| contract.command)
+        .collect();
+
+    for command in [
+        "./scripts/run_rgc_test_harness_suite.sh ci",
+        "./scripts/run_rgc_verification_coverage_matrix.sh ci",
+        "./scripts/e2e/rgc_test_harness_replay.sh ci",
+        "./scripts/e2e/rgc_verification_coverage_matrix_replay.sh ci",
+    ] {
+        assert!(
+            commands.contains(command),
+            "fixture missing lane command {command}"
+        );
+    }
+}
+
+#[test]
 fn fixture_lane_commands_have_valid_lanes() {
     let fixture = load_fixture();
     let valid_lanes = [
+        "fmt",
         "check",
         "clippy",
         "unit",

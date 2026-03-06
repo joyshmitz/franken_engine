@@ -68,8 +68,8 @@ fn compile_simple() -> CompilationResult {
 #[test]
 fn constants_are_valid() {
     assert!(!SCHEMA_VERSION.is_empty());
-    assert!(DEFAULT_MAX_CHUNK_BYTES > 0);
-    assert!(MIN_SUFFICIENCY_SCORE > 0);
+    const { assert!(DEFAULT_MAX_CHUNK_BYTES > 0) };
+    const { assert!(MIN_SUFFICIENCY_SCORE > 0) };
 }
 
 // ── SufficiencyDimension ────────────────────────────────────────────────
