@@ -77,3 +77,9 @@ __pycache__/
 
 # Beads issue tracker history backups
 .beads/.br_history/
+
+# Ephemeral one-off refactoring scripts (agent-generated)
+apply_fix.py
+fix_mut.py
+fix_mut2.py
+refactor_ternary.py
