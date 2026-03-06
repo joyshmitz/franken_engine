@@ -22,11 +22,22 @@ use frankenengine_engine::ir_contract::Ir0Module;
 use frankenengine_engine::lowering_pipeline::{
     LoweringContext, LoweringPipelineOutput, lower_ir0_to_ir3,
 };
+use frankenengine_engine::module_compatibility_matrix::CompatibilityScenarioReport;
 use frankenengine_engine::parser::{CanonicalEs2020Parser, ParseEventIr, ParserOptions};
 use frankenengine_engine::receipt_verifier_pipeline::{
     ReceiptVerifierCliInput, render_verdict_summary, verify_receipt_by_id,
 };
 use frankenengine_engine::region_lifecycle::FinalizeResult;
+use frankenengine_engine::runtime_diagnostics_cli::{
+    CompatibilityAdvisoryInput, CompatibilityAdvisoryOutput, EvidenceExportFilter,
+    OnboardingReadinessClass, OnboardingScorecardInput, OnboardingScorecardOutput,
+    OnboardingScorecardSignal, PreflightDoctorOutput, PreflightVerdict,
+    RolloutDecisionArtifactInput, RolloutDecisionArtifactOutput, RolloutRecommendation,
+    RuntimeDiagnosticsCliInput, SupportBundleFile, SupportBundleOutput,
+    SupportBundleRedactionPolicy, build_compatibility_advisories, build_onboarding_scorecard,
+    build_rollout_decision_artifact, parse_decision_type, parse_evidence_severity,
+    run_preflight_doctor,
+};
 use frankenengine_engine::third_party_verifier::{
     BenchmarkClaimBundle, ClaimedBenchmarkOutcome, THIRD_PARTY_VERIFIER_COMPONENT,
     ThirdPartyVerificationReport, VerificationCheckResult, VerificationVerdict, VerifierEvent,
@@ -47,6 +58,7 @@ enum CommandSpec {
     Help,
     Compile(CompileArgs),
     Run(RunArgs),
+    Doctor(DoctorArgs),
     Verify(VerifyArgs),
     Benchmark(BenchmarkArgs),
     Replay(ReplayArgs),
@@ -68,6 +80,22 @@ struct RunArgs {
     extension_id: String,
     parse_goal: ParseGoal,
     out: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DoctorArgs {
+    input: PathBuf,
+    summary: bool,
+    out_dir: Option<PathBuf>,
+    workload_id: Option<String>,
+    package_name: Option<String>,
+    target_platforms: Vec<String>,
+    signals: Option<PathBuf>,
+    advisories: Option<PathBuf>,
+    scenario_report: Option<PathBuf>,
+    platform_signals: Option<PathBuf>,
+    filter: EvidenceExportFilter,
+    redact_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,6 +267,32 @@ struct ReplayCommandOutput {
     complete: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct DoctorSignalCounts {
+    external_signals: usize,
+    compatibility_signals: usize,
+    platform_signals: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DoctorCommandOutput {
+    schema_version: String,
+    input_path: String,
+    workload_id: String,
+    package_name: String,
+    target_platforms: Vec<String>,
+    preflight_verdict: String,
+    readiness: String,
+    remediation_effort: String,
+    rollout_recommendation: String,
+    blocked: bool,
+    signal_counts: DoctorSignalCounts,
+    output_dir: Option<String>,
+    preflight: PreflightDoctorOutput,
+    onboarding_scorecard: OnboardingScorecardOutput,
+    rollout_decision: RolloutDecisionArtifactOutput,
+}
+
 fn main() {
     let code = match run(env::args().skip(1).collect()) {
         Ok(code) => code,
@@ -274,6 +328,7 @@ fn run(raw_args: Vec<String>) -> Result<i32, String> {
         }
         CommandSpec::Compile(args) => execute_compile(args),
         CommandSpec::Run(args) => execute_run(args),
+        CommandSpec::Doctor(args) => execute_doctor(args),
         CommandSpec::Verify(args) => execute_verify(args),
         CommandSpec::Benchmark(args) => execute_benchmark(args),
         CommandSpec::Replay(args) => execute_replay(args),
@@ -298,6 +353,7 @@ fn parse_command(args: &[String]) -> Result<CommandSpec, String> {
         "version" => Ok(CommandSpec::Version),
         "compile" => parse_compile_args(&args[1..]).map(CommandSpec::Compile),
         "run" => parse_run_args(&args[1..]).map(CommandSpec::Run),
+        "doctor" => parse_doctor_args(&args[1..]).map(CommandSpec::Doctor),
         "verify" => parse_verify_args(&args[1..]).map(CommandSpec::Verify),
         "benchmark" => parse_benchmark_args(&args[1..]).map(CommandSpec::Benchmark),
         "replay" => parse_replay_args(&args[1..]).map(CommandSpec::Replay),
@@ -375,6 +431,89 @@ fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
         extension_id: extension_id.ok_or_else(|| "run requires --extension-id <id>".to_string())?,
         parse_goal: goal,
         out,
+    })
+}
+
+fn parse_doctor_args(args: &[String]) -> Result<DoctorArgs, String> {
+    let mut input: Option<PathBuf> = None;
+    let mut summary = false;
+    let mut out_dir: Option<PathBuf> = None;
+    let mut workload_id: Option<String> = None;
+    let mut package_name: Option<String> = None;
+    let mut target_platforms = Vec::<String>::new();
+    let mut signals: Option<PathBuf> = None;
+    let mut advisories: Option<PathBuf> = None;
+    let mut scenario_report: Option<PathBuf> = None;
+    let mut platform_signals: Option<PathBuf> = None;
+    let mut filter = EvidenceExportFilter::default();
+    let mut redact_keys = Vec::<String>::new();
+
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--input" => input = Some(PathBuf::from(next_arg(args, &mut index, "--input")?)),
+            "--summary" => summary = true,
+            "--out-dir" => out_dir = Some(PathBuf::from(next_arg(args, &mut index, "--out-dir")?)),
+            "--workload-id" => workload_id = Some(next_arg(args, &mut index, "--workload-id")?),
+            "--package-name" => package_name = Some(next_arg(args, &mut index, "--package-name")?),
+            "--target-platform" => {
+                target_platforms.push(next_arg(args, &mut index, "--target-platform")?)
+            }
+            "--signals" => signals = Some(PathBuf::from(next_arg(args, &mut index, "--signals")?)),
+            "--advisories" => {
+                advisories = Some(PathBuf::from(next_arg(args, &mut index, "--advisories")?))
+            }
+            "--scenario-report" => {
+                scenario_report = Some(PathBuf::from(next_arg(args, &mut index, "--scenario-report")?))
+            }
+            "--platform-signals" => {
+                platform_signals =
+                    Some(PathBuf::from(next_arg(args, &mut index, "--platform-signals")?))
+            }
+            "--extension-id" => {
+                filter.extension_id = Some(next_arg(args, &mut index, "--extension-id")?)
+            }
+            "--trace-id" => filter.trace_id = Some(next_arg(args, &mut index, "--trace-id")?),
+            "--start-ns" => {
+                filter.start_timestamp_ns =
+                    Some(parse_u64(&next_arg(args, &mut index, "--start-ns")?, "--start-ns")?)
+            }
+            "--end-ns" => {
+                filter.end_timestamp_ns =
+                    Some(parse_u64(&next_arg(args, &mut index, "--end-ns")?, "--end-ns")?)
+            }
+            "--severity" => {
+                let value = next_arg(args, &mut index, "--severity")?;
+                filter.severity = Some(parse_evidence_severity(value.as_str()).ok_or_else(
+                    || format!("invalid --severity `{value}` (expected info|warning|critical)"),
+                )?);
+            }
+            "--decision-type" => {
+                let value = next_arg(args, &mut index, "--decision-type")?;
+                filter.decision_type = Some(
+                    parse_decision_type(value.as_str())
+                        .ok_or_else(|| format!("invalid --decision-type `{value}`"))?,
+                );
+            }
+            "--redact-key" => redact_keys.push(next_arg(args, &mut index, "--redact-key")?),
+            flag => return Err(format!("unknown doctor flag `{flag}`")),
+        }
+        index += 1;
+    }
+
+    Ok(DoctorArgs {
+        input: input.ok_or_else(|| "doctor requires --input <runtime_input.json>".to_string())?,
+        summary,
+        out_dir,
+        workload_id,
+        package_name,
+        target_platforms,
+        signals,
+        advisories,
+        scenario_report,
+        platform_signals,
+        filter,
+        redact_keys,
     })
 }
 
@@ -681,6 +820,121 @@ fn execute_run(args: RunArgs) -> Result<i32, String> {
     }
     print_json(&output)?;
     Ok(0)
+}
+
+fn execute_doctor(args: DoctorArgs) -> Result<i32, String> {
+    let input = load_json_file::<RuntimeDiagnosticsCliInput>(&args.input)?;
+    let redaction_policy = if args.redact_keys.is_empty() {
+        SupportBundleRedactionPolicy::default()
+    } else {
+        SupportBundleRedactionPolicy::with_additional_fragments(args.redact_keys.clone())
+    };
+
+    let preflight = run_preflight_doctor(&input, args.filter.clone(), redaction_policy);
+
+    let mut external_signals = match &args.signals {
+        Some(path) => load_onboarding_signals(path)?,
+        None => Vec::new(),
+    };
+    sort_and_dedup_signals(&mut external_signals);
+
+    let mut compatibility_signals = match &args.advisories {
+        Some(path) => load_onboarding_signals(path)?,
+        None => Vec::new(),
+    };
+    if let Some(path) = &args.scenario_report {
+        let scenario_report = load_json_file::<CompatibilityScenarioReport>(path)?;
+        let advisory_output = build_compatibility_advisories(&CompatibilityAdvisoryInput {
+            source_report: path.display().to_string(),
+            scenario_report,
+        });
+        compatibility_signals.extend(advisory_output.signals);
+    }
+    sort_and_dedup_signals(&mut compatibility_signals);
+
+    let mut platform_signals = match &args.platform_signals {
+        Some(path) => load_onboarding_signals(path)?,
+        None => Vec::new(),
+    };
+    sort_and_dedup_signals(&mut platform_signals);
+
+    let workload_id = args
+        .workload_id
+        .clone()
+        .unwrap_or_else(|| input.trace_id.clone());
+    let package_name = args
+        .package_name
+        .clone()
+        .unwrap_or_else(|| workload_id.clone());
+    let onboarding_scorecard = build_onboarding_scorecard(&OnboardingScorecardInput {
+        workload_id,
+        package_name,
+        target_platforms: args.target_platforms.clone(),
+        preflight: preflight.clone(),
+        external_signals: external_signals.clone(),
+    });
+    let rollout_decision = build_rollout_decision_artifact(&RolloutDecisionArtifactInput {
+        onboarding_scorecard: onboarding_scorecard.clone(),
+        compatibility_advisories: compatibility_signals.clone(),
+        platform_matrix_signals: platform_signals.clone(),
+    });
+
+    let blocked = onboarding_scorecard.readiness == OnboardingReadinessClass::Blocked
+        || !rollout_decision.pilot_gate_consumable
+        || matches!(
+            rollout_decision.recommendation,
+            RolloutRecommendation::Rollback | RolloutRecommendation::Defer
+        );
+
+    let output = DoctorCommandOutput {
+        schema_version: FRANKENCTL_SCHEMA_VERSION.to_string(),
+        input_path: args.input.display().to_string(),
+        workload_id: onboarding_scorecard.workload_id.clone(),
+        package_name: onboarding_scorecard.package_name.clone(),
+        target_platforms: onboarding_scorecard.target_platforms.clone(),
+        preflight_verdict: preflight.verdict.to_string(),
+        readiness: onboarding_scorecard.readiness.to_string(),
+        remediation_effort: onboarding_scorecard.remediation_effort.to_string(),
+        rollout_recommendation: rollout_decision.recommendation.to_string(),
+        blocked,
+        signal_counts: DoctorSignalCounts {
+            external_signals: external_signals.len(),
+            compatibility_signals: compatibility_signals.len(),
+            platform_signals: platform_signals.len(),
+        },
+        output_dir: args.out_dir.as_ref().map(|path| path.display().to_string()),
+        preflight,
+        onboarding_scorecard,
+        rollout_decision,
+    };
+
+    if let Some(out_dir) = &args.out_dir {
+        write_support_bundle_files(&output.preflight.support_bundle, out_dir)?;
+        write_json_file(
+            &out_dir.join("support_bundle/preflight_report.json"),
+            &output.preflight,
+        )?;
+        write_json_file(
+            &out_dir.join("support_bundle/onboarding_scorecard.json"),
+            &output.onboarding_scorecard,
+        )?;
+        write_json_file(
+            &out_dir.join("support_bundle/rollout_decision_artifact.json"),
+            &output.rollout_decision,
+        )?;
+        write_json_file(
+            &out_dir.join("support_bundle/frankenctl_doctor_report.json"),
+            &output,
+        )?;
+    }
+
+    if args.summary {
+        println!("{}", render_doctor_summary(&output));
+    } else {
+        print_json(&output)?;
+    }
+
+    if blocked { Ok(25) } else { Ok(0) }
 }
 
 fn execute_verify(args: VerifyArgs) -> Result<i32, String> {
@@ -1354,6 +1608,87 @@ fn load_json_file<T: DeserializeOwned>(path: &Path) -> Result<T, String> {
         .map_err(|error| format!("failed to parse JSON `{}`: {error}", path.display()))
 }
 
+fn load_onboarding_signals(path: &Path) -> Result<Vec<OnboardingScorecardSignal>, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read signal file `{}`: {error}", path.display()))?;
+    if let Ok(signals) = serde_json::from_str::<Vec<OnboardingScorecardSignal>>(&content) {
+        return Ok(signals);
+    }
+    if let Ok(bundle) = serde_json::from_str::<CompatibilityAdvisoryOutput>(&content) {
+        return Ok(bundle.signals);
+    }
+    Err(format!(
+        "failed to parse signal file `{}` as JSON array or compatibility advisory bundle",
+        path.display()
+    ))
+}
+
+fn sort_and_dedup_signals(signals: &mut Vec<OnboardingScorecardSignal>) {
+    signals.sort_by(|left, right| {
+        right
+            .severity
+            .cmp(&left.severity)
+            .then(left.signal_id.cmp(&right.signal_id))
+            .then(left.source.cmp(&right.source))
+    });
+    signals.dedup();
+}
+
+fn write_materialized_files(files: &[SupportBundleFile], out_dir: &Path) -> Result<(), String> {
+    for file in files {
+        let destination = out_dir.join(&file.path);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("failed to create `{}`: {error}", parent.display()))?;
+        }
+        fs::write(&destination, file.content.as_bytes())
+            .map_err(|error| format!("failed to write `{}`: {error}", destination.display()))?;
+    }
+    Ok(())
+}
+
+fn write_support_bundle_files(output: &SupportBundleOutput, out_dir: &Path) -> Result<(), String> {
+    write_materialized_files(&output.files, out_dir)
+}
+
+fn render_doctor_summary(output: &DoctorCommandOutput) -> String {
+    let mut lines = vec![
+        format!("schema_version: {}", output.schema_version),
+        format!("workload_id: {}", output.workload_id),
+        format!("package_name: {}", output.package_name),
+        format!("preflight_verdict: {}", output.preflight_verdict),
+        format!("readiness: {}", output.readiness),
+        format!("remediation_effort: {}", output.remediation_effort),
+        format!("recommendation: {}", output.rollout_recommendation),
+        format!("blocked: {}", output.blocked),
+        format!(
+            "signal_counts: external={} compatibility={} platform={}",
+            output.signal_counts.external_signals,
+            output.signal_counts.compatibility_signals,
+            output.signal_counts.platform_signals
+        ),
+        format!(
+            "mandatory_fields_valid: {}",
+            output.rollout_decision.mandatory_field_status.valid
+        ),
+        format!("next_steps: {}", output.onboarding_scorecard.next_steps.len()),
+    ];
+
+    for step in &output.onboarding_scorecard.next_steps {
+        lines.push(format!(
+            "  - [{}] {} owner={} cmd={}",
+            step.severity, step.step_id, step.owner, step.reproducible_command
+        ));
+    }
+
+    lines.push("reproducible_commands:".to_string());
+    for command in &output.rollout_decision.reproducible_commands {
+        lines.push(format!("  - {command}"));
+    }
+
+    lines.join("\n")
+}
+
 fn usage() -> String {
     [
         "frankenctl usage:",
@@ -1361,6 +1696,13 @@ fn usage() -> String {
         "  frankenctl compile --input <source.js> --out <artifact.json> [--goal script|module]",
         "      [--trace-id <id>] [--decision-id <id>] [--policy-id <id>]",
         "  frankenctl run --input <source.js> --extension-id <id> [--goal script|module] [--out <report.json>]",
+        "  frankenctl doctor --input <runtime_input.json> [--summary] [--out-dir <path>]",
+        "      [--workload-id <id>] [--package-name <name>] [--target-platform <value>]...",
+        "      [--signals <signals.json>] [--advisories <signals_or_bundle.json>]",
+        "      [--scenario-report <compatibility_scenario_report.json>] [--platform-signals <signals.json>]",
+        "      [--extension-id <id>] [--trace-id <id>] [--start-ns <u64>] [--end-ns <u64>]",
+        "      [--severity info|warning|critical] [--decision-type <snake_case_decision_type>]",
+        "      [--redact-key <key_fragment>]...",
         "  frankenctl verify compile-artifact --input <artifact.json>",
         "  frankenctl verify receipt --input <verifier_input.json> --receipt-id <id> [--summary]",
         "  frankenctl benchmark run [--seed <u64>] [--run-id <id>] [--run-date <YYYY-MM-DD>]",
@@ -1386,6 +1728,7 @@ fn command_label(command: &CommandSpec) -> &'static str {
         CommandSpec::Help => "help",
         CommandSpec::Compile(_) => "compile",
         CommandSpec::Run(_) => "run",
+        CommandSpec::Doctor(_) => "doctor",
         CommandSpec::Verify(_) => "verify",
         CommandSpec::Benchmark(_) => "benchmark",
         CommandSpec::Replay(_) => "replay",
@@ -1396,6 +1739,9 @@ fn command_remediation(command: &str) -> &'static str {
     match command {
         "compile" => "Verify --input/--out paths and parse goal, then rerun `frankenctl compile`.",
         "run" => "Verify extension source path and `--extension-id`, then rerun `frankenctl run`.",
+        "doctor" => {
+            "Verify runtime diagnostics input, optional signal paths, and then rerun `frankenctl doctor`."
+        }
         "verify" => "Inspect input artifact/receipt payload and rerun `frankenctl verify ...`.",
         "benchmark" => {
             "Validate benchmark subcommand args (run|score|verify), then rerun `frankenctl benchmark ...`."
@@ -1476,6 +1822,48 @@ mod tests {
                 assert!(summary);
             }
             other => panic!("expected verify receipt command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_doctor_command() {
+        let args = vec![
+            "doctor".to_string(),
+            "--input".to_string(),
+            "runtime_input.json".to_string(),
+            "--summary".to_string(),
+            "--out-dir".to_string(),
+            "artifacts/doctor".to_string(),
+            "--workload-id".to_string(),
+            "demo-workload".to_string(),
+            "--package-name".to_string(),
+            "demo-package".to_string(),
+            "--target-platform".to_string(),
+            "linux-x86_64".to_string(),
+            "--scenario-report".to_string(),
+            "compatibility_report.json".to_string(),
+            "--severity".to_string(),
+            "warning".to_string(),
+        ];
+        let parsed = parse_command(&args).expect("doctor command should parse");
+        match parsed {
+            CommandSpec::Doctor(spec) => {
+                assert_eq!(spec.input, PathBuf::from("runtime_input.json"));
+                assert!(spec.summary);
+                assert_eq!(spec.out_dir, Some(PathBuf::from("artifacts/doctor")));
+                assert_eq!(spec.workload_id.as_deref(), Some("demo-workload"));
+                assert_eq!(spec.package_name.as_deref(), Some("demo-package"));
+                assert_eq!(spec.target_platforms, vec!["linux-x86_64".to_string()]);
+                assert_eq!(
+                    spec.scenario_report,
+                    Some(PathBuf::from("compatibility_report.json"))
+                );
+                assert_eq!(
+                    spec.filter.severity,
+                    parse_evidence_severity("warning")
+                );
+            }
+            other => panic!("expected doctor command, got {other:?}"),
         }
     }
 

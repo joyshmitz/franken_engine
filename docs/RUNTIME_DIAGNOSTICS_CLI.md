@@ -8,6 +8,18 @@ Deterministic diagnostics and evidence export surface for Section 10.8 item 1.
 cargo run -p frankenengine-engine --bin runtime_diagnostics -- help
 ```
 
+Unified user-facing wrapper:
+
+```bash
+frankenctl doctor --input artifacts/runtime_input.json --summary
+```
+
+`frankenctl doctor` composes the existing diagnostics preflight, onboarding
+scorecard, and rollout-decision surfaces into one deterministic migration
+readiness workflow. It accepts the same workload input JSON plus optional
+signal/advisory inputs, and can inline compatibility advisories directly from a
+scenario report via `--scenario-report <path>`.
+
 Subcommands:
 
 - `diagnostics`: emit runtime-state diagnostics
@@ -104,6 +116,27 @@ runtime_diagnostics rollout-decision-artifact \
   --platform-signals artifacts/platform_matrix_signals.json \
   --summary
 ```
+
+Equivalent single-command workflow through `frankenctl`:
+
+```bash
+frankenctl doctor \
+  --input artifacts/runtime_input.json \
+  --workload-id demo-workload \
+  --package-name demo-package \
+  --target-platform linux-x86_64 \
+  --scenario-report artifacts/module_compat/scenario_report.json \
+  --platform-signals artifacts/platform_matrix_signals.json \
+  --out-dir artifacts/doctor \
+  --summary
+```
+
+This command emits a top-level doctor report plus:
+
+- `support_bundle/preflight_report.json`
+- `support_bundle/onboarding_scorecard.json`
+- `support_bundle/rollout_decision_artifact.json`
+- `support_bundle/frankenctl_doctor_report.json`
 
 `--signals`, `--advisories`, and `--platform-signals` accept either:
 - JSON array of `OnboardingScorecardSignal`

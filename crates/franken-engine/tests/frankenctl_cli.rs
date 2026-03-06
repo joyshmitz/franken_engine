@@ -5,7 +5,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use frankenengine_engine::containment_executor::ContainmentState;
 use frankenengine_engine::deterministic_replay::{NondeterminismSource, NondeterminismTrace};
+use frankenengine_engine::runtime_diagnostics_cli::{
+    GcPressureSample, RuntimeDiagnosticsCliInput, RuntimeExtensionState, RuntimeStateInput,
+    SchedulerLaneSample,
+};
+use frankenengine_engine::security_epoch::SecurityEpoch;
 
 fn temp_path(name: &str, ext: &str) -> PathBuf {
     let mut path = std::env::temp_dir();
@@ -36,6 +42,49 @@ fn parse_stdout_json(output: &std::process::Output) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).expect("stdout should contain valid json")
 }
 
+fn build_doctor_input() -> RuntimeDiagnosticsCliInput {
+    RuntimeDiagnosticsCliInput {
+        trace_id: "trace-frankenctl-doctor".to_string(),
+        decision_id: "decision-frankenctl-doctor".to_string(),
+        policy_id: "policy-frankenctl-doctor".to_string(),
+        runtime_state: RuntimeStateInput {
+            snapshot_timestamp_ns: 42_000,
+            loaded_extensions: vec![RuntimeExtensionState {
+                extension_id: "ext-doctor".to_string(),
+                containment_state: ContainmentState::Running,
+            }],
+            active_policies: vec!["policy-main".to_string()],
+            security_epoch: SecurityEpoch::from_raw(7),
+            gc_pressure: vec![GcPressureSample {
+                extension_id: "ext-doctor".to_string(),
+                used_bytes: 128,
+                budget_bytes: 1_024,
+            }],
+            scheduler_lanes: vec![SchedulerLaneSample {
+                lane: "ready".to_string(),
+                queue_depth: 1,
+                max_depth: 8,
+                tasks_submitted: 3,
+                tasks_scheduled: 3,
+                tasks_completed: 3,
+                tasks_timed_out: 0,
+            }],
+        },
+        evidence_entries: Vec::new(),
+        hostcall_records: Vec::new(),
+        containment_receipts: Vec::new(),
+        replay_artifacts: Vec::new(),
+    }
+}
+
+fn write_runtime_diagnostics_input(path: &Path, input: &RuntimeDiagnosticsCliInput) {
+    fs::write(
+        path,
+        serde_json::to_vec_pretty(input).expect("runtime diagnostics input should serialize"),
+    )
+    .expect("runtime diagnostics input should write");
+}
+
 #[test]
 fn frankenctl_help_lists_supported_commands() {
     let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
@@ -52,6 +101,7 @@ fn frankenctl_help_lists_supported_commands() {
     assert!(stdout.contains("frankenctl usage"));
     assert!(stdout.contains("frankenctl compile"));
     assert!(stdout.contains("frankenctl run"));
+    assert!(stdout.contains("frankenctl doctor"));
     assert!(stdout.contains("frankenctl verify"));
     assert!(stdout.contains("frankenctl benchmark run"));
     assert!(stdout.contains("frankenctl benchmark score"));
@@ -507,6 +557,133 @@ fn frankenctl_run_missing_extension_id_fails() {
     let _ = fs::remove_file(source_path);
 }
 
+#[test]
+fn frankenctl_doctor_outputs_json_and_writes_support_bundle() {
+    let input_path = temp_path("frankenctl_doctor_input", "json");
+    let out_dir = temp_dir("frankenctl_doctor_bundle");
+    write_runtime_diagnostics_input(&input_path, &build_doctor_input());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "doctor",
+            "--input",
+            input_path.to_str().unwrap(),
+            "--workload-id",
+            "demo-workload",
+            "--package-name",
+            "demo-package",
+            "--target-platform",
+            "linux-x86_64",
+            "--out-dir",
+            out_dir.to_str().unwrap(),
+        ])
+        .output()
+        .expect("doctor command should execute");
+
+    assert!(
+        output.status.success(),
+        "doctor failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = parse_stdout_json(&output);
+    assert_eq!(json["preflight_verdict"].as_str(), Some("green"));
+    assert_eq!(json["readiness"].as_str(), Some("ready"));
+    assert_eq!(json["rollout_recommendation"].as_str(), Some("promote"));
+    assert_eq!(json["blocked"].as_bool(), Some(false));
+    assert_eq!(json["signal_counts"]["external_signals"].as_u64(), Some(0));
+    assert_eq!(
+        json["signal_counts"]["compatibility_signals"].as_u64(),
+        Some(0)
+    );
+    assert_eq!(json["signal_counts"]["platform_signals"].as_u64(), Some(0));
+    assert!(
+        out_dir.join("support_bundle/preflight_report.json").is_file(),
+        "expected preflight report to be written"
+    );
+    assert!(
+        out_dir.join("support_bundle/onboarding_scorecard.json").is_file(),
+        "expected onboarding scorecard to be written"
+    );
+    assert!(
+        out_dir
+            .join("support_bundle/rollout_decision_artifact.json")
+            .is_file(),
+        "expected rollout decision artifact to be written"
+    );
+    assert!(
+        out_dir
+            .join("support_bundle/frankenctl_doctor_report.json")
+            .is_file(),
+        "expected doctor report to be written"
+    );
+
+    let _ = fs::remove_file(input_path);
+    let _ = fs::remove_dir_all(out_dir);
+}
+
+#[test]
+fn frankenctl_doctor_can_inline_compatibility_scenario_report() {
+    let input_path = temp_path("frankenctl_doctor_input_with_advisories", "json");
+    write_runtime_diagnostics_input(&input_path, &build_doctor_input());
+    let scenario_report = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/runtime_compatibility_scenario_report_v1.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args([
+            "doctor",
+            "--input",
+            input_path.to_str().unwrap(),
+            "--scenario-report",
+            scenario_report.to_str().unwrap(),
+        ])
+        .output()
+        .expect("doctor command should execute");
+
+    assert_eq!(
+        output.status.code(),
+        Some(25),
+        "critical compatibility advisories should produce blocked exit code"
+    );
+    let json = parse_stdout_json(&output);
+    assert_eq!(json["preflight_verdict"].as_str(), Some("green"));
+    assert_eq!(
+        json["signal_counts"]["compatibility_signals"].as_u64(),
+        Some(1)
+    );
+    assert_eq!(json["blocked"].as_bool(), Some(true));
+    assert!(
+        json["rollout_decision"]["merged_signals"]
+            .as_array()
+            .is_some_and(|entries| !entries.is_empty()),
+        "expected rollout decision to include compatibility advisory signal"
+    );
+
+    let _ = fs::remove_file(input_path);
+}
+
+#[test]
+fn frankenctl_doctor_summary_mentions_verdict_and_recommendation() {
+    let input_path = temp_path("frankenctl_doctor_summary_input", "json");
+    write_runtime_diagnostics_input(&input_path, &build_doctor_input());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_frankenctl"))
+        .args(["doctor", "--input", input_path.to_str().unwrap(), "--summary"])
+        .output()
+        .expect("doctor --summary command should execute");
+
+    assert!(
+        output.status.success(),
+        "doctor --summary failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    assert!(stdout.contains("preflight_verdict: green"));
+    assert!(stdout.contains("recommendation: promote"));
+    assert!(stdout.contains("blocked: false"));
+
+    let _ = fs::remove_file(input_path);
+}
+
 // ── Verify tests ──────────────────────────────────────────────────────
 
 #[test]
@@ -938,7 +1115,12 @@ fn frankenctl_replay_trace_serde_roundtrip_preserves_all_source_kinds() {
 
     let mut trace = NondeterminismTrace::new("session-serde-all-sources");
     for (vts, source) in NondeterminismSource::ALL.iter().enumerate() {
-        trace.capture(source.clone(), vec![(vts as u8)], (vts as u64) + 1, "serde-test");
+        trace.capture(
+            source.clone(),
+            vec![(vts as u8)],
+            (vts as u64) + 1,
+            "serde-test",
+        );
     }
     trace.finalise((NondeterminismSource::ALL.len() as u64) + 1);
 
@@ -1054,13 +1236,11 @@ fn frankenctl_compile_deterministic_hashes_across_runs() {
     let json2 = run_compile(&artifact_2);
 
     assert_eq!(
-        json1["hashes"]["parse_event_ir"],
-        json2["hashes"]["parse_event_ir"],
+        json1["hashes"]["parse_event_ir"], json2["hashes"]["parse_event_ir"],
         "parse_event_ir hash must be deterministic across runs"
     );
     assert_eq!(
-        json1["hashes"]["ir0"],
-        json2["hashes"]["ir0"],
+        json1["hashes"]["ir0"], json2["hashes"]["ir0"],
         "ir0 hash must be deterministic across runs"
     );
 
