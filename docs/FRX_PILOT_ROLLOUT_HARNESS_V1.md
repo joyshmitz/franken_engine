@@ -5,6 +5,10 @@ Primary bead: bd-mjh3.9.1
 Track id: FRX-09.1
 Machine-readable contract: `docs/frx_pilot_rollout_harness_v1.json`
 
+RGC alignment: this FRX contract is reused as dependency-safe prework for
+`bd-1lsy.10.3` / `RGC-903` so the staged rollout lane has an explicit artifact
+and rollback schema before the runtime-facing prerequisites fully close.
+
 ## Scope
 
 FRX-09.1 defines a deterministic pilot rollout program that supports causal
@@ -86,6 +90,43 @@ Decisions are loss-aware and require deterministic thresholds for:
 - incident-rate deltas
 - sequential evidence confidence
 
+## Rollout Phase Contract (Shadow -> Canary -> Active)
+
+Pilot progression is explicit and ordered:
+
+1. `shadow`
+2. `canary`
+3. `active`
+
+Every phase must declare:
+
+- deterministic traffic share / exposure budget
+- a phase-exit scorecard identifier
+- required migration-readiness inputs
+- promotion requirements with quantitative thresholds
+- rollback trigger identifiers
+- automatic rollback semantics
+
+The gate fails closed if any phase is missing its scorecard, if phase ordering is
+violated, or if the forced-regression rollback drill has not been recorded.
+
+## Migration Readiness Inputs and Remediation Queue
+
+Promotion decisions must correlate user-facing migration-readiness surfaces, not
+only internal telemetry.
+
+Required readiness inputs:
+
+- `preflight_verdict`
+- `compatibility_advisories`
+- `onboarding_scorecard`
+- `support_bundle_ref`
+
+Blocked workloads must emit an explicit remediation queue entry with the
+blocking signal, owner, recommended action, evidence reference, and replay
+command. Missing readiness inputs or missing remediation plans are fail-closed
+conditions.
+
 ## Incident Linkage and Replay/Evidence Artifacts
 
 Every pilot incident must link to deterministic replay/evidence surfaces:
@@ -123,6 +164,14 @@ with:
 - `run_manifest.json`
 - `events.jsonl`
 - `commands.txt`
+- `phase_exit_scorecards.json`
+- `migration_readiness_inputs.json`
+- `blocked_workload_remediation_queue.json`
+- `forced_regression_rollback_drill.json`
+- `pilot_cohort_manifest.json`
+
+The forced-regression drill must prove automatic rollback and incident capture
+end-to-end before broader pilot promotion is considered credible.
 
 ## Operator Verification
 

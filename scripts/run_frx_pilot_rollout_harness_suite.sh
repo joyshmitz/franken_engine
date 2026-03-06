@@ -17,6 +17,11 @@ run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
 events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
+phase_scorecards_path="${run_dir}/phase_exit_scorecards.json"
+readiness_inputs_path="${run_dir}/migration_readiness_inputs.json"
+remediation_queue_path="${run_dir}/blocked_workload_remediation_queue.json"
+rollback_drill_path="${run_dir}/forced_regression_rollback_drill.json"
+cohort_manifest_path="${run_dir}/pilot_cohort_manifest.json"
 
 trace_id="trace-frx-pilot-rollout-harness-${timestamp}"
 decision_id="decision-frx-pilot-rollout-harness-${timestamp}"
@@ -109,6 +114,180 @@ run_mode() {
   esac
 }
 
+write_contract_artifacts() {
+  local outcome="$1"
+
+  cat >"$phase_scorecards_path" <<EOF
+{
+  "schema_version": "frx.pilot-rollout-harness.phase-exit-scorecards.v1",
+  "scenario_id": "${scenario_id}",
+  "generated_at_utc": "${timestamp}",
+  "outcome": "${outcome}",
+  "phases": [
+    {
+      "phase_id": "shadow",
+      "user_traffic_bps": 0,
+      "phase_exit_scorecard_id": "scorecard.shadow.v1",
+      "required_readiness_inputs": [
+        "preflight_verdict",
+        "compatibility_advisories",
+        "onboarding_scorecard",
+        "support_bundle_ref"
+      ],
+      "promotion_requirements": [
+        "divergence_budget_within_threshold",
+        "tail_latency_regression_within_threshold",
+        "security_incident_delta_within_threshold",
+        "evidence_bundle_complete"
+      ],
+      "rollback_trigger_ids": [
+        "shadow_divergence_budget_exceeded",
+        "shadow_security_incident_delta_exceeded"
+      ],
+      "automatic_rollback_required": true
+    },
+    {
+      "phase_id": "canary",
+      "user_traffic_bps": 500,
+      "phase_exit_scorecard_id": "scorecard.canary.v1",
+      "required_readiness_inputs": [
+        "preflight_verdict",
+        "compatibility_advisories",
+        "onboarding_scorecard",
+        "support_bundle_ref"
+      ],
+      "promotion_requirements": [
+        "error_budget_burn_within_threshold",
+        "p95_latency_regression_within_threshold",
+        "security_incident_delta_within_threshold",
+        "correlated_readiness_artifacts_complete"
+      ],
+      "rollback_trigger_ids": [
+        "canary_error_budget_burn_exceeded",
+        "canary_security_incident_delta_exceeded"
+      ],
+      "automatic_rollback_required": true
+    },
+    {
+      "phase_id": "active",
+      "user_traffic_bps": 10000,
+      "phase_exit_scorecard_id": "scorecard.active.v1",
+      "required_readiness_inputs": [
+        "preflight_verdict",
+        "compatibility_advisories",
+        "onboarding_scorecard",
+        "support_bundle_ref"
+      ],
+      "promotion_requirements": [
+        "active_cohort_error_budget_within_threshold",
+        "tail_latency_regression_within_threshold",
+        "containment_incident_delta_within_threshold",
+        "remediation_queue_drained_or_accepted"
+      ],
+      "rollback_trigger_ids": [
+        "active_error_budget_burn_exceeded",
+        "active_containment_incident_delta_exceeded"
+      ],
+      "automatic_rollback_required": true
+    }
+  ]
+}
+EOF
+
+  cat >"$readiness_inputs_path" <<EOF
+{
+  "schema_version": "frx.pilot-rollout-harness.migration-readiness.v1",
+  "scenario_id": "${scenario_id}",
+  "generated_at_utc": "${timestamp}",
+  "required_inputs": [
+    "preflight_verdict",
+    "compatibility_advisories",
+    "onboarding_scorecard",
+    "support_bundle_ref"
+  ],
+  "fail_closed_on_missing_inputs": true,
+  "require_remediation_queue_for_blocked_workloads": true,
+  "require_support_bundle_linkage": true
+}
+EOF
+
+  cat >"$remediation_queue_path" <<EOF
+{
+  "schema_version": "frx.pilot-rollout-harness.remediation-queue.v1",
+  "scenario_id": "${scenario_id}",
+  "generated_at_utc": "${timestamp}",
+  "fail_closed_on_missing_inputs": true,
+  "required_fields": [
+    "workload_id",
+    "phase_id",
+    "blocking_signal",
+    "remediation_owner",
+    "recommended_action",
+    "evidence_ref",
+    "replay_command"
+  ],
+  "entries": []
+}
+EOF
+
+  cat >"$rollback_drill_path" <<EOF
+{
+  "schema_version": "frx.pilot-rollout-harness.rollback-drill.v1",
+  "scenario_id": "${scenario_id}",
+  "generated_at_utc": "${timestamp}",
+  "forced_regression_drill_required": true,
+  "automatic_rollback_expected": true,
+  "required_artifacts": [
+    "run_manifest.json",
+    "events.jsonl",
+    "phase_exit_scorecards.json",
+    "blocked_workload_remediation_queue.json"
+  ],
+  "success_criteria": [
+    "rollback_decision_emitted",
+    "incident_capture_recorded",
+    "replay_bundle_linked",
+    "support_bundle_linked"
+  ]
+}
+EOF
+
+  cat >"$cohort_manifest_path" <<EOF
+{
+  "schema_version": "frx.pilot-rollout-harness.cohort-manifest.v1",
+  "scenario_id": "${scenario_id}",
+  "generated_at_utc": "${timestamp}",
+  "strata": [
+    {
+      "stratum_id": "low_risk_transactional_dashboard",
+      "risk_tier": "low",
+      "target_share_bps": 3000
+    },
+    {
+      "stratum_id": "medium_risk_data_sync_optimistic_ui",
+      "risk_tier": "medium",
+      "target_share_bps": 3000
+    },
+    {
+      "stratum_id": "high_risk_collaboration_concurrency",
+      "risk_tier": "high",
+      "target_share_bps": 2000
+    },
+    {
+      "stratum_id": "security_sensitive_admin_policy_control",
+      "risk_tier": "critical",
+      "target_share_bps": 2000
+    }
+  ],
+  "phase_order": [
+    "shadow",
+    "canary",
+    "active"
+  ]
+}
+EOF
+}
+
 write_manifest() {
   local exit_code="${1:-0}"
   local outcome error_code_json git_commit dirty_worktree idx comma
@@ -133,6 +312,7 @@ write_manifest() {
     dirty_worktree=true
   fi
 
+  write_contract_artifacts "$outcome"
   printf '%s\n' "${commands_run[@]}" >"$commands_path"
 
   {
@@ -177,6 +357,11 @@ write_manifest() {
     echo "    \"manifest\": \"${manifest_path}\","
     echo "    \"events\": \"${events_path}\","
     echo "    \"commands\": \"${commands_path}\","
+    echo "    \"phase_exit_scorecards\": \"${phase_scorecards_path}\","
+    echo "    \"migration_readiness_inputs\": \"${readiness_inputs_path}\","
+    echo "    \"blocked_workload_remediation_queue\": \"${remediation_queue_path}\","
+    echo "    \"forced_regression_rollback_drill\": \"${rollback_drill_path}\","
+    echo "    \"pilot_cohort_manifest\": \"${cohort_manifest_path}\","
     echo '    "contract_doc": "docs/FRX_PILOT_ROLLOUT_HARNESS_V1.md",'
     echo '    "contract_json": "docs/frx_pilot_rollout_harness_v1.json",'
     echo '    "integration_test": "crates/franken-engine/tests/frx_pilot_rollout_harness.rs"'
@@ -185,6 +370,11 @@ write_manifest() {
     echo "    \"cat ${manifest_path}\","
     echo "    \"cat ${events_path}\","
     echo "    \"cat ${commands_path}\","
+    echo "    \"cat ${phase_scorecards_path}\","
+    echo "    \"cat ${readiness_inputs_path}\","
+    echo "    \"cat ${remediation_queue_path}\","
+    echo "    \"cat ${rollback_drill_path}\","
+    echo "    \"cat ${cohort_manifest_path}\","
     echo "    \"${replay_command}\""
     echo '  ]'
     echo "}"
@@ -192,6 +382,8 @@ write_manifest() {
 
   echo "frx pilot rollout harness manifest: ${manifest_path}"
   echo "frx pilot rollout harness events: ${events_path}"
+  echo "frx pilot rollout harness scorecards: ${phase_scorecards_path}"
+  echo "frx pilot rollout harness readiness: ${readiness_inputs_path}"
 }
 
 main_exit=0

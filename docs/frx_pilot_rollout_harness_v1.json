@@ -3,6 +3,11 @@
   "bead_id": "bd-mjh3.9.1",
   "generated_by": "bd-mjh3.9.1",
   "generated_at_utc": "2026-02-26T00:00:00Z",
+  "rgc_alignment": {
+    "bead_id": "bd-1lsy.10.3",
+    "track_id": "RGC-903",
+    "relationship": "dependency_safe_prework_contract_reused_from_frx_09_1"
+  },
   "track": {
     "id": "FRX-09.1",
     "name": "Pilot App Program and A/B Rollout Harness"
@@ -120,6 +125,110 @@
       "rollback_tail_latency_delta": 80000
     },
     "require_loss_aware_decision_path": true
+  },
+  "rollout_phases": {
+    "phase_order": [
+      "shadow",
+      "canary",
+      "active"
+    ],
+    "fail_closed_on_missing_phase_exit_scorecard": true,
+    "require_forced_regression_drill": true,
+    "phases": [
+      {
+        "phase_id": "shadow",
+        "user_traffic_bps": 0,
+        "phase_exit_scorecard_id": "scorecard.shadow.v1",
+        "required_readiness_inputs": [
+          "preflight_verdict",
+          "compatibility_advisories",
+          "onboarding_scorecard",
+          "support_bundle_ref"
+        ],
+        "promotion_requirements": [
+          "divergence_budget_within_threshold",
+          "tail_latency_regression_within_threshold",
+          "security_incident_delta_within_threshold",
+          "evidence_bundle_complete"
+        ],
+        "rollback_trigger_ids": [
+          "shadow_divergence_budget_exceeded",
+          "shadow_security_incident_delta_exceeded"
+        ],
+        "automatic_rollback_required": true
+      },
+      {
+        "phase_id": "canary",
+        "user_traffic_bps": 500,
+        "phase_exit_scorecard_id": "scorecard.canary.v1",
+        "required_readiness_inputs": [
+          "preflight_verdict",
+          "compatibility_advisories",
+          "onboarding_scorecard",
+          "support_bundle_ref"
+        ],
+        "promotion_requirements": [
+          "error_budget_burn_within_threshold",
+          "p95_latency_regression_within_threshold",
+          "security_incident_delta_within_threshold",
+          "correlated_readiness_artifacts_complete"
+        ],
+        "rollback_trigger_ids": [
+          "canary_error_budget_burn_exceeded",
+          "canary_security_incident_delta_exceeded"
+        ],
+        "automatic_rollback_required": true
+      },
+      {
+        "phase_id": "active",
+        "user_traffic_bps": 10000,
+        "phase_exit_scorecard_id": "scorecard.active.v1",
+        "required_readiness_inputs": [
+          "preflight_verdict",
+          "compatibility_advisories",
+          "onboarding_scorecard",
+          "support_bundle_ref"
+        ],
+        "promotion_requirements": [
+          "active_cohort_error_budget_within_threshold",
+          "tail_latency_regression_within_threshold",
+          "containment_incident_delta_within_threshold",
+          "remediation_queue_drained_or_accepted"
+        ],
+        "rollback_trigger_ids": [
+          "active_error_budget_burn_exceeded",
+          "active_containment_incident_delta_exceeded"
+        ],
+        "automatic_rollback_required": true
+      }
+    ]
+  },
+  "readiness_inputs": {
+    "required_inputs": [
+      "preflight_verdict",
+      "compatibility_advisories",
+      "onboarding_scorecard",
+      "support_bundle_ref"
+    ],
+    "fail_closed_on_missing_inputs": true,
+    "require_remediation_queue_for_blocked_workloads": true,
+    "require_support_bundle_linkage": true
+  },
+  "artifact_contract": {
+    "artifact_root": "artifacts/frx_pilot_rollout_harness/<UTC_TIMESTAMP>/",
+    "required_files": [
+      "run_manifest.json",
+      "events.jsonl",
+      "commands.txt",
+      "phase_exit_scorecards.json",
+      "migration_readiness_inputs.json",
+      "blocked_workload_remediation_queue.json",
+      "forced_regression_rollback_drill.json",
+      "pilot_cohort_manifest.json"
+    ],
+    "require_phase_exit_scorecard_per_phase": true,
+    "require_quantitative_thresholds": true,
+    "require_signed_promotion_decisions": true
   },
   "incident_linkage": {
     "required_fields": [

@@ -140,7 +140,7 @@ step_counter=0
 
 default_owner_for_lane() {
   case "$1" in
-    check|clippy|unit|integration)
+    fmt|check|clippy|unit|integration)
       printf 'runtime-core'
       ;;
     e2e|replay)
@@ -356,6 +356,9 @@ evaluate_regression_verdict() {
 
 run_mode() {
   case "$mode" in
+    fmt)
+      run_step_rch "fmt" "cargo fmt --check" cargo fmt --check
+      ;;
     check)
       run_step_rch "check" "cargo check --all-targets" cargo check --all-targets
       ;;
@@ -378,6 +381,7 @@ run_mode() {
       run_step_local "replay" "./scripts/e2e/rgc_verification_coverage_matrix_replay.sh ci" "${root_dir}/scripts/e2e/rgc_verification_coverage_matrix_replay.sh" ci
       ;;
     ci)
+      run_mode fmt
       run_mode check
       run_mode clippy
       run_mode unit
@@ -390,7 +394,7 @@ run_mode() {
       evaluate_regression_verdict
       ;;
     *)
-      echo "usage: $0 [check|clippy|unit|integration|e2e|replay|regression|ci]" >&2
+      echo "usage: $0 [fmt|check|clippy|unit|integration|e2e|replay|regression|ci]" >&2
       exit 2
       ;;
   esac

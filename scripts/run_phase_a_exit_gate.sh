@@ -19,7 +19,7 @@ policy_id="policy-phase-a-exit-gate-v1"
 timestamp="$(date -u +%Y%m%dT%H%M%S%NZ)"
 run_dir="${artifact_root}/${timestamp}"
 manifest_path="${run_dir}/run_manifest.json"
-events_path="${run_dir}/phase_a_exit_gate_events.jsonl"
+events_path="${run_dir}/events.jsonl"
 commands_path="${run_dir}/commands.txt"
 logs_dir="${run_dir}/logs"
 

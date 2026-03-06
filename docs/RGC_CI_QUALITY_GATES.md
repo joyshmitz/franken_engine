@@ -23,18 +23,23 @@ This lane is implemented by:
 
 The gate supports deterministic lane modes:
 
+- `fmt`: `cargo fmt --check` (rch-backed per repo validation policy)
 - `check`: `cargo check --all-targets` (rch-backed)
 - `clippy`: `cargo clippy --all-targets -- -D warnings` (rch-backed)
 - `unit`: `cargo test -p frankenengine-engine --lib` (rch-backed)
 - `integration`: focused RGC integration tests (rch-backed)
-- `e2e`: deterministic RGC harness suites
-- `replay`: deterministic replay wrappers for RGC harness suites
-- `regression`: regression-verdict ingestion only
-- `ci`: `check + clippy + unit + integration + e2e + replay + regression`
+- `e2e`:
+  - `./scripts/run_rgc_test_harness_suite.sh ci`
+  - `./scripts/run_rgc_verification_coverage_matrix.sh ci`
+- `replay`:
+  - `./scripts/e2e/rgc_test_harness_replay.sh ci`
+  - `./scripts/e2e/rgc_verification_coverage_matrix_replay.sh ci`
+- `regression`: regression-verdict ingestion only via `./scripts/run_rgc_ci_quality_gates.sh regression`
+- `ci`: `fmt + check + clippy + unit + integration + e2e + replay + regression`
 
 ## rch Requirement
 
-All heavy Rust compile/lint/test lanes run through `rch exec -- ...`.
+All Cargo verification lanes in this gate run through `rch exec -- ...`.
 If `rch` reports local fallback semantics, the gate fails closed.
 
 ## Regression Verdict Ingestion (RGC-703 hook)
@@ -51,6 +56,12 @@ regressions using deterministic policy:
 For strict CI enforcement, set:
 
 - `RGC_CI_QUALITY_REQUIRE_REGRESSION_VERDICT=true`
+
+Fail-closed regression verdict error semantics:
+
+- `FE-RGC-CI-QUALITY-GATE-0005`: strict mode enabled but no verdict path configured
+- `FE-RGC-CI-QUALITY-GATE-0006`: strict mode enabled and configured verdict file is missing
+- `FE-RGC-CI-QUALITY-GATE-0007`: verdict file contains blocking regression signals
 
 ## Structured Log Contract
 
@@ -70,6 +81,9 @@ Failure code mapping (deterministic):
 - `FE-RGC-CI-QUALITY-GATE-0002`: local fallback detected (fail-closed)
 - `FE-RGC-CI-QUALITY-GATE-0003`: remote command returned non-zero exit
 - `FE-RGC-CI-QUALITY-GATE-0004`: local lane command failed
+- `FE-RGC-CI-QUALITY-GATE-0005`: required regression verdict path missing
+- `FE-RGC-CI-QUALITY-GATE-0006`: configured regression verdict file missing
+- `FE-RGC-CI-QUALITY-GATE-0007`: regression verdict blocks promotion
 - `FE-RGC-CI-QUALITY-GATE-0008`: remote exit marker missing (generic)
 - `FE-RGC-CI-QUALITY-GATE-0009`: timeout before remote exit marker emitted
 - `FE-RGC-CI-QUALITY-GATE-0010`: remote exit marker lost after remote start
