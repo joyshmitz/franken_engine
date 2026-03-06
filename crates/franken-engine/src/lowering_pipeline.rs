@@ -419,6 +419,11 @@ pub fn lower_ir0_to_ir1(
     };
     let mut bindings = Vec::<ResolvedBinding>::new();
     let mut binding_lookup = BTreeMap::<String, BindingId>::new();
+    let declared_root_bindings = reserve_root_scope_bindings(
+        &ir0.tree.body,
+        &mut binding_lookup,
+        &mut binding_index,
+    );
     let mut synthetic_export_index = 0u32;
     let mut label_counter = 0u32;
 
@@ -452,7 +457,8 @@ pub fn lower_ir0_to_ir1(
                         root_scope_id,
                         &mut label_counter,
                     )?;
-                    let binding_name = format!("__default_export_{synthetic_export_index}");
+                    let binding_name =
+                        make_internal_binding_name("default_export", synthetic_export_index);
                     synthetic_export_index = synthetic_export_index.saturating_add(1);
                     let binding_id = alloc_binding(
                         &mut bindings,
@@ -470,27 +476,27 @@ pub fn lower_ir0_to_ir1(
                     });
                 }
                 ExportKind::NamedClause(clause) => {
-                    let binding_id = match binding_lookup.get(clause) {
-                        Some(existing) => *existing,
-                        None => {
-                            let binding_name =
-                                format!("__named_export_{synthetic_export_index}_{clause}");
-                            synthetic_export_index = synthetic_export_index.saturating_add(1);
-                            alloc_binding(
-                                &mut bindings,
-                                &mut binding_lookup,
-                                &mut binding_index,
-                                root_scope_id,
-                                &binding_name,
-                                BindingKind::Const,
-                            )
-                            .map_err(LoweringPipelineError::SemanticViolation)?
+                    for (local_name, exported_name) in parse_named_export_clause_bindings(clause) {
+                        if !declared_root_bindings.contains(local_name.as_str()) {
+                            return Err(LoweringPipelineError::SemanticViolation(
+                                SemanticError::new(
+                                    SemanticErrorCode::UndeclaredExportBinding,
+                                    Some(local_name.clone()),
+                                    Some(export.span.clone()),
+                                ),
+                            ));
                         }
-                    };
-                    ir1.ops.push(Ir1Op::ExportBinding {
-                        name: clause.clone(),
-                        binding_id,
-                    });
+                        let binding_id = binding_lookup
+                            .get(local_name.as_str())
+                            .copied()
+                            .ok_or(LoweringPipelineError::InvariantViolation {
+                                detail: "reserved root binding missing from binding lookup",
+                            })?;
+                        ir1.ops.push(Ir1Op::ExportBinding {
+                            name: exported_name,
+                            binding_id,
+                        });
+                    }
                 }
             },
             _ => {
@@ -562,6 +568,102 @@ fn alloc_label(counter: &mut u32) -> u32 {
 struct ControlFlowTargets {
     break_label: Option<u32>,
     continue_label: Option<u32>,
+}
+
+fn make_internal_binding_name(purpose: &str, index: u32) -> String {
+    format!("@@franken_internal_{purpose}_{index}")
+}
+
+fn reserve_binding_id(
+    binding_lookup: &mut BTreeMap<String, BindingId>,
+    binding_index: &mut BindingId,
+    name: &str,
+) -> BindingId {
+    if let Some(existing_id) = binding_lookup.get(name) {
+        return *existing_id;
+    }
+
+    let binding_id = *binding_index;
+    *binding_index = binding_index.saturating_add(1);
+    binding_lookup.insert(name.to_string(), binding_id);
+    binding_id
+}
+
+fn reserve_root_scope_bindings(
+    statements: &[Statement],
+    binding_lookup: &mut BTreeMap<String, BindingId>,
+    binding_index: &mut BindingId,
+) -> BTreeSet<String> {
+    let mut declared = BTreeSet::new();
+
+    for statement in statements {
+        match statement {
+            Statement::Import(import) => {
+                if let Some(binding_name) = &import.binding {
+                    reserve_binding_id(binding_lookup, binding_index, binding_name);
+                    declared.insert(binding_name.clone());
+                }
+            }
+            Statement::VariableDeclaration(variable_declaration) => {
+                for declarator in &variable_declaration.declarations {
+                    for binding_name in declarator.pattern.binding_names() {
+                        reserve_binding_id(binding_lookup, binding_index, binding_name);
+                        declared.insert(binding_name.to_string());
+                    }
+                }
+            }
+            Statement::FunctionDeclaration(function) => {
+                if let Some(name) = &function.name {
+                    reserve_binding_id(binding_lookup, binding_index, name);
+                    declared.insert(name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    declared
+}
+
+fn parse_named_export_clause_bindings(clause: &str) -> Vec<(String, String)> {
+    let trimmed = clause.trim();
+    let local_clause = trimmed
+        .split_once(" from ")
+        .map(|(head, _)| head.trim())
+        .unwrap_or(trimmed);
+
+    if let Some(inner) = local_clause
+        .strip_prefix('{')
+        .and_then(|body| body.strip_suffix('}'))
+    {
+        let inner = inner.trim();
+        if inner.is_empty() {
+            return Vec::new();
+        }
+
+        return inner
+            .split(',')
+            .filter_map(|specifier| {
+                let specifier = specifier.trim();
+                if specifier.is_empty() {
+                    return None;
+                }
+                let parts: Vec<&str> = specifier.split_whitespace().collect();
+                let (local_name, exported_name) = match parts.as_slice() {
+                    [name] => (*name, *name),
+                    [local, "as", exported] => (*local, *exported),
+                    _ => (specifier, specifier),
+                };
+                Some((local_name.to_string(), exported_name.to_string()))
+            })
+            .collect();
+    }
+
+    if trimmed.is_empty() {
+        Vec::new()
+    } else {
+        vec![(trimmed.to_string(), trimmed.to_string())]
+    }
 }
 
 fn alloc_pattern_primary_binding(
@@ -1156,7 +1258,8 @@ fn lower_switch_to_ir1(
         scope_id,
         label_counter,
     )?;
-    let discriminant_binding_name = format!("__franken_switch_discriminant_{}", *binding_index);
+    let discriminant_binding_name =
+        make_internal_binding_name("switch_discriminant", *binding_index);
     let discriminant_binding = alloc_binding(
         bindings,
         binding_lookup,
@@ -2000,7 +2103,15 @@ fn alloc_binding(
                 }
             }
         }
-        // If we can't find the binding kind (shouldn't happen), reuse defensively.
+        // Reserved bindings are inserted into the lookup before their
+        // declarations are lowered so exports and forward references can
+        // share a stable binding ID.
+        bindings.push(ResolvedBinding {
+            name: name.to_string(),
+            binding_id: *existing_id,
+            scope,
+            kind,
+        });
         return Ok(*existing_id);
     }
 
@@ -3901,10 +4012,21 @@ mod tests {
     fn lower_module_with_default_export() {
         let tree = SyntaxTree {
             goal: ParseGoal::Module,
-            body: vec![Statement::Export(ExportDeclaration {
-                kind: ExportKind::Default(Expression::NumericLiteral(42)),
-                span: span(),
-            })],
+            body: vec![
+                Statement::VariableDeclaration(VariableDeclaration {
+                    kind: VariableDeclarationKind::Const,
+                    declarations: vec![VariableDeclarator {
+                        pattern: BindingPattern::Identifier("__default_export_0".to_string()),
+                        initializer: Some(Expression::NumericLiteral(7)),
+                        span: span(),
+                    }],
+                    span: span(),
+                }),
+                Statement::Export(ExportDeclaration {
+                    kind: ExportKind::Default(Expression::NumericLiteral(42)),
+                    span: span(),
+                }),
+            ],
             span: span(),
         };
         let ir0 = Ir0Module::from_syntax_tree(tree, "default_export.mjs");
@@ -3923,12 +4045,17 @@ mod tests {
         let tree = SyntaxTree {
             goal: ParseGoal::Module,
             body: vec![
-                Statement::Expression(ExpressionStatement {
-                    expression: Expression::Identifier("foo".to_string()),
+                Statement::VariableDeclaration(VariableDeclaration {
+                    kind: VariableDeclarationKind::Const,
+                    declarations: vec![VariableDeclarator {
+                        pattern: BindingPattern::Identifier("foo".to_string()),
+                        initializer: Some(Expression::NumericLiteral(1)),
+                        span: span(),
+                    }],
                     span: span(),
                 }),
                 Statement::Export(ExportDeclaration {
-                    kind: ExportKind::NamedClause("foo".to_string()),
+                    kind: ExportKind::NamedClause("{ foo as published }".to_string()),
                     span: span(),
                 }),
             ],
@@ -3941,7 +4068,7 @@ mod tests {
             .module
             .ops
             .iter()
-            .any(|op| matches!(op, Ir1Op::ExportBinding { name, .. } if name == "foo"));
+            .any(|op| matches!(op, Ir1Op::ExportBinding { name, .. } if name == "published"));
         assert!(has_export);
     }
 
@@ -3950,20 +4077,92 @@ mod tests {
         let tree = SyntaxTree {
             goal: ParseGoal::Module,
             body: vec![Statement::Export(ExportDeclaration {
-                kind: ExportKind::NamedClause("bar".to_string()),
+                kind: ExportKind::NamedClause("{ bar }".to_string()),
                 span: span(),
             })],
             span: span(),
         };
         let ir0 = Ir0Module::from_syntax_tree(tree, "named_unknown.mjs");
-        let result = lower_ir0_to_ir1(&ir0).expect("should succeed");
+        let err = lower_ir0_to_ir1(&ir0).expect_err("undeclared export should fail");
+        assert!(matches!(
+            err,
+            LoweringPipelineError::SemanticViolation(SemanticError {
+                code: SemanticErrorCode::UndeclaredExportBinding,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn lower_module_with_named_export_before_declaration() {
+        let tree = SyntaxTree {
+            goal: ParseGoal::Module,
+            body: vec![
+                Statement::Export(ExportDeclaration {
+                    kind: ExportKind::NamedClause("{ foo }".to_string()),
+                    span: span(),
+                }),
+                Statement::VariableDeclaration(VariableDeclaration {
+                    kind: VariableDeclarationKind::Const,
+                    declarations: vec![VariableDeclarator {
+                        pattern: BindingPattern::Identifier("foo".to_string()),
+                        initializer: Some(Expression::NumericLiteral(3)),
+                        span: span(),
+                    }],
+                    span: span(),
+                }),
+            ],
+            span: span(),
+        };
+        let ir0 = Ir0Module::from_syntax_tree(tree, "named_export_before_decl.mjs");
+        let result = lower_ir0_to_ir1(&ir0).expect("forward export should lower");
 
         let has_export = result
             .module
             .ops
             .iter()
-            .any(|op| matches!(op, Ir1Op::ExportBinding { name, .. } if name == "bar"));
+            .any(|op| matches!(op, Ir1Op::ExportBinding { name, .. } if name == "foo"));
         assert!(has_export);
+    }
+
+    #[test]
+    fn lower_switch_discriminant_internal_binding_avoids_user_name_collision() {
+        let ir0 = stmt_ir0(vec![
+            Statement::VariableDeclaration(VariableDeclaration {
+                kind: VariableDeclarationKind::Let,
+                declarations: vec![VariableDeclarator {
+                    pattern: BindingPattern::Identifier(
+                        "__franken_switch_discriminant_1".to_string(),
+                    ),
+                    initializer: Some(Expression::NumericLiteral(0)),
+                    span: span(),
+                }],
+                span: span(),
+            }),
+            Statement::Switch(SwitchStatement {
+                discriminant: Expression::Identifier("x".into()),
+                cases: vec![SwitchCase {
+                    test: Some(Expression::NumericLiteral(1)),
+                    consequent: vec![Statement::Break(BreakStatement {
+                        label: None,
+                        span: span(),
+                    })],
+                    span: span(),
+                }],
+                span: span(),
+            }),
+        ]);
+        let result = lower_ir0_to_ir1(&ir0).expect("internal switch temp should stay hidden");
+        assert!(
+            result
+                .module
+                .scopes
+                .first()
+                .expect("root scope")
+                .bindings
+                .iter()
+                .any(|binding| binding.name == "__franken_switch_discriminant_1")
+        );
     }
 
     // -- Module lowering with await --

@@ -82,7 +82,7 @@ fn export_default(expr: Expression) -> Statement {
 
 fn export_named(name: &str) -> Statement {
     Statement::Export(ExportDeclaration {
-        kind: ExportKind::NamedClause(name.to_string()),
+        kind: ExportKind::NamedClause(format!("{{ {name} }}")),
         span: span(),
     })
 }
@@ -806,13 +806,17 @@ fn named_export_of_declared_binding() {
 }
 
 #[test]
-fn named_export_of_undeclared_creates_synthetic() {
+fn named_export_of_undeclared_is_error() {
     let result = lower(
         ParseGoal::Module,
         vec![export_named("unknown")],
         "synth_export.mjs",
     );
-    assert!(result.is_ok());
+    assert!(matches!(
+        result,
+        Err(LoweringPipelineError::SemanticViolation(sem))
+            if sem.code == SemanticErrorCode::UndeclaredExportBinding
+    ));
 }
 
 #[test]

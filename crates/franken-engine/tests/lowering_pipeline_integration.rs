@@ -9,8 +9,9 @@
 use std::collections::BTreeSet;
 
 use frankenengine_engine::ast::{
-    ExportDeclaration, ExportKind, Expression, ExpressionStatement, ImportDeclaration, ParseGoal,
-    SourceSpan, Statement, SyntaxTree,
+    BindingPattern, ExportDeclaration, ExportKind, Expression, ExpressionStatement,
+    ImportDeclaration, ParseGoal, SourceSpan, Statement, SyntaxTree, VariableDeclaration,
+    VariableDeclarationKind, VariableDeclarator,
 };
 use frankenengine_engine::hash_tiers::ContentHash;
 use frankenengine_engine::ifc_artifacts::Label;
@@ -101,6 +102,18 @@ fn module_ir0_named_export(clause: &str) -> Ir0Module {
         span: span(),
     };
     Ir0Module::from_syntax_tree(tree, "named_export.mjs")
+}
+
+fn const_decl(name: &str, value: i64) -> Statement {
+    Statement::VariableDeclaration(VariableDeclaration {
+        kind: VariableDeclarationKind::Const,
+        declarations: vec![VariableDeclarator {
+            pattern: BindingPattern::Identifier(name.to_string()),
+            initializer: Some(Expression::NumericLiteral(value)),
+            span: span(),
+        }],
+        span: span(),
+    })
 }
 
 fn run_full_pipeline(ir0: &Ir0Module) -> LoweringPipelineOutput {
@@ -537,16 +550,14 @@ fn ir0_to_ir1_default_export() {
 }
 
 #[test]
-fn ir0_to_ir1_named_export_unknown_creates_synthetic_binding() {
-    let ir0 = module_ir0_named_export("bar");
-    let result = lower_ir0_to_ir1(&ir0).expect("should succeed");
-
-    let has_export = result
-        .module
-        .ops
-        .iter()
-        .any(|op| matches!(op, Ir1Op::ExportBinding { name, .. } if name == "bar"));
-    assert!(has_export);
+fn ir0_to_ir1_named_export_unknown_is_error() {
+    let ir0 = module_ir0_named_export("{ bar }");
+    let err = lower_ir0_to_ir1(&ir0).expect_err("undeclared export should fail");
+    assert!(matches!(
+        err,
+        LoweringPipelineError::SemanticViolation(sem)
+            if sem.code == frankenengine_engine::parser::SemanticErrorCode::UndeclaredExportBinding
+    ));
 }
 
 #[test]
@@ -554,12 +565,9 @@ fn ir0_to_ir1_named_export_known_binding_reuses_id() {
     let tree = SyntaxTree {
         goal: ParseGoal::Module,
         body: vec![
-            Statement::Expression(ExpressionStatement {
-                expression: Expression::Identifier("foo".to_string()),
-                span: span(),
-            }),
+            const_decl("foo", 1),
             Statement::Export(ExportDeclaration {
-                kind: ExportKind::NamedClause("foo".to_string()),
+                kind: ExportKind::NamedClause("{ foo as published }".to_string()),
                 span: span(),
             }),
         ],
@@ -572,7 +580,7 @@ fn ir0_to_ir1_named_export_known_binding_reuses_id() {
         .module
         .ops
         .iter()
-        .any(|op| matches!(op, Ir1Op::ExportBinding { name, .. } if name == "foo"));
+        .any(|op| matches!(op, Ir1Op::ExportBinding { name, .. } if name == "published"));
     assert!(has_export);
 }
 
@@ -1714,20 +1722,14 @@ fn multiple_exports_pipeline() {
     let tree = SyntaxTree {
         goal: ParseGoal::Module,
         body: vec![
-            Statement::Expression(ExpressionStatement {
-                expression: Expression::Identifier("foo".to_string()),
-                span: span(),
-            }),
-            Statement::Expression(ExpressionStatement {
-                expression: Expression::Identifier("bar".to_string()),
+            const_decl("foo", 1),
+            const_decl("bar", 2),
+            Statement::Export(ExportDeclaration {
+                kind: ExportKind::NamedClause("{ foo }".to_string()),
                 span: span(),
             }),
             Statement::Export(ExportDeclaration {
-                kind: ExportKind::NamedClause("foo".to_string()),
-                span: span(),
-            }),
-            Statement::Export(ExportDeclaration {
-                kind: ExportKind::NamedClause("bar".to_string()),
+                kind: ExportKind::NamedClause("{ bar }".to_string()),
                 span: span(),
             }),
         ],

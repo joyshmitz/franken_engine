@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 struct ParserThirdPartyRerunKitFixture {
@@ -514,7 +514,7 @@ fn parser_third_party_rerun_kit_fixture_matrix_statuses_cover_all_classifier_out
         let result = classify_matrix_input_status(provided, complete, deltas);
         assert_eq!(result, expected);
         assert!(
-            statuses.contains(&expected.to_string()),
+            statuses.contains(expected),
             "fixture matrix_input_statuses missing classifier output: {expected}"
         );
     }

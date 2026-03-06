@@ -185,7 +185,7 @@ fn determinism_named_export() {
                 "foo",
                 Some(Expression::NumericLiteral(1)),
             ),
-            make_named_export("foo"),
+            make_named_export("{ foo }"),
         ],
     );
     let a = run_full(&ir0);
@@ -959,7 +959,7 @@ fn complex_module_with_all_syntax_families() {
             make_expr_stmt(Expression::NullLiteral),
             make_expr_stmt(Expression::UndefinedLiteral),
             make_default_export(Expression::NumericLiteral(42)),
-            make_named_export("VERSION"),
+            make_named_export("{ VERSION }"),
         ],
     );
     let output = run_full(&ir0);
