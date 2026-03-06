@@ -560,6 +560,7 @@ impl HasErrorCode for SerdeError {
             | SerdeError::UnknownSchema { .. }
             | SerdeError::BufferTooShort { .. }
             | SerdeError::InvalidTag { .. }
+            | SerdeError::InvalidBoolEncoding { .. }
             | SerdeError::InvalidUtf8 { .. }
             | SerdeError::DuplicateKey { .. }
             | SerdeError::NonLexicographicKeys { .. }

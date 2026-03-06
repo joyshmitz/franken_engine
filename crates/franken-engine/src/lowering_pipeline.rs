@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::ast::{
-    ArrowBody, BinaryOperator, BindingPattern, ExportKind, Expression, ParseGoal, Statement,
-    VariableDeclarationKind,
+    ArrowBody, BinaryOperator, BindingPattern, ExportKind, Expression, ParseGoal, SourceSpan,
+    Statement, VariableDeclarationKind,
 };
 use crate::flow_lattice::{
     Clearance, DeclassificationObligation, FlowCheckResult as LatticeFlowCheckResult,
@@ -21,6 +21,7 @@ use crate::ir_contract::{
     verify_ir3_specialization,
 };
 use crate::parser::{SemanticError, SemanticErrorCode, SemanticValidationResult};
+use crate::parser_gap_inventory::{ParserGapSiteId, UnsupportedSyntaxDiagnostic};
 
 const COMPONENT: &str = "lowering_pipeline";
 const IFC_RUNTIME_GUARD_CAPABILITY: &str = "ifc.check_flow";
@@ -213,6 +214,17 @@ pub enum LoweringPipelineError {
     },
     #[error("static semantics violation: {0}")]
     SemanticViolation(SemanticError),
+    #[error("unsupported syntax rejected by fail-closed contract: {0}")]
+    UnsupportedSyntax(Box<UnsupportedSyntaxDiagnostic>),
+}
+
+fn unsupported_syntax_error(
+    site: ParserGapSiteId,
+    span: Option<SourceSpan>,
+) -> LoweringPipelineError {
+    LoweringPipelineError::UnsupportedSyntax(Box::new(UnsupportedSyntaxDiagnostic::from_site(
+        site, "ir0", span,
+    )))
 }
 
 pub fn lower_ir0_to_ir3(
@@ -419,11 +431,8 @@ pub fn lower_ir0_to_ir1(
     };
     let mut bindings = Vec::<ResolvedBinding>::new();
     let mut binding_lookup = BTreeMap::<String, BindingId>::new();
-    let declared_root_bindings = reserve_root_scope_bindings(
-        &ir0.tree.body,
-        &mut binding_lookup,
-        &mut binding_index,
-    );
+    let declared_root_bindings =
+        reserve_root_scope_bindings(&ir0.tree.body, &mut binding_lookup, &mut binding_index);
     let mut synthetic_export_index = 0u32;
     let mut label_counter = 0u32;
 
@@ -486,12 +495,11 @@ pub fn lower_ir0_to_ir1(
                                 ),
                             ));
                         }
-                        let binding_id = binding_lookup
-                            .get(local_name.as_str())
-                            .copied()
-                            .ok_or(LoweringPipelineError::InvariantViolation {
+                        let binding_id = binding_lookup.get(local_name.as_str()).copied().ok_or(
+                            LoweringPipelineError::InvariantViolation {
                                 detail: "reserved root binding missing from binding lookup",
-                            })?;
+                            },
+                        )?;
                         ir1.ops.push(Ir1Op::ExportBinding {
                             name: exported_name,
                             binding_id,
@@ -907,99 +915,16 @@ fn lower_statement_to_ir1_with_flow(
             ops.push(Ir1Op::Label { id: end_label });
         }
         Statement::ForIn(for_in_stmt) => {
-            // Evaluate the object expression for side effects, then run the
-            // body once with the binding initialised to undefined as a
-            // placeholder (full for-in enumeration is not yet implemented).
-            lower_expression_to_ir1(
-                &for_in_stmt.object,
-                ops,
-                bindings,
-                binding_lookup,
-                binding_index,
-                scope_id,
-                label_counter,
-            )?;
-            ops.push(Ir1Op::Pop);
-            let binding_kind = for_in_stmt
-                .binding_kind
-                .map(binding_kind_for_variable_declaration)
-                .unwrap_or(BindingKind::Var);
-            let bid = alloc_pattern_primary_binding(
-                bindings,
-                binding_lookup,
-                binding_index,
-                scope_id,
-                &for_in_stmt.binding,
-                binding_kind,
-            )
-            .map_err(LoweringPipelineError::SemanticViolation)?;
-            ops.push(Ir1Op::LoadLiteral {
-                value: Ir1Literal::Undefined,
-            });
-            ops.push(Ir1Op::StoreBinding { binding_id: bid });
-            let end_label = alloc_label(label_counter);
-            lower_statement_to_ir1_with_flow(
-                &for_in_stmt.body,
-                ops,
-                bindings,
-                binding_lookup,
-                binding_index,
-                scope_id,
-                label_counter,
-                ControlFlowTargets {
-                    break_label: Some(end_label),
-                    continue_label: Some(end_label),
-                },
-            )?;
-            ops.push(Ir1Op::Label { id: end_label });
+            return Err(unsupported_syntax_error(
+                ParserGapSiteId::ForInStatementPlaceholder,
+                Some(for_in_stmt.span.clone()),
+            ));
         }
         Statement::ForOf(for_of_stmt) => {
-            // Evaluate the iterable expression for side effects, then run the
-            // body once with the binding initialised to undefined as a
-            // placeholder (full for-of iteration protocol is not yet
-            // implemented).
-            lower_expression_to_ir1(
-                &for_of_stmt.iterable,
-                ops,
-                bindings,
-                binding_lookup,
-                binding_index,
-                scope_id,
-                label_counter,
-            )?;
-            ops.push(Ir1Op::Pop);
-            let binding_kind = for_of_stmt
-                .binding_kind
-                .map(binding_kind_for_variable_declaration)
-                .unwrap_or(BindingKind::Var);
-            let bid = alloc_pattern_primary_binding(
-                bindings,
-                binding_lookup,
-                binding_index,
-                scope_id,
-                &for_of_stmt.binding,
-                binding_kind,
-            )
-            .map_err(LoweringPipelineError::SemanticViolation)?;
-            ops.push(Ir1Op::LoadLiteral {
-                value: Ir1Literal::Undefined,
-            });
-            ops.push(Ir1Op::StoreBinding { binding_id: bid });
-            let end_label = alloc_label(label_counter);
-            lower_statement_to_ir1_with_flow(
-                &for_of_stmt.body,
-                ops,
-                bindings,
-                binding_lookup,
-                binding_index,
-                scope_id,
-                label_counter,
-                ControlFlowTargets {
-                    break_label: Some(end_label),
-                    continue_label: Some(end_label),
-                },
-            )?;
-            ops.push(Ir1Op::Label { id: end_label });
+            return Err(unsupported_syntax_error(
+                ParserGapSiteId::ForOfStatementPlaceholder,
+                Some(for_of_stmt.span.clone()),
+            ));
         }
         Statement::While(while_stmt) => {
             let loop_label = alloc_label(label_counter);
@@ -2467,56 +2392,21 @@ fn lower_expression_to_ir1(
             ops.push(Ir1Op::Return);
         }
         Expression::New { callee, arguments } => {
-            // Lower the constructor and its arguments for side effects, then
-            // emit a Call placeholder.  A dedicated NewObject opcode is not
-            // yet available in IR1; model `new F(args)` as a call for now.
-            lower_expression_to_ir1(
-                callee,
-                ops,
-                bindings,
-                binding_lookup,
-                binding_index,
-                root_scope_id,
-                label_counter,
-            )?;
-            for arg in arguments {
-                lower_expression_to_ir1(
-                    arg,
-                    ops,
-                    bindings,
-                    binding_lookup,
-                    binding_index,
-                    root_scope_id,
-                    label_counter,
-                )?;
-            }
-            ops.push(Ir1Op::Call {
-                arg_count: arguments.len() as u32,
-            });
+            let _ = (callee, arguments);
+            return Err(unsupported_syntax_error(
+                ParserGapSiteId::NewExpressionCallPlaceholder,
+                None,
+            ));
         }
         Expression::TemplateLiteral {
             quasis,
             expressions,
         } => {
-            // Lower each interpolated expression for side effects, then emit
-            // the static string portions as a Raw literal placeholder.  Full
-            // template coercion and concatenation are not yet implemented.
-            for expr in expressions {
-                lower_expression_to_ir1(
-                    expr,
-                    ops,
-                    bindings,
-                    binding_lookup,
-                    binding_index,
-                    root_scope_id,
-                    label_counter,
-                )?;
-                ops.push(Ir1Op::Pop);
-            }
-            let raw = quasis.join("");
-            ops.push(Ir1Op::LoadLiteral {
-                value: Ir1Literal::String(raw),
-            });
+            let _ = (quasis, expressions);
+            return Err(unsupported_syntax_error(
+                ParserGapSiteId::TemplateLiteralRawPlaceholder,
+                None,
+            ));
         }
     }
     Ok(())
@@ -2871,6 +2761,7 @@ mod tests {
         SwitchStatement, SyntaxTree, ThrowStatement, TryCatchStatement, UnaryOperator,
         VariableDeclaration, VariableDeclarationKind, VariableDeclarator, WhileStatement,
     };
+    use crate::parser_gap_inventory::{ParserGapSiteId, UnsupportedSyntaxDiagnostic};
 
     fn span() -> SourceSpan {
         SourceSpan::new(0, 1, 1, 1, 1, 2)
@@ -3983,6 +3874,20 @@ mod tests {
         assert!(err.to_string().contains("duplicate binding IDs"));
     }
 
+    #[test]
+    fn lowering_pipeline_error_display_unsupported_syntax() {
+        let err = LoweringPipelineError::UnsupportedSyntax(Box::new(
+            UnsupportedSyntaxDiagnostic::from_site(
+                ParserGapSiteId::ForInStatementPlaceholder,
+                "ir0",
+                Some(span()),
+            ),
+        ));
+        let display = err.to_string();
+        assert!(display.contains("FE-PARSER-GAP-FOR-IN-0001"));
+        assert!(display.contains("lower_ir0_to_ir1.for_in_placeholder"));
+    }
+
     // -- Module lowering with imports --
 
     #[test]
@@ -4777,6 +4682,13 @@ mod tests {
                 sink_clearance: Label::Public,
                 detail: "x".into(),
             },
+            LoweringPipelineError::UnsupportedSyntax(Box::new(
+                UnsupportedSyntaxDiagnostic::from_site(
+                    ParserGapSiteId::TemplateLiteralRawPlaceholder,
+                    "ir0",
+                    None,
+                ),
+            )),
         ];
         let set: std::collections::BTreeSet<String> =
             variants.iter().map(|e| format!("{e}")).collect();
@@ -5144,36 +5056,37 @@ mod tests {
     }
 
     #[test]
-    fn lower_new_expression() {
+    fn lower_new_expression_fails_closed() {
         let ir0 = expr_ir0(Expression::New {
             callee: Box::new(Expression::Identifier("Foo".into())),
             arguments: vec![Expression::NumericLiteral(1)],
         });
-        let result = lower_ir0_to_ir1(&ir0).expect("new should lower");
-        assert!(
-            result
-                .module
-                .ops
-                .iter()
-                .any(|op| matches!(op, Ir1Op::Call { arg_count: 1 }))
-        );
+        let err = lower_ir0_to_ir1(&ir0).expect_err("new must fail closed");
+        assert!(matches!(
+            err,
+            LoweringPipelineError::UnsupportedSyntax(ref diagnostic)
+                if diagnostic.site_id
+                    == ParserGapSiteId::NewExpressionCallPlaceholder.as_str()
+                && diagnostic.diagnostic_code
+                    == ParserGapSiteId::NewExpressionCallPlaceholder.diagnostic_code()
+        ));
     }
 
     #[test]
-    fn lower_template_literal() {
+    fn lower_template_literal_fails_closed() {
         let ir0 = expr_ir0(Expression::TemplateLiteral {
             quasis: vec!["hello ".into(), " world".into()],
             expressions: vec![Expression::Identifier("name".into())],
         });
-        let result = lower_ir0_to_ir1(&ir0).expect("template should lower");
-        // Should pop each interpolated expression and concat quasis.
-        assert!(result.module.ops.iter().any(|op| matches!(op, Ir1Op::Pop)));
-        assert!(result.module.ops.iter().any(|op| matches!(
-            op,
-            Ir1Op::LoadLiteral {
-                value: Ir1Literal::String(s)
-            } if s == "hello  world"
-        )));
+        let err = lower_ir0_to_ir1(&ir0).expect_err("template literal must fail closed");
+        assert!(matches!(
+            err,
+            LoweringPipelineError::UnsupportedSyntax(ref diagnostic)
+                if diagnostic.site_id
+                    == ParserGapSiteId::TemplateLiteralRawPlaceholder.as_str()
+                && diagnostic.diagnostic_code
+                    == ParserGapSiteId::TemplateLiteralRawPlaceholder.diagnostic_code()
+        ));
     }
 
     // ================================================================
@@ -5284,7 +5197,7 @@ mod tests {
     }
 
     #[test]
-    fn lower_for_in_statement() {
+    fn lower_for_in_statement_fails_closed() {
         let ir0 = stmt_ir0(vec![Statement::ForIn(ForInStatement {
             binding: BindingPattern::Identifier("k".into()),
             binding_kind: Some(VariableDeclarationKind::Let),
@@ -5295,21 +5208,20 @@ mod tests {
             })),
             span: span(),
         })]);
-        let result = lower_ir0_to_ir1(&ir0).expect("for-in should lower");
-        assert!(result.module.ops.iter().any(|op| matches!(op, Ir1Op::Pop)));
-        let binding = result
-            .module
-            .scopes
-            .first()
-            .expect("scope")
-            .bindings
-            .iter()
-            .find(|b| b.name == "k");
-        assert!(binding.is_some());
+        let err = lower_ir0_to_ir1(&ir0).expect_err("for-in must fail closed");
+        assert!(matches!(
+            err,
+            LoweringPipelineError::UnsupportedSyntax(ref diagnostic)
+                if diagnostic.site_id
+                    == ParserGapSiteId::ForInStatementPlaceholder.as_str()
+                && diagnostic.diagnostic_code
+                    == ParserGapSiteId::ForInStatementPlaceholder.diagnostic_code()
+                && diagnostic.span == Some(span())
+        ));
     }
 
     #[test]
-    fn lower_for_of_statement() {
+    fn lower_for_of_statement_fails_closed() {
         let ir0 = stmt_ir0(vec![Statement::ForOf(ForOfStatement {
             binding: BindingPattern::Identifier("v".into()),
             binding_kind: Some(VariableDeclarationKind::Const),
@@ -5320,16 +5232,16 @@ mod tests {
             })),
             span: span(),
         })]);
-        let result = lower_ir0_to_ir1(&ir0).expect("for-of should lower");
-        let binding = result
-            .module
-            .scopes
-            .first()
-            .expect("scope")
-            .bindings
-            .iter()
-            .find(|b| b.name == "v");
-        assert!(binding.is_some());
+        let err = lower_ir0_to_ir1(&ir0).expect_err("for-of must fail closed");
+        assert!(matches!(
+            err,
+            LoweringPipelineError::UnsupportedSyntax(ref diagnostic)
+                if diagnostic.site_id
+                    == ParserGapSiteId::ForOfStatementPlaceholder.as_str()
+                && diagnostic.diagnostic_code
+                    == ParserGapSiteId::ForOfStatementPlaceholder.diagnostic_code()
+                && diagnostic.span == Some(span())
+        ));
     }
 
     #[test]
@@ -5923,7 +5835,7 @@ mod tests {
     }
 
     #[test]
-    fn for_in_without_binding_kind_defaults_to_var() {
+    fn for_in_without_binding_kind_fails_closed() {
         let ir0 = stmt_ir0(vec![Statement::ForIn(ForInStatement {
             binding: BindingPattern::Identifier("k".into()),
             binding_kind: None,
@@ -5934,17 +5846,13 @@ mod tests {
             })),
             span: span(),
         })]);
-        let result = lower_ir0_to_ir1(&ir0).expect("for-in default should lower");
-        let binding = result
-            .module
-            .scopes
-            .first()
-            .expect("scope")
-            .bindings
-            .iter()
-            .find(|b| b.name == "k")
-            .expect("k binding");
-        assert_eq!(binding.kind, BindingKind::Var);
+        let err = lower_ir0_to_ir1(&ir0).expect_err("for-in default binding must fail closed");
+        assert!(matches!(
+            err,
+            LoweringPipelineError::UnsupportedSyntax(ref diagnostic)
+                if diagnostic.site_id
+                    == ParserGapSiteId::ForInStatementPlaceholder.as_str()
+        ));
     }
 
     #[test]

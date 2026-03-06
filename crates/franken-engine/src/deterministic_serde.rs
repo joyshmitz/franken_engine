@@ -109,6 +109,8 @@ pub enum SerdeError {
     BufferTooShort { expected: usize, actual: usize },
     /// Invalid tag byte encountered.
     InvalidTag { tag: u8, offset: usize },
+    /// Invalid boolean encoding byte encountered.
+    InvalidBoolEncoding { value: u8, offset: usize },
     /// String decoding failed.
     InvalidUtf8 { offset: usize },
     /// Duplicate key in map.
@@ -138,6 +140,9 @@ impl fmt::Display for SerdeError {
             }
             Self::InvalidTag { tag, offset } => {
                 write!(f, "invalid tag 0x{tag:02x} at offset {offset}")
+            }
+            Self::InvalidBoolEncoding { value, offset } => {
+                write!(f, "invalid bool encoding 0x{value:02x} at offset {offset}")
             }
             Self::InvalidUtf8 { offset } => write!(f, "invalid UTF-8 at offset {offset}"),
             Self::DuplicateKey { key } => write!(f, "duplicate key: {key}"),
@@ -260,7 +265,13 @@ fn decode_at(
         }
         TAG_BOOL => {
             need_bytes(data, pos, 1)?;
-            let v = data[pos] != 0;
+            let v = match data[pos] {
+                0x00 => false,
+                0x01 => true,
+                value => {
+                    return Err(SerdeError::InvalidBoolEncoding { value, offset: pos });
+                }
+            };
             Ok((CanonicalValue::Bool(v), pos + 1))
         }
         TAG_BYTES => {
@@ -727,6 +738,17 @@ mod tests {
     }
 
     #[test]
+    fn invalid_bool_encoding_rejected() {
+        assert!(matches!(
+            decode_value(&[TAG_BOOL, 0x02]),
+            Err(SerdeError::InvalidBoolEncoding {
+                value: 0x02,
+                offset: 1
+            })
+        ));
+    }
+
+    #[test]
     fn truncated_u64() {
         let mut bytes = encode_value(&CanonicalValue::U64(42));
         bytes.truncate(5); // tag + 4 of 8 bytes
@@ -862,6 +884,10 @@ mod tests {
                 tag: 0xFF,
                 offset: 0,
             },
+            SerdeError::InvalidBoolEncoding {
+                value: 0x02,
+                offset: 1,
+            },
             SerdeError::DuplicateKey {
                 key: "test".to_string(),
             },
@@ -936,6 +962,10 @@ mod tests {
                 tag: 0xFF,
                 offset: 0,
             }),
+            Box::new(SerdeError::InvalidBoolEncoding {
+                value: 0x02,
+                offset: 1,
+            }),
             Box::new(SerdeError::InvalidUtf8 { offset: 3 }),
             Box::new(SerdeError::DuplicateKey { key: "k".into() }),
             Box::new(SerdeError::NonLexicographicKeys {
@@ -949,7 +979,7 @@ mod tests {
         for v in &variants {
             displays.insert(format!("{v}"));
         }
-        assert_eq!(displays.len(), 9);
+        assert_eq!(displays.len(), 10);
     }
 
     // -----------------------------------------------------------------------
@@ -1173,6 +1203,10 @@ mod tests {
                 tag: 0xAA,
                 offset: 10,
             },
+            SerdeError::InvalidBoolEncoding {
+                value: 0x02,
+                offset: 11,
+            },
             SerdeError::InvalidUtf8 { offset: 20 },
             SerdeError::DuplicateKey {
                 key: "dup".to_string(),
@@ -1190,7 +1224,7 @@ mod tests {
             assert!(!s.is_empty());
             displays.insert(s);
         }
-        // All 9 variants produce distinct Display output.
+        // All 10 variants produce distinct Display output.
         assert_eq!(displays.len(), variants.len());
     }
 
@@ -1466,6 +1500,17 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("de")); // hex of 0xDE
         assert!(msg.contains("42"));
+    }
+
+    #[test]
+    fn display_invalid_bool_encoding_contains_hex() {
+        let err = SerdeError::InvalidBoolEncoding {
+            value: 0x02,
+            offset: 17,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("02"));
+        assert!(msg.contains("17"));
     }
 
     #[test]

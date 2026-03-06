@@ -224,7 +224,7 @@ struct EvidenceRecordInput<'a> {
 #[derive(Debug)]
 pub enum OrchestratorError {
     Parse(Box<ParseError>),
-    Lowering(LoweringPipelineError),
+    Lowering(Box<LoweringPipelineError>),
     Interpreter(InterpreterError),
     Ledger(LedgerError),
     Saga(SagaError),
@@ -260,7 +260,7 @@ impl From<ParseError> for OrchestratorError {
 
 impl From<LoweringPipelineError> for OrchestratorError {
     fn from(e: LoweringPipelineError) -> Self {
-        Self::Lowering(e)
+        Self::Lowering(Box::new(e))
     }
 }
 

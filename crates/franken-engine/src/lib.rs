@@ -152,6 +152,7 @@ pub mod parser_api_stability;
 pub mod parser_arena;
 pub mod parser_error_recovery;
 pub mod parser_evidence_indexer;
+pub mod parser_gap_inventory;
 pub mod parser_multi_engine_harness;
 pub mod parser_oracle;
 pub mod performance_regression_gate;
@@ -926,21 +927,16 @@ fn map_parse_error(error: ParseError) -> EvalError {
 }
 
 fn map_lowering_error(error: LoweringPipelineError) -> EvalError {
-    let mapped = match error {
-        err @ LoweringPipelineError::SemanticViolation(_) => {
-            EvalError::resolution_failure(err.to_string())
-        }
-        err @ LoweringPipelineError::FlowLatticeFailure { .. } => {
-            EvalError::policy_denied(err.to_string())
-        }
-        err @ LoweringPipelineError::UnauthorizedFlow { .. } => {
-            EvalError::capability_denied(err.to_string())
-        }
-        err @ LoweringPipelineError::InvariantViolation { .. }
-        | err @ LoweringPipelineError::EmptyIr0Body
-        | err @ LoweringPipelineError::IrContractValidation { .. } => {
-            EvalError::invariant_violation(err.to_string())
-        }
+    let mapped = if matches!(error, LoweringPipelineError::SemanticViolation(_)) {
+        EvalError::resolution_failure(error.to_string())
+    } else if matches!(error, LoweringPipelineError::FlowLatticeFailure { .. }) {
+        EvalError::policy_denied(error.to_string())
+    } else if matches!(error, LoweringPipelineError::UnauthorizedFlow { .. }) {
+        EvalError::capability_denied(error.to_string())
+    } else if matches!(error, LoweringPipelineError::UnsupportedSyntax(_)) {
+        EvalError::parse_failure(error.to_string())
+    } else {
+        EvalError::invariant_violation(error.to_string())
     };
     annotate_error_stage(mapped, "lowering", None)
 }

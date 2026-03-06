@@ -358,6 +358,18 @@ fn decode_invalid_tag_error() {
 }
 
 #[test]
+fn decode_invalid_bool_encoding_error() {
+    let err = decode_value(&[0x03, 0x02]).unwrap_err();
+    assert!(matches!(
+        err,
+        SerdeError::InvalidBoolEncoding {
+            value: 0x02,
+            offset: 1
+        }
+    ));
+}
+
+#[test]
 fn decode_truncated_u64_error() {
     // Tag for U64 followed by only 3 bytes instead of 8
     let err = decode_value(&[0x01, 0x00, 0x00, 0x00]).unwrap_err();
@@ -405,6 +417,13 @@ fn serde_error_display_all_variants() {
                 offset: 0,
             },
             "invalid tag",
+        ),
+        (
+            SerdeError::InvalidBoolEncoding {
+                value: 0x02,
+                offset: 1,
+            },
+            "invalid bool encoding",
         ),
         (SerdeError::InvalidUtf8 { offset: 5 }, "invalid UTF-8"),
         (
@@ -502,6 +521,10 @@ fn serde_error_json_serde_roundtrip() {
         SerdeError::InvalidTag {
             tag: 0xFF,
             offset: 0,
+        },
+        SerdeError::InvalidBoolEncoding {
+            value: 0x02,
+            offset: 1,
         },
         SerdeError::DuplicateKey {
             key: "dup".to_string(),
